@@ -382,6 +382,7 @@ def test_convert_then_export_restores_the_hf_weights(
     assert config["dllm_block_size"] == BLOCK_SIZE
     assert config["dllm_mask_token_id"] == MASK_ID
     assert config["dllm_token_shift"] == TOKEN_SHIFT
+    assert config["dllm_clean_attention"] == "block"  # the default of export
     assert config["torch_dtype"] == "bfloat16"
     assert config["vocab_size"] == 40
 
@@ -597,6 +598,136 @@ def test_export_rejects_unsupported_block_diffusion_settings(
             mask_token_id=mask_token_id,
         )
     assert not out.exists()
+
+
+@pytest.mark.parametrize("clean_attention", ["block", "causal"])
+def test_export_writes_the_clean_attention_next_to_the_block_fields(
+    tmp_path: Path, clean_attention: str
+) -> None:
+    """The exporter writes dllm_clean_attention with the value that export
+    receives.
+
+    Spec section 15: an nld model is exported with "causal", and a bd3 model with "block".
+    """
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    export_dir = tmp_path / "export"
+    export(
+        megatron,
+        hf_dir,
+        export_dir,
+        block_size=BLOCK_SIZE,
+        token_shift=TOKEN_SHIFT,
+        mask_token_id=MASK_ID,
+        clean_attention=clean_attention,
+    )
+    config = json.loads((export_dir / "config.json").read_text())
+    assert config["dllm_clean_attention"] == clean_attention
+    assert config["dllm_block_size"] == BLOCK_SIZE
+    assert config["dllm_mask_token_id"] == MASK_ID
+    assert config["dllm_token_shift"] == TOKEN_SHIFT
+
+
+@pytest.mark.parametrize(
+    ("objective", "requested", "written"),
+    [
+        ("nld", None, "causal"),
+        ("nld", "causal", "causal"),
+        ("bd3", None, "block"),
+        ("bd3", "block", "block"),
+        ("ar", None, "block"),
+    ],
+)
+def test_export_takes_the_clean_attention_from_the_checkpoint_objective(
+    tmp_path: Path, objective: str, requested: str | None, written: str
+) -> None:
+    """Without a value the exporter writes the clean attention of bd_objective
+    (spec section 15)."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _set_rank0_args(megatron, bd_objective=objective)
+    export_dir = tmp_path / "export"
+    export(
+        megatron,
+        hf_dir,
+        export_dir,
+        block_size=BLOCK_SIZE,
+        token_shift=TOKEN_SHIFT,
+        mask_token_id=MASK_ID,
+        clean_attention=requested,
+    )
+    config = json.loads((export_dir / "config.json").read_text())
+    assert config["dllm_clean_attention"] == written
+
+
+@pytest.mark.parametrize(("objective", "requested"), [("nld", "block"), ("bd3", "causal")])
+def test_export_rejects_a_clean_attention_that_the_objective_did_not_train(
+    tmp_path: Path, objective: str, requested: str
+) -> None:
+    """An nld checkpoint exported as block (or bd3 as causal) raises ValueError
+    and writes nothing."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _set_rank0_args(megatron, bd_objective=objective)
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="bd_objective"):
+        export(
+            megatron,
+            hf_dir,
+            out,
+            block_size=BLOCK_SIZE,
+            token_shift=TOKEN_SHIFT,
+            mask_token_id=MASK_ID,
+            clean_attention=requested,
+        )
+    assert not out.exists()
+
+
+def test_export_rejects_an_unsupported_clean_attention(tmp_path: Path) -> None:
+    """A clean attention other than block or causal raises ValueError and
+    writes nothing."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="clean_attention"):
+        export(
+            megatron,
+            hf_dir,
+            out,
+            block_size=BLOCK_SIZE,
+            token_shift=TOKEN_SHIFT,
+            mask_token_id=MASK_ID,
+            clean_attention="full",
+        )
+    assert not out.exists()
+
+
+def test_export_command_line_writes_the_clean_attention(tmp_path: Path) -> None:
+    """--clean-attention sets dllm_clean_attention. The default is block, and other values fail."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    common = [
+        "--megatron",
+        str(megatron),
+        "--hf-base",
+        str(hf_dir),
+        "--block-size",
+        str(BLOCK_SIZE),
+        "--token-shift",
+        str(TOKEN_SHIFT),
+        "--mask-token-id",
+        str(MASK_ID),
+    ]
+    causal_dir = tmp_path / "causal"
+    status = megadlm_to_hf_qwen3.main(
+        [*common, "--out", str(causal_dir), "--clean-attention", "causal"]
+    )
+    assert status == 0
+    default_dir = tmp_path / "default"
+    assert megadlm_to_hf_qwen3.main([*common, "--out", str(default_dir)]) == 0
+    causal = json.loads((causal_dir / "config.json").read_text())
+    default = json.loads((default_dir / "config.json").read_text())
+    assert causal["dllm_clean_attention"] == "causal"
+    assert default["dllm_clean_attention"] == "block"
+    refused = tmp_path / "refused"
+    with pytest.raises(SystemExit):
+        megadlm_to_hf_qwen3.main([*common, "--out", str(refused), "--clean-attention", "full"])
+    assert not refused.exists()
 
 
 def test_export_refuses_to_write_into_the_base_model_directory(tmp_path: Path) -> None:

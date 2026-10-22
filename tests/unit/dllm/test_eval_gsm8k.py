@@ -3,6 +3,7 @@ metrics M2 and M3)."""
 
 from __future__ import annotations
 
+import json
 import os
 import random
 from collections.abc import Sequence
@@ -20,6 +21,8 @@ import torch
 import transformers
 from torch import nn
 
+from oellm_autoexp.dllm.eval import eval_gsm8k
+from oellm_autoexp.dllm.eval import sampler as sampler_module
 from oellm_autoexp.dllm.eval.eval_gsm8k import (
     build_fewshot_prefix,
     evaluate,
@@ -315,6 +318,121 @@ def test_evaluate_rejects_unsupported_settings() -> None:
         _evaluate("static", block_size=None, token_shift=1, mask_id=_MASK_ID)
     with pytest.raises(ValueError):
         _evaluate("dynamic", block_size=2, token_shift=1, mask_id=_MASK_ID, tau=1.5)
+
+
+def _spy_on_sampler(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Replace the sampler class by a subclass that records every construction.
+
+    Returns:
+        A list that receives the keyword arguments of each constructed sampler.
+    """
+    seen: list[dict[str, Any]] = []
+    real_sampler = sampler_module.BlockDiffusionSampler
+
+    class _SpySampler(real_sampler):
+        def __init__(self, **kwargs: Any) -> None:
+            seen.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(sampler_module, "BlockDiffusionSampler", _SpySampler)
+    return seen
+
+
+@pytest.mark.parametrize(("clean_attention", "expected"), [("block", False), ("causal", True)])
+def test_evaluate_passes_clean_causal_to_the_sampler(
+    monkeypatch: pytest.MonkeyPatch, clean_attention: str, expected: bool
+) -> None:
+    seen = _spy_on_sampler(monkeypatch)
+    settings = {"block_size": 2, "token_shift": 1, "mask_id": _MASK_ID}
+    _evaluate("static", clean_attention=clean_attention, **settings)
+    _evaluate("dynamic", clean_attention=clean_attention, **settings)
+    assert [call["clean_causal"] for call in seen] == [expected, expected]
+
+
+def test_evaluate_ar_mode_builds_no_sampler(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = _spy_on_sampler(monkeypatch)
+    _check_result(_evaluate("ar", clean_attention="causal"), mode="ar", count=3)
+    assert seen == []
+
+
+def test_evaluate_rejects_an_unknown_clean_attention() -> None:
+    with pytest.raises(ValueError, match="clean_attention"):
+        _evaluate("static", block_size=2, token_shift=1, mask_id=_MASK_ID, clean_attention="nld")
+
+
+def _patch_hf_loading(monkeypatch: pytest.MonkeyPatch, config_fields: dict[str, Any]) -> None:
+    """Replace the loaders that ``main`` uses by stand-ins that need no files
+    or network.
+
+    The model config has the block-diffusion fields of the tiny model, plus ``config_fields``.
+    The model is the tiny model and the tokenizer is the character tokenizer of these tests.
+    """
+    config = SimpleNamespace(
+        dllm_block_size=2, dllm_token_shift=1, dllm_mask_token_id=_MASK_ID, **config_fields
+    )
+    model = _tiny_model()
+
+    def load_split(split: str, hf_home: str | None = None) -> list[dict[str, str]]:
+        return _problems(3) if split == "test" else _train_items()
+
+    monkeypatch.setattr(transformers.AutoConfig, "from_pretrained", lambda *args, **kwargs: config)
+    monkeypatch.setattr(
+        transformers.AutoTokenizer, "from_pretrained", lambda *args, **kwargs: _CharTokenizer()
+    )
+    monkeypatch.setattr(
+        transformers.AutoModelForCausalLM, "from_pretrained", lambda *args, **kwargs: model
+    )
+    monkeypatch.setattr(eval_gsm8k, "load_gsm8k", load_split)
+
+
+def _run_main(tmp_path: Path, *extra: str) -> dict[str, Any]:
+    """Run ``eval_gsm8k.main`` on two problems and return the JSON file that it
+    writes."""
+    out = tmp_path / "result.json"
+    argv = ["--model", "local-model", "--device", "cpu", "--n", "2", "--max-new-tokens", "6"]
+    assert eval_gsm8k.main([*argv, "--out", str(out), *extra]) == 0
+    return json.loads(out.read_text())
+
+
+@pytest.mark.parametrize(
+    ("config_fields", "recorded", "clean_causal"),
+    [
+        ({"dllm_clean_attention": "causal"}, "causal", True),
+        ({}, "block", False),
+        ({"dllm_clean_attention": None}, "block", False),  # null means block, as in eval_nelbo
+    ],
+)
+def test_main_reads_dllm_clean_attention_and_records_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    config_fields: dict[str, Any],
+    recorded: str,
+    clean_causal: bool,
+) -> None:
+    seen = _spy_on_sampler(monkeypatch)
+    _patch_hf_loading(monkeypatch, config_fields)
+    payload = _run_main(tmp_path, "--mode", "static")
+    assert payload["clean_attention"] == recorded
+    assert [call["clean_causal"] for call in seen] == [clean_causal]
+
+
+@pytest.mark.parametrize("value", ["full", "nld"])
+def test_main_rejects_a_dllm_clean_attention_that_is_not_block_or_causal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: str
+) -> None:
+    _patch_hf_loading(monkeypatch, {"dllm_clean_attention": value})
+    with pytest.raises(ValueError, match="clean_attention"):
+        _run_main(tmp_path, "--mode", "dynamic")
+
+
+def test_main_ar_mode_records_no_clean_attention(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen = _spy_on_sampler(monkeypatch)
+    _patch_hf_loading(monkeypatch, {"dllm_clean_attention": "causal"})
+    payload = _run_main(tmp_path, "--mode", "ar")
+    assert payload["clean_attention"] is None
+    assert seen == []
 
 
 def test_load_gsm8k_reads_the_snapshot_under_hf_home(tmp_path: Path) -> None:

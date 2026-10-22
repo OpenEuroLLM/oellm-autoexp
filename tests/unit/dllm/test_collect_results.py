@@ -14,6 +14,11 @@ from oellm_autoexp.dllm.eval import collect_results as cr
 BD3_NAME = "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-5-T2B"
 BD3_B4_NAME = "bd3-q3_0.6B-B4-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-5-T2B"
 AR_NAME = "ar-q3_0.6B-lr3e-5-T2B"
+NLD_NAME = "nld-q3_0.6B-B32-sh0-a0.3-ao0.2-lr3e-5-T2B"
+NLD_TIER1_ROW = (
+    f"| {NLD_NAME} | objective nld (B = 32, diffusion weight 0.3, AR-only 0.2) "
+    "| 1.1500 | -4.17 | - | - | - | - | AR-mode M1 1.1200 |"
+)
 T0_RUNS = {
     "1e-5": "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-5-T0.5B",
     "3e-5": "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-5-T0.5B",
@@ -149,6 +154,10 @@ def _write_logs(root: Path) -> Path:
         "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0.8_0.2-dm1-scnone-lr3e-5-T2B",
         "bd3-q3_0.6B-B0-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-5-T2B",
         "ar-q3_0.6B-lr3e-5",
+        "nld-q3_0.6B-B32-sh0-a0.3-lr3e-5-T2B",
+        "nld-q3_0.6B-B32-sh0-a0.3-ao1.5-lr3e-5-T2B",
+        "nld-q3_0.6B-B32-sh0-a0.3-ao1-lr3e-5-T2B",  # args.py needs a fraction below 1
+        "nld-q3_0.6B-B0-sh0-a0.3-ao0.2-lr3e-5-T2B",
     ],
 )
 def test_parse_run_name_rejects_bad_names(name: str) -> None:
@@ -168,6 +177,8 @@ def test_parse_bd3_run_name_from_ablation_pattern() -> None:
         "t_max": 1.0,
         "doc_mask": 1,
         "schedule": None,
+        "diffusion_weight": None,
+        "ar_only_fraction": None,
         "lr": 3e-5,
         "tokens": 2_000_000_000,
     }
@@ -197,6 +208,35 @@ def test_parse_bd3_run_name_with_path_safe_schedule() -> None:
     assert parsed["tokens"] == 2_000_000_000
 
 
+def test_parse_nld_run_name_keeps_the_r00_base_and_adds_the_nld_settings() -> None:
+    assert cr.parse_run_name(NLD_NAME) == {
+        "objective": "nld",
+        "size": "0.6B",
+        "block_size": 32,
+        "token_shift": 0,
+        "complementary": 0,
+        "weighting": "elbo",
+        "t_min": 0.0,
+        "t_max": 1.0,
+        "doc_mask": 1,
+        "schedule": None,
+        "diffusion_weight": 0.3,
+        "ar_only_fraction": 0.2,
+        "lr": 3e-5,
+        "tokens": 2_000_000_000,
+    }
+
+
+def test_parse_nld_run_name_reads_token_shift_and_the_boundary_fractions() -> None:
+    parsed = cr.parse_run_name("nld-q3_0.6B-B8-sh1-a1-ao0-lr1e-4-T0.5B")
+    assert parsed["token_shift"] == 1
+    assert parsed["block_size"] == 8
+    assert parsed["diffusion_weight"] == 1.0
+    assert parsed["ar_only_fraction"] == 0.0
+    assert parsed["lr"] == 1e-4
+    assert parsed["tokens"] == 500_000_000
+
+
 def test_parse_ar_run_name_has_no_block_diffusion_fields() -> None:
     parsed = cr.parse_run_name(AR_NAME)
     assert parsed["objective"] == "ar"
@@ -212,6 +252,8 @@ def test_parse_ar_run_name_has_no_block_diffusion_fields() -> None:
         "t_max",
         "doc_mask",
         "schedule",
+        "diffusion_weight",
+        "ar_only_fraction",
     )
     assert all(parsed[key] is None for key in bd_fields)
 
@@ -248,8 +290,37 @@ def test_load_eval_dir_reads_each_metric_file(tmp_path: Path) -> None:
     _write_json(tmp_path / f"{AR_NAME}.gsm8k_ar.json", {"accuracy": 33.2})
     _write_json(tmp_path / "parity.json", {"top1": 0.99})
     assert cr.load_eval_dir(tmp_path) == {
-        BD3_NAME: {"m1": 1.2, "m2_static": 30.5, "m2_dyn": 29.0, "m3": 2.4, "m2_ar": None},
-        AR_NAME: {"m1": 1.1, "m2_static": None, "m2_dyn": None, "m3": None, "m2_ar": 33.2},
+        BD3_NAME: {
+            "m1": 1.2,
+            "m2_static": 30.5,
+            "m2_dyn": 29.0,
+            "m3": 2.4,
+            "m2_ar": None,
+            "m1_ar": None,
+        },
+        AR_NAME: {
+            "m1": 1.1,
+            "m2_static": None,
+            "m2_dyn": None,
+            "m3": None,
+            "m2_ar": 33.2,
+            "m1_ar": None,
+        },
+    }
+
+
+def test_load_eval_dir_reads_the_ar_mode_m1_of_an_nld_run(tmp_path: Path) -> None:
+    _write_json(tmp_path / f"{NLD_NAME}.m1.json", {"bits_per_token": 1.15})
+    _write_json(tmp_path / f"{NLD_NAME}.m1_ar.json", {"bits_per_token": 1.12})
+    assert cr.load_eval_dir(tmp_path) == {
+        NLD_NAME: {
+            "m1": 1.15,
+            "m2_static": None,
+            "m2_dyn": None,
+            "m3": None,
+            "m2_ar": None,
+            "m1_ar": 1.12,
+        },
     }
 
 
@@ -305,6 +376,43 @@ def test_tier1_change_column_lists_every_changed_factor() -> None:
         "doc mask 0; schedule 0:4,0.15:8; lr 1e-4"
     )
     assert cells[3] == "-"
+
+
+def test_tier1_row_of_an_nld_run_shows_its_change_and_ar_mode_m1() -> None:
+    rows = [
+        {"run": BD3_NAME, "m1": 1.2, "m2_static": 30.5, "m2_dyn": 29.0, "m3": 2.4, "m4": 400.0},
+        {"run": NLD_NAME, "m1": 1.15, "m2_static": 30.0, "m2_dyn": 29.0, "m3": 2.0, "m1_ar": 1.12},
+    ]
+    lines = cr.tier1_table(rows, base_run=BD3_NAME).splitlines()
+    assert _cells(lines[3]) == [
+        NLD_NAME,
+        "objective nld (B = 32, diffusion weight 0.3, AR-only 0.2)",
+        "1.1500",
+        "-4.17",
+        "30.0",
+        "29.0",
+        "2.00",
+        "-",
+        "AR-mode M1 1.1200",
+    ]
+
+
+def test_tier1_ignores_m1_ar_of_a_run_that_is_not_nld() -> None:
+    rows = [
+        {"run": BD3_NAME, "m1": 1.2, "m2_static": 30.5, "m2_dyn": 29.0, "m3": 2.4, "m1_ar": 1.1},
+        {"run": AR_NAME, "m1": 1.1, "m2_ar": 40.0, "m1_ar": 1.0},
+    ]
+    lines = cr.tier1_table(rows, base_run=BD3_NAME).splitlines()
+    assert not any("AR-mode M1" in line for line in lines)
+
+
+def test_tier1_change_of_an_nld_run_lists_only_the_differences_from_r00() -> None:
+    name = "nld-q3_0.6B-B8-sh1-a0.5-ao0.1-lr1e-4-T2B"
+    lines = cr.tier1_table([{"run": name, "m1": 1.3}], base_run=BD3_NAME).splitlines()
+    cells = _cells(lines[2])
+    assert cells[1] == "objective nld (token shift 1, diffusion weight 0.5, AR-only 0.1); lr 1e-4"
+    assert cells[3] == "-"
+    assert cells[8] == ""
 
 
 def test_pick_lr_clear_winner_needs_no_note() -> None:
@@ -443,6 +551,49 @@ def test_main_without_write_prints_tables_and_keeps_the_file(
         assert line in out_lines
     assert "pick: LR 3e-5" in out_lines
     assert f"base run: {BD3_NAME}" in out_lines
+
+
+def test_main_adds_an_nld_run_to_tier_1_and_keeps_tier_0(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    eval_dir = _write_eval_dir(tmp_path)
+    _write_json(eval_dir / f"{NLD_NAME}.m1.json", {"bits_per_token": 1.15})
+    _write_json(eval_dir / f"{NLD_NAME}.m1_ar.json", {"bits_per_token": 1.12})
+    logs = _write_logs(tmp_path)
+    results_md = tmp_path / "RESULTS.md"
+    results_md.write_text(RESULTS_MD, encoding="utf-8")
+
+    status = cr.main(
+        [
+            "--eval-dir",
+            str(eval_dir),
+            "--logs-glob",
+            str(logs / "*.out"),
+            "--results-md",
+            str(results_md),
+        ]
+    )
+
+    assert status == 0
+    out_lines = capsys.readouterr().out.splitlines()
+    tier0_start = out_lines.index("## Tier 0")
+    tier1_start = out_lines.index("## Tier 1")
+    base_line = out_lines.index(f"base run: {BD3_NAME}")
+    assert out_lines[tier0_start:tier1_start] == [
+        "## Tier 0",
+        HEADER_TIER0,
+        SEP_TIER0,
+        *EXPECTED_TIER0,
+        "pick: LR 3e-5",
+        "",
+    ]
+    assert out_lines[tier1_start:base_line] == [
+        "## Tier 1",
+        HEADER_TIER1,
+        SEP_TIER1,
+        *EXPECTED_TIER1,
+        NLD_TIER1_ROW,
+    ]
 
 
 def test_main_rejects_a_missing_eval_directory(tmp_path: Path) -> None:

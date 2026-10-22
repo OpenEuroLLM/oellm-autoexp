@@ -4,7 +4,8 @@ M1 is the validation NELBO of a block-diffusion model, or the exact NLL of an AR
 token over the scored positions of a fixed set of held-out sequences. The block-diffusion value uses
 the deterministic estimator of spec section 9. For each block it draws ``l_k`` masked positions and
 weights their cross entropy by ``B / l_k``. The model reads ``[xt | x0]`` under the dense mask of
-spec section 5.
+spec section 5. For the nld objective (clean attention ``causal``, spec section 15) the clean
+stream is token-causal.
 
 The scored positions are the same for every model (D-035). Position ``i`` is scored when ``i >= 1``
 and it is not a document start, that is ``doc_ids[i] == doc_ids[i - 1]``. Document ids are computed
@@ -40,10 +41,12 @@ from torch import Tensor, nn
 
 from oellm_autoexp.dllm.data_prep import read_idx_header
 from oellm_autoexp.dllm.masks import (
+    CLEAN_ATTENTIONS,
     compute_doc_ids,
     make_ar_mask_mod,
     make_bd3_mask_mod,
     materialize_mask,
+    resolve_clean_attention,
 )
 from oellm_autoexp.dllm.noise import sample_validation_noise, validation_nelbo
 from oellm_autoexp.dllm.targets import ar_sources, prediction_sources
@@ -139,6 +142,25 @@ def _from_flag_or_config(flag: int | None, config: Any, name: str) -> int | None
     return flag if flag is not None else getattr(config, name, None)
 
 
+def _resolve_clean_attention(flag: str | None, config: Any) -> str:
+    """Return the clean attention of a bd3 model: the flag, else the config field, else block.
+
+    A config without ``dllm_clean_attention`` is a block-causal model (spec section 15).
+
+    Args:
+        flag: Value of ``--clean-attention``, or None when the flag is absent.
+        config: Hugging Face model config.
+
+    Returns:
+        ``"block"`` or ``"causal"``.
+
+    Raises:
+        ValueError: If the resolved value is not supported.
+    """
+    value = flag if flag is not None else getattr(config, "dllm_clean_attention", None)
+    return resolve_clean_attention(value)
+
+
 def _check_token_batch(x0: Tensor) -> None:
     """Raise ValueError unless ``x0`` is a 2-D integer tensor ``[b, L]``.
 
@@ -186,6 +208,7 @@ def bd3_nelbo_batch(
     eod_id: int,
     doc_mask: bool,
     generator: torch.Generator,
+    clean_causal: bool = False,
 ) -> tuple[Tensor, Tensor]:
     """Compute the validation NELBO sum of one batch (spec section 9, D-035).
 
@@ -203,6 +226,8 @@ def bd3_nelbo_batch(
         eod_id: Token id of the end-of-document token.
         doc_mask: Whether the attention mask uses the document ids.
         generator: Generator on the device of ``x0``. Its state advances with the noise draws.
+        clean_causal: True for the token-causal clean stream of the nld objective (spec section
+            15). False for the block-causal clean stream of bd3 (spec section 5).
 
     Returns:
         A tuple ``(nelbo_sum, scored)`` of 0-dim float32 tensors. ``nelbo_sum`` is the sum of
@@ -211,10 +236,13 @@ def bd3_nelbo_batch(
 
     Raises:
         ValueError: If an input is unsupported.
+        TypeError: If ``clean_causal`` is not a bool.
     """
     _check_token_batch(x0)
     if isinstance(block_size, bool) or not isinstance(block_size, int) or block_size < 1:
         raise ValueError(f"block_size must be an integer >= 1, got {block_size!r}")
+    if not isinstance(clean_causal, bool):
+        raise TypeError(f"clean_causal must be a bool, got {clean_causal!r}")
     batch, length = x0.shape
     device = x0.device
     src, has_src = prediction_sources(length, block_size, token_shift, device=device)
@@ -225,7 +253,7 @@ def bd3_nelbo_batch(
     positions = torch.arange(length, device=device)
     position_ids = torch.cat([positions, positions]).unsqueeze(0).expand(batch, -1)
     attention_mask = materialize_mask(
-        make_bd3_mask_mod(length, block_size, attention_doc_ids),
+        make_bd3_mask_mod(length, block_size, attention_doc_ids, clean_causal=clean_causal),
         batch,
         2 * length,
         2 * length,
@@ -306,13 +334,15 @@ def evaluate(
     seed: int,
     batch_size: int,
     device: str | torch.device,
+    clean_attention: str = "block",
 ) -> dict[str, Any]:
     """Evaluate M1 over a set of windows and return the value with its
     settings.
 
     One generator seeded with ``seed`` supplies the noise of the whole run, and the batches are
-    taken in order. For ``objective="ar"``, the arguments ``block_size``, ``token_shift``, and
-    ``mask_id`` are ignored, and the result reports ``block_size`` and ``token_shift`` as None.
+    taken in order. For ``objective="ar"``, the arguments ``block_size``, ``token_shift``,
+    ``mask_id``, and ``clean_attention`` are ignored, and the result reports ``block_size``,
+    ``token_shift``, and ``clean_attention`` as None.
 
     Args:
         model: Hugging Face causal LM in eval mode, on ``device``.
@@ -326,11 +356,14 @@ def evaluate(
         seed: Seed of the noise generator.
         batch_size: Number of sequences per forward pass, at least 1.
         device: Device for the batches and for the generator.
+        clean_attention: ``"block"`` (bd3, spec section 5) or ``"causal"`` (nld, spec section 15).
+            The value must be one of these for both objectives, and bd3 uses it.
 
     Returns:
-        A dict with the keys ``objective``, ``block_size``, ``token_shift``, ``doc_mask``,
-        ``num_sequences``, ``seq_len``, ``scored_positions``, ``nats_sum``, ``bits_per_token``,
-        and ``seed``. ``bits_per_token`` equals ``nats_sum / (scored_positions * ln 2)``.
+        A dict with the keys ``objective``, ``block_size``, ``token_shift``, ``clean_attention``,
+        ``doc_mask``, ``num_sequences``, ``seq_len``, ``scored_positions``, ``nats_sum``,
+        ``bits_per_token``, and ``seed``. ``bits_per_token`` equals
+        ``nats_sum / (scored_positions * ln 2)``.
 
     Raises:
         ValueError: If an input is unsupported, if no position is scored, or if the sum is not
@@ -348,6 +381,7 @@ def evaluate(
         raise ValueError(f"windows must not be empty, got shape {tuple(windows.shape)}")
     if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
         raise ValueError(f"batch_size must be an integer >= 1, got {batch_size!r}")
+    clean_attention = resolve_clean_attention(clean_attention)
     dev = torch.device(device)
     generator = torch.Generator(device=dev).manual_seed(seed)
     nats_sum = 0.0
@@ -356,7 +390,15 @@ def evaluate(
         x0 = windows[start : start + batch_size].to(dev)
         if objective == "bd3":
             batch_nats, batch_scored = bd3_nelbo_batch(
-                model, x0, block_size, token_shift, mask_id, eod_id, doc_mask, generator
+                model,
+                x0,
+                block_size,
+                token_shift,
+                mask_id,
+                eod_id,
+                doc_mask,
+                generator,
+                clean_causal=clean_attention == "causal",
             )
         else:
             batch_nats, batch_scored = ar_nll_batch(model, x0, eod_id, doc_mask)
@@ -375,6 +417,7 @@ def evaluate(
         "objective": objective,
         "block_size": block_size if is_bd3 else None,
         "token_shift": token_shift if is_bd3 else None,
+        "clean_attention": clean_attention if is_bd3 else None,
         "doc_mask": bool(doc_mask),
         "num_sequences": num_sequences,
         "seq_len": seq_len,
@@ -421,6 +464,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="mask id M (default dllm_mask_token_id, else len(tokenizer))",
     )
     parser.add_argument(
+        "--clean-attention",
+        choices=CLEAN_ATTENTIONS,
+        default=None,
+        help="clean stream of bd3: block or causal (default dllm_clean_attention, else block)",
+    )
+    parser.add_argument(
         "--eod-id", type=int, default=None, help="EOD id (default tokenizer.eos_token_id)"
     )
     parser.add_argument(
@@ -443,9 +492,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     The JSON result is written to ``--out`` and printed. It holds the model and the data prefix,
     the fields of :func:`evaluate`, and the resolved ``eod_id``, ``mask_token_id``, and ``dtype``.
-    The block size, token shift, and mask id default to the ``dllm_*`` fields of the model config.
-    The mask id falls back to ``len(tokenizer)``, and the EOD id defaults to
-    ``tokenizer.eos_token_id``. The tokenizer is loaded only when one of these is needed.
+    The block size, token shift, mask id, and clean attention default to the ``dllm_*`` fields of
+    the model config. The clean attention falls back to ``block`` when the config has no
+    ``dllm_clean_attention`` field. The mask id falls back to ``len(tokenizer)``, and the EOD id
+    defaults to ``tokenizer.eos_token_id``. The tokenizer is loaded only when one of these is
+    needed.
 
     Args:
         argv: Arguments without the program name, or None to read ``sys.argv``.
@@ -465,6 +516,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     block_size: int | None = None
     token_shift: int | None = None
     mask_id: int | None = None
+    # The clean attention of the ar objective is not used, so ar takes the default here.
+    clean_attention = "block"
     if args.objective == "bd3":
         block_size = _from_flag_or_config(args.block_size, config, "dllm_block_size")
         if block_size is None:
@@ -472,6 +525,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         token_shift = _from_flag_or_config(args.token_shift, config, "dllm_token_shift")
         token_shift = 0 if token_shift is None else token_shift
         mask_id = _from_flag_or_config(args.mask_token_id, config, "dllm_mask_token_id")
+        clean_attention = _resolve_clean_attention(args.clean_attention, config)
     tokenizer = None
     if args.eod_id is None or (args.objective == "bd3" and mask_id is None):
         tokenizer = transformers.AutoTokenizer.from_pretrained(args.model)
@@ -496,6 +550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         seed=args.seed,
         batch_size=args.batch_size,
         device=args.device,
+        clean_attention=clean_attention,
     )
     payload = {
         "model": args.model,

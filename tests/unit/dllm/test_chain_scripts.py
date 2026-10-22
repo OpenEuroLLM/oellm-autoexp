@@ -25,6 +25,8 @@ _EVAL_KEYS = (
     "EVAL_TOKEN_SHIFT",
     "EVAL_MASK_ID",
     "EVAL_DOC_MASK",
+    "EVAL_CLEAN_ATTENTION",
+    "EVAL_M1_AR",
 )
 
 
@@ -87,6 +89,8 @@ def test_evaluation_takes_its_settings_from_the_training_flags(tmp_path: Path) -
         "EVAL_TOKEN_SHIFT": "1",
         "EVAL_MASK_ID": "151669",
         "EVAL_DOC_MASK": "1",
+        "EVAL_CLEAN_ATTENTION": "",
+        "EVAL_M1_AR": "",
         "EVAL_MODES": "",
     }
 
@@ -314,6 +318,7 @@ def test_eval_chain_exports_the_checkpoint_and_names_the_ar_result(tmp_path: Pat
         "-m", "oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3", "--megatron", "/ckpt",
         "--hf-base", "Qwen/Qwen3-0.6B-Base", "--out", model, "--block-size", "1",
         "--token-shift", "1", "--mask-token-id", "151669", "--layout", "te",
+        "--clean-attention", "block",
     ]  # fmt: skip
     assert "--doc-mask 0" in m1 and f"--model {model}" in m1
     assert gsm8k.endswith(f"--out {tmp_path}/eval/run.gsm8k_ar.json")
@@ -332,3 +337,38 @@ def test_stage_data_falls_back_when_the_override_directory_is_missing(tmp_path: 
     result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
     assert result.returncode == 0, result.stderr
     assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]
+
+
+def test_nld_run_is_evaluated_as_diffusion_with_causal_clean_stream_and_ar_mode(
+    tmp_path: Path,
+) -> None:
+    """Spec section 15: M1 is the bd3 NELBO with the nld mask, plus the AR-mode exact NLL."""
+    save = tmp_path / "checkpoints"
+    save.mkdir()
+    (save / "latest_checkpointed_iteration.txt").write_text("100")
+    stub, out = _stub_eval(tmp_path)
+    flags = _train_flags(save)
+    flags[flags.index("--bd-objective") + 1] = "nld"
+    flags[flags.index("--bd-block-size") + 1] = "32"
+    env = {"EVAL_CHAIN_CMD": stub, "EVAL_MODES": "static,dynamic"}
+    result = _run(["bash", str(TRAIN_THEN_EVAL), *flags], env)
+    assert result.returncode == 0, result.stderr
+    settings = _settings(out)
+    assert settings["EVAL_OBJECTIVE"] == "bd3"
+    assert (settings["EVAL_BLOCK_SIZE"], settings["EVAL_TOKEN_SHIFT"]) == ("32", "0")
+    assert (settings["EVAL_CLEAN_ATTENTION"], settings["EVAL_M1_AR"]) == ("causal", "1")
+    assert settings["EVAL_MODES"] == "static,dynamic"
+
+
+def test_eval_chain_adds_the_ar_mode_m1_when_asked(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    (bin_dir / "python").write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    (bin_dir / "python").chmod(0o755)
+    env = _chain_env(tmp_path, bin_dir, EVAL_M1_AR="1", EVAL_MODES="none")
+    result = _run(["bash", str(EVAL_CHAIN)], env)
+    assert result.returncode == 0, result.stderr
+    m1, m1_ar = calls.read_text().splitlines()
+    assert "--objective bd3" in m1 and m1.endswith(f"{tmp_path}/eval/run.m1.json")
+    assert "--objective ar" in m1_ar and m1_ar.endswith(f"{tmp_path}/eval/run.m1_ar.json")

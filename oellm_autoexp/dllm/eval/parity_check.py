@@ -160,6 +160,12 @@ def add_parity_args(parser):
         default=1e-2,
         help="mean absolute CE difference allowed for I3 (nats, bf16)",
     )
+    group.add_argument(
+        "--parity-nld-block-size",
+        type=int,
+        default=32,
+        help="block size of the nld clean-stream check (invariant I11); divides --parity-seq-len",
+    )
     group.add_argument("--parity-out", type=str, default=None, help="JSON result path")
     return parser
 
@@ -205,11 +211,18 @@ def main() -> int:
     net = unwrap_model(model[0])
     net.eval()
     real_vocab = len(get_tokenizer()._tokenizer)
+    if args.parity_seq_len % args.parity_nld_block_size != 0:
+        raise ValueError("--parity-nld-block-size must divide --parity-seq-len")
     x0 = _load_windows(args.parity_data_prefix, args.parity_num_seqs, args.parity_seq_len).cuda()
     xt = torch.full_like(x0, int(args.mask_token))
+    # I11: the nld clean stream ignores the noisy copy, so a half-masked copy is as good as any.
+    generator = torch.Generator(device="cuda").manual_seed(1234)
+    half = torch.rand(x0.shape, device="cuda", generator=generator) < 0.5
+    xt_nld = torch.where(half, xt, x0)
     with torch.no_grad():
         meg_ar = net.ar_logits(x0)
         meg_bd3 = net.bd3_logits(x0, xt, block_size=1, token_shift=1)
+        meg_nld = net.nld_clean_logits(x0, xt_nld, block_size=args.parity_nld_block_size)
 
     rank = torch.distributed.get_rank()
     passed = True
@@ -227,6 +240,8 @@ def main() -> int:
         logit_stats = compare_logits(hf_logits, meg_ar, real_vocab)
         i3_stats = i3_compare(meg_bd3[..., :real_vocab], meg_ar[..., :real_vocab], x0)
         parity_ok, i3_ok = parity_verdict(logit_stats, i3_stats, args.parity_i3_tol)
+        nld_stats = compare_logits(hf_logits, meg_nld, real_vocab)
+        nld_ok, _ = parity_verdict(nld_stats, i3_stats, args.parity_i3_tol)
         result = {
             "load": args.load,
             "hf": args.parity_hf,
@@ -239,6 +254,9 @@ def main() -> int:
             "i3": i3_stats,
             "parity_pass": parity_ok,
             "i3_pass": i3_ok,
+            "nld_block_size": args.parity_nld_block_size,
+            "nld_ar": nld_stats,
+            "nld_ar_pass": nld_ok,
         }
         print(json.dumps(result), flush=True)
         print(
@@ -250,10 +268,16 @@ def main() -> int:
             f"I3 {'PASS' if i3_ok else 'FAIL'}: mean_abs_diff={i3_stats['mean_abs_diff']:.2e}",
             flush=True,
         )
+        print(
+            f"NLD-AR {'PASS' if nld_ok else 'FAIL'}: top1={nld_stats['top1']:.4f} "
+            f"kl_mean={nld_stats['kl_mean']:.2e} (clean stream vs HF, B "
+            f"{args.parity_nld_block_size})",
+            flush=True,
+        )
         if args.parity_out:
             Path(args.parity_out).parent.mkdir(parents=True, exist_ok=True)
             Path(args.parity_out).write_text(json.dumps(result, indent=2))
-        passed = parity_ok and i3_ok
+        passed = parity_ok and i3_ok and nld_ok
     flag = torch.tensor([1 if passed else 0], device="cuda")
     torch.distributed.broadcast(flag, src=0)
     torch.distributed.barrier()

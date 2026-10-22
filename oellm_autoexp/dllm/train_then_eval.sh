@@ -10,7 +10,9 @@
 # attention rule of M1) and --mask-token.
 # The job sets EVAL_RUN, EVAL_DIR, EVAL_HF_BASE, EVAL_DATA_PREFIX and EVAL_MODES (eval_chain.sh).
 # An AR run (--bd-objective ar) is exported with B = 1 and shift 1, M1 is its exact NLL, and its
-# GSM8K modes become "ar". EVAL_CHAIN_CMD replaces eval_chain.sh (tests).
+# GSM8K modes become "ar". An nld run (spec section 15) is exported with its token-causal clean
+# attention; M1 is the diffusion NELBO with that mask, plus the AR-mode exact NLL (m1_ar).
+# EVAL_CHAIN_CMD replaces eval_chain.sh (tests).
 set -euo pipefail
 "$@"
 if [ "${SLURM_NODEID:-0}" != "0" ]; then
@@ -58,7 +60,12 @@ else
   fi
   token_shift="${FLAG[--bd-token-shift]:-0}"
 fi
-export EVAL_CKPT="$save" EVAL_OBJECTIVE="$objective" EVAL_BLOCK_SIZE="$block"
+m1_objective="$objective"
+if [ "$objective" = "nld" ]; then
+  m1_objective=bd3
+  export EVAL_CLEAN_ATTENTION=causal EVAL_M1_AR=1
+fi
+export EVAL_CKPT="$save" EVAL_OBJECTIVE="$m1_objective" EVAL_BLOCK_SIZE="$block"
 export EVAL_TOKEN_SHIFT="$token_shift" EVAL_MASK_ID="${FLAG[--mask-token]:?--mask-token is missing}"
 export EVAL_DOC_MASK="${FLAG[--bd-doc-mask]:-1}"
 echo "[train_then_eval] evaluating $save at iteration $latest (objective $objective, B $block," \

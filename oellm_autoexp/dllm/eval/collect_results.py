@@ -2,7 +2,8 @@
 
 Metrics per run (see ``.claude/dllm/ABLATIONS.md``):
 
-* M1 is the field ``bits_per_token`` of ``<run>.m1.json``.
+* M1 is the field ``bits_per_token`` of ``<run>.m1.json``. The AR-mode M1 of an nld run is the
+  same field of ``<run>.m1_ar.json``.
 * M2 static and M2 dyn@0.9 are the field ``accuracy`` (percent) of
   ``<run>.gsm8k_static.json`` and ``<run>.gsm8k_dynamic.json``.
 * M3 is the field ``mean_tpf_decode`` of ``<run>.gsm8k_dynamic.json``.
@@ -73,6 +74,11 @@ _BD3_RE = re.compile(
     rf"-lr(?P<lr>{_LR})-T(?P<tokens>{_TOKENS})"
 )
 _AR_RE = re.compile(rf"ar-q3_(?P<size>{_SIZE})-lr(?P<lr>{_LR})-T(?P<tokens>{_TOKENS})")
+_NLD_RE = re.compile(
+    rf"nld-q3_(?P<size>{_SIZE})-B(?P<block_size>\d+)-sh(?P<token_shift>[01])"
+    rf"-a(?P<diffusion_weight>{_NUM})-ao(?P<ar_only_fraction>{_NUM})"
+    rf"-lr(?P<lr>{_LR})-T(?P<tokens>{_TOKENS})"
+)
 _THROUGHPUT_RE = re.compile(
     r"bd throughput \| iteration\s+\d+ \| tokens/s/GPU: (?P<value>[-+]?\d+(?:\.\d+)?)"
 )
@@ -109,25 +115,28 @@ def _parse_tokens(text: str, name: str) -> int:
 
 
 def parse_run_name(name: str) -> dict[str, Any]:
-    """Parse a block-diffusion or AR run name from ``ABLATIONS.md``.
+    """Parse a block-diffusion, nld, or AR run name from ``ABLATIONS.md``.
 
     The accepted patterns are
     ``bd3-q3_<size>-B<B>-sh<shift>-cm<comp>-w<weight>-t<tmin>_<tmax>-dm<doc>-sc<schedule|none>``
-    ``-lr<lr>-T<tokens>`` and ``ar-q3_<size>-lr<lr>-T<tokens>``.
+    ``-lr<lr>-T<tokens>``, ``nld-q3_<size>-B<B>-sh<shift>-a<w_bd>-ao<fraction>-lr<lr>-T<tokens>``,
+    and ``ar-q3_<size>-lr<lr>-T<tokens>``. The other settings of an nld run are the R00 base.
 
     Args:
         name: The run name.
 
     Returns:
-        A dict with the keys ``objective`` ("bd3" or "ar"), ``size`` (for example "0.6B"),
+        A dict with the keys ``objective`` ("bd3", "nld", or "ar"), ``size`` (for example "0.6B"),
         ``block_size`` (int), ``token_shift`` (0 or 1), ``complementary`` (0 or 1),
         ``weighting`` ("elbo" or "uniform"), ``t_min`` and ``t_max`` (float), ``doc_mask``
         (0 or 1), ``schedule`` (the schedule string, or None for a constant block size),
-        ``lr`` (float), and ``tokens`` (int, for example "2B" gives 2000000000). For AR names
-        the block-diffusion fields are None.
+        ``diffusion_weight`` and ``ar_only_fraction`` (float for an nld run, None otherwise),
+        ``lr`` (float), and ``tokens`` (int, for example "2B" gives 2000000000). An nld run
+        takes the R00 values of ``complementary``, ``weighting``, ``t_min``, ``t_max``,
+        ``doc_mask``, and ``schedule``. For AR names the block-diffusion fields are None.
 
     Raises:
-        ValueError: If the name matches neither pattern, or a value is out of range.
+        ValueError: If the name matches no pattern, or a value is out of range.
     """
     match = _BD3_RE.fullmatch(name)
     if match is not None:
@@ -148,6 +157,32 @@ def parse_run_name(name: str) -> dict[str, Any]:
             "t_max": t_max,
             "doc_mask": int(groups["doc_mask"]),
             "schedule": _schedule_text(groups["schedule"]),
+            "diffusion_weight": None,
+            "ar_only_fraction": None,
+            "lr": _parse_lr(groups["lr"], name),
+            "tokens": _parse_tokens(groups["tokens"], name),
+        }
+    match = _NLD_RE.fullmatch(name)
+    if match is not None:
+        groups = match.groupdict()
+        block_size = int(groups["block_size"])
+        ar_only_fraction = float(groups["ar_only_fraction"])
+        # The same ranges as --bd-block-size and --bd-nld-ar-only-fraction (args.py).
+        if block_size < 1 or not 0.0 <= ar_only_fraction < 1.0:
+            raise ValueError(f"block size or AR-only fraction out of range in run name {name!r}")
+        return {
+            "objective": "nld",
+            "size": groups["size"],
+            "block_size": block_size,
+            "token_shift": int(groups["token_shift"]),
+            "complementary": BASE_BD3["complementary"],
+            "weighting": BASE_BD3["weighting"],
+            "t_min": BASE_BD3["t_min"],
+            "t_max": BASE_BD3["t_max"],
+            "doc_mask": BASE_BD3["doc_mask"],
+            "schedule": BASE_BD3["schedule"],
+            "diffusion_weight": float(groups["diffusion_weight"]),
+            "ar_only_fraction": ar_only_fraction,
             "lr": _parse_lr(groups["lr"], name),
             "tokens": _parse_tokens(groups["tokens"], name),
         }
@@ -165,6 +200,8 @@ def parse_run_name(name: str) -> dict[str, Any]:
             "t_max": None,
             "doc_mask": None,
             "schedule": None,
+            "diffusion_weight": None,
+            "ar_only_fraction": None,
             "lr": _parse_lr(groups["lr"], name),
             "tokens": _parse_tokens(groups["tokens"], name),
         }
@@ -232,7 +269,8 @@ def _entry(results: dict[str, dict[str, float | None]], run: str) -> dict[str, f
     """Return the metric entry of a run, creating it with empty fields when
     needed."""
     return results.setdefault(
-        run, {"m1": None, "m2_static": None, "m2_dyn": None, "m3": None, "m2_ar": None}
+        run,
+        {"m1": None, "m2_static": None, "m2_dyn": None, "m3": None, "m2_ar": None, "m1_ar": None},
     )
 
 
@@ -240,17 +278,18 @@ def load_eval_dir(eval_dir: str | os.PathLike[str]) -> dict[str, dict[str, float
     """Read the evaluation JSON files of every run in a directory.
 
     The files are matched by suffix. ``<run>.m1.json`` gives ``m1`` (field
-    ``bits_per_token``). ``<run>.gsm8k_static.json`` gives ``m2_static`` (field ``accuracy``
-    in percent). ``<run>.gsm8k_dynamic.json`` gives ``m2_dyn`` (``accuracy``) and ``m3``
-    (``mean_tpf_decode``). ``<run>.gsm8k_ar.json`` (AR greedy decoding, the M2 of AR runs) gives
-    ``m2_ar`` (``accuracy``). Other files are ignored.
+    ``bits_per_token``). ``<run>.m1_ar.json`` (the exact AR-mode NLL of an nld run) gives
+    ``m1_ar`` (``bits_per_token``). ``<run>.gsm8k_static.json`` gives ``m2_static`` (field
+    ``accuracy`` in percent). ``<run>.gsm8k_dynamic.json`` gives ``m2_dyn`` (``accuracy``) and
+    ``m3`` (``mean_tpf_decode``). ``<run>.gsm8k_ar.json`` (AR greedy decoding, the M2 of AR runs)
+    gives ``m2_ar`` (``accuracy``). Other files are ignored.
 
     Args:
         eval_dir: Directory with the evaluation JSON files.
 
     Returns:
-        Maps each run name to ``{"m1", "m2_static", "m2_dyn", "m3", "m2_ar"}``. A field whose
-        file is absent is None.
+        Maps each run name to ``{"m1", "m2_static", "m2_dyn", "m3", "m2_ar", "m1_ar"}``. A field
+        whose file is absent is None.
 
     Raises:
         FileNotFoundError: If ``eval_dir`` is not a directory.
@@ -268,6 +307,9 @@ def load_eval_dir(eval_dir: str | os.PathLike[str]) -> dict[str, dict[str, float
         if name.endswith(".m1.json"):
             entry = _entry(results, name[: -len(".m1.json")])
             entry["m1"] = _read_number(path, "bits_per_token")
+        elif name.endswith(".m1_ar.json"):
+            entry = _entry(results, name[: -len(".m1_ar.json")])
+            entry["m1_ar"] = _read_number(path, "bits_per_token")
         elif name.endswith(".gsm8k_static.json"):
             entry = _entry(results, name[: -len(".gsm8k_static.json")])
             entry["m2_static"] = _read_number(path, "accuracy")
@@ -336,6 +378,26 @@ def _is_base_bd3(row: Mapping[str, Any]) -> bool:
     return all(row[key] == value for key, value in BASE_BD3.items())
 
 
+def _describe_nld(parsed: Mapping[str, Any]) -> str:
+    """Describe an nld run for the Change column.
+
+    Args:
+        parsed: The output of :func:`parse_run_name` for an nld run.
+
+    Returns:
+        "objective nld" and, in parentheses, the block size and the token shift when they differ
+        from R00, then the diffusion weight and the AR-only fraction.
+    """
+    details: list[str] = []
+    if parsed["block_size"] != BASE_BD3["block_size"]:
+        details.append(f"B = {parsed['block_size']}")
+    if parsed["token_shift"] != BASE_BD3["token_shift"]:
+        details.append(f"token shift {parsed['token_shift']}")
+    details.append(f"diffusion weight {parsed['diffusion_weight']:g}")
+    details.append(f"AR-only {parsed['ar_only_fraction']:g}")
+    return f"objective nld ({', '.join(details)})"
+
+
 def _describe_change(parsed: Mapping[str, Any], base_lr: float | None) -> str:
     """Describe how a parsed run differs from the R00 configuration.
 
@@ -347,7 +409,9 @@ def _describe_change(parsed: Mapping[str, Any], base_lr: float | None) -> str:
         The differences joined by "; ", or "none" when there are none.
     """
     parts: list[str] = []
-    if parsed["objective"] != "bd3":
+    if parsed["objective"] == "nld":
+        parts.append(_describe_nld(parsed))
+    elif parsed["objective"] != "bd3":
         parts.append(f"objective {parsed['objective']}")
     else:
         if parsed["block_size"] != BASE_BD3["block_size"]:
@@ -440,11 +504,12 @@ def tier1_table(rows: Sequence[Mapping[str, Any]], base_run: str | None) -> str:
     base row is marked "base". Another row whose |dM1| is below 0.3 percent is marked "tie".
     The Change column lists the differences from the R00 configuration, and the LR difference
     from the base run. An AR run shows its AR greedy GSM8K accuracy (``m2_ar``) in the M2 static
-    column, marked "M2 = AR greedy".
+    column, marked "M2 = AR greedy". An nld run adds its AR-mode M1 (``m1_ar``) to the Notes
+    column when it is present.
 
     Args:
-        rows: Tier 1 rows with ``run``, ``m1``, ``m2_static``, ``m2_dyn``, ``m3``, ``m4``, and
-            ``m2_ar`` (each may be None or absent).
+        rows: Tier 1 rows with ``run``, ``m1``, ``m2_static``, ``m2_dyn``, ``m3``, ``m4``,
+            ``m2_ar``, and ``m1_ar`` (each may be None or absent).
         base_run: Name of the R00 run, or None when there is no base yet. Without a base,
             dM1 shows "-".
 
@@ -476,6 +541,8 @@ def tier1_table(rows: Sequence[Mapping[str, Any]], base_run: str | None) -> str:
         if parsed["objective"] == "ar":
             m2_static = row.get("m2_ar")
             notes.append("M2 = AR greedy")
+        if parsed["objective"] == "nld" and row.get("m1_ar") is not None:
+            notes.append(f"AR-mode M1 {row['m1_ar']:.4f}")
         cells = [
             str(row["run"]),
             _describe_change(parsed, base_lr),

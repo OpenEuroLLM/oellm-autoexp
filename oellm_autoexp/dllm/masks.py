@@ -15,6 +15,41 @@ from torch import Tensor
 from torch.nn.attention.flex_attention import BlockMask, create_block_mask
 
 _MaskMod = Callable[[Tensor, Tensor, Tensor, Tensor], Tensor]
+# Attention inside the clean stream (spec sections 5 and 15): block-causal for bd3, token-causal for
+# nld. Exported models store it as dllm_clean_attention.
+CLEAN_ATTENTIONS: tuple[str, ...] = ("block", "causal")
+
+
+def clean_attention_of(objective: str) -> str:
+    """Return the clean-stream attention that a training objective uses.
+
+    Args:
+        objective: ``bd_objective`` of a run: ``"bd3"``, ``"ar"``, or ``"nld"``.
+
+    Returns:
+        ``"causal"`` for nld (spec section 15), else ``"block"``.
+    """
+    return "causal" if objective == "nld" else "block"
+
+
+def resolve_clean_attention(value: str | None) -> str:
+    """Return a checked clean-stream attention. None means ``"block"``.
+
+    A model config without ``dllm_clean_attention`` (or with null) is a bd3 model.
+
+    Args:
+        value: ``"block"``, ``"causal"``, or None.
+
+    Returns:
+        ``"block"`` or ``"causal"``.
+
+    Raises:
+        ValueError: If value is any other string.
+    """
+    value = "block" if value is None else value
+    if value not in CLEAN_ATTENTIONS:
+        raise ValueError(f"clean_attention must be one of {CLEAN_ATTENTIONS}, got {value!r}")
+    return value
 
 
 def _check_length(length: int) -> None:

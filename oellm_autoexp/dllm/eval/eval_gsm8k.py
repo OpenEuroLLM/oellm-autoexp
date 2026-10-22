@@ -12,6 +12,11 @@ The modes are:
 M2 is the accuracy in percent. M3 is the mean tokens per forward pass, with TPF_decode and TPF_all
 as defined in spec section 14.
 
+The block-diffusion modes read ``dllm_clean_attention`` from the model config. The value
+``"causal"`` (objective nld, spec section 15) makes the sampler use token-causal attention among
+the clean tokens. The value ``"block"`` (objective bd3, spec section 14) is also the value when the
+config has no such field.
+
 Run it in the GPU environment, for example:
 
     python oellm_autoexp/dllm/eval/eval_gsm8k.py --model DIR --mode static --out result.json
@@ -36,6 +41,8 @@ if __package__ in (None, ""):
 
 import torch
 from torch import nn
+
+from oellm_autoexp.dllm.masks import CLEAN_ATTENTIONS, resolve_clean_attention
 
 _MODES = ("ar", "static", "dynamic")
 _SPLITS = ("train", "test")
@@ -245,6 +252,7 @@ def evaluate(
     real_vocab: int,
     eos_id: int,
     tau: float = 0.9,
+    clean_attention: str = "block",
 ) -> dict[str, Any]:
     """Measure GSM8K accuracy (M2) and tokens per forward pass (M3) for one
     decoding mode.
@@ -262,6 +270,8 @@ def evaluate(
         real_vocab: Number of real token ids. Only ids below it are generated.
         eos_id: End-of-sequence id in ``[0, real_vocab)``. Generation stops at it.
         tau: Confidence threshold of ``dynamic`` mode, in [0, 1].
+        clean_attention: Clean-token attention of the block-diffusion modes, ``"block"`` (spec
+            section 14) or ``"causal"`` (objective nld, spec section 15). ``ar`` mode ignores it.
 
     Returns:
         A dict with ``accuracy`` (percent), ``n``, ``correct``, ``mode``, ``mean_tpf_decode``,
@@ -289,6 +299,8 @@ def evaluate(
             raise ValueError(f"{mode} mode needs mask_id")
     if mode == "dynamic" and not 0.0 <= tau <= 1.0:
         raise ValueError(f"tau must be in [0, 1], got {tau}")
+    if clean_attention not in CLEAN_ATTENTIONS:
+        raise ValueError(f"clean_attention must be 'block' or 'causal', got {clean_attention!r}")
 
     sampler: Any = None
     if mode != "ar":
@@ -301,6 +313,7 @@ def evaluate(
             token_shift=token_shift,
             real_vocab=real_vocab,
             eos_id=eos_id,
+            clean_causal=clean_attention == "causal",
         )
 
     records: list[dict[str, Any]] = []
@@ -380,6 +393,24 @@ def _resolve_int(flag: int | None, config: Any, attr: str) -> int:
     return int(value)
 
 
+def _resolve_clean_attention(config: Any) -> str:
+    """Return the clean-token attention of a block-diffusion model from its
+    config.
+
+    Args:
+        config: Model config. The field ``dllm_clean_attention`` is ``"causal"`` for objective nld
+            (spec section 15) and ``"block"`` for objective bd3 (spec section 14). A config
+            without the field, or with null, means ``"block"``.
+
+    Returns:
+        ``"block"`` or ``"causal"``.
+
+    Raises:
+        ValueError: If the field holds any other value.
+    """
+    return resolve_clean_attention(getattr(config, "dllm_clean_attention", None))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser.
 
@@ -426,7 +457,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         Exit code 0.
 
     Raises:
-        ValueError: If a setting is not supported, for example ``--n`` above the test size.
+        ValueError: If a setting is not supported, for example ``--n`` above the test size, or an
+            unknown ``dllm_clean_attention`` in the config.
     """
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -449,11 +481,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     block_size: int | None = None
     token_shift: int | None = None
     mask_id: int | None = None
+    clean_attention = "block"
     if args.mode != "ar":
         config = AutoConfig.from_pretrained(args.model)
         block_size = _resolve_int(args.block_size, config, "dllm_block_size")
         token_shift = _resolve_int(args.token_shift, config, "dllm_token_shift")
         mask_id = _resolve_int(args.mask_token_id, config, "dllm_mask_token_id")
+        clean_attention = _resolve_clean_attention(config)
 
     result = evaluate(
         model,
@@ -468,6 +502,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         real_vocab,
         eos_id,
         tau=args.tau,
+        clean_attention=clean_attention,
     )
     payload = {
         **result,
@@ -481,6 +516,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "block_size": block_size,
         "token_shift": token_shift,
         "mask_token_id": mask_id,
+        "clean_attention": clean_attention if args.mode != "ar" else None,
     }
     summary = {key: value for key, value in payload.items() if key != "records"}
     print(json.dumps(summary), flush=True)

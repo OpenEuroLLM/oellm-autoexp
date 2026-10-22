@@ -10,6 +10,10 @@ cache-fill pass stores the finished block as clean tokens.
 The model is called with explicit 4D boolean masks of shape ``[1, 1, q, kv]``, where True means
 that the query may attend to the key, and with explicit ``position_ids``. The model must use
 ``attn_implementation="sdpa"``, which passes such masks through unchanged.
+
+The clean tokens (the prompt prefill and the cache-fill passes) use the block-causal rule of spec
+section 14. With ``clean_causal`` (objective nld, spec section 15) they use the token-causal rule
+instead, so the clean context is an exact AR model. The denoise passes do not change.
 """
 
 from __future__ import annotations
@@ -82,6 +86,8 @@ class BlockDiffusionSampler:
             emitted.
         eos_id: End-of-sequence id that stops generation. Use a value that the model never emits,
             such as -1, to disable the stop.
+        clean_causal: True for token-causal clean tokens (objective nld, spec section 15), False
+            for block-causal clean tokens (spec section 14).
     """
 
     def __init__(
@@ -92,6 +98,7 @@ class BlockDiffusionSampler:
         token_shift: int,
         real_vocab: int,
         eos_id: int,
+        clean_causal: bool = False,
     ) -> None:
         """Check the decoding constants against the model and store them.
 
@@ -107,10 +114,15 @@ class BlockDiffusionSampler:
                 most the model vocabulary size.
             eos_id: End-of-sequence id. Use a value that the model never emits, such as -1, to
                 disable the stop.
+            clean_causal: If True, the clean tokens written to the cache (the prompt prefill and
+                the cache-fill pass of each finished block) use token-causal attention among
+                themselves, as in objective nld (spec section 15). If False, they use the
+                block-causal rule of spec section 14. The denoise passes are the same in both.
 
         Raises:
             ValueError: If an argument is unsupported, or if the model does not use SDPA attention
                 or has layers other than full attention.
+            TypeError: If ``clean_causal`` is not a bool.
         """
         config = model.config
         attn_implementation = getattr(config, "_attn_implementation", None)
@@ -139,6 +151,9 @@ class BlockDiffusionSampler:
         if self.token_shift not in _TOKEN_SHIFTS:
             raise ValueError(f"token_shift must be 0 or 1, got {token_shift}")
         self.eos_id = _require_int("eos_id", eos_id)
+        if not isinstance(clean_causal, bool):
+            raise TypeError(f"clean_causal must be a bool, got {clean_causal!r}")
+        self.clean_causal = clean_causal
 
     def generate(
         self,
@@ -301,8 +316,11 @@ class BlockDiffusionSampler:
         return out.logits[0]
 
     def _prefill(self, cache: DynamicCache, prefix: list[int]) -> Tensor:
-        """Fill the cache with the whole prompt blocks under the block-causal
-        rule.
+        """Fill the cache with the whole prompt blocks as clean tokens (spec
+        section 14, step 1).
+
+        The clean tokens follow the block-causal rule, or the token-causal rule when
+        ``clean_causal`` is set.
 
         Args:
             cache: Empty cache, filled with the keys of ``prefix``.
@@ -311,7 +329,7 @@ class BlockDiffusionSampler:
         Returns:
             Logits of the last prefix position with shape ``[V]``.
         """
-        allowed = _prefix_mask(len(prefix), self.block_size, self._device())
+        allowed = _clean_mask(len(prefix), self.block_size, self.clean_causal, self._device())
         return self._call(cache, prefix, 0, allowed, last_only=True)[-1]
 
     def _denoise_logits(self, cache: DynamicCache, block: list[int], start: int) -> Tensor:
@@ -339,6 +357,10 @@ class BlockDiffusionSampler:
         """Store the finished block in the cache as clean tokens (spec section
         14, step 5).
 
+        The block queries see every cached key. Inside the block, the clean rule applies:
+        block-causal, or token-causal when ``clean_causal`` is set. The rows of the block in the
+        clean mask give this mask.
+
         Args:
             cache: Cache that holds the ``start`` tokens before the block. The keys of the block
                 are appended to it.
@@ -349,7 +371,8 @@ class BlockDiffusionSampler:
             Logits of the last block position with shape ``[V]``.
         """
         size = len(block)
-        allowed = _full_mask(size, start + size, self._device())
+        total = start + size
+        allowed = _clean_mask(total, size, self.clean_causal, self._device())[..., start:, :]
         return self._call(cache, block, start, allowed, last_only=True)[-1]
 
 
@@ -398,22 +421,24 @@ def _check_prompt(prompt_ids: Sequence[int], real_vocab: int) -> list[int]:
     return prompt
 
 
-def _prefix_mask(length: int, block_size: int, device: torch.device) -> Tensor:
-    """Return the block-causal (c2c) mask of ``length`` clean positions.
+def _clean_mask(length: int, block_size: int, clean_causal: bool, device: torch.device) -> Tensor:
+    """Return the clean-to-clean mask of ``length`` clean positions.
 
-    A query in block a may attend to a key in block b when b <= a (spec section 6, clean to clean).
-    The rule is the clean half of ``make_bd3_mask_mod``, which is read at indices
-    ``length..2*length-1`` of its input.
+    With the block-causal rule (spec section 14), a query in block a may attend to a key in
+    block b when b <= a. With the token-causal rule (spec section 15), a query may attend to a
+    key at or before its own position. The rule is the clean half of ``make_bd3_mask_mod``, which
+    is read at indices ``length..2*length-1`` of its input.
 
     Args:
         length: Number of clean positions, a multiple of ``block_size``.
         block_size: Diffusion block size B.
+        clean_causal: True for the token-causal rule, False for the block-causal rule.
         device: Device of the returned mask.
 
     Returns:
         Boolean tensor of shape ``[1, 1, length, length]``. True means that the query may attend.
     """
-    mask_mod = make_bd3_mask_mod(length, block_size, None)
+    mask_mod = make_bd3_mask_mod(length, block_size, None, clean_causal=clean_causal)
     clean = torch.arange(length, device=device) + length
     batch = torch.zeros(1, dtype=torch.long, device=device)
     head = torch.zeros(1, dtype=torch.long, device=device)

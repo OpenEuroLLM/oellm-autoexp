@@ -7,7 +7,7 @@ from the padded size up are read from the base model's safetensors, and the rows
 the checkpoint. The exporter writes a Hugging Face checkpoint in bfloat16. The vocabulary is cut
 back to the Hugging Face ``vocab_size``, so the mask row M stays and the padding rows are dropped.
 The output config.json is the base config plus ``dllm_block_size``, ``dllm_mask_token_id``,
-``dllm_token_shift``, and ``torch_dtype``.
+``dllm_token_shift``, ``dllm_clean_attention``, and ``torch_dtype``.
 
 Run ``python -m oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3 --help`` for the command line.
 """
@@ -41,6 +41,7 @@ from oellm_autoexp.dllm.convert.qwen3_layout import (
     megatron_to_hf_state,
     restore_vocab_tail,
 )
+from oellm_autoexp.dllm.masks import CLEAN_ATTENTIONS, clean_attention_of
 
 # Largest total size in bytes of the tensors in one weight file (4 GiB). A larger export is split
 # into shards.
@@ -67,7 +68,13 @@ _HF_HEAD = "lm_head.weight"
 _MISSING = object()
 
 
-def _check_settings(block_size: int, token_shift: int, mask_token_id: int, vocab_size: int) -> None:
+def _check_settings(
+    block_size: int,
+    token_shift: int,
+    mask_token_id: int,
+    vocab_size: int,
+    clean_attention: str | None,
+) -> None:
     """Raise ValueError unless the block-diffusion settings can be written to
     config.json.
 
@@ -76,9 +83,12 @@ def _check_settings(block_size: int, token_shift: int, mask_token_id: int, vocab
         token_shift: Prediction shift, 0 or 1 (spec section 6).
         mask_token_id: Mask token id M. It must be a row of the exported vocabulary.
         vocab_size: Hugging Face ``vocab_size``.
+        clean_attention: Attention of the clean stream, ``"block"`` or ``"causal"`` (spec
+            section 15), or None to take it from the checkpoint.
 
     Raises:
-        ValueError: If B < 1, the shift is not 0 or 1, or M is outside [0, vocab_size).
+        ValueError: If B < 1, the shift is not 0 or 1, M is outside [0, vocab_size), or the clean
+            attention is not one of CLEAN_ATTENTIONS.
     """
     if block_size < 1:
         raise ValueError(f"block_size must be >= 1, got {block_size}")
@@ -86,6 +96,10 @@ def _check_settings(block_size: int, token_shift: int, mask_token_id: int, vocab
         raise ValueError(f"token_shift must be 0 or 1, got {token_shift}")
     if not 0 <= mask_token_id < vocab_size:
         raise ValueError(f"mask_token_id must be in [0, {vocab_size}), got {mask_token_id}")
+    if clean_attention is not None and clean_attention not in CLEAN_ATTENTIONS:
+        raise ValueError(
+            f"clean_attention must be one of {CLEAN_ATTENTIONS}, got {clean_attention!r}"
+        )
 
 
 def _tensor_bytes(tensor: Tensor) -> int:
@@ -200,7 +214,12 @@ def _copy_tokenizer_files(hf_dir: Path, out_path: Path) -> list[str]:
 
 
 def _write_config(
-    base: dict[str, Any], out_path: Path, block_size: int, token_shift: int, mask_token_id: int
+    base: dict[str, Any],
+    out_path: Path,
+    block_size: int,
+    token_shift: int,
+    mask_token_id: int,
+    clean_attention: str,
 ) -> None:
     """Write config.json: the base config plus the block-diffusion fields and
     the dtype.
@@ -211,11 +230,13 @@ def _write_config(
         block_size: Diffusion block size B, written as ``dllm_block_size``.
         token_shift: Prediction shift, written as ``dllm_token_shift``.
         mask_token_id: Mask token id M, written as ``dllm_mask_token_id``.
+        clean_attention: Attention of the clean stream, written as ``dllm_clean_attention``.
     """
     config = dict(base)
     config["dllm_block_size"] = block_size
     config["dllm_mask_token_id"] = mask_token_id
     config["dllm_token_shift"] = token_shift
+    config["dllm_clean_attention"] = clean_attention
     config["torch_dtype"] = DTYPE
     (out_path / CONFIG_FILE).write_text(json.dumps(config, indent=2) + "\n")
 
@@ -240,6 +261,35 @@ def _check_mask_token(args: Any, mask_token_id: int) -> None:
         raise ValueError(
             f"mask_token_id {mask_token_id} differs from the checkpoint's mask_token {trained!r}"
         )
+
+
+def _trained_clean_attention(requested: str | None, objective: str | None) -> str:
+    """Return the clean attention to export, checked against the checkpoint's
+    objective.
+
+    An nld model trained its clean stream token-causal and a bd3 model block-causal (spec section
+    15). Writing the other value would make the samplers and the NELBO evaluator read the clean
+    stream with masks that the model never saw.
+
+    Args:
+        requested: Clean attention that the exporter was given, or None to use the objective.
+        objective: ``bd_objective`` of the checkpoint args, or None when the args lack it.
+
+    Returns:
+        ``"block"`` or ``"causal"``. Without an objective: requested, else ``"block"``.
+
+    Raises:
+        ValueError: If requested differs from the clean attention of the objective.
+    """
+    if objective is None:
+        return "block" if requested is None else requested
+    trained = clean_attention_of(objective)
+    if requested is not None and requested != trained:
+        raise ValueError(
+            f"clean_attention {requested!r} differs from {trained!r}, the clean attention of the "
+            f"checkpoint's bd_objective {objective!r}"
+        )
+    return trained
 
 
 def _base_weight_file(hf_dir: Path, key: str) -> Path:
@@ -300,6 +350,7 @@ def export(
     mask_token_id: int,
     iteration: str | None = None,
     layout: str = "te",
+    clean_attention: str | None = None,
 ) -> dict[str, Any]:
     """Export one MegaDLMs Qwen3 checkpoint as a Hugging Face checkpoint in
     bfloat16.
@@ -322,6 +373,10 @@ def export(
             Hugging Face vocabulary. When the checkpoint args hold ``mask_token``, it must equal M.
         iteration: ``"release"`` or an iteration number. None reads the tracker file.
         layout: ``"te"`` or ``"local"``. See ``qwen3_layout.layer_key_table``.
+        clean_attention: Attention of the clean stream, written as ``dllm_clean_attention``:
+            ``"block"`` for bd3 or ``"causal"`` for nld (spec section 15). None (the default)
+            takes it from ``bd_objective`` in the checkpoint args, and ``"block"`` when the args
+            lack it. A given value must match ``bd_objective`` when the args hold it.
 
     Returns:
         Dict with the keys ``out_dir`` (the output directory as a string), ``num_tensors`` (the
@@ -332,27 +387,32 @@ def export(
         FileNotFoundError: If the base config.json or the tracker file is missing.
         CheckpointNotFoundError: If the checkpoint holds no rank files for the iteration.
         TypeError: If a rank file holds a ``model`` entry that is not a dict.
-        ValueError: If a setting is unsupported, out_dir is the base directory, the checkpoint args
-            do not match the base config, the checkpoint's mask_token differs from mask_token_id, a
-            rank file does not match the base model, or one tensor is larger than the shard limit.
+        ValueError: If a setting is unsupported (block size, token shift, mask token id, or clean
+            attention), out_dir is the base directory, the checkpoint args do not match the base
+            config, the checkpoint's mask_token differs from mask_token_id, clean_attention differs
+            from the checkpoint's bd_objective, a rank file does not match the base model, or one
+            tensor is larger than the shard limit.
     """
     check_layout(layout)
     hf_dir = resolve_hf_dir(str(hf_base))
     base_config = read_hf_config(hf_dir)
     dims = Qwen3Dims.from_hf_config(base_config)
-    _check_settings(block_size, token_shift, mask_token_id, dims.vocab_size)
+    _check_settings(block_size, token_shift, mask_token_id, dims.vocab_size, clean_attention)
     out_path = Path(out_dir)
     if out_path.resolve() == hf_dir.resolve():
         raise ValueError(f"out_dir must differ from the Hugging Face base directory {hf_dir}")
     _, files = find_checkpoint_files(Path(megatron_dir), iteration)
     shards: list[dict[str, Any]] = []
+    objective = None
     for rank, path in enumerate(files):
         # Keep only each rank's model dict, so the rest of a checkpoint is freed on the next load.
         ckpt = load_rank_checkpoint(path)
         if rank == 0 and "args" in ckpt:
             check_args_against_hf(ckpt["args"], base_config, layout)
             _check_mask_token(ckpt["args"], mask_token_id)
+            objective = getattr(ckpt["args"], "bd_objective", None)
         shards.append(ckpt["model"])
+    clean_attention = _trained_clean_attention(clean_attention, objective)
     merged = megatron_to_hf_state(shards, dims, layout=layout)
     padded_rows = len(shards) * int(shards[0][_EMBEDDING].shape[0])
     if padded_rows < dims.vocab_size:
@@ -370,7 +430,7 @@ def export(
     out_path.mkdir(parents=True, exist_ok=True)
     _remove_stale_weights(out_path)
     written = _write_weights(out_path, state, MAX_SHARD_BYTES)
-    _write_config(base_config, out_path, block_size, token_shift, mask_token_id)
+    _write_config(base_config, out_path, block_size, token_shift, mask_token_id, clean_attention)
     written.append(CONFIG_FILE)
     written.extend(_copy_tokenizer_files(hf_dir, out_path))
     return {"out_dir": str(out_path), "num_tensors": len(state), "files": written}
@@ -417,6 +477,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--layout", choices=LAYOUTS, default="te", help="Megatron layer spec (default: te)."
     )
+    parser.add_argument(
+        "--clean-attention",
+        choices=CLEAN_ATTENTIONS,
+        default=None,
+        help=(
+            "Clean-stream attention (dllm_clean_attention): block for bd3, causal for nld. "
+            "Default: from the checkpoint's bd_objective, else block."
+        ),
+    )
     args = parser.parse_args(argv)
     summary = export(
         args.megatron,
@@ -427,6 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         mask_token_id=args.mask_token_id,
         iteration=args.iteration,
         layout=args.layout,
+        clean_attention=args.clean_attention,
     )
     print(json.dumps(summary, sort_keys=True))
     return 0

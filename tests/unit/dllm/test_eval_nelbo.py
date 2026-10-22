@@ -47,6 +47,7 @@ _RESULT_KEYS = (
     "objective",
     "block_size",
     "token_shift",
+    "clean_attention",
     "doc_mask",
     "num_sequences",
     "seq_len",
@@ -173,14 +174,16 @@ def _manual_bd3_nelbo(
     token_shift: int,
     doc_mask: bool,
     seed: int,
+    clean_causal: bool = False,
 ) -> tuple[float, int]:
     """Return the bd3 NELBO sum and scored count of a batch, written out one
     row at a time.
 
     The noise comes from ``sample_validation_noise`` with the same seed. Each row runs the model
-    under the dense reference mask of invariant I1. The source of each position follows spec
-    section 6 as written here, and the scored positions follow D-035. Document ids are counted
-    directly from the EOD tokens.
+    under the dense reference mask of invariant I1, with the token-causal clean stream of spec
+    section 15 when ``clean_causal`` is True. The source of each position follows spec section 6
+    as written here, and the scored positions follow D-035. Document ids are counted directly from
+    the EOD tokens.
     """
     length = x0.shape[1]
     generator = torch.Generator().manual_seed(seed)
@@ -192,7 +195,9 @@ def _manual_bd3_nelbo(
         for token in x0[row].tolist():
             docs.append(eods_before)
             eods_before += int(token == _EOD)
-        allowed = dense_bd3_reference(length, block_size, docs if doc_mask else None)
+        allowed = dense_bd3_reference(
+            length, block_size, docs if doc_mask else None, clean_causal=clean_causal
+        )
         input_ids = torch.cat([xt[row], x0[row]])
         with torch.no_grad():
             logits = (
@@ -245,6 +250,163 @@ def test_bd3_nelbo_matches_a_manual_reference_with_block_size_four(
     assert expected_sum > 0
     assert scored.item() == expected_scored
     assert nelbo_sum.item() == pytest.approx(expected_sum, rel=1e-5)
+
+
+class _RecordingModel(torch.nn.Module):
+    """Wrap a causal LM and keep the attention mask of every forward pass."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        super().__init__()
+        self.model = model
+        self.masks: list[torch.Tensor] = []
+
+    def forward(self, **kwargs: Any) -> Any:
+        self.masks.append(kwargs["attention_mask"].clone())
+        return self.model(**kwargs)
+
+
+@pytest.mark.parametrize("clean_causal", [False, True])
+@pytest.mark.parametrize("doc_mask", [False, True])
+def test_bd3_estimator_passes_the_clean_attention_mask_to_the_model(
+    clean_causal: bool, doc_mask: bool
+) -> None:
+    """The mask of the estimator equals the dense reference of spec section 5,
+    or the token-causal reference of spec section 15 for the nld clean
+    stream."""
+    recorder = _RecordingModel(_tiny_model())
+    x0 = _windows(2, 12, seed=4)
+    bd3_nelbo_batch(
+        recorder,
+        x0,
+        block_size=4,
+        token_shift=0,
+        mask_id=_MASK,
+        eod_id=_EOD,
+        doc_mask=doc_mask,
+        generator=torch.Generator().manual_seed(11),
+        clean_causal=clean_causal,
+    )
+    (mask,) = recorder.masks
+    assert mask.shape == (2, 1, 24, 24)
+    for row in range(2):
+        docs = compute_doc_ids(x0[row : row + 1], _EOD)[0].tolist() if doc_mask else None
+        expected = dense_bd3_reference(12, 4, docs, clean_causal=clean_causal)
+        assert torch.equal(mask[row, 0], expected), row
+
+
+@pytest.mark.parametrize("token_shift", [0, 1])
+@pytest.mark.parametrize("doc_mask", [False, True])
+def test_bd3_nelbo_with_the_causal_clean_stream_matches_the_manual_reference(
+    token_shift: int, doc_mask: bool
+) -> None:
+    model = _tiny_model()
+    x0 = _windows(2, 12, seed=4)
+    seed = 11
+    nelbo_sum, scored = bd3_nelbo_batch(
+        model,
+        x0,
+        block_size=4,
+        token_shift=token_shift,
+        mask_id=_MASK,
+        eod_id=_EOD,
+        doc_mask=doc_mask,
+        generator=torch.Generator().manual_seed(seed),
+        clean_causal=True,
+    )
+    expected_sum, expected_scored = _manual_bd3_nelbo(
+        model, x0, 4, token_shift, doc_mask, seed, clean_causal=True
+    )
+    assert expected_sum > 0
+    assert scored.item() == expected_scored
+    assert nelbo_sum.item() == pytest.approx(expected_sum, rel=1e-5)
+
+
+def test_causal_clean_attention_changes_the_estimate_only_for_blocks_longer_than_one() -> None:
+    model = _tiny_model()
+    x0 = _windows(2, 12, seed=4)
+
+    def nelbo(block_size: int, clean_causal: bool) -> float:
+        nelbo_sum, _ = bd3_nelbo_batch(
+            model,
+            x0,
+            block_size=block_size,
+            token_shift=0,
+            mask_id=_MASK,
+            eod_id=_EOD,
+            doc_mask=True,
+            generator=torch.Generator().manual_seed(11),
+            clean_causal=clean_causal,
+        )
+        return nelbo_sum.item()
+
+    # With B = 1, block-causal and token-causal attention are the same mask.
+    assert nelbo(1, True) == pytest.approx(nelbo(1, False), rel=1e-12)
+    # With B = 4, the block-causal clean stream also sees later tokens of its own block.
+    assert abs(nelbo(4, True) - nelbo(4, False)) > 1e-6
+
+
+def test_bd3_nelbo_batch_rejects_a_clean_causal_that_is_not_a_bool() -> None:
+    with pytest.raises(TypeError, match="clean_causal"):
+        bd3_nelbo_batch(
+            _tiny_model(),
+            _windows(1, 8),
+            block_size=4,
+            token_shift=0,
+            mask_id=_MASK,
+            eod_id=_EOD,
+            doc_mask=False,
+            generator=torch.Generator().manual_seed(0),
+            clean_causal="causal",
+        )
+
+
+def test_evaluate_reports_the_clean_attention_and_ignores_it_for_the_ar_objective() -> None:
+    model = _tiny_model()
+    windows = _windows(3, 12, seed=2)
+
+    def run(objective: str, clean_attention: str) -> dict[str, Any]:
+        return evaluate(
+            model=model,
+            windows=windows,
+            objective=objective,
+            block_size=4,
+            token_shift=0,
+            mask_id=_MASK,
+            eod_id=_EOD,
+            doc_mask=True,
+            seed=5,
+            batch_size=2,
+            device="cpu",
+            clean_attention=clean_attention,
+        )
+
+    block, causal = run("bd3", "block"), run("bd3", "causal")
+    assert block["clean_attention"] == "block"
+    assert causal["clean_attention"] == "causal"
+    assert block["bits_per_token"] != causal["bits_per_token"]
+    ar_block, ar_causal = run("ar", "block"), run("ar", "causal")
+    assert ar_block["clean_attention"] is None
+    assert ar_causal["clean_attention"] is None
+    assert ar_block["nats_sum"] == ar_causal["nats_sum"]
+
+
+@pytest.mark.parametrize("objective", ["bd3", "ar"])
+def test_evaluate_rejects_an_unsupported_clean_attention(objective: str) -> None:
+    with pytest.raises(ValueError, match="clean_attention"):
+        evaluate(
+            model=_tiny_model(),
+            windows=_windows(2, 8),
+            objective=objective,
+            block_size=4,
+            token_shift=0,
+            mask_id=_MASK,
+            eod_id=_EOD,
+            doc_mask=True,
+            seed=0,
+            batch_size=1,
+            device="cpu",
+            clean_attention="full",
+        )
 
 
 @pytest.mark.parametrize("doc_mask", [False, True])
@@ -429,6 +591,8 @@ def test_main_writes_the_json_with_all_keys(
     assert payload["objective"] == "bd3"
     assert payload["block_size"] == 4
     assert payload["token_shift"] == 0
+    # The config of this model has no dllm_clean_attention field, which means block.
+    assert payload["clean_attention"] == "block"
     assert payload["mask_token_id"] == _MASK
     assert payload["eod_id"] == _EOD
     assert payload["doc_mask"] is True
@@ -480,6 +644,7 @@ def test_main_ar_objective_reports_no_block_settings(tmp_path: Path) -> None:
     assert payload["block_size"] is None
     assert payload["token_shift"] is None
     assert payload["mask_token_id"] is None
+    assert payload["clean_attention"] is None
     assert payload["bits_per_token"] > 0
 
 
@@ -515,3 +680,81 @@ def test_main_bd3_without_a_block_size_raises(tmp_path: Path) -> None:
             ]
         )
     assert not out.exists()
+
+
+def _m1_arguments(model_dir: Path, prefix: Path, objective: str) -> list[str]:
+    """Return the command-line arguments of a tiny M1 run on two windows of 12
+    tokens."""
+    return [
+        "--model",
+        str(model_dir),
+        "--data-prefix",
+        str(prefix),
+        "--objective",
+        objective,
+        "--eod-id",
+        str(_EOD),
+        "--dtype",
+        "float32",
+        "--num-sequences",
+        "2",
+        "--seq-len",
+        "12",
+        "--device",
+        "cpu",
+    ]
+
+
+def _save_tiny_bd3_model(directory: Path, **config_fields: Any) -> Path:
+    """Save a tiny model whose config holds the bd3 fields, and the extra
+    config fields."""
+    model = _tiny_model(torch.float32)
+    model.config.dllm_block_size = 4
+    model.config.dllm_token_shift = 0
+    model.config.dllm_mask_token_id = _MASK
+    for name, value in config_fields.items():
+        setattr(model.config, name, value)
+    model.save_pretrained(directory)
+    return directory
+
+
+def test_main_takes_the_clean_attention_from_the_config_unless_the_flag_is_given(
+    tmp_path: Path,
+) -> None:
+    model_dir = _save_tiny_bd3_model(tmp_path / "model", dllm_clean_attention="causal")
+    prefix = tmp_path / "data"
+    _write_indexed_dataset(prefix, _windows(2, 12).tolist())
+    arguments = _m1_arguments(model_dir, prefix, "bd3")
+    from_config, overridden = tmp_path / "config.json", tmp_path / "flag.json"
+    assert main([*arguments, "--out", str(from_config)]) == 0
+    assert main([*arguments, "--clean-attention", "block", "--out", str(overridden)]) == 0
+    causal = json.loads(from_config.read_text(encoding="utf-8"))
+    block = json.loads(overridden.read_text(encoding="utf-8"))
+    assert causal["clean_attention"] == "causal"
+    assert block["clean_attention"] == "block"
+    assert causal["nats_sum"] != block["nats_sum"]
+
+
+def test_main_rejects_an_unsupported_clean_attention_in_the_config(tmp_path: Path) -> None:
+    model_dir = _save_tiny_bd3_model(tmp_path / "model", dllm_clean_attention="full")
+    prefix = tmp_path / "data"
+    _write_indexed_dataset(prefix, _windows(2, 12).tolist())
+    out = tmp_path / "bad.json"
+    with pytest.raises(ValueError, match="clean_attention"):
+        main([*_m1_arguments(model_dir, prefix, "bd3"), "--out", str(out)])
+    assert not out.exists()
+
+
+def test_main_ar_objective_ignores_the_clean_attention_flag(tmp_path: Path) -> None:
+    model_dir = tmp_path / "model"
+    _tiny_model(torch.float32).save_pretrained(model_dir)
+    prefix = tmp_path / "data"
+    _write_indexed_dataset(prefix, _windows(2, 12).tolist())
+    arguments = _m1_arguments(model_dir, prefix, "ar")
+    plain, flagged = tmp_path / "plain.json", tmp_path / "flagged.json"
+    assert main([*arguments, "--out", str(plain)]) == 0
+    assert main([*arguments, "--clean-attention", "causal", "--out", str(flagged)]) == 0
+    first = json.loads(plain.read_text(encoding="utf-8"))
+    second = json.loads(flagged.read_text(encoding="utf-8"))
+    assert second["clean_attention"] is None
+    assert second["nats_sum"] == first["nats_sum"]

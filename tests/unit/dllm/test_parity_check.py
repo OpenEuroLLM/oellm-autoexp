@@ -73,6 +73,7 @@ def test_add_parity_args_defaults() -> None:
     assert args.parity_hf == "x"
     assert args.parity_num_seqs == 4
     assert args.parity_seq_len == 512
+    assert args.parity_nld_block_size == 32  # the R11 block size; divides 512
 
 
 def test_parity_dtype_follows_the_megatron_run() -> None:

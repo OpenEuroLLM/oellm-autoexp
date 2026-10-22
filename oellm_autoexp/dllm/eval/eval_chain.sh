@@ -13,11 +13,14 @@
 #   EVAL_CKPT           MegaDLMs checkpoint root to export, or empty
 #   EVAL_ITERATION      checkpoint iteration to export (default: the tracker file)
 #   EVAL_LAYOUT         layer spec of the checkpoint: te (default) or local
+#   EVAL_CLEAN_ATTENTION  clean-stream attention written to config.json: block (default) or
+#                       causal (objective nld, spec section 15)
 #   EVAL_BLOCK_SIZE, EVAL_TOKEN_SHIFT, EVAL_MASK_ID   bd3 settings of the run (export only)
 #   EVAL_OBJECTIVE      M1 estimator: bd3 or ar
 #   EVAL_DATA_PREFIX    Megatron .bin/.idx prefix of the held-out split
 #   EVAL_NUM_SEQS       M1 windows (default 1000; 0 skips M1)
 #   EVAL_DOC_MASK       document attention mask of M1, the run's --bd-doc-mask (default 1)
+#   EVAL_M1_AR          1 adds the AR-mode exact NLL as <run>.m1_ar.json (nld runs)
 #   EVAL_MODES          comma-separated GSM8K modes: ar, static, dynamic (default static,dynamic;
 #                       none skips GSM8K)
 #   EVAL_GSM8K_N        number of GSM8K test problems (default 250)
@@ -39,7 +42,8 @@ if [ -n "${EVAL_CKPT:-}" ]; then
   python -m oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3 \
     --megatron "$EVAL_CKPT" --hf-base "$EVAL_HF_BASE" --out "$MODEL" \
     --block-size "$EVAL_BLOCK_SIZE" --token-shift "$EVAL_TOKEN_SHIFT" \
-    --mask-token-id "$EVAL_MASK_ID" --layout "${EVAL_LAYOUT:-te}" "${ITER_ARGS[@]}"
+    --mask-token-id "$EVAL_MASK_ID" --layout "${EVAL_LAYOUT:-te}" \
+    --clean-attention "${EVAL_CLEAN_ATTENTION:-block}" "${ITER_ARGS[@]}"
 else
   echo "[eval] 1/3 no checkpoint: evaluating $MODEL"
 fi
@@ -57,6 +61,11 @@ if [ "${EVAL_NUM_SEQS:-1000}" -gt 0 ]; then
     --data-prefix "$EVAL_DATA_PREFIX" --num-sequences "${EVAL_NUM_SEQS:-1000}" \
     --objective "$EVAL_OBJECTIVE" --doc-mask "${EVAL_DOC_MASK:-1}" \
     --out "$EVAL_DIR/$EVAL_RUN.m1.json"
+  if [ "${EVAL_M1_AR:-0}" = "1" ]; then
+    add_task m1_ar python -m oellm_autoexp.dllm.eval.eval_nelbo --model "$MODEL" \
+      --data-prefix "$EVAL_DATA_PREFIX" --num-sequences "${EVAL_NUM_SEQS:-1000}" \
+      --objective ar --doc-mask "${EVAL_DOC_MASK:-1}" --out "$EVAL_DIR/$EVAL_RUN.m1_ar.json"
+  fi
 fi
 MODES="${EVAL_MODES:-static,dynamic}"
 if [ "$MODES" != "none" ]; then
