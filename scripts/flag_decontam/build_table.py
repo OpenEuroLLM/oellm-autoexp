@@ -139,7 +139,11 @@ def prune(args):
     segs["n_grams"] = np.bincount(seg, minlength=len(segs["n"])).astype(np.int32)
     np.savez(os.path.join(tdir, "segments.npz"), **segs)
     lost = (segs["n_grams_built"] > 0) & (segs["n_grams"] < 3)
-    rep = {"count_files": len(files), "max_count": args.max_count, "ngrams_dropped": int(drop.sum()),
+    hist = {f">{t}": int((counts > t).sum()) for t in (0, 1, 5, 10, 20, 50, 100, 1000, 10000)}
+    seen_seg = np.bincount(tab["csr_seg"][np.repeat(counts > 0, nseg)], minlength=len(segs["n"]))
+    rep = {"count_files": len(files), "ngrams_with_count": hist,
+           "segments_with_any_ngram_seen": int((seen_seg > 0).sum()),
+           "max_count": args.max_count, "ngrams_dropped": int(drop.sum()),
            "ngrams_kept": int((~drop).sum()), "segments_left_unmatchable": int(lost.sum())}
     with open(os.path.join(tdir, "prune_report.json"), "w") as f:
         json.dump(rep, f, indent=1)
