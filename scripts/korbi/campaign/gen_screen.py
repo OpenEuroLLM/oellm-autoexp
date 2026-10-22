@@ -1294,6 +1294,99 @@ def arms5r7(size: str = "s2"):
               B + "dataloader_prefetch_factor": w[1], **BAD_NODES})]
 
 
+# one GPU per task (the tiny optimizer study: a model this small does not scale over 4 GPUs)
+ONE_GPU = {"slurm.sbatch.gres": "gpu:1", "slurm.sbatch.gpus_per_node": 1, "slurm.sbatch.cpus_per_task": 20,
+           "slurm.sbatch.exclusive": False, "slurm.srun.exclusive": False, "slurm.srun.cpus_per_task": 20,
+           "slurm.env.SLURM_CPUS_PER_TASK": "20", "slurm.env.GPUS_PER_NODE": "1",
+           "slurm.env.NUM_GPUS_PER_NODE": "1"}
+
+
+def _opt_variants(lr: float):
+    """The optimizer variants of the long-horizon study (user 2026-10-22: all of them), as arm deltas.
+    AngularMuown direction decay: p = 1 (default), p = 1/2, p = 0 (constant; direction step 0.2 /
+    0.05), the radius equilibrium; the PR's C / (1 + t) (C = 8 / 22; its cooldown over the run's
+    last 10 % to 0.1x); muown_classical without (the paper) / with decoupled weight decay on v
+    (ours: the rotation settles at ~sqrt(2 lr lambda), lambda 0.1 / 0.01); standard Muon + weight
+    decay 0.1 (the classic equilibrium, Muon's 0.2 sqrt(max(m, n)) scale); AdamW (2e-3, 1000
+    warmup, wd 0.1)."""
+    am = {B + "optimizer": "angular_muown"}
+    simp = lambda c: {B + "optimizer": "angular_muown_simplified", B + "angular_muown_c": float(c),  # noqa: E731
+                      B + "angular_muown_cooldown_fraction": 0.1, B + "angular_muown_cooldown_end_ratio": 0.1}
+    cl = {B + "optimizer": "muown_classical"}
+    return {
+        "am_p1": am,
+        "am_p05": {**am, B + "angular_muown_u_decay_p": 0.5},
+        "am_p0_s02": {**am, B + "angular_muown_u_decay_p": 0.0},
+        "am_p0_s005": {**am, B + "angular_muown_u_decay_p": 0.0, B + "angular_muown_extra_scale_factor": 0.05},
+        "am_radius": {**am, B + "angular_muown_u_decay_schedule": "radius", B + "angular_muown_u_decay_scale": 0.0074,
+                      B + "angular_muown_u_radius_lambda": 0.083},
+        "amsimp_c8": simp(8),
+        "amsimp_c22": simp(22),
+        "muown_classical": cl,
+        "muown_cl_wd01": {**cl, B + "muown_classical_v_weight_decay": 0.1},
+        "muown_cl_wd001": {**cl, B + "muown_classical_v_weight_decay": 0.01},
+        "muon_wd": {B + "optimizer": "muon", B + "muon_extra_scale_factor": 0.2, B + "muon_momentum": 0.95,
+                    B + "muon_nesterov": True, B + "weight_decay": 0.1},
+        "adamw": {B + "optimizer": "adam", B + "lr": lr / 2, B + "min_lr": lr / 20, B + "lr_warmup_iters": 1000,
+                  B + "weight_decay": 0.1},
+    }
+
+
+def arms5tiny(gbs: int = 8, smoke: bool = False):
+    """Long-horizon optimizer study (user 2026-10-22): many optimizer steps cheaply -- a tiny 7:1 hybrid
+    (hidden 384 x 8 blocks, CKDA + NoPE / XSA / gated attention, mHC-4, coarse MoE 16 x 384 top-2 +
+    shared 384, the 262k vocabulary), 2k context with document masking, one GPU per arm, 1.6B tokens:
+    100k steps at gbs 8 x 2048 (16k tokens / step) or 25k steps at gbs 32 (equal tokens, 4x fewer
+    steps: the batch effect). WSD: stable, then a linear cooldown over the last 10 % to lr / 10.
+    lr 4e-3 as s1 (the direction step scales with sqrt(max(m, n)) itself). One data index per gbs
+    (built by the first arm / the smoke: same schedule)."""
+    lr = 4e-3
+    steps = 1_638_400 * 1000 // (gbs * 2048) // 1000 * 1000  # 1.6B tokens
+    mhc4 = dict((n, kv) for n, _, kv in arms5("s1"))["h5_moe_mhc4"]
+    tiny = {**{k: v for k, v in mhc4.items() if not k.startswith("job.")},
+            B + "hidden_size": 384, B + "num_attention_heads": 3, B + "num_query_groups": 1, B + "kv_channels": 128,
+            B + "linear_num_key_heads": 3, B + "linear_num_value_heads": 3, B + "ffn_hidden_size": 1152,
+            "aux.pattern": hybrid_every(8, 8, "L"),
+            B + "num_experts": 16, B + "moe_ffn_hidden_size": 384, B + "moe_router_topk": 2,
+            B + "moe_shared_expert_intermediate_size": 384, B + "expert_model_parallel_size": 1,
+            "aux.seq": 2048, B + "seq_length": 2048, B + "max_position_embeddings": 2048,
+            B + "micro_batch_size": gbs, B + "global_batch_size": gbs, "aux.gbs": gbs,
+            B + "train_iters": steps, B + "exit_interval": 300 if smoke else steps,
+            B + "lr": lr, B + "min_lr": lr / 10, B + "lr_warmup_iters": 0,
+            B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": steps,
+            B + "lr_wsd_decay_iters": steps // 10,
+            B + "data_cache_path": f"{RUNS5}/data_cache_flag2k_tiny_b{gbs}",
+            B + "num_workers": 4, B + "dataloader_prefetch_factor": 4,
+            B + "eval_interval": max(steps // 50, 100), B + "eval_iters": 10, B + "log_interval": 20,
+            B + "non_persistent_save_interval": 5000,
+            "job.est_steps": 300 if smoke else steps, "job.est_step_time_s": 0.08,
+            "slurm.sbatch.time": "12:00:00", **ONE_GPU, **BAD_NODES}
+    var = _opt_variants(lr)
+    names = {8: list(var), 32: ["am_p1", "am_p0_s02", "muown_classical", "muown_cl_wd01", "muon_wd"]}[gbs]
+    if smoke:
+        names = ["am_p1", "muown_classical"]
+    return [(n, f"tiny 7:1 + mHC-4, gbs {gbs}: {n}", {**tiny, **var[n]}) for n in names]
+
+
+def arms5opt2(size: str = "s1"):
+    """The rest of the optimizer variants at the screen batch (user 2026-10-22: all variants, at s1 and
+    s2 for a scaling effect), in screen5opt's protocol (stable to 4000, WSD to lr / 10 at 4800, one
+    job; paired with screen5udcool / screen5udadapt / screen5opt of the size). Only the variants not
+    yet run at that size: s1 muown_classical + v weight decay (0.1 / 0.01) and Muon + weight decay;
+    s2 also radius and p = 0 (direction step 0.2)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
+             "job.est_steps": 4800, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1],
+             **BAD_NODES}
+    var = _opt_variants(lr)
+    names = {"s1": ["muown_cl_wd01", "muown_cl_wd001", "muon_wd"],
+             "s2": ["am_radius", "am_p0_s02", "muown_cl_wd01", "muon_wd"]}[size]
+    return [(n, f"optimizer variant {n}, stable 4000 + WSD 800", {**h5, **sched, **var[n]}) for n in names]
+
+
 def arms5udadapt(size: str = "s1"):
     """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
     the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
@@ -1520,6 +1613,9 @@ def write5():
             *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5r7", arms5r7("s2")),
+            ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
+            *[(z, "screen5opt2", arms5opt2(z)) for z in ("s1", "s2")],
+            *[("s1", f"opttiny_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
             # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact

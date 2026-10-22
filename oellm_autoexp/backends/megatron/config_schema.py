@@ -1995,6 +1995,11 @@ class MegatronConfig(ConfigInterface):
     # adam.
     muon_scalar_optimizer: Literal["adam", "lion"] = "adam"
 
+    # muown_classical: decoupled weight decay on the unnormalized direction vectors v (not in
+    # the Muown paper): the rotation rate settles at about sqrt(2 lr lambda) instead of
+    # annealing as t^-1/2.
+    muown_classical_v_weight_decay: float = 0.0
+
     # Independent angular C/(1 + updates since warmup), before matrix scaling, with extra
     # factor fixed to 1. Required for angular_muown_simplified; fixed batch only.
     angular_muown_c: float | None = None

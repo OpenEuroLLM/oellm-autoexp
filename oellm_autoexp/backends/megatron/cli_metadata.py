@@ -5590,6 +5590,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "muown_classical_v_weight_decay": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="muown_classical: decoupled weight decay on the unnormalized direction vectors v (not in the Muown paper): the rotation rate settles at about sqrt(2 lr lambda) instead of annealing as t^-1/2.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "muown_cpu_offload": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -13031,6 +13039,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="blockwise",
+    ),
+    "muown_classical_v_weight_decay": MegatronActionSpec(
+        option_strings=("--muown-classical-v-weight-decay",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "muown_cpu_offload": MegatronActionSpec(
         option_strings=("--muown-cpu-offload",),
