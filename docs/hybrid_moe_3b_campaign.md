@@ -2673,3 +2673,39 @@ batch 1, a GPU cache holding a share f of all expert bytes, 16 sequences x 2048 
 | polar forget + erase (sign unused: effectively unsigned) | +0.003 | -0.002 | -0.003 |
 | signed f, beta in [0, 2], unit write, full-rank gate | +0.013 (2320) | +0.030 (1480) | +0.021 (2490) |
 | CKDA + mHC-4 (reference) | -0.051 | -0.040 | -0.037 |
+
+### 12.12 CKLSTM vs CKDA and the new optimizers (launched 2026-10-22; budget raised to 8k GPU-h)
+
+CKLSTM is the only alternative mixer still considered (user: more expressivity, length
+extrapolation beyond retrieval). Every arm has mHC-4 (mixer lr x0.25) and the low-rank output gate,
+round-5 protocol, paired with that size's CKDA + mHC-4 (`h5_moe_mhc4`).
+
+- **A, `screen5ckl_s1`** (47800809, ~68 GPU-h), five parametrizations:
+  - `kron_mhc4`: paper gates;
+  - `ckl_sgn`: signed forget f in [-1, 1] (Complex KDA's gate, shipped init), erase beta in [0, 2], write c in [0, 1];
+  - `ckl_sgn_w2`: as `ckl_sgn` with c in [0, 2];
+  - `ckl_sgn_cpl`: erase and write coupled, both s beta in [0, 2] (Complex KDA's delta-rule structure);
+  - `ckl_polar_broad`: polar forget with the broad angle init (FLA ecd3df8: both signs and a spread
+    of magnitudes from step 0, the paper's short / long-memory spread kept).
+- **D, `screen5ckl_s2`** (47800811, ~54 GPU-h): `ckl_sgn` and `ckl_sgn_cpl` at s2.
+- **B, synthetic state tracking** (`scripts/korbi/synthetic/state_tracking.py`, job 47801220, ~3 GPU-h):
+  - tasks: parity, Z3, S3, S5 word problems, the running state predicted at every position;
+  - models: 2 layers of one mixer (KDA, CKDA, KronLSTM, the four CKLSTM variants), 2 seeds;
+  - trained at length 64, tested to 4096.
+- **C, the long-context set** (`prepare_tasks.py longctx` -> `requests_longctx.jsonl`, job 47801219;
+  evaluator: Megatron 3faedd827 "ppl" items):
+  - 64k long-document loss per position bin (24 finepdfs-edu documents);
+  - 64-fact multi-key retrieval at 4k-64k;
+  - variable tracking (8 chains x 4 hops) at 4k-64k;
+  - 16-fact retrieval and passkey at 64k.
+  - Suites `ds5lc(logn)_s2` on the s2 checkpoints (CKDA, + mHC-4, KronLSTM paper / polar), then
+    the SSMax, LDM and new CKLSTM s2 checkpoints.
+
+**Optimizers, `screen5opt_s{1,2}`** (47800810 / 47800812, ~130 GPU-h; Megatron with the
+AngularMuown PR: `angular_muown_simplified`, `muown_classical`). Stable to step 4000, then WSD to
+4800 in one job, paired with `screen5udcool`'s p = 1 / p = 1/2 branches.
+- `amsimp_c{2,8,22}`: direction rate C / (1 + t). Our p = 1 default moves square-matrix rows by
+  22 / (1000 + t) rad per step, so C = 22 has the same 1/t tail; its own cooldown runs over the same
+  800 steps, to 0.1 of the rate.
+- `muown_classical`: AngularMuown's defaults, persistent direction norms.
+- s2: C = 8 and `muown_classical`.
