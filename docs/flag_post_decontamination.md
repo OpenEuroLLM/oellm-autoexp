@@ -145,9 +145,18 @@ run verify
 
 (filled in as the steps run)
 
-| step | job | nodes x time | GPU-h | result |
+All jobs: account ehpc533, QOS acc_debug, snapshot `$R/autoexp_decon`. GPU-h = nodes x 4 x elapsed.
+
+| step | job | nodes x elapsed | GPU-h | result |
 |---|---|---|---|---|
-| extract (JUPITER login) | - | - | 0 | 2,406,959 unique segments from 4157 files, 132 MB (sha256 fdeceb5b...) |
+| extract (JUPITER login) | - | - | 0 | 2,406,959 unique segments from 4157 files, 132 MB (sha256 fdeceb5b...); 147 hub files with missing blobs (flores, xcopa pairs), covered by the arrow cache |
+| selftest (1st) | 47820026 | 1 x 0:01 | 0.1 | failed: the image has no pytest -> tests run as a plain script |
+| selftest | 47820072 | 1 x 0:01 | 0.1 | 4/4 passed on an H100 (CPU and GPU hashes agree) |
+| build | 47820082 | 1 x 0:01:21 | 0.1 | lookup table 262144 ids -> 224382 canonical, 53 dropped; 82.3M (segment, n-gram) pairs, 64.5M unique n-grams, 115,807 template n-grams (> 10 segments) dropped; 1.53M segments at n = 13, 0.79M at n = 8, 80,325 too short (< 8 tokens: mostly multiple-choice options) |
+| roundtrip | 47820487 | 1 x 0:01:51 | 0.1 | 900/900 documents (agenttrove, megamath, dclm) decode -> re-encode to the identical canonical stream |
+| count (1st) | 47820821 | 2 x 0:02:24 | 0.3 | crashed: CUDA index assert on token id 262144 (`<pad>`, an added token outside the SentencePiece vocab: literal "<pad>" text) -> such ids are dropped and reported |
+| count | 47821047 | 2 x 0:03:32 | 0.5 | 105.5B sample tokens (first 2^28 of each of 419 ordinary shards) in ~80 s per GPU (~165M tok/s/GPU); `<pad>` in 12 shards, 1-79 per 268M tokens |
+| prune | (prune) | 1 x ~0:01 | 0.1 | n-grams seen > 50 times dropped: 51,995 (0.08 %); 64.45M kept. Histogram of sample counts: > 0: 936k, > 10: 148k, > 100: 32k, > 10000: 388. Matchable segments (>= 3 n-grams): 2,183,686 -> 2,182,710 (976 lost to pruning) |
 
 ## 5. Caveats
 

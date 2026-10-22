@@ -14,7 +14,8 @@ Writes $WORK/table/{lut.npy, table.npz, segments.npz, sources.json, build_report
 
 prune: drop the n-grams that `scan.py --mode count` found more than --max-count times in the
 sample of the training data (common phrases, licence headers, boilerplate), recompute n_grams,
-and keep the previous table as table_unpruned.npz.
+and keep the previous table as table_unpruned.npz. Prune once per build: a second prune would
+overwrite table_unpruned.npz with the already pruned table.
 """
 
 from __future__ import annotations
@@ -138,7 +139,8 @@ def prune(args):
     segs = dict(np.load(os.path.join(tdir, "segments.npz")))
     segs["n_grams"] = np.bincount(seg, minlength=len(segs["n"])).astype(np.int32)
     np.savez(os.path.join(tdir, "segments.npz"), **segs)
-    lost = (segs["n_grams_built"] > 0) & (segs["n_grams"] < 3)
+    # matchable (>= 3 n-grams, finalize's --min-hits) before pruning, not after
+    lost = (segs["n_grams_built"] >= 3) & (segs["n_grams"] < 3)
     hist = {f">{t}": int((counts > t).sum()) for t in (0, 1, 5, 10, 20, 50, 100, 1000, 10000)}
     seen_seg = np.bincount(tab["csr_seg"][np.repeat(counts > 0, nseg)], minlength=len(segs["n"]))
     rep = {"count_files": len(files), "ngrams_with_count": hist,
