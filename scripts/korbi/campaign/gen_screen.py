@@ -1382,12 +1382,24 @@ def arms5s3cool(size: str = "s3"):
 DOWNSTREAM = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl"
 
 
-def arms5downstream_any(entries, tasks: str = ""):
-    """arms5downstream for any runs: entries = [(name, src suite, src arm, its training config)]."""
+LONGCTX = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests_longctx.jsonl"
+
+
+def LONGCTX_S2():  # noqa: N802 - the s2 checkpoints of the long-context comparison
+    p5 = dict((n, kv) for n, _, kv in arms5("s2"))
+    return [("ckda", "screen5_s2", "h5_moe", p5["h5_moe"]),
+            ("ckda_mhc4", "screen5_s2", "h5_moe_mhc4", p5["h5_moe_mhc4"]),
+            ("kron_paper", "screen5kronlr_s2", "h5_moe_kron_lr", arms5kron_lowrank("s2")[0][2]),
+            ("kron_polar", "screen5kronpfb_s2", "h5_moe_kron_lr_pfb", arms5kron_pfb("s2")[0][2])]
+
+
+def arms5downstream_any(entries, tasks: str = "", requests: str | None = None):
+    """arms5downstream for any runs: entries = [(name, src suite, src arm, its training config)];
+    `requests`: another request file than DOWNSTREAM (e.g. the long-context set)."""
     out = []
     for name, suite, arm, kv in entries:
         src = f"{RUNS5}/{suite}/{arm}"
-        env = {"backend.env.DOWNSTREAM_EVAL_FILE": DOWNSTREAM}
+        env = {"backend.env.DOWNSTREAM_EVAL_FILE": requests or DOWNSTREAM}
         if tasks:
             env["backend.env.DOWNSTREAM_EVAL_TASKS"] = tasks
         ev = {B + "skip_train": True, B + "eval_iters": 1, B + "no_load_optim": True, B + "no_load_rng": True,
@@ -1494,6 +1506,14 @@ def write5():
             *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
+            # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
+            # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact
+            # retrieval / passkey at 64k) on the s2 mixers' step-4000 checkpoints (KronLSTM paper
+            # gates: its last, 3000), plain and with eval-time log-n
+            *[("s2", f"ds5lc{tag}", arms5downstream_any(
+                [(n, su, a, {**kv, **extra}) for n, su, a, kv in LONGCTX_S2()], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
             *[(z, "trace5", arms5trace(z)) for z in ("s1", "s2")],
             # LDM's long-context retrieval (user 2026-10-22): does LDM generalize past the training
             # length like mHC-4? The 2-node s2 trio (plain / mHC-4 / LDM x2.0, same setup and data
