@@ -55,6 +55,7 @@ _RESULT_KEYS = (
     "nats_sum",
     "bits_per_token",
     "seed",
+    "batch_size",
     "eod_id",
     "mask_token_id",
     "dtype",

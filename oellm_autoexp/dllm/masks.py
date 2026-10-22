@@ -28,7 +28,12 @@ def clean_attention_of(objective: str) -> str:
 
     Returns:
         ``"causal"`` for nld (spec section 15), else ``"block"``.
+
+    Raises:
+        ValueError: If objective is not one of the three.
     """
+    if objective not in ("bd3", "ar", "nld"):
+        raise ValueError(f"objective must be bd3, ar, or nld, got {objective!r}")
     return "causal" if objective == "nld" else "block"
 
 
@@ -80,6 +85,15 @@ def _check_bd3_args(length: int, block_size: int) -> None:
         raise ValueError(f"B must be >= 1, got {block_size}")
     if length % block_size != 0:
         raise ValueError(f"L must be a multiple of B, got L={length} and B={block_size}")
+
+
+def _check_clean_causal(clean_causal: bool) -> None:
+    """Raise TypeError unless clean_causal is a bool.
+
+    A truthy string such as ``"block"`` would otherwise select the token-causal nld mask.
+    """
+    if not isinstance(clean_causal, bool):
+        raise TypeError(f"clean_causal must be a bool, got {clean_causal!r}")
 
 
 def _check_doc_ids(doc_ids: Tensor | None, length: int) -> None:
@@ -167,9 +181,11 @@ def make_bd3_mask_mod(
 
     Raises:
         ValueError: If B < 1, L % B != 0, or doc_ids does not have shape [b, L].
+        TypeError: If clean_causal is not a bool.
     """
     _check_bd3_args(L, B)
     _check_doc_ids(doc_ids, L)
+    _check_clean_causal(clean_causal)
 
     def mask_mod(b: Tensor, h: Tensor, q_idx: Tensor, kv_idx: Tensor) -> Tensor:
         q_noisy = q_idx < L
@@ -285,8 +301,10 @@ def dense_bd3_reference(
 
     Raises:
         ValueError: If B < 1, L % B != 0, or doc_ids_row does not have length L.
+        TypeError: If clean_causal is not a bool.
     """
     _check_bd3_args(L, B)
+    _check_clean_causal(clean_causal)
     docs = _checked_doc_row(doc_ids_row, L)
     rows: list[list[bool]] = []
     for q in range(2 * L):

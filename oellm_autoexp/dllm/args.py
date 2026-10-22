@@ -9,6 +9,7 @@ inside ``validate_bd_args``. The rules follow the dllm-bd3-spec skill, sections 
 from __future__ import annotations
 
 import argparse
+import math
 import types
 
 # Defaults of the nld flags (spec section 15). Other objectives must leave them at these values.
@@ -179,9 +180,10 @@ def validate_bd_args(args: argparse.Namespace | types.SimpleNamespace) -> None:
     if args.bd_objective == "nld":
         ar_weight = nld["bd_nld_ar_weight"]
         diffusion_weight = nld["bd_nld_diffusion_weight"]
-        if ar_weight < 0 or diffusion_weight < 0 or ar_weight + diffusion_weight == 0:
+        finite = math.isfinite(ar_weight) and math.isfinite(diffusion_weight)
+        if not finite or ar_weight < 0 or diffusion_weight < 0 or ar_weight + diffusion_weight == 0:
             raise ValueError(
-                "nld needs non-negative loss weights that are not both 0, got "
+                "nld needs finite non-negative loss weights that are not both 0, got "
                 f"ar {ar_weight} and diffusion {diffusion_weight}"
             )
         fraction = nld["bd_nld_ar_only_fraction"]

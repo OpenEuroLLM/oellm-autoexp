@@ -66,6 +66,8 @@ class BlockDiffusionGPTModel(GPTModel):
         self.eod_id = int(eod_id)
         self.mask_id = int(self.args.mask_token)
         self.objective = self.args.bd_objective
+        if self.objective not in ("bd3", "ar", "nld"):
+            raise ValueError(f"bd_objective must be bd3, ar, or nld, got {self.objective!r}")
         self.seq_len_effective = int(self.args.seq_length) - 1
         self.block_schedule = parse_block_schedule(self.args.bd_block_schedule)
         self._train_generator: torch.Generator | None = None

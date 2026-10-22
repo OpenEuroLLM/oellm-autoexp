@@ -271,6 +271,20 @@ def _set_rank0_args(root: Path, **changes: object) -> None:
     torch.save(checkpoint, path)
 
 
+def _as_trained_run(root: Path, iteration: int = 100, **changes: object) -> None:
+    """Make a converted (release) checkpoint look like the checkpoint of a
+    training run.
+
+    Args:
+        root: Checkpoint root that holds ``release``.
+        iteration: Iteration of the training checkpoint.
+        **changes: Attributes of the rank-0 args to set first, such as ``bd_objective``.
+    """
+    _set_rank0_args(root, **changes)
+    (root / "release").rename(root / f"iter_{iteration:07d}")
+    (root / "latest_checkpointed_iteration.txt").write_text(str(iteration))
+
+
 def _convert_model(root: Path, tied: bool, tp: int, layout: str = "te") -> tuple[Path, Path]:
     """Save a tiny model and convert it into a MegaDLMs checkpoint.
 
@@ -643,7 +657,7 @@ def test_export_takes_the_clean_attention_from_the_checkpoint_objective(
     """Without a value the exporter writes the clean attention of bd_objective
     (spec section 15)."""
     hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
-    _set_rank0_args(megatron, bd_objective=objective)
+    _as_trained_run(megatron, bd_objective=objective)
     export_dir = tmp_path / "export"
     export(
         megatron,
@@ -665,7 +679,7 @@ def test_export_rejects_a_clean_attention_that_the_objective_did_not_train(
     """An nld checkpoint exported as block (or bd3 as causal) raises ValueError
     and writes nothing."""
     hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
-    _set_rank0_args(megatron, bd_objective=objective)
+    _as_trained_run(megatron, bd_objective=objective)
     out = tmp_path / "out"
     with pytest.raises(ValueError, match="bd_objective"):
         export(
@@ -678,6 +692,69 @@ def test_export_rejects_a_clean_attention_that_the_objective_did_not_train(
             clean_attention=requested,
         )
     assert not out.exists()
+
+
+@pytest.mark.parametrize("objective", ["bd3", "nld"])
+def test_export_rejects_a_token_shift_that_the_checkpoint_did_not_train(
+    tmp_path: Path, objective: str
+) -> None:
+    """A trained bd3 or nld checkpoint keeps its bd_token_shift; another shift
+    raises ValueError."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _as_trained_run(megatron, bd_objective=objective, bd_token_shift=1 - TOKEN_SHIFT)
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="bd_token_shift"):
+        export(
+            megatron,
+            hf_dir,
+            out,
+            block_size=BLOCK_SIZE,
+            token_shift=TOKEN_SHIFT,
+            mask_token_id=MASK_ID,
+        )
+    assert not out.exists()
+
+
+def test_export_of_an_ar_checkpoint_ignores_its_token_shift(tmp_path: Path) -> None:
+    """The ar objective has no prediction shift, so its bd_token_shift is not
+    compared."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _as_trained_run(megatron, bd_objective="ar", bd_token_shift=1 - TOKEN_SHIFT)
+    export_dir = tmp_path / "export"
+    export(
+        megatron,
+        hf_dir,
+        export_dir,
+        block_size=BLOCK_SIZE,
+        token_shift=TOKEN_SHIFT,
+        mask_token_id=MASK_ID,
+    )
+    config = json.loads((export_dir / "config.json").read_text())
+    assert config["dllm_token_shift"] == TOKEN_SHIFT
+    assert config["dllm_clean_attention"] == "block"
+
+
+def test_export_of_a_release_conversion_ignores_the_template_settings(tmp_path: Path) -> None:
+    """A release checkpoint holds the template run's args, which say nothing
+    about training.
+
+    The I8 check exports the step-0 conversion with B = 1 and shift 1
+    (spec section 14).
+    """
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _set_rank0_args(megatron, bd_objective="nld", bd_token_shift=1 - TOKEN_SHIFT)
+    export_dir = tmp_path / "export"
+    export(
+        megatron,
+        hf_dir,
+        export_dir,
+        block_size=BLOCK_SIZE,
+        token_shift=TOKEN_SHIFT,
+        mask_token_id=MASK_ID,
+    )
+    config = json.loads((export_dir / "config.json").read_text())
+    assert config["dllm_token_shift"] == TOKEN_SHIFT
+    assert config["dllm_clean_attention"] == "block"
 
 
 def test_export_rejects_an_unsupported_clean_attention(tmp_path: Path) -> None:

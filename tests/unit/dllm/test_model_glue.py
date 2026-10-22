@@ -686,17 +686,26 @@ def _metric(metrics: dict, key: str) -> float:
     return float(numerator) / float(denominator)
 
 
-def test_nld_with_ar_weight_zero_gives_the_bd3_loss() -> None:
-    """I12: w_ar = 0, w_bd = 1 reproduces the bd3 loss of the same noise (B = 4 here)."""
+@pytest.mark.parametrize(("token_shift", "doc_mask"), [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_nld_with_ar_weight_zero_gives_the_bd3_loss(token_shift: int, doc_mask: int) -> None:
+    """I12: w_ar = 0, w_bd = 1 reproduces the bd3 loss_sum of the same noise (B = 4 here).
+
+    num_tokens is the AR count (spec section 15). It equals the bd3 count, except that token
+    shift 1 with the document mask also drops the document starts from the bd3 count.
+    """
     labels = _random_labels(seed=901)
-    bd3 = _make_model(objective="bd3", curr_iteration=50)
-    nld = _make_model(
-        objective="nld", curr_iteration=50, nld_ar_weight=0.0, nld_diffusion_weight=1.0
-    )
+    labels[0, 5] = _EOD_ID
+    labels[1, 9] = _EOD_ID
+    settings = {"curr_iteration": 50, "token_shift": token_shift, "doc_mask": doc_mask}
+    bd3 = _make_model(objective="bd3", **settings)
+    nld = _make_model(objective="nld", nld_ar_weight=0.0, nld_diffusion_weight=1.0, **settings)
     bd3_loss, bd3_tokens, bd3_metrics = _run(bd3, labels)
     nld_loss, nld_tokens, nld_metrics = _run(nld, labels)
     assert torch.equal(nld_loss, bd3_loss)
-    assert float(nld_tokens) == float(bd3_tokens)
+    if token_shift == 1 and doc_mask == 1:
+        assert float(nld_tokens) > float(bd3_tokens)
+    else:
+        assert float(nld_tokens) == float(bd3_tokens)
     for key in ("masked ce", "mask frac", "nelbo bits/token"):
         assert _metric(nld_metrics, key) == pytest.approx(_metric(bd3_metrics, key))
 
@@ -744,6 +753,29 @@ def test_nld_block_mask_has_a_token_causal_clean_stream() -> None:
     mask = materialize_mask(model.decoder.calls[-1].block_mask.mask_mod, 1, 2 * _L, 2 * _L)
     assert torch.equal(mask[0], dense_bd3_reference(_L, _BLOCK, None, clean_causal=True))
     assert not torch.equal(mask[0], dense_bd3_reference(_L, _BLOCK, None))
+
+
+def test_nld_clean_logits_decode_the_clean_stream_under_the_nld_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The parity diagnostic decodes [xt, x0] with the nld mask and returns the
+    clean logits."""
+    monkeypatch.setattr(
+        model_module.tensor_parallel, "gather_from_tensor_model_parallel_region", lambda t: t
+    )
+    labels = _random_labels(seed=906)
+    x0 = labels[:, :-1]
+    xt = torch.full_like(x0, _MASK_ID)
+    model = _make_model(objective="nld", curr_iteration=60, training=False)
+    logits = model.nld_clean_logits(x0, xt, block_size=_BLOCK)
+    call = model.decoder.calls[-1]
+    assert torch.equal(model.embedding.calls[-1][0], torch.cat([xt, x0], dim=1))
+    mask = materialize_mask(call.block_mask.mask_mod, 1, 2 * _L, 2 * _L)
+    assert torch.equal(mask[0], dense_bd3_reference(_L, _BLOCK, None, clean_causal=True))
+    # The fake decoder is the identity: the clean output at L + i is the embedding of x0[i].
+    expected, _ = model.output_layer(model.embedding.table(x0).transpose(0, 1))
+    assert logits.shape == (_BATCH, _L, _VOCAB)
+    torch.testing.assert_close(logits, expected.transpose(0, 1))
 
 
 def test_nld_validation_reports_nelbo_and_ar_bits() -> None:

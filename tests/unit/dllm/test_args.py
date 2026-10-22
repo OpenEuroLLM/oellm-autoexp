@@ -233,6 +233,10 @@ def test_optional_attributes_may_be_absent() -> None:
             "not both 0",
         ),
         ({"bd_objective": "nld", "bd_nld_ar_only_fraction": 1.0}, "ar-only-fraction"),
+        ({"bd_objective": "nld", "bd_nld_ar_weight": float("nan")}, "finite"),
+        ({"bd_objective": "nld", "bd_nld_diffusion_weight": float("nan")}, "finite"),
+        ({"bd_objective": "nld", "bd_nld_ar_weight": float("inf")}, "finite"),
+        ({"bd_objective": "nld", "bd_nld_ar_only_fraction": float("nan")}, "ar-only-fraction"),
     ],
 )
 def test_each_unsupported_setting_raises_on_its_own(

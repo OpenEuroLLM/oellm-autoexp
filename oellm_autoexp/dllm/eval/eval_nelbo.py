@@ -362,8 +362,9 @@ def evaluate(
     Returns:
         A dict with the keys ``objective``, ``block_size``, ``token_shift``, ``clean_attention``,
         ``doc_mask``, ``num_sequences``, ``seq_len``, ``scored_positions``, ``nats_sum``,
-        ``bits_per_token``, and ``seed``. ``bits_per_token`` equals
-        ``nats_sum / (scored_positions * ln 2)``.
+        ``bits_per_token``, ``seed``, and ``batch_size``. ``bits_per_token`` equals
+        ``nats_sum / (scored_positions * ln 2)``. The bd3 noise is drawn per batch, so a bd3 value
+        is reproduced only with the same ``seed`` and ``batch_size``.
 
     Raises:
         ValueError: If an input is unsupported, if no position is scored, or if the sum is not
@@ -425,6 +426,7 @@ def evaluate(
         "nats_sum": nats_sum,
         "bits_per_token": bits_per_token,
         "seed": seed,
+        "batch_size": batch_size,
     }
 
 

@@ -19,12 +19,14 @@ from torch.nn.attention.flex_attention import BlockMask, create_mask
 
 from oellm_autoexp.dllm.masks import (
     build_block_mask,
+    clean_attention_of,
     compute_doc_ids,
     dense_ar_reference,
     dense_bd3_reference,
     make_ar_mask_mod,
     make_bd3_mask_mod,
     materialize_mask,
+    resolve_clean_attention,
 )
 
 EOD_ID = 7
@@ -265,6 +267,33 @@ def test_nld_mask_matches_dense_reference(length: int, block: int, use_docs: boo
     )
     mask_mod = make_bd3_mask_mod(length, block, doc_ids, clean_causal=True)
     assert torch.equal(materialize_mask(mask_mod, _BATCH, 2 * length, 2 * length), expected)
+
+
+@pytest.mark.parametrize("value", ["block", 1, None])
+def test_clean_causal_must_be_a_bool(value: object) -> None:
+    """A truthy non-bool such as "block" must not select the nld mask."""
+    with pytest.raises(TypeError, match="clean_causal"):
+        make_bd3_mask_mod(8, 4, None, clean_causal=value)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="clean_causal"):
+        dense_bd3_reference(8, 4, None, clean_causal=value)  # type: ignore[arg-type]
+
+
+def test_clean_attention_of_each_objective_and_unknown_objectives() -> None:
+    assert [clean_attention_of(name) for name in ("bd3", "ar", "nld")] == [
+        "block",
+        "block",
+        "causal",
+    ]
+    for name in ("NLD", "", None):
+        with pytest.raises(ValueError, match="objective"):
+            clean_attention_of(name)  # type: ignore[arg-type]
+
+
+def test_resolve_clean_attention_maps_none_to_block_and_rejects_others() -> None:
+    assert resolve_clean_attention(None) == "block"
+    assert resolve_clean_attention("causal") == "causal"
+    with pytest.raises(ValueError, match="clean_attention"):
+        resolve_clean_attention("full")
 
 
 @pytest.mark.parametrize(("length", "block"), [(16, 4), (24, 8), (32, 8)])

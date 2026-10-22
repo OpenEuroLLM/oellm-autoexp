@@ -263,6 +263,32 @@ def _check_mask_token(args: Any, mask_token_id: int) -> None:
         )
 
 
+def _check_token_shift(args: Any, objective: str | None, token_shift: int) -> None:
+    """Raise ValueError when a bd3 or nld checkpoint trained with another token
+    shift.
+
+    The prediction sources follow the shift (spec section 6), so an export with another
+    ``dllm_token_shift`` makes the evaluators score the model with sources it never trained. The ar
+    objective has no prediction shift (the evaluators ignore it), and args without
+    ``bd_token_shift`` are not checked.
+
+    Args:
+        args: Arguments of the checkpoint, such as ``checkpoint["args"]``.
+        objective: ``bd_objective`` of the args, or None when the args lack it.
+        token_shift: Token shift that the exporter was given.
+
+    Raises:
+        ValueError: If the objective is bd3 or nld and ``bd_token_shift`` differs from token_shift.
+    """
+    trained = getattr(args, "bd_token_shift", _MISSING)
+    if objective in (None, "ar") or trained is _MISSING:
+        return
+    if int(trained) != token_shift:
+        raise ValueError(
+            f"token_shift {token_shift} differs from the checkpoint's bd_token_shift {trained!r}"
+        )
+
+
 def _trained_clean_attention(requested: str | None, objective: str | None) -> str:
     """Return the clean attention to export, checked against the checkpoint's
     objective.
@@ -368,7 +394,8 @@ def export(
         out_dir: Output directory. It must differ from the base model directory. Weight and index
             files of an earlier export in out_dir are removed.
         block_size: Diffusion block size B, written as ``dllm_block_size``. Must be at least 1.
-        token_shift: Prediction shift, 0 or 1, written as ``dllm_token_shift``.
+        token_shift: Prediction shift, 0 or 1, written as ``dllm_token_shift``. A trained bd3 or
+            nld checkpoint must hold the same ``bd_token_shift``.
         mask_token_id: Mask token id M, written as ``dllm_mask_token_id``. Must be a row of the
             Hugging Face vocabulary. When the checkpoint args hold ``mask_token``, it must equal M.
         iteration: ``"release"`` or an iteration number. None reads the tracker file.
@@ -376,7 +403,8 @@ def export(
         clean_attention: Attention of the clean stream, written as ``dllm_clean_attention``:
             ``"block"`` for bd3 or ``"causal"`` for nld (spec section 15). None (the default)
             takes it from ``bd_objective`` in the checkpoint args, and ``"block"`` when the args
-            lack it. A given value must match ``bd_objective`` when the args hold it.
+            lack it or the checkpoint is a ``release`` conversion. A given value must match
+            ``bd_objective`` when a trained checkpoint (``iter_*``) holds it.
 
     Returns:
         Dict with the keys ``out_dir`` (the output directory as a string), ``num_tensors`` (the
@@ -389,9 +417,9 @@ def export(
         TypeError: If a rank file holds a ``model`` entry that is not a dict.
         ValueError: If a setting is unsupported (block size, token shift, mask token id, or clean
             attention), out_dir is the base directory, the checkpoint args do not match the base
-            config, the checkpoint's mask_token differs from mask_token_id, clean_attention differs
-            from the checkpoint's bd_objective, a rank file does not match the base model, or one
-            tensor is larger than the shard limit.
+            config, the checkpoint's mask_token differs from mask_token_id, the token shift or
+            clean_attention differs from a trained checkpoint's bd_token_shift or bd_objective, a
+            rank file does not match the base model, or one tensor is larger than the shard limit.
     """
     check_layout(layout)
     hf_dir = resolve_hf_dir(str(hf_base))
@@ -401,7 +429,10 @@ def export(
     out_path = Path(out_dir)
     if out_path.resolve() == hf_dir.resolve():
         raise ValueError(f"out_dir must differ from the Hugging Face base directory {hf_dir}")
-    _, files = find_checkpoint_files(Path(megatron_dir), iteration)
+    dir_name, files = find_checkpoint_files(Path(megatron_dir), iteration)
+    # A release checkpoint is a conversion of a base model (spec section 13). Its args come from
+    # the template run, so they say nothing about the settings that the weights were trained with.
+    trained = dir_name != "release"
     shards: list[dict[str, Any]] = []
     objective = None
     for rank, path in enumerate(files):
@@ -410,7 +441,9 @@ def export(
         if rank == 0 and "args" in ckpt:
             check_args_against_hf(ckpt["args"], base_config, layout)
             _check_mask_token(ckpt["args"], mask_token_id)
-            objective = getattr(ckpt["args"], "bd_objective", None)
+            if trained:
+                objective = getattr(ckpt["args"], "bd_objective", None)
+                _check_token_shift(ckpt["args"], objective, token_shift)
         shards.append(ckpt["model"])
     clean_attention = _trained_clean_attention(clean_attention, objective)
     merged = megatron_to_hf_state(shards, dims, layout=layout)
