@@ -1368,9 +1368,10 @@ def arms5tiny(gbs: int = 8, smoke: bool = False):
             B + "num_workers": 4, B + "dataloader_prefetch_factor": 4,
             B + "eval_interval": max(steps // 50, 100), B + "eval_iters": 10, B + "log_interval": 20,
             B + "non_persistent_save_interval": 5000,
-            # no CUDA graphs: mHC + MoE partial graphs + packed documents need micro-batch 1, and the
-            # whole step is one micro-batch of gbs sequences here (fewer launches than gbs micro-batches)
-            B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
+            # no document masking (user 2026-10-23: only the main run needs it), so CUDA graphs on the
+            # attention / mixer layers and the MoE router (round 4's CG4); with masking, mHC + MoE
+            # partial graphs need micro-batch 1 and the whole step is one micro-batch here
+            B + "dataloader_inter_document_masking": False, **CG4,
             "job.est_steps": 300 if smoke else steps, "job.est_step_time_s": 0.08,
             "slurm.sbatch.time": "12:00:00", **BAD_NODES}
     if smoke:
@@ -1634,8 +1635,9 @@ def write5():
             ("s2", "screen5r7", arms5r7("s2")),
             ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
             ("s1", "opttinysmoke32", arms5tiny(32, smoke=True)),
+            # opttiny_b{8,32}: the first launch (document masking, no graphs; cancelled 2026-10-23)
             *[(z, "screen5opt2", arms5opt2(z)) for z in ("s1", "s2")],
-            *[("s1", f"opttiny_b{g}", arms5tiny(g)) for g in (8, 32)],
+            *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
             # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact

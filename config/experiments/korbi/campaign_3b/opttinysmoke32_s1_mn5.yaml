@@ -83,7 +83,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: []
+          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -98,7 +98,7 @@ sweep:
           backend.megatron.split: 998,2,0
           backend.megatron.seq_length: 2048
           backend.megatron.max_position_embeddings: 2048
-          backend.megatron.dataloader_inter_document_masking: true
+          backend.megatron.dataloader_inter_document_masking: false
           backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 4
           backend.megatron.manual_gc: true
@@ -108,7 +108,7 @@ sweep:
           backend.megatron.global_batch_size: 32
           aux.gbs: 32
           backend.megatron.train_iters: 25000
-          backend.megatron.cuda_graph_impl: none
+          backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/data_cache_flag2k_tiny_b32
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
