@@ -1505,7 +1505,9 @@ def ckpt_offload():
     eng40 = dict(eng, **{B + "engram_table_size": int(eng[B + "engram_table_size"] * 40 / 10.9)
                          // 64 * 64})
     big = {"aux.nodes": 128, "slurm.sbatch.nodes": 128, "aux.gbs": 2048, B + "train_iters": 10,
-           "slurm.sbatch.time": "01:00:00", "slurm.env.WATCHDOG_STARTUP_S": "2700",
+           # 128-node test: init ~2.7 min, compile / warm-up ~5 min (steps 1-2), 13.6 s / step at
+           # gbs 2048 (~50 s at 8192): 9 min for 10 steps; a short limit backfills sooner
+           "slurm.sbatch.time": "00:30:00", "slurm.env.WATCHDOG_STARTUP_S": "1500",
            "slurm.sbatch.qos": "acc_xehpc"}  # acc_ehpc caps jobs at 100 nodes
     arm("s128_cand40", "128 nodes, gbs 2048, angular MuOwn, candidate, Engram 40B", base, hyb,
         moon, off, ctx16, mbs2, fused, eng40, memb, cand, addmm, sparse, muown, big,

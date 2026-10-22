@@ -4984,8 +4984,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
         # 8-node reference of s128: gbs 512, angular MuOwn, candidate, Engram 21.8B
         - aux.arm: s8_cand22
@@ -5169,8 +5169,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
         # 128 nodes, gbs 8192, mbs 4 (16 / pipeline)
@@ -5265,8 +5265,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
         # 128 nodes, gbs 4096, mbs 4 (8 / pipeline: the mbs effect at 2048's count)
@@ -5361,8 +5361,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
         # 128 nodes, gbs 2048, gradient reduction in bf16 (half the DP traffic)
@@ -5457,8 +5457,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
           backend.megatron.grad_reduce_in_bf16: true
@@ -5554,8 +5554,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
         # 128 nodes, gbs 2048, no recompute of the last chunk on every stage
@@ -5650,8 +5650,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
           backend.env.RECOMPUTE_SKIP_CHUNKS: 1,1,1,1
@@ -5747,8 +5747,8 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           aux.nodes: 128
           slurm.sbatch.nodes: 128
-          slurm.sbatch.time: 01:00:00
-          slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.time: 00:30:00
+          slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
           slurm.sbatch.account: cns144
           backend.megatron.profile: true
