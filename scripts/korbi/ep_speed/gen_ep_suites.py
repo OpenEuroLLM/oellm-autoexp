@@ -1366,6 +1366,88 @@ def ctx16k_scale():
     return arms
 
 
+def a3b50():
+    """35B-A3B vs 50B-A3B on 16 nodes: the Qwen3.5-35B-A3B MoE shape (experts 512 wide, top-8 + 1
+    shared of 512, 40 blocks, CKDA 3:1) with 256 vs 384 experts, everything else equal (same layout,
+    fp32 Adam). Memory model calibrated on s1 s_q35_ref (8 nodes, stage 0 peaks at 61.0 of 63.7 GiB):
+    on 8 nodes 50B at the 35B layout needs ~74 GiB on stage 0 (expert optimizer state over 2
+    replicas); on 16 nodes it splits over 4 and the rebalanced 11 / 11 / 11 / 7 layout fits (~60 GiB).
+    Plain residual, 4k mbs 4, gbs 2048 (as s_q35_ref: 6,712 tok/s/GPU with native GDN on 8 nodes)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    # stage s holds VPP chunks s and s + 4: 11 / 11 / 11 / 7 layers (the last stage also has the head)
+    a3b = {**RECIPE, **PLAIN, B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, B + "moe_ffn_hidden_size": 512, B + "moe_router_topk": 8,
+           B + "moe_shared_expert_intermediate_size": 512, "aux.topk": 8, "aux.expert_ffn": 512,
+           B + "seq_length": 4096, B + "max_position_embeddings": 4096, B + "micro_batch_size": 4,
+           "aux.gbs": 2048, B + "train_iters": 12,
+           # the base slurm config's caches live in the HYBRID_ENV owner's project dir: own caches
+           "slurm.env.TORCHINDUCTOR_CACHE_DIR": "/gpfs/scratch/ehpc533/users/${oc.env:USER}/cache/inductor",
+           "slurm.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/users/${oc.env:USER}/cache/triton",
+           "slurm.env.HF_HOME": "/gpfs/scratch/ehpc533/users/${oc.env:USER}/cache/hf",
+           "slurm.sbatch.exclude": "as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02",
+           "aux.pattern": vpp_pattern("LLL*" * 10, (6, 6, 6, 4, 5, 5, 5, 3))}
+    arm("x_35", "35B-A3B: 256 x 512 experts, top-8 + 1 shared", base, a3b, moon, {B + "num_experts": 256})
+    arm("x_50", "50B-A3B: 384 x 512 experts, top-8 + 1 shared", base, a3b, moon, {B + "num_experts": 384})
+    arm("x_50w", "50B-A3.5B (Kimi-Linear-like): 256 x 768 experts, top-8 + 1 shared of 768", base, a3b,
+        moon, {B + "num_experts": 256, B + "moe_ffn_hidden_size": 768,
+               B + "moe_shared_expert_intermediate_size": 768, "aux.expert_ffn": 768})
+    arm("x_50w_muown", "256 x 768, angular MuOwn (production optimizer: more memory than Adam)", base,
+        a3b, moon, {B + "num_experts": 256, B + "moe_ffn_hidden_size": 768,
+                    B + "moe_shared_expert_intermediate_size": 768, "aux.expert_ffn": 768},
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3})
+    # the production residual on top (ckpt_offload's settings): mHC-4, a checkpoint every 2 layers,
+    # checkpoint inputs on the host, Triton mHC read, mixer lr x0.25 under MuOwn
+    arm("x_35_muown_mhc4", "35B: 256 x 512, angular MuOwn + mHC-4 (host checkpoints, fused read)", base,
+        a3b, moon, {B + "num_experts": 256},
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+         B + "residual_mixer_lr_mult": 0.25},
+        {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+         B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2,
+         "backend.env.RECOMPUTE_OFFLOAD": "1", "backend.env.MHC_FUSED_READ": "1",
+         "aux.array_tag": "_moonofffused"})
+    arm("x_50w_muown_mhc4", "256 x 768, angular MuOwn + mHC-4 (host checkpoints, fused read)", base,
+        a3b, moon, {B + "num_experts": 256, B + "moe_ffn_hidden_size": 768,
+                    B + "moe_shared_expert_intermediate_size": 768, "aux.expert_ffn": 768},
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+         B + "residual_mixer_lr_mult": 0.25},
+        {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+         B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2,
+         "backend.env.RECOMPUTE_OFFLOAD": "1", "backend.env.MHC_FUSED_READ": "1",
+         "aux.array_tag": "_moonofffused"})
+    # Kimi-Linear-48B-A3B's shape: hidden 2304, 27 layers (layer 1 a dense FFN of 9216, then MoE),
+    # 256 x 1024 experts top-8 + 1 shared, linear layers 32 heads x 128, full attention at layers
+    # 4, 8, ..., 24, 27. Differences left: CKDA for KDA, GQA (32 q / 4 kv x 128) for MLA, our 262k
+    # vocabulary, no routed scaling factor. Stages 7 / 7 / 8 / 5 layers (+ the head on the last).
+    kimi_mixers = "LLL*" * 6 + "LL*"
+    kimi_blocks = [m + ("-" if i == 0 else "E") for i, m in enumerate(kimi_mixers)]
+    kimi_chunks, i = [], 0
+    for n in (4, 4, 4, 3, 3, 3, 4, 2):
+        kimi_chunks.append("".join(kimi_blocks[i:i + n]))
+        i += n
+    assert i == 27
+    kimi = {"aux.pattern": "|".join(kimi_chunks), B + "hidden_size": 2304, B + "ffn_hidden_size": 9216,
+            B + "num_experts": 256, B + "moe_ffn_hidden_size": 1024,
+            B + "moe_shared_expert_intermediate_size": 1024, "aux.expert_ffn": 1024,
+            B + "linear_num_key_heads": 32, B + "linear_num_value_heads": 32,
+            B + "num_attention_heads": 32, B + "num_query_groups": 4, B + "kv_channels": 128}
+    arm("x_kimi", "Kimi-Linear-48B-A3B shape: 2304 x 27 layers, 256 x 1024 experts", base, a3b, moon, kimi)
+    arm("x_kimi_muown_mhc4", "Kimi shape, angular MuOwn + mHC-4 (host checkpoints, fused read)", base, a3b,
+        moon, kimi, {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+                     B + "residual_mixer_lr_mult": 0.25},
+        {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+         B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2,
+         "backend.env.RECOMPUTE_OFFLOAD": "1", "backend.env.MHC_FUSED_READ": "1",
+         "aux.array_tag": "_moonofffused"})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1905,6 +1987,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), ckpt_offload())
+    dump("ep_a3b50_mn5.yaml", "35B-A3B vs 50B-A3B (256 vs 384 x 512 experts, top-8 + 1, CKDA 3:1) on 16 nodes.", """
+aux:
+  family: a3b50
+  suite: x1
+  pattern: "*E"
+  nodes: 16
+  ep: 4
+  gbs: 2048
+  topk: 8
+  expert_ffn: 512
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:50:00"'), a3b50())
     dump("ep_ctx16k_mn5.yaml", "16k context at 16 / 32 nodes: mHC-4 and Engram memory (docs/ep_fp8_speed.md).", """
 aux:
   family: ctx16k
