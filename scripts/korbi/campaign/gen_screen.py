@@ -1246,6 +1246,26 @@ def arms5udadapt(size: str = "s1"):
 RUNS5 = "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b"
 
 
+def arms5trace(size: str):
+    """MoE routing traces for the expert-offloading question (user 2026-10-22): round 5's step-4000
+    h5_moe (144 x w, top-3 + shared) and h5_moe_g2 (288 x w/2, top-6 + shared: equal active and
+    total) evaluated on validation batches with ROUTER_TRACE_OUT=1 (Megatron router_trace.py: each
+    router's top-k ids per token -> <save>/router_trace.pt), no CUDA graphs (hooks), for the
+    offline expert-cache simulation (scripts/korbi/campaign/expert_cache_sim.py)."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    out = []
+    for a in ("h5_moe", "h5_moe_g2"):
+        src = f"{RUNS5}/screen5_{size}/{a}"
+        ev = {B + "skip_train": True, B + "eval_iters": 8, B + "no_load_optim": True,
+              B + "no_load_rng": True, B + "load": f"{src}/ckpt",
+              B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
+              "backend.env.ROUTER_TRACE_OUT": "1", "job.est_steps": 1,
+              "slurm.sbatch.time": "01:00:00", **BAD_NODES}
+        out.append((a, f"{a}, step 4000: routing trace", {**pool[a], **ev}))
+    return out
+
+
 def arms5quant(size: str, bits: str | None = None):
     """4-bit robustness (user 2026-10-21): round 5's step-4000 checkpoints evaluated twice -- full
     precision and weight-only 4-bit (QUANT_EVAL_BITS=4, groups of 32 along the input dim, close to
@@ -1400,6 +1420,17 @@ def write5():
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5iat", arms5iat("s1")),
             ("s2", "screen5ssmax", arms5ssmax("s2")),
+            *[(z, "trace5", arms5trace(z)) for z in ("s1", "s2")],
+            # LDM's long-context retrieval (user 2026-10-22): does LDM generalize past the training
+            # length like mHC-4? The 2-node s2 trio (plain / mHC-4 / LDM x2.0, same setup and data
+            # order), step 4000, evaluated on 1 node; plain and with eval-time log-n beyond 8k
+            *[("s2", f"ds5ldm{tag}", arms5downstream_any(
+                [(n, "screen5ldm2_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
+                 for n, _, kv in arms5ldm2_s2()], tasks=tasks))
+              for tag, extra, tasks in (
+                  ("", {}, "kvret,passkey,lambada"),
+                  ("logn", {B + "attention_length_scaling": "logn",
+                            B + "attention_length_scaling_base": 8192}, "kvret"))],
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             ("s2", "screen5udadapt", arms5udadapt("s2")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
