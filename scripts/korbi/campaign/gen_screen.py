@@ -1359,6 +1359,9 @@ def arms5tiny(gbs: int = 8, smoke: bool = False):
             B + "num_workers": 4, B + "dataloader_prefetch_factor": 4,
             B + "eval_interval": max(steps // 50, 100), B + "eval_iters": 10, B + "log_interval": 20,
             B + "non_persistent_save_interval": 5000,
+            # no CUDA graphs: mHC + MoE partial graphs + packed documents need micro-batch 1, and the
+            # whole step is one micro-batch of gbs sequences here (fewer launches than gbs micro-batches)
+            B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
             "job.est_steps": 300 if smoke else steps, "job.est_step_time_s": 0.08,
             "slurm.sbatch.time": "12:00:00", **BAD_NODES}
     if smoke:
