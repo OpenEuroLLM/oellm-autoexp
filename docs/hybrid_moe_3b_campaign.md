@@ -2721,3 +2721,58 @@ order, step 4000, uncooled; multi-key retrieval, 10-way, 50 per length; log-n be
 
 LDM has the best loss and LAMBADA but the worst retrieval at every length, and none of mHC-4's
 length generalization. **mHC-4 stays the residual.**
+
+**Decision (user 2026-10-22): no SSMax.** The q/k-norm gains give a learnable (position-free)
+temperature, and NSA2's sparse selection later bounds the number of attended keys; eval-time log-n
+stays available. `screen5ssmax_s2` stopped (it had also hit a NODE_FAIL at step ~2700).
+
+**CKLSTM, first results (2026-10-22 evening).**
+
+A / D, paired gap vs CKDA + mHC-4 (+ = worse), 200-step windows; trend a + b ln t from step 1000:
+
+| arm | s1 @3900 | s1 10B (trend) | s2 @2300 | s2 10B (trend, short fit) |
+|---|---:|---:|---:|---:|
+| kron_mhc4 (paper gates) | +0.020 | +0.013 | | |
+| ckl_sgn (f in [-1, 1], beta [0, 2], c [0, 1]) | +0.021 | +0.003 | +0.007 | -0.032 |
+| ckl_sgn_w2 (c in [0, 2]) | +0.022 | -0.001 | | |
+| ckl_sgn_cpl (coupled erase / write) | +0.018 | +0.005 | +0.011 | +0.001 |
+| ckl_polar_broad | +0.015 (flat) | +0.018 | | |
+
+- **mHC-4 helps CKDA more than KronLSTM.** Without it, KronLSTM was +0.009 at s1; with it, +0.020.
+- **The signed variants close their gap steadily.** At s2, ckl_sgn goes from +0.032 at step 900 to
+  +0.007 at 2300. Its trend projects ahead of CKDA, but it is a drifting gap: the backtest overshot
+  such gaps by up to 0.015, so it needs the full run.
+
+B, state tracking (2 layers, trained at 64; best of 2 seeds; accuracy at 64 / 256 / 1k / 4k):
+
+| task | KDA / KronLSTM (unsigned) | CKDA | CKLSTM ckl_sgn / _w2 / _cpl / polar_broad |
+|---|---|---|---|
+| parity | 1.00 / 0.69 / 0.55 / 0.51 (both) | 1.00 / 1.00 / 0.80 / 0.58 | 4k: 0.54 / 0.91 / 0.57 / **0.96** |
+| Z3 | 1k: 0.45 | 1.00 / **0.96** / 0.51 / 0.37 | 256: 0.76-0.87 |
+| S3 | 0.42 / 0.39 at 64 (fail) | 1.00 / 1.00 / **0.98** / **0.69** | 1k: 0.48-0.63, 4k: 0.35-0.39 |
+| S5 | all fail (2 layers) | | |
+
+- **Signed gates are required:** unsigned KDA / KronLSTM fail parity beyond 64 and S3 even in distribution.
+- **CKLSTM generalizes parity furthest** (polar_broad 0.96 at 64x, write-[0, 2] 0.91).
+- **CKDA generalizes Z3 and S3 best.**
+
+C, the long-context set on the s2 checkpoints (step 4000, KronLSTM paper at 3000; uncooled; in
+brackets with eval-time log-n). Long-document NLL by position on 24 x 64k finepdfs-edu
+documents (trained at 8k):
+
+| model | 4-8k | 8-16k | 16-32k | 32-64k |
+|---|---:|---:|---:|---:|
+| CKDA | 2.535 | 2.554 | 2.355 | 2.367 (2.316) |
+| CKDA + mHC-4 | **2.488** | **2.509** | **2.314** | **2.353 (2.277)** |
+| KronLSTM paper | 2.597 | 2.647 | 2.689 | 3.038 (2.817) |
+| KronLSTM polar | 2.532 | 2.571 | 2.487 | 2.669 (2.550) |
+
+- **CKDA extrapolates the LM loss cleanly to 8x the training length; KronLSTM (paper / polar)
+  degrades past 16k.** The bins are the same documents, so compare models within a column.
+- **64-fact retrieval** (4k / 8k / 16k / 32k / 64k):
+  - CKDA 0.72 / 0.72 / 0.66 / 0.36 / 0.24 (log-n: 0.48 / 0.34 at 32k / 64k);
+  - CKDA + mHC-4 0.78 / 0.64 / 0.44 / 0.36 / 0.12 (log-n: **0.66 / 0.36**);
+  - KronLSTM paper 0.66 / 0.74 / 0.48 / 0.04 / 0.12.
+- **Variable tracking** is near chance for every s2 model: uninformative at this size.
+- **Passkey** at 64k is 1.00 for all.
+- The signed CKLSTM s2 checkpoints get the same evals when D finishes.
