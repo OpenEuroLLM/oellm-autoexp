@@ -14,7 +14,7 @@ defaults:
   - ../../base
   - /backend: megatron_torchrun
   - /container: marenostrum_hybrid
-  - /slurm: marenostrum_ehpc533
+  - /slurm: marenostrum_autoexclude
   - /backend/megatron: [base]
   - /sweep: none
   - _self_

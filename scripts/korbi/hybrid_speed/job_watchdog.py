@@ -16,9 +16,23 @@ py-spy stacks of its Python processes (all threads, native frames) into
 iteration, peak / current memory, whether any GPU was near-full: the "too much memory"
 signature is memory >= WATCHDOG_MEM_FULL_FRAC with utilisation 0) and scancels the job.
 
+Bad-GPU nodes (WATCHDOG_EXCLUDE_FILE set, config/slurm/marenostrum_autoexclude.yaml): every
+node records ITSELF in the shared exclusion file, which the next submissions read
+(oc.exclude_nodes), when
+* its GPU probe at the start sees fewer than WATCHDOG_GPUS GPUs (nvidia-smi fails or lists
+  fewer) -- the node behind torchrun's "AssertionError: Invalid device id", or
+* the job log shows a hardware-signature CUDA error ("unspecified launch failure", "CUDA error:
+  unknown error", an uncorrectable ECC error, "fallen off the bus") on its ranks
+  (rank // WATCHDOG_GPUS == SLURM_NODEID: torchrun --node-rank $SLURM_NODEID) and on no other
+  node's, and no MoonEP barrier trap was logged: a trap makes every waiting rank report a
+  launch failure, so neither a trap nor errors on several nodes implicate one node.
+A healthy node failing a code bug does not match either. Each entry is a "# date reason job"
+comment line plus the host name.
+
 Env: WATCHDOG_DIR (default <log dir>/watchdog), WATCHDOG_STARTUP_S (1200), WATCHDOG_STALL_S
 (300), WATCHDOG_INTERVAL_S (15), WATCHDOG_MEM_FULL_FRAC (0.97), WATCHDOG_PYSPY (path to the
-py-spy binary; optional), WATCHDOG_DRY_RUN=1 (report, never cancel).
+py-spy binary; optional), WATCHDOG_DRY_RUN=1 (report, never cancel), WATCHDOG_EXCLUDE_FILE
+(bad-node list; unset: no recording), WATCHDOG_GPUS (4).
 """
 import os
 import re
@@ -28,6 +42,68 @@ import sys
 import time
 
 ITER_RE = re.compile(rb"iteration\s+(\d+)/\s*\d+")
+HW_RE = re.compile(rb"\[rank(\d+)\]:[^\n]*(unspecified launch failure|CUDA error: unknown error|"
+                   rb"uncorrectable ECC error|fallen off the bus)")
+TRAP_RE = re.compile(rb"MoonEP [a-z_ ]*barrier timeout[^\n]*trapping")
+
+
+def record_bad_node(path, host, reason):
+    """Append ``host`` (with a comment line) to the exclusion file unless it is listed."""
+    try:
+        with open(path) as f:
+            listed = {l.strip() for l in f if l.strip() and not l.lstrip().startswith("#")}
+    except OSError:
+        listed = set()
+    if host in listed:
+        return False
+    job = os.environ.get("SLURM_ARRAY_JOB_ID") or os.environ.get("SLURM_JOB_ID", "?")
+    entry = "# %s %s (job %s)\n%s\n" % (time.strftime("%Y-%m-%d %H:%M"), reason, job, host)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)  # one atomic append
+    try:
+        os.write(fd, entry.encode())
+    finally:
+        os.close(fd)
+    return True
+
+
+def gpu_probe(expected):
+    """None if ``expected`` GPUs answer nvidia-smi, else the failure."""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index,pci.bus_id", "--format=csv,noheader"],
+            stderr=subprocess.STDOUT, timeout=60).decode()
+    except Exception as e:  # nvidia-smi failing is itself the finding
+        return "nvidia-smi failed: %s" % str(e).splitlines()[0][:120]
+    n = len([l for l in out.splitlines() if l.strip()])
+    return None if n >= expected else "GPU probe: %d of %d GPUs" % (n, expected)
+
+
+class HardwareScan:
+    """Follows the job log for hardware-signature CUDA errors (see the module docstring)."""
+
+    def __init__(self, log, gpus):
+        self.log, self.gpus, self.offset = log, gpus, 0
+        self.nodes, self.first, self.trap = {}, {}, False
+
+    def update(self):
+        try:
+            with open(self.log, "rb") as f:
+                f.seek(self.offset)
+                data = f.read()
+        except OSError:
+            return
+        cut = data.rfind(b"\n") + 1  # whole lines only
+        self.offset += cut
+        data = data[:cut]
+        if TRAP_RE.search(data):
+            self.trap = True
+        for m in HW_RE.finditer(data):
+            node = int(m.group(1)) // self.gpus
+            self.nodes[node] = self.nodes.get(node, 0) + 1
+            self.first.setdefault(node, m.group(2).decode())
+
+    def implicates(self, node_id):
+        return not self.trap and set(self.nodes) == {node_id}
 
 
 def env_f(name, default):
@@ -150,6 +226,17 @@ def main():
     dumped = False
     stop = []
     signal.signal(signal.SIGTERM, lambda *a: stop.append(1))
+    exclude_file = os.environ.get("WATCHDOG_EXCLUDE_FILE")
+    gpus = int(env_f("WATCHDOG_GPUS", 4))
+    scan, seen_at, recorded = (HardwareScan(log, gpus) if exclude_file and log else None), None, False
+    if exclude_file:
+        problem = gpu_probe(gpus)
+        if problem:
+            record_bad_node(exclude_file, host, problem)
+            if log:
+                with open(log, "a") as f:
+                    f.write("\nWATCHDOG: %s on %s -> recorded in %s\n" % (problem, host, exclude_file))
+            recorded = True
     while not stop:
         now = time.time()
         rows = gpu_sample()
@@ -159,6 +246,18 @@ def main():
         csv.flush()
         host_csv.write("%d,%d,%d\n" % ((int(now),) + host_sample()))
         host_csv.flush()
+        if scan is not None and not recorded:
+            scan.update()
+            if node_id in scan.nodes and seen_at is None:
+                seen_at = now
+            # one more look after a grace period: a MoonEP trap or other nodes' errors may follow
+            if seen_at is not None and now - seen_at >= min(interval, 10):
+                if scan.implicates(node_id):
+                    reason = "%s on rank(s) of node %d" % (scan.first[node_id], node_id)
+                    record_bad_node(exclude_file, host, reason)
+                    with open(log, "a") as f:
+                        f.write("\nWATCHDOG: %s (%s) -> recorded in %s\n" % (host, reason, exclude_file))
+                recorded = True
         if os.path.exists(stall_flag) and not dumped:
             dump_stacks(os.path.join(wdir, "stacks_%s.txt" % host), pyspy)
             dumped = True
@@ -188,7 +287,12 @@ def main():
                     job = os.environ.get("SLURM_ARRAY_JOB_ID")
                     job = "%s_%s" % (job, os.environ["SLURM_ARRAY_TASK_ID"]) if job else os.environ.get("SLURM_JOB_ID")
                     subprocess.call(["scancel", job])
-        time.sleep(interval)
+        time.sleep(min(interval, 5) if seen_at is not None and not recorded else interval)
+    if scan is not None and not recorded:  # the job is ending: decide on what the log holds now
+        scan.update()
+        if scan.implicates(node_id):
+            reason = "%s on rank(s) of node %d" % (scan.first[node_id], node_id)
+            record_bad_node(exclude_file, host, reason)
     with open(os.path.join(wdir, "peak_%s.txt" % host), "w") as f:
         f.write(" ".join("gpu%d=%dMiB" % (k, v) for k, v in sorted(peak.items())) + "\n")
 

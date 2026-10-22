@@ -1,0 +1,27 @@
+defaults:
+  - marenostrum_ehpc533
+  - _self_
+
+# MareNostrum 5 variant that avoids known-bad GPU nodes, after config/slurm/jupiter_autoexclude.yaml.
+#
+# The oc.exclude_nodes resolver reads the list at config resolution, and `exclude_file` makes the
+# sbatch builder re-read it when it renders each script (a resubmission carries nodes added
+# since); a missing / empty file emits no --exclude directive. One shared file on the cluster
+# for every checkout and agent ($MN5_EXCLUDE_NODES overrides), never a repo-tracked copy (it has
+# a runtime writer: see the JUPITER config for why that drifts).
+#
+# The writer: the in-job watchdog (scripts/korbi/hybrid_speed/job_watchdog.py, templates/
+# marenostrum_watchdog.sbatch), through WATCHDOG_EXCLUDE_FILE. Each node records itself when its
+# GPU probe at the start fails (fewer than 4 GPUs: torchrun's "AssertionError: Invalid device
+# id") or when the job log shows a hardware-signature CUDA error ("unspecified launch failure",
+# "CUDA error: unknown error", uncorrectable ECC, "fallen off the bus") on its own ranks only,
+# with no MoonEP barrier trap (a trap makes every waiting rank report a launch failure). MN5's
+# error lines name ranks, not nodes (rank // 4 = position in the nodelist), which is why the
+# node itself decides rather than a monitor regex on a node name as on JUPITER / Leonardo.
+#
+# Prune entries once nodes are confirmed healthy: the list only shrinks the schedulable pool.
+exclude_file: ${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}
+sbatch:
+  exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
+env:
+  WATCHDOG_EXCLUDE_FILE: ${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}
