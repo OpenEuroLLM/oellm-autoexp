@@ -1484,6 +1484,17 @@ def ckpt_offload():
         arm(f"o_layA_{tag}", f"layout 1,8,8,8|12,5,5,1, sparse table grads, tables {total or 10.9}B",
             base, hyb, moon, off, ctx16, mbs2, fused, eng, memb, cand, addmm, sparse, lay_a,
             {B + "engram_table_size": size, "aux.array_tag": f"_moonofffused_laya_{tag}"})
+    # o24: the group exchanges planned at the step start and issued one group ahead (async)
+    agroups = {"backend.env.ENGRAM_ASYNC_GROUPS": "1"}
+    arm("o_cand3", "candidate + addmm + sparse table grads (reference of o24)", base, hyb, moon, off,
+        ctx16, mbs2, fused, eng, memb, cand, addmm, sparse, {"aux.array_tag": "_moonofffused_cand3"})
+    arm("o_cand3_async", "... + ENGRAM_ASYNC_GROUPS", base, hyb, moon, off, ctx16, mbs2, fused, eng,
+        memb, cand, addmm, sparse, agroups, {"aux.array_tag": "_moonofffused_cand3_async"})
+    arm("p_cand3_async", "profile: ... + ENGRAM_ASYNC_GROUPS", base, hyb, moon, off, ctx16, mbs2,
+        fused, eng, cand, addmm, sparse, agroups,
+        {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
+         B + "profile_step_start": 5, B + "profile_step_end": 6, B + "train_iters": 7,
+         "aux.gbs": 128, "aux.array_tag": "_moonofffused_cand3_async_prof"})
     # s128 (user 2026-10-22): where the candidate stands at the production scale, 128 nodes, gbs
     # 2048 (32 micro-batches per pipeline per step, as 512 on 8 nodes), angular MuOwn, 40B Engram
     # tables (0.94 GB per GPU on the Engram stages at 128 GPUs per stage); 8-node reference with
