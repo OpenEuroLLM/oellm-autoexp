@@ -30,6 +30,9 @@ _BD_FLAGS: tuple[str, ...] = (
     "--bd-t-max",
     "--bd-doc-mask",
     "--bd-val-seed",
+    "--bd-nld-ar-weight",
+    "--bd-nld-diffusion-weight",
+    "--bd-nld-ar-only-fraction",
 )
 
 
@@ -73,8 +76,8 @@ def test_add_bd_args_returns_the_same_parser() -> None:
     assert add_bd_args(parser) is parser
 
 
-def test_exactly_the_ten_block_diffusion_flags_are_added() -> None:
-    """add_bd_args adds the ten documented flags and no other destinations."""
+def test_exactly_the_documented_block_diffusion_flags_are_added() -> None:
+    """add_bd_args adds the documented flags and no other destinations."""
     args = _bd_parser().parse_args([])
     assert set(vars(args)) == {_dest(flag) for flag in _BD_FLAGS}
 
@@ -87,7 +90,7 @@ def test_flags_are_listed_under_a_block_diffusion_group() -> None:
         assert flag in help_text
 
 
-def test_defaults_of_all_ten_flags() -> None:
+def test_defaults_of_all_flags() -> None:
     """Every block-diffusion flag has its documented default when none is
     given."""
     args = _bd_parser().parse_args([])
@@ -101,10 +104,13 @@ def test_defaults_of_all_ten_flags() -> None:
     assert args.bd_t_max == 1.0
     assert args.bd_doc_mask == 1
     assert args.bd_val_seed == 1234
+    assert args.bd_nld_ar_weight == 1.0
+    assert args.bd_nld_diffusion_weight == 0.3
+    assert args.bd_nld_ar_only_fraction == 0.2
 
 
-def test_explicit_values_parse_for_all_ten_flags() -> None:
-    """Passing all ten flags sets each attribute to the parsed value."""
+def test_explicit_values_parse_for_all_flags() -> None:
+    """Passing all flags sets each attribute to the parsed value."""
     argv = [
         "--bd-objective",
         "ar",
@@ -126,6 +132,12 @@ def test_explicit_values_parse_for_all_ten_flags() -> None:
         "0",
         "--bd-val-seed",
         "7",
+        "--bd-nld-ar-weight",
+        "0.5",
+        "--bd-nld-diffusion-weight",
+        "1.0",
+        "--bd-nld-ar-only-fraction",
+        "0.1",
     ]
     args = _bd_parser().parse_args(argv)
     assert args.bd_objective == "ar"
@@ -138,6 +150,10 @@ def test_explicit_values_parse_for_all_ten_flags() -> None:
     assert args.bd_t_max == 0.9
     assert args.bd_doc_mask == 0
     assert args.bd_val_seed == 7
+    assert args.bd_nld_ar_weight == 0.5
+    assert args.bd_nld_diffusion_weight == 1.0
+    assert args.bd_nld_ar_only_fraction == 0.1
+    assert _bd_parser().parse_args(["--bd-objective", "nld"]).bd_objective == "nld"
 
 
 @pytest.mark.parametrize(
@@ -209,6 +225,14 @@ def test_optional_attributes_may_be_absent() -> None:
         ({"mask_token": -1}, "must be >= 0"),
         ({"reset_attention_mask": True}, "reset-attention-mask"),
         ({"reset_position_ids": True}, "reset-position-ids"),
+        ({"bd_nld_ar_weight": 0.5}, "apply to --bd-objective nld only"),
+        ({"bd_objective": "ar", "bd_nld_ar_only_fraction": 0.0}, "nld only"),
+        ({"bd_objective": "nld", "bd_nld_ar_weight": -1.0}, "non-negative"),
+        (
+            {"bd_objective": "nld", "bd_nld_ar_weight": 0.0, "bd_nld_diffusion_weight": 0.0},
+            "not both 0",
+        ),
+        ({"bd_objective": "nld", "bd_nld_ar_only_fraction": 1.0}, "ar-only-fraction"),
     ],
 )
 def test_each_unsupported_setting_raises_on_its_own(
@@ -236,3 +260,13 @@ def test_extra_args_provider_chains_megadlms_and_bd_flags(
 
     args = parser.parse_args(["--difflm-varilen-prob", "0"])
     assert args.difflm_varilen_prob == 0.0
+
+
+def test_valid_nld_configurations_pass() -> None:
+    """The R11 setting, the I12 setting (w_ar = 0) and nld with complementary
+    masks pass."""
+    validate_bd_args(_valid_args(bd_objective="nld", bd_block_size=32))
+    validate_bd_args(
+        _valid_args(bd_objective="nld", bd_nld_ar_weight=0.0, bd_nld_diffusion_weight=1.0)
+    )
+    validate_bd_args(_valid_args(bd_objective="nld", bd_complementary_mask=1))

@@ -109,18 +109,22 @@ def compute_doc_ids(x0: Tensor, eod_id: int) -> Tensor:
     return c - is_eod
 
 
-def make_bd3_mask_mod(L: int, B: int, doc_ids: Tensor | None) -> _MaskMod:
+def make_bd3_mask_mod(
+    L: int, B: int, doc_ids: Tensor | None, clean_causal: bool = False
+) -> _MaskMod:
     """Build the BD3 mask_mod for the ``[noisy | clean]`` input of length 2L.
 
     Noisy queries attend to noisy keys in their own block and to clean keys of earlier blocks.
     Clean queries attend to clean keys of their own block and earlier blocks, so no clean query
-    attends to a noisy key. With doc_ids, a pair is allowed only when both positions have the same
-    document id.
+    attends to a noisy key. With ``clean_causal`` (objective nld, spec section 15), a clean query
+    attends only to clean keys at or before its own position, so the clean stream is an exact AR
+    model. With doc_ids, a pair is allowed only when both positions have the same document id.
 
     Args:
         L: Effective sequence length. Must be a multiple of B.
         B: Diffusion block size. Must be at least 1.
         doc_ids: Document ids with shape [b, L], or None to disable the document mask.
+        clean_causal: Token-causal instead of block-causal attention inside the clean stream.
 
     Returns:
         A function ``mask_mod(b, h, q_idx, kv_idx)`` that returns a boolean tensor. True means
@@ -141,7 +145,10 @@ def make_bd3_mask_mod(L: int, B: int, doc_ids: Tensor | None) -> _MaskMod:
         kv_blk = kv_pos // B
         n2n = q_noisy & kv_noisy & (q_blk == kv_blk)  # own noisy block, both directions
         n2c = q_noisy & ~kv_noisy & (kv_blk < q_blk)  # earlier clean blocks only
-        c2c = ~q_noisy & ~kv_noisy & (kv_blk <= q_blk)  # block-causal, full inside own block
+        if clean_causal:
+            c2c = ~q_noisy & ~kv_noisy & (kv_pos <= q_pos)  # token-causal (nld)
+        else:
+            c2c = ~q_noisy & ~kv_noisy & (kv_blk <= q_blk)  # block-causal, full inside own block
         allowed = n2n | n2c | c2c  # clean never attends to noisy
         if doc_ids is not None:
             # D-039: a noisy query takes the document of its block start, which the earlier clean
@@ -223,16 +230,20 @@ def _check_grid(mask_mod: _MaskMod, batch: int | None, q_len: int, kv_len: int) 
         raise ValueError(f"the mask is built for q_len = kv_len = {length}, got {q_len}, {kv_len}")
 
 
-def dense_bd3_reference(L: int, B: int, doc_ids_row: Sequence[int] | None) -> Tensor:
+def dense_bd3_reference(
+    L: int, B: int, doc_ids_row: Sequence[int] | None, clean_causal: bool = False
+) -> Tensor:
     """Build the BD3 mask for one row with plain Python loops.
 
-    The rules follow spec section 5, written per index pair. They do not reuse
-    ``make_bd3_mask_mod``, so the two can be compared (invariant I1).
+    The rules follow spec section 5 (and section 15 for ``clean_causal``), written per index
+    pair. They do not reuse ``make_bd3_mask_mod``, so the two can be compared (invariants I1
+    and I10).
 
     Args:
         L: Effective sequence length. Must be a multiple of B.
         B: Diffusion block size. Must be at least 1.
         doc_ids_row: Document id of each position (length L), or None.
+        clean_causal: Token-causal instead of block-causal attention inside the clean stream.
 
     Returns:
         Boolean tensor with shape [2L, 2L]. Entry [q, kv] is True when q may attend to kv.
@@ -256,10 +267,11 @@ def dense_bd3_reference(L: int, B: int, doc_ids_row: Sequence[int] | None) -> Te
             noisy_to_clean = q_noisy and not kv_noisy
             both_clean = not q_noisy and not kv_noisy
             own_noisy_block = both_noisy and q_blk == kv_blk
+            clean_visible = kv_pos <= q_pos if clean_causal else kv_blk <= q_blk
             allowed = (
                 own_noisy_block
                 or (noisy_to_clean and kv_blk < q_blk)
-                or (both_clean and kv_blk <= q_blk)
+                or (both_clean and clean_visible)
             )
             if allowed and docs is not None and not own_noisy_block:
                 # D-039: a noisy query uses the document of its block start.

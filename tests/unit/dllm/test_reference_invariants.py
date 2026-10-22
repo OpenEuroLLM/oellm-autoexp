@@ -28,6 +28,7 @@ from oellm_autoexp.dllm.reference import (
     ar_logits,
     bd3_dense_mask,
     bd3_logits,
+    nld_clean_logits,
 )
 from oellm_autoexp.dllm.targets import apply_doc_source_rule, prediction_sources
 
@@ -265,3 +266,27 @@ def test_dense_masks_reject_doc_ids_with_another_batch_size() -> None:
         bd3_dense_mask(8, 2, doc_ids, _BATCH)
     with pytest.raises(ValueError, match="doc_ids"):
         ar_dense_mask(8, doc_ids, _BATCH)
+
+
+@pytest.mark.parametrize("with_docs", [False, True], ids=["no-docs", "docs"])
+def test_i11_nld_clean_stream_is_the_ar_model(with_docs: bool) -> None:
+    """I11: with the token-causal clean stream, the clean logits equal the AR logits of x0,
+    whatever the noisy copy holds."""
+    length, block = 16, 4
+    model = _make_model()
+    x0 = _random_tokens(_BATCH, length, seed=21)
+    doc_ids = None
+    if with_docs:
+        x0 = _with_documents(x0, seed=22)
+        doc_ids = compute_doc_ids(x0, _EOD_ID)
+    gen = torch.Generator().manual_seed(23)
+    xt = torch.where(torch.rand(x0.shape, generator=gen) < 0.5, torch.full_like(x0, _MASK_ID), x0)
+    with torch.no_grad():
+        clean = nld_clean_logits(model, x0, xt, block_size=block, doc_ids=doc_ids)
+        ar = ar_logits(model, x0, doc_ids=doc_ids)
+        ids = torch.cat([xt, x0], dim=1)
+        positions = torch.arange(length).repeat(2).unsqueeze(0).expand(_BATCH, -1)
+        bd3_mask = bd3_dense_mask(length, block, doc_ids, _BATCH)
+        block_causal = model(ids, positions, bd3_mask)[:, length:]
+    torch.testing.assert_close(clean, ar, atol=1e-10, rtol=0)
+    assert not torch.allclose(block_causal, ar)  # bd3's block-causal clean stream is not AR

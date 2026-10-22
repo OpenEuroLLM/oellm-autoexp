@@ -4,7 +4,8 @@ The model implements the BD3/SDAR training formulation of the dllm-bd3-spec: the
 ``[xt, x0]`` (noisy copy, clean copy) of length 2L, RoPE uses position ``i mod L`` for both copies,
 attention follows the block-diffusion FlexAttention mask, and only the noisy copy (or, with token
 shift, the clean copy at block starts) predicts ``x0``. The ``ar`` objective runs the same weights
-as a causal model on ``x0`` alone.
+as a causal model on ``x0`` alone. The ``nld`` objective (spec section 15) makes the clean copy
+token-causal and adds its AR loss to the weighted block-diffusion loss, after an AR-only stage.
 
 ``forward`` returns ``(loss_sum, num_tokens, metrics)`` per micro-batch, where ``metrics`` maps a
 log key to a ``(numerator, denominator)`` pair. ``pretrain_block_difflm.loss_func`` reduces them.
@@ -95,15 +96,26 @@ class BlockDiffusionGPTModel(GPTModel):
         for example in a validation round of a resumed run, ``args.iteration`` holds the
         iteration of the loaded checkpoint.
         """
-        iteration = getattr(self.args, "curr_iteration", None)
-        if iteration is None:
-            iteration = getattr(self.args, "iteration", 0) or 0
         return block_size_at(
-            int(iteration),
+            self._iteration(),
             int(self.args.train_iters),
             self.block_schedule,
             int(self.args.bd_block_size),
         )
+
+    def _iteration(self) -> int:
+        """Return ``args.curr_iteration``, or ``args.iteration`` before the
+        training loop."""
+        iteration = getattr(self.args, "curr_iteration", None)
+        if iteration is None:
+            iteration = getattr(self.args, "iteration", 0) or 0
+        return int(iteration)
+
+    def nld_ar_stage(self) -> bool:
+        """Whether an nld training step is in its AR-only stage (spec section
+        15)."""
+        fraction = float(self.args.bd_nld_ar_only_fraction)
+        return self._iteration() < fraction * int(self.args.train_iters)
 
     def _noise_generator(self, device: torch.device) -> torch.Generator:
         """Return the training-noise generator (seed + 1000 * dp_rank, spec
@@ -144,15 +156,17 @@ class BlockDiffusionGPTModel(GPTModel):
         the forward and backward of one micro-batch before the next
         forward starts (stream order on one device).
         """
-        q_len = 2 * seq_len if objective == "bd3" else seq_len
+        q_len = seq_len if objective == "ar" else 2 * seq_len
         batch = None if doc_ids is None else doc_ids.shape[0]
         key = (objective, seq_len, block_size, batch, str(device))
         if key not in self._mask_cache:
             doc_buffer = None if doc_ids is None else doc_ids.clone()
-            if objective == "bd3":
-                mask_mod = make_bd3_mask_mod(seq_len, block_size, doc_buffer)
-            else:
+            if objective == "ar":
                 mask_mod = make_ar_mask_mod(seq_len, doc_buffer)
+            else:
+                mask_mod = make_bd3_mask_mod(
+                    seq_len, block_size, doc_buffer, clean_causal=objective == "nld"
+                )
             block_mask = None
             if doc_ids is None:
                 block_mask = build_block_mask(mask_mod, None, q_len, q_len, device)
@@ -264,7 +278,41 @@ class BlockDiffusionGPTModel(GPTModel):
             )
         if self.objective == "ar":
             return self._forward_ar(x0, target_ok)
+        if self.objective == "nld":
+            return self._forward_nld(x0, target_ok)
         return self._forward_bd3(x0, target_ok)
+
+    def _noise(
+        self, x0: Tensor, target_ok: Tensor, doc_ids: Tensor | None, block_size: int
+    ) -> tuple[Tensor, Tensor, Tensor | None, Tensor, Tensor, Tensor]:
+        """Draw the noisy copy for training (spec section 3) or validation
+        (section 9).
+
+        Returns:
+            ``(x0, target_ok, doc_ids, xt, masked, weight)``. With complementary masking the
+            first three are repeated on the batch axis. ``weight`` is ``p_block`` in training
+            and the validation block weight in eval mode.
+        """
+        args = self.args
+        if not self.training:
+            generator = self._validation_generator(x0.device)
+            xt, masked, block_weight = sample_validation_noise(
+                x0, block_size, self.mask_id, generator
+            )
+            return x0, target_ok, doc_ids, xt, masked, block_weight
+        generator = self._noise_generator(x0.device)
+        if int(args.bd_complementary_mask):
+            xt, masked, p_block = sample_complementary_noise(
+                x0, block_size, self.mask_id, args.bd_t_min, args.bd_t_max, generator
+            )
+            x0 = torch.cat([x0, x0], dim=0)
+            target_ok = torch.cat([target_ok, target_ok], dim=0)
+            doc_ids = torch.cat([doc_ids, doc_ids], dim=0) if doc_ids is not None else None
+            return x0, target_ok, doc_ids, xt, masked, p_block
+        xt, masked, p_block = sample_block_noise(
+            x0, block_size, self.mask_id, args.bd_t_min, args.bd_t_max, generator
+        )
+        return x0, target_ok, doc_ids, xt, masked, p_block
 
     def _forward_bd3(self, x0: Tensor, target_ok: Tensor) -> tuple[Tensor, Tensor, Metrics]:
         args = self.args
@@ -272,25 +320,8 @@ class BlockDiffusionGPTModel(GPTModel):
         block_size = self.current_block_size()
         token_shift = int(args.bd_token_shift)
         doc_ids = self._bd3_doc_ids(x0)
-
-        if self.training:
-            generator = self._noise_generator(x0.device)
-            if int(args.bd_complementary_mask):
-                xt, masked, p_block = sample_complementary_noise(
-                    x0, block_size, self.mask_id, args.bd_t_min, args.bd_t_max, generator
-                )
-                x0 = torch.cat([x0, x0], dim=0)
-                target_ok = torch.cat([target_ok, target_ok], dim=0)
-                doc_ids = torch.cat([doc_ids, doc_ids], dim=0) if doc_ids is not None else None
-            else:
-                xt, masked, p_block = sample_block_noise(
-                    x0, block_size, self.mask_id, args.bd_t_min, args.bd_t_max, generator
-                )
-        else:
-            generator = self._validation_generator(x0.device)
-            xt, masked, block_weight = sample_validation_noise(
-                x0, block_size, self.mask_id, generator
-            )
+        x0, target_ok, doc_ids, xt, masked, weight = self._noise(x0, target_ok, doc_ids, block_size)
+        p_block = block_weight = weight
 
         batch = x0.shape[0]
         block_mask = self._block_mask("bd3", seq_len, block_size, doc_ids, x0.device)
@@ -338,6 +369,61 @@ class BlockDiffusionGPTModel(GPTModel):
         metrics[key] = (loss_sum.detach() / LN2, num_tokens)
         return loss_sum, num_tokens, metrics
 
+    def _forward_nld(self, x0: Tensor, target_ok: Tensor) -> tuple[Tensor, Tensor, Metrics]:
+        """Hybrid step (spec section 15): AR loss of the token-causal clean
+        stream plus the weighted bd3 loss of the noisy stream, over the AR
+        token count; an AR-only stage first."""
+        if self.training and self.nld_ar_stage():
+            return self._forward_ar(x0, target_ok)
+        args = self.args
+        seq_len = x0.shape[1]
+        block_size = self.current_block_size()
+        token_shift = int(args.bd_token_shift)
+        doc_ids = self._bd3_doc_ids(x0)
+        x0, target_ok, doc_ids, xt, masked, weight = self._noise(x0, target_ok, doc_ids, block_size)
+
+        batch = x0.shape[0]
+        block_mask = self._block_mask("nld", seq_len, block_size, doc_ids, x0.device)
+        hidden = self._decode(torch.cat([xt, x0], dim=1), seq_len, block_mask)
+        src, base_has_src = self._sources(seq_len, block_size, token_shift, x0.device)
+        has_src = apply_doc_source_rule(base_has_src, doc_ids, token_shift, batch)
+        ce = self.compute_language_model_loss(x0, self._logits_at(hidden, src)).float()
+        scorable = scorable_positions(has_src, target_ok)
+        # AR term: the clean output at index L + i - 1 predicts x0[i].
+        ar_src, ar_has_src = ar_sources(seq_len, device=x0.device)
+        ar_ce = self.compute_language_model_loss(
+            x0, self._logits_at(hidden, ar_src + seq_len)
+        ).float()
+        ar_scorable = scorable_positions(ar_has_src.unsqueeze(0).expand(batch, -1), target_ok)
+        ar_sum, ar_count = ar_loss_terms(ar_ce, ar_scorable)
+        ar_weight = float(args.bd_nld_ar_weight)
+        diffusion_weight = float(args.bd_nld_diffusion_weight)
+
+        one = torch.ones((), device=x0.device)
+        if not self.training:
+            nelbo_sum, scored = validation_nelbo(ce, masked, weight, scorable)
+            loss_sum = ar_weight * ar_sum + diffusion_weight * nelbo_sum
+            metrics: Metrics = {
+                "lm loss": (loss_sum, ar_count),
+                "val nelbo bits/token": (nelbo_sum / LN2, scored),
+                "val ar bits/token": (ar_sum / LN2, ar_count),
+                "block size": (one * block_size, one),
+            }
+            return loss_sum, ar_count, metrics
+
+        terms = bd3_loss_terms(ce, masked, scorable, weight, block_size, args.bd_loss_weighting)
+        loss_sum = ar_weight * ar_sum + diffusion_weight * terms["loss_sum"]
+        metrics = {
+            "lm loss": (loss_sum.detach(), ar_count),
+            "ar loss": (ar_sum.detach(), ar_count),
+            "diffusion loss": (terms["loss_sum"].detach(), terms["num_tokens"]),
+            "masked ce": (terms["masked_ce_sum"].detach(), terms["num_targets"]),
+            "mask frac": (weight.sum().float(), one * weight.numel()),
+            "block size": (one * block_size, one),
+            "nelbo bits/token": (terms["elbo_sum"].detach() / LN2, terms["scored"]),
+        }
+        return loss_sum, ar_count, metrics
+
     # ------------------------------------------------------------------ diagnostics
 
     def ar_logits(self, x0: Tensor, doc_mask: bool = False) -> Tensor:
@@ -368,6 +454,24 @@ class BlockDiffusionGPTModel(GPTModel):
         block_mask = self._block_mask("bd3", seq_len, block_size, doc_ids, x0.device)
         hidden = self._decode(torch.cat([xt, x0], dim=1), seq_len, block_mask)
         src, _ = self._sources(seq_len, block_size, token_shift, x0.device)
+        logits = self._logits_at(hidden, src)
+        logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
+        return logits.transpose(0, 1).contiguous()
+
+    def nld_clean_logits(
+        self, x0: Tensor, xt: Tensor, block_size: int, doc_mask: bool = False
+    ) -> Tensor:
+        """Clean-stream logits of the nld input ``[xt, x0]`` [b, L, V]
+        (gathered over TP).
+
+        Output ``i`` predicts ``x0[i + 1]``. With the token-causal clean stream these equal
+        ``ar_logits(x0)`` whatever ``xt`` holds (invariant I11). Used by the parity check.
+        """
+        seq_len = x0.shape[1]
+        doc_ids = compute_doc_ids(x0, self.eod_id) if doc_mask else None
+        block_mask = self._block_mask("nld", seq_len, block_size, doc_ids, x0.device)
+        hidden = self._decode(torch.cat([xt, x0], dim=1), seq_len, block_mask)
+        src = torch.arange(seq_len, 2 * seq_len, device=x0.device)
         logits = self._logits_at(hidden, src)
         logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
         return logits.transpose(0, 1).contiguous()

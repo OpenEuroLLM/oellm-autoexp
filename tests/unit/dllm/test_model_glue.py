@@ -183,12 +183,15 @@ def _make_model(
     schedule: str = "",
     curr_iteration: int = 0,
     training: bool = True,
+    nld_ar_weight: float = 1.0,
+    nld_diffusion_weight: float = 0.3,
+    nld_ar_only_fraction: float = 0.2,
 ) -> BlockDiffusionGPTModel:
     """Build a model whose Megatron parts are fakes and whose attributes match
     ``__init__``.
 
     Args:
-        objective: ``"bd3"`` or ``"ar"``.
+        objective: ``"bd3"``, ``"ar"`` or ``"nld"``.
         block_size: The constant ``--bd-block-size``.
         token_shift: ``--bd-token-shift``.
         doc_mask: ``--bd-doc-mask``.
@@ -197,6 +200,9 @@ def _make_model(
         schedule: ``--bd-block-schedule``.
         curr_iteration: The current training iteration.
         training: Whether the model starts in training mode.
+        nld_ar_weight: ``--bd-nld-ar-weight``.
+        nld_diffusion_weight: ``--bd-nld-diffusion-weight``.
+        nld_ar_only_fraction: ``--bd-nld-ar-only-fraction``.
 
     Returns:
         The model, in the requested mode.
@@ -219,6 +225,9 @@ def _make_model(
         train_iters=100,
         curr_iteration=curr_iteration,
         seed=_SEED,
+        bd_nld_ar_weight=nld_ar_weight,
+        bd_nld_diffusion_weight=nld_diffusion_weight,
+        bd_nld_ar_only_fraction=nld_ar_only_fraction,
     )
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(0)
@@ -667,3 +676,79 @@ def test_block_size_before_the_first_step_uses_the_loaded_iteration() -> None:
     for loaded, expected_block in ((0, 4), (49, 4), (60, 8)):
         model.args.iteration = loaded
         assert model.current_block_size() == expected_block
+
+
+# ---------------------------------------------------------------------- objective nld (section 15)
+
+
+def _metric(metrics: dict, key: str) -> float:
+    numerator, denominator = metrics[key]
+    return float(numerator) / float(denominator)
+
+
+def test_nld_with_ar_weight_zero_gives_the_bd3_loss() -> None:
+    """I12: w_ar = 0, w_bd = 1 reproduces the bd3 loss of the same noise (B = 4 here)."""
+    labels = _random_labels(seed=901)
+    bd3 = _make_model(objective="bd3", curr_iteration=50)
+    nld = _make_model(
+        objective="nld", curr_iteration=50, nld_ar_weight=0.0, nld_diffusion_weight=1.0
+    )
+    bd3_loss, bd3_tokens, bd3_metrics = _run(bd3, labels)
+    nld_loss, nld_tokens, nld_metrics = _run(nld, labels)
+    assert torch.equal(nld_loss, bd3_loss)
+    assert float(nld_tokens) == float(bd3_tokens)
+    for key in ("masked ce", "mask frac", "nelbo bits/token"):
+        assert _metric(nld_metrics, key) == pytest.approx(_metric(bd3_metrics, key))
+
+
+def test_nld_ar_only_stage_is_the_ar_objective() -> None:
+    """I12: before ar_only_fraction * train_iters (20 of 100) a step is objective ar (R10)."""
+    labels = _random_labels(seed=902)
+    for iteration in (0, 19):
+        ar = _make_model(objective="ar", curr_iteration=iteration)
+        nld = _make_model(objective="nld", curr_iteration=iteration)
+        ar_loss, ar_tokens, ar_metrics = _run(ar, labels)
+        nld_loss, nld_tokens, nld_metrics = _run(nld, labels)
+        assert torch.equal(nld_loss, ar_loss)
+        assert float(nld_tokens) == float(ar_tokens)
+        assert set(nld_metrics) == set(ar_metrics)
+        assert nld.decoder.calls[-1].hidden_states.shape[0] == _L  # one stream, no [xt, x0]
+    joint = _make_model(objective="nld", curr_iteration=20)
+    _run(joint, labels)
+    assert joint.decoder.calls[-1].hidden_states.shape[0] == 2 * _L
+
+
+def test_nld_loss_is_weighted_ar_plus_diffusion_over_the_ar_count() -> None:
+    """Section 15: loss_sum = w_ar * ar_sum + w_bd * bd_sum, num_tokens = AR count."""
+    labels = _random_labels(seed=903)
+    x0 = labels[:, :-1]
+    model = _make_model(objective="nld", curr_iteration=60)
+    loss_sum, num_tokens, metrics = _run(model, labels)
+    # The fake decoder is the identity, so the clean output at L + i - 1 is the embedding of
+    # x0[i - 1]; the AR term is the cross entropy of its logits against x0[i].
+    hidden = model.embedding.table(x0).transpose(0, 1)
+    logits, _ = model.output_layer(hidden[:-1])
+    ar_ce = _fake_lm_loss(x0[:, 1:], logits)
+    ar_sum = ar_ce.sum()
+    assert float(num_tokens) == _BATCH * (_L - 1)
+    _assert_pair(metrics["ar loss"], float(ar_sum), _BATCH * (_L - 1))
+    diffusion_sum = float(metrics["diffusion loss"][0])
+    assert float(loss_sum) == pytest.approx(1.0 * float(ar_sum) + 0.3 * diffusion_sum, rel=1e-6)
+    _assert_pair(metrics["lm loss"], float(loss_sum), _BATCH * (_L - 1))
+
+
+def test_nld_block_mask_has_a_token_causal_clean_stream() -> None:
+    labels = _random_labels(seed=904)
+    model = _make_model(objective="nld", curr_iteration=60)
+    _run(model, labels)
+    mask = materialize_mask(model.decoder.calls[-1].block_mask.mask_mod, 1, 2 * _L, 2 * _L)
+    assert torch.equal(mask[0], dense_bd3_reference(_L, _BLOCK, None, clean_causal=True))
+    assert not torch.equal(mask[0], dense_bd3_reference(_L, _BLOCK, None))
+
+
+def test_nld_validation_reports_nelbo_and_ar_bits() -> None:
+    labels = _random_labels(seed=905)
+    model = _make_model(objective="nld", curr_iteration=0, training=False)
+    _, num_tokens, metrics = _run(model, labels)
+    assert {"lm loss", "val nelbo bits/token", "val ar bits/token", "block size"} == set(metrics)
+    assert float(num_tokens) == _BATCH * (_L - 1)

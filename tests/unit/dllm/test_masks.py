@@ -249,3 +249,35 @@ def test_noisy_rows_do_not_depend_on_tokens_of_their_own_block(length: int, bloc
                 )
                 rows.append(mask[0, k * block : (k + 1) * block])
             assert torch.equal(rows[0], rows[1]), f"block {k}, position {pos}"
+
+
+@pytest.mark.parametrize("use_docs", [False, True], ids=["no_docs", "docs"])
+@pytest.mark.parametrize(("length", "block"), _BD3_CASES)
+def test_nld_mask_matches_dense_reference(length: int, block: int, use_docs: bool) -> None:
+    """I10: the nld mask (token-causal clean stream) equals its Python-loop reference."""
+    x0 = _random_x0(length, _BATCH, seed=3000 * length + block + 1)
+    doc_ids = compute_doc_ids(x0, EOD_ID) if use_docs else None
+    expected = torch.stack(
+        [
+            dense_bd3_reference(length, block, row, clean_causal=True)
+            for row in _doc_rows(doc_ids, _BATCH)
+        ]
+    )
+    mask_mod = make_bd3_mask_mod(length, block, doc_ids, clean_causal=True)
+    assert torch.equal(materialize_mask(mask_mod, _BATCH, 2 * length, 2 * length), expected)
+
+
+@pytest.mark.parametrize(("length", "block"), [(16, 4), (24, 8), (32, 8)])
+def test_nld_clean_stream_is_the_ar_mask(length: int, block: int) -> None:
+    """Section 15: the clean-to-clean quadrant of the nld mask is the AR mask, and only the
+    clean-to-clean quadrant differs from bd3."""
+    x0 = _random_x0(length, 1, seed=4000 + length)
+    doc_ids = compute_doc_ids(x0, EOD_ID)
+    nld = materialize_mask(
+        make_bd3_mask_mod(length, block, doc_ids, True), 1, 2 * length, 2 * length
+    )
+    bd3 = materialize_mask(make_bd3_mask_mod(length, block, doc_ids), 1, 2 * length, 2 * length)
+    ar = materialize_mask(make_ar_mask_mod(length, doc_ids), 1, length, length)
+    assert torch.equal(nld[0, length:, length:], ar[0])
+    assert torch.equal(nld[0, :length], bd3[0, :length])
+    assert torch.equal(nld[0, length:, :length], bd3[0, length:, :length])

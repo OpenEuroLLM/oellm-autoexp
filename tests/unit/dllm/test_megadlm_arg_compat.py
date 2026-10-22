@@ -131,6 +131,12 @@ _BD_REQUIRED_FLAGS = (
     "--mask-token",
     "--difflm-varilen-prob",
 )
+# Flags that only nld jobs set; every nld job must set all of them (spec section 15).
+_NLD_REQUIRED_FLAGS = (
+    "--bd-nld-ar-weight",
+    "--bd-nld-diffusion-weight",
+    "--bd-nld-ar-only-fraction",
+)
 
 
 def _flag_values(command: str, launcher: str) -> dict[str, list[str]]:
@@ -166,7 +172,10 @@ def test_block_diffusion_jobs_set_their_flags_explicitly(
         return  # no launcher, or MegaDLMs' own launcher: no --bd-* flags
     for command in render_launch_commands(config_name, _CONFIG_DIR):
         values = _flag_values(command, launcher)
-        missing = [flag for flag in _BD_REQUIRED_FLAGS if not values.get(flag)]
+        required = list(_BD_REQUIRED_FLAGS)
+        if values.get("--bd-objective", [""])[-1] == "nld":
+            required += _NLD_REQUIRED_FLAGS
+        missing = [flag for flag in required if not values.get(flag)]
         assert not missing, f"{config_name}: missing explicit flags {missing}"
         varilen = values["--difflm-varilen-prob"][-1]
         assert float(varilen) == 0.0, f"{config_name}: --difflm-varilen-prob {varilen} != 0"
@@ -203,8 +212,8 @@ def test_extract_script_flags_requires_the_launcher_token() -> None:
 def test_bd_flags_are_accepted_only_by_the_block_diffusion_launcher() -> None:
     """--bd-* flags pass for pretrain_block_difflm.py and fail for MegaDLMs' pretrain_difflm.py.
 
-    The block launcher's --bd-* flags are exactly the --bd-* flags of _BD_REQUIRED_FLAGS, so a
-    new flag cannot be left out of the explicit-flag check.
+    The block launcher's --bd-* flags are exactly the --bd-* flags of _BD_REQUIRED_FLAGS and
+    _NLD_REQUIRED_FLAGS, so a new flag cannot be left out of the explicit-flag check.
     """
     block = parse_accepted_flags(
         REPO_ROOT / rel
@@ -212,7 +221,8 @@ def test_bd_flags_are_accepted_only_by_the_block_diffusion_launcher() -> None:
     )
     plain = parse_accepted_flags(REPO_ROOT / rel for rel in argparser_files_for(_LAUNCHER))
     bd_flags = {flag for flag in block if flag.startswith("--bd-")}
-    assert bd_flags == {flag for flag in _BD_REQUIRED_FLAGS if flag.startswith("--bd-")}
+    required = {flag for flag in _BD_REQUIRED_FLAGS if flag.startswith("--bd-")}
+    assert bd_flags == required | set(_NLD_REQUIRED_FLAGS)
     assert not bd_flags & plain
     assert "--mask-token" in block and "--mask-token" in plain
     with pytest.raises(ValueError):

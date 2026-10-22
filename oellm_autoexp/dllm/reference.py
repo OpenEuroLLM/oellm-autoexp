@@ -394,18 +394,21 @@ def _mask_device(doc_ids: Tensor | None, batch: int) -> torch.device | None:
     return doc_ids.device
 
 
-def bd3_dense_mask(L: int, B: int, doc_ids: Tensor | None, batch: int) -> Tensor:
+def bd3_dense_mask(
+    L: int, B: int, doc_ids: Tensor | None, batch: int, clean_causal: bool = False
+) -> Tensor:
     """Return the dense BD3 attention mask of the ``[noisy | clean]`` input.
 
-    The mask is ``materialize_mask(make_bd3_mask_mod(L, B, doc_ids), batch, 2L, 2L)``, following
-    spec section 5. It lives on the device of ``doc_ids``, or on the default device when
-    ``doc_ids`` is None.
+    The mask is ``materialize_mask(make_bd3_mask_mod(L, B, doc_ids, clean_causal), batch, 2L,
+    2L)``, following spec section 5 (section 15 for ``clean_causal``). It lives on the device of
+    ``doc_ids``, or on the default device when ``doc_ids`` is None.
 
     Args:
         L: Effective length L. Must be a multiple of B.
         B: Diffusion block size. Must be at least 1.
         doc_ids: Document ids with shape [batch, L], or None to disable the document mask.
         batch: Number of rows.
+        clean_causal: Token-causal clean stream (objective nld).
 
     Returns:
         A BoolTensor [batch, 2L, 2L]. True means that the query may attend to the key.
@@ -415,7 +418,8 @@ def bd3_dense_mask(L: int, B: int, doc_ids: Tensor | None, batch: int) -> Tensor
             [batch, L].
     """
     device = _mask_device(doc_ids, batch)
-    return materialize_mask(make_bd3_mask_mod(L, B, doc_ids), batch, 2 * L, 2 * L, device)
+    mask_mod = make_bd3_mask_mod(L, B, doc_ids, clean_causal=clean_causal)
+    return materialize_mask(mask_mod, batch, 2 * L, 2 * L, device)
 
 
 def ar_dense_mask(L: int, doc_ids: Tensor | None, batch: int) -> Tensor:
@@ -483,6 +487,44 @@ def bd3_logits(
     mask = bd3_dense_mask(seq_len, block_size, doc_ids, batch).to(x0.device)
     logits = model(ids, positions, mask)
     return logits.index_select(1, src)
+
+
+def nld_clean_logits(
+    model: RefModel,
+    x0: Tensor,
+    xt: Tensor,
+    block_size: int,
+    doc_ids: Tensor | None = None,
+) -> Tensor:
+    """Return the clean-stream logits of the nld input (spec section 15).
+
+    The model input is ``cat([xt, x0], 1)`` with duplicated positions and the nld mask
+    (token-causal clean stream). Output ``i`` is the model output at clean index ``L + i``, so it
+    predicts ``x0[i + 1]``, like :func:`ar_logits`.
+
+    Args:
+        model: The reference model.
+        x0: Clean token ids, LongTensor [b, L].
+        xt: Noisy token ids, LongTensor [b, L].
+        block_size: Diffusion block size B. L must be a multiple of B.
+        doc_ids: Document ids with shape [b, L], or None to disable the document mask.
+
+    Returns:
+        Logits with shape [b, L, vocab_size].
+
+    Raises:
+        ValueError: If x0 is not 2-D or xt does not have the shape of x0.
+    """
+    if x0.dim() != 2 or xt.shape != x0.shape:
+        raise ValueError(
+            f"x0 and xt must have the same shape [b, L], got {tuple(x0.shape)} and "
+            f"{tuple(xt.shape)}"
+        )
+    batch, seq_len = x0.shape
+    ids = torch.cat([xt, x0], dim=1)
+    positions = _duplicated_positions(batch, seq_len, x0.device)
+    mask = bd3_dense_mask(seq_len, block_size, doc_ids, batch, clean_causal=True).to(x0.device)
+    return model(ids, positions, mask)[:, seq_len:]
 
 
 def ar_logits(model: RefModel, x0: Tensor, doc_ids: Tensor | None = None) -> Tensor:

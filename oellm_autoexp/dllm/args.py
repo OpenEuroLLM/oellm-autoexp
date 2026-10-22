@@ -11,6 +11,13 @@ from __future__ import annotations
 import argparse
 import types
 
+# Defaults of the nld flags (spec section 15). Other objectives must leave them at these values.
+NLD_DEFAULTS = {
+    "bd_nld_ar_weight": 1.0,
+    "bd_nld_diffusion_weight": 0.3,
+    "bd_nld_ar_only_fraction": 0.2,
+}
+
 
 def add_bd_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Add the block-diffusion flags to an argument parser.
@@ -25,9 +32,10 @@ def add_bd_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     group.add_argument(
         "--bd-objective",
         type=str,
-        choices=["bd3", "ar"],
+        choices=["bd3", "ar", "nld"],
         default="bd3",
-        help="training objective: bd3 block diffusion or ar causal next-token prediction",
+        help="training objective: bd3 block diffusion, ar causal next-token prediction, or nld "
+        "(AR loss on a token-causal clean stream plus weighted block diffusion, spec section 15)",
     )
     group.add_argument(
         "--bd-block-size",
@@ -86,6 +94,24 @@ def add_bd_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         type=int,
         default=1234,
         help="seed for the deterministic validation masks (monitoring only)",
+    )
+    group.add_argument(
+        "--bd-nld-ar-weight",
+        type=float,
+        default=NLD_DEFAULTS["bd_nld_ar_weight"],
+        help="nld only: weight of the AR cross entropy of the clean stream",
+    )
+    group.add_argument(
+        "--bd-nld-diffusion-weight",
+        type=float,
+        default=NLD_DEFAULTS["bd_nld_diffusion_weight"],
+        help="nld only: weight of the block-diffusion loss of the noisy stream",
+    )
+    group.add_argument(
+        "--bd-nld-ar-only-fraction",
+        type=float,
+        default=NLD_DEFAULTS["bd_nld_ar_only_fraction"],
+        help="nld only: fraction of the iterations that train the plain ar objective first",
     )
     return parser
 
@@ -149,9 +175,29 @@ def validate_bd_args(args: argparse.Namespace | types.SimpleNamespace) -> None:
 
     schedule = parse_block_schedule(args.bd_block_schedule)
     validate_block_sizes(args.seq_length - 1, args.bd_block_size, schedule)
+    nld = {name: getattr(args, name, default) for name, default in NLD_DEFAULTS.items()}
+    if args.bd_objective == "nld":
+        ar_weight = nld["bd_nld_ar_weight"]
+        diffusion_weight = nld["bd_nld_diffusion_weight"]
+        if ar_weight < 0 or diffusion_weight < 0 or ar_weight + diffusion_weight == 0:
+            raise ValueError(
+                "nld needs non-negative loss weights that are not both 0, got "
+                f"ar {ar_weight} and diffusion {diffusion_weight}"
+            )
+        fraction = nld["bd_nld_ar_only_fraction"]
+        if not 0.0 <= fraction < 1.0:
+            raise ValueError(f"--bd-nld-ar-only-fraction must be in [0, 1), got {fraction}")
+    else:
+        changed = [
+            "--" + name.replace("_", "-")
+            for name, default in NLD_DEFAULTS.items()
+            if nld[name] != default
+        ]
+        if changed:
+            raise ValueError(f"{changed} apply to --bd-objective nld only")
     if args.bd_complementary_mask == 1:
-        if args.bd_objective != "bd3":
-            raise ValueError("--bd-complementary-mask 1 requires --bd-objective bd3")
+        if args.bd_objective not in ("bd3", "nld"):
+            raise ValueError("--bd-complementary-mask 1 requires --bd-objective bd3 or nld")
         block_sizes = [args.bd_block_size, *(size for _, size in schedule)]
         if min(block_sizes) < 2:
             raise ValueError(
