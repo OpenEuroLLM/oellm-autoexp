@@ -1,0 +1,6 @@
+# @package backend
+# Method preset fastdllm_v2 (D-055): Fast-dLLM v2: block size 32, complementary masks, token shift 1 (AR next-token alignment).
+# Sets the --bd-* flags (backend.aux.bd_args); the other settings are the R00 base. Compose it
+# into an experiment's defaults list before its size override (see qwen3_<size>_fastdllm_v2.yaml).
+aux:
+  bd_args: "--bd-objective bd3 --bd-block-size 32 --bd-block-schedule none --bd-token-shift 1 --bd-complementary-mask 1 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"

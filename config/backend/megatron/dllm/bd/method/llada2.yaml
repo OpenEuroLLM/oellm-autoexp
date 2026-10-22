@@ -1,0 +1,6 @@
+# @package backend
+# Method preset llada2 (D-055): LLaDA2.0: block-size warmup-stable-decay (2 -> 2048 = full sequence -> 32) with complementary masks; the top-k checkpoint merge and the confidence loss are not implemented.
+# Sets the --bd-* flags (backend.aux.bd_args); the other settings are the R00 base. Compose it
+# into an experiment's defaults list before its size override (see qwen3_<size>_llada2.yaml).
+aux:
+  bd_args: "--bd-objective bd3 --bd-block-size 32 --bd-block-schedule 0:2,0.02:4,0.04:16,0.06:64,0.08:256,0.1:2048,0.8:32 --bd-token-shift 0 --bd-complementary-mask 1 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"

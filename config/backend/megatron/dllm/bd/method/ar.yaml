@@ -1,0 +1,6 @@
+# @package backend
+# Method preset ar (D-055): AR control: next-token cross entropy, the same weights as a causal model.
+# Sets the --bd-* flags (backend.aux.bd_args); the other settings are the R00 base. Compose it
+# into an experiment's defaults list before its size override (see qwen3_<size>_ar.yaml).
+aux:
+  bd_args: "--bd-objective ar --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"

@@ -1,4 +1,5 @@
-"""Every tier 0 and tier 1 job runs the configuration that its run name states.
+"""Every tier 0, tier 1 and method-preset job runs the configuration that its
+run name states.
 
 Run names (.claude/dllm/ABLATIONS.md) key the RESULTS.md tables through collect_results.py, so a
 name that disagrees with the job's flags would report a result under the wrong factor. The jobs
@@ -26,6 +27,10 @@ _CONFIG_DIR = REPO_ROOT / "config"
 _TIER_CONFIGS = (
     "experiments/dllm/bd/tier0_qwen3_0.6B",
     "experiments/dllm/bd/tier1_qwen3_0.6B",
+    *(
+        f"experiments/dllm/bd/{path.stem}"
+        for path in sorted((_CONFIG_DIR / "experiments/dllm/bd").glob("qwen3_*_*.yaml"))
+    ),
 )
 _BASE_GLOBAL_BATCH = 256  # PARAMS training.global_batch_size
 _L = 2048  # PARAMS training.seq_length_effective
@@ -83,6 +88,11 @@ def test_tier_job_flags_match_their_run_names(
         assert "--calculate-per-token-loss" in flags, name
         if run["objective"] == "ar":
             continue
+        if run["objective"] == "nld":  # spec section 15; the AR weight is always 1.0
+            assert float(flags["--bd-nld-ar-weight"]) == 1.0, name
+            diffusion_weight = float(flags["--bd-nld-diffusion-weight"])
+            assert diffusion_weight == run["diffusion_weight"], name
+            assert float(flags["--bd-nld-ar-only-fraction"]) == run["ar_only_fraction"], name
         assert int(flags["--bd-block-size"]) == run["block_size"], name
         assert int(flags["--bd-token-shift"]) == run["token_shift"], name
         assert int(flags["--bd-complementary-mask"]) == run["complementary"], name

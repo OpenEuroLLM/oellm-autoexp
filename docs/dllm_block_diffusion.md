@@ -26,6 +26,10 @@ For a training sequence of effective length `L` (Megatron `seq_length = L + 1`) 
 - Validation: a deterministic estimator (`--bd-val-seed`) reports `val nelbo bits/token`, an
   upper bound of the NLL that is comparable across block sizes and with AR NLL.
 - `--bd-objective ar` trains the same weights as a causal model (the AR control).
+- `--bd-objective nld` (NLD-style hybrid) makes the clean copy token-causal, so the model keeps
+  an exact AR mode, and trains `AR cross entropy + 0.3 x block-diffusion loss` over the AR token
+  count (`--bd-nld-ar-weight`, `--bd-nld-diffusion-weight`), after an AR-only stage
+  (`--bd-nld-ar-only-fraction 0.2`). It is evaluated in diffusion mode and in AR mode.
 
 The normative description is the dllm-bd3-spec (spec sections are cited in the code).
 
@@ -70,7 +74,9 @@ offline to `<run dir>/wandb`; upload them with `wandb sync`.
 
 `--bd-objective {bd3,ar}`, `--bd-block-size N`, `--bd-block-schedule "0:4,0.15:8"`,
 `--bd-token-shift {0,1}`, `--bd-complementary-mask {0,1}`, `--bd-loss-weighting {elbo,uniform}`,
-`--bd-t-min F`, `--bd-t-max F`, `--bd-doc-mask {0,1}`, `--bd-val-seed N`. The MegaDLMs flags go in
+`--bd-t-min F`, `--bd-t-max F`, `--bd-doc-mask {0,1}`, `--bd-val-seed N`, and for
+`--bd-objective nld` also `--bd-nld-ar-weight F`, `--bd-nld-diffusion-weight F` and
+`--bd-nld-ar-only-fraction F`. The MegaDLMs flags go in
 `backend.aux.difflm_args` (at least `--mask-token 151669 --difflm-varilen-prob 0`), the `--bd-*`
 flags in `backend.aux.bd_args`. Stock Megatron keys go under `backend.megatron`.
 
@@ -134,18 +140,35 @@ A job resubmitted with the same config resumes from its last checkpoint.
 |---|---|
 | `probe_qwen3` | 20-iteration throughput probe; size, TP and micro batch as overrides |
 | `tier0_qwen3_0.6B` | learning rates 1e-5, 3e-5, 1e-4 at 0.5B tokens (list sweep, `--array-subset i`) |
-| `tier1_qwen3_0.6B` | R00-R10 at 2B tokens (one factor at a time, AR control R10) |
+| `tier1_qwen3_0.6B` | R00-R11 at 2B tokens (one factor at a time, AR control R10, nld hybrid R11) |
 
 Run names follow `bd3-q3_<size>-B<B>-sh<shift>-cm<comp>-w<weight>-t<tmin>_<tmax>-dm<doc>-sc<schedule>-lr<lr>-T<tokens>`
-(schedule `0:4,0.15:8` is written `0-4_0.15-8`) and `ar-q3_<size>-lr<lr>-T<tokens>`; a test checks
-that every tier job's flags match its name. With complementary masking the global and micro batch
+(schedule `0:4,0.15:8` is written `0-4_0.15-8`), `ar-q3_<size>-lr<lr>-T<tokens>`, and
+`nld-q3_<size>-B<B>-sh<shift>-a<diffusion weight>-ao<AR-only fraction>-lr<lr>-T<tokens>`; a test
+checks that every tier job's flags match its name. With complementary masking the global and micro batch
 are halved, so the FLOPs per step match the base run.
+
+Method presets combine these knobs (`config/backend/megatron/dllm/bd/method/`), one experiment
+per size and method (`qwen3_<size>_<method>.yaml`, 0.6B to 8B):
+
+| Preset | Settings (rest: B = 8, shift 0, ELBO weights, t in [0, 1], doc mask on) |
+|---|---|
+| `ar` | causal AR control |
+| `sdar` | B = 4 |
+| `bd3lm` | B = 4, clipped noise t in [0.45, 0.95] |
+| `fastdllm_v2` | B = 32, token shift 1, complementary masks |
+| `llada2` | block-size schedule 2 -> 2048 (full sequence) -> 32, complementary masks |
+| `mdlm` | B = L = 2048 (masked diffusion over the whole sequence; the clean copy is unused) |
+| `nld` | hybrid AR + 0.3 x block diffusion, B = 32, 20 percent AR-only |
+
+With complementary masks, the global and micro batch are halved (same FLOPs per step).
 
 ## Evaluation
 
 | Metric | Tool |
 |---|---|
 | M1 NELBO bits/token (AR: exact NLL) on 1000 held-out sequences | `python -m oellm_autoexp.dllm.eval.eval_nelbo` |
+| AR-mode M1 of nld runs (exact NLL of the clean stream) | `eval_nelbo --objective ar`, `<run>.m1_ar.json` |
 | M2 GSM8K 4-shot accuracy, static and dynamic@0.9 decoding | `python -m oellm_autoexp.dllm.eval.eval_gsm8k` |
 | M3 tokens per forward at dynamic@0.9 | `eval_gsm8k` output |
 | M4 training tokens/s/GPU | `bd throughput` lines in the training log |
@@ -172,8 +195,10 @@ pytest tests/unit/dllm tests/integration/test_dllm_config_feasibility.py
 They cover the spec invariants on CPU: I1 masks against a loop reference, I2 equal N- and C-stream
 outputs without masking, I3 bd3 with block size 1 and shift 1 equals AR, I4 noise, I5 sources,
 I6 deterministic validation, I7 exact converter round trip at TP 1 and 2, I8 sampler with block
-size 1 equals AR greedy decoding, and I9 every flag of every dllm experiment is accepted by the
-launcher's argparser.
+size 1 equals AR greedy decoding, I9 every flag of every dllm experiment is accepted by the
+launcher's argparser, I10 the nld mask against a loop reference, I11 the nld clean stream equals
+the AR model (and HF Qwen3 in the GPU parity check), and I12 the nld loss reduces to the bd3 loss
+(AR weight 0) and to the AR loss (AR-only stage).
 
 ## Known limits (v1)
 

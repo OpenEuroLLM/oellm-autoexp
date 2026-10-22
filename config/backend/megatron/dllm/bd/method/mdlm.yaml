@@ -1,0 +1,6 @@
+# @package backend
+# Method preset mdlm (D-055): MDLM: masked diffusion over the whole sequence, block size = L = 2048 (the clean copy is computed but unused, so FLOPs per token are 2x MegaDLMs' native single-stream path; D-055).
+# Sets the --bd-* flags (backend.aux.bd_args); the other settings are the R00 base. Compose it
+# into an experiment's defaults list before its size override (see qwen3_<size>_mdlm.yaml).
+aux:
+  bd_args: "--bd-objective bd3 --bd-block-size 2048 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
