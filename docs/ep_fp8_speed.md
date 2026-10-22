@@ -757,6 +757,15 @@ GPUs / 4 = 128 at 128 nodes, so gbs 2048 is 16 samples = **8 micro-batches per p
 nodes is gbs 8192. The 8-node reference of the same config at gbs 512 (32 micro-batches):
 **5,813 tok/s/GPU**; the like-for-like 8-node point for gbs 2048 at 128 nodes is gbs 128.
 
+**s128 result** (2026-10-22, job 47792257, 9 min; the first attempt died on the bad GPU of
+as07r4b02): **4,803 tok/s/GPU, 82.3 TFLOP/s, 13.6 s / step** (steady from step 3), loss 12.9 ->
+9.45 in 10 steps, **41 GiB in use on every stage** (non-PyTorch 5.8-5.9 GiB; 40B Engram tables at
+0.94 GB per GPU). vs 8 nodes at gbs 512 (5,813): -17 %, of which the bubble (3/16 vs 3/64 at
+VPP2: 1.047 / 1.1875 -> ~5,130 expected) is ~-12 % and scale (gradient sync over 128 replicas,
+Engram exchanges over 128 ranks per stage) ~-6 %. The ~20 GiB of free memory per GPU at this
+scale (fewer micro-batches in flight than at gbs 512 on 8 nodes, smaller shards) is what makes
+less recompute, fewer pipeline stages or more virtual stages possible there.
+
 **Bad-node auto-exclusion** (config/slurm/marenostrum_autoexclude.yaml, after the JUPITER one;
 the speed suites use it): a shared list on the cluster (mn5_exclude_nodes.txt in $HYBRID_ENV),
 read by oc.exclude_nodes and re-read at render; written by the in-job watchdog, where each node
