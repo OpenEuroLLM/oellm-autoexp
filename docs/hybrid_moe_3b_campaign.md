@@ -2631,3 +2631,45 @@ EP-2 mHC-4 speed reference (29.1k):
 At matched total params (whole experts traded for the internal attention), no IAT variant beats
 mHC-4, all are slower; the paper's full-width variant is worse than the plain residual here.
 **Decision: mHC-4 stays the residual.**
+
+### 12.11 AngularMuown at s2, expert offloading, CKLSTM status (2026-10-22)
+
+**AngularMuown decay, s2 confirmation** (`screen5udadapt_s2`, p = 1/2 at direction step 0.1, one job
+through the cooldown; paired with `screen5udcool_s2`'s p = 1 branch; + = worse):
+
+| s2 arm | 4000-4200 (stable end) | 4700-4800 (cooled) |
+|---|---:|---:|
+| p = 1/2, direction step 0.2 | +0.058 | **+0.008** |
+| p = 1/2, direction step 0.1 | +0.034 | +0.023 |
+
+The s1 recommendation (step 0.1) does not hold at s2: the larger step gains more from the cooldown
+and ends ahead. The direction step's optimum moves with size; no p = 1/2 setting matches p = 1
+at this horizon yet. Next: the PR's `angular_muown_simplified` (independent C/t direction rate)
+and `muown_classical` (Megatron feat/angular-muown-simplified; our `muown` keeps its name).
+
+**Expert offloading by MoE granularity** (`trace5_s{1,2}`, Megatron router_trace.py; decode at
+batch 1, a GPU cache holding a share f of all expert bytes, 16 sequences x 2048 tokens per layer;
+`expert_cache_sim.py`):
+
+| model | LRU f = 0.05 / 0.1 / 0.2 / 0.3 / 0.5 | static pinning f = 0.1 / 0.3 / 0.5 | prev-token reuse | experts touched per 256 tokens |
+|---|---|---|---:|---:|
+| s1 144 x w top-3 | 0.25 / 0.37 / 0.54 / 0.66 / 0.83 | 0.18 / 0.41 / 0.61 | 0.17 | 0.75 |
+| s1 288 x w/2 top-6 | 0.24 / 0.37 / 0.54 / 0.66 / 0.84 | 0.17 / 0.40 / 0.61 | 0.17 | 0.76 |
+| s2 144 x w top-3 | 0.21 / 0.33 / 0.50 / 0.63 / 0.82 | 0.13 / 0.38 / 0.59 | 0.14 | 0.79 |
+| s2 288 x w/2 top-6 | 0.24 / 0.36 / 0.53 / 0.65 / 0.83 | 0.15 / 0.38 / 0.60 | 0.16 | 0.78 |
+
+- **Granularity is not an offloading tie-breaker:** equal at s1, ×2 slightly better at s2
+  (+0.02-0.03 LRU hit rate at small caches).
+- **Caching itself buys little at a small cache:** consecutive tokens share only 14-17 % of their
+  experts (7-8x random) and a 256-token window touches ~3/4 of all experts. LRU beats static
+  pinning (the balanced router flattens frequencies). A GPU cache of 30 % of the expert bytes
+  serves ~2/3 of the expert reads; the rest stream from host memory.
+
+**CKLSTM vs CKDA so far** (paired gap vs CKDA h5_moe; the true signed arms were stopped early):
+
+| | s1 | s2 | s3 |
+|---|---:|---:|---:|
+| KronLSTM paper gates, low-rank | +0.009 (4000) | +0.002 (3170) | -0.002 (4000) |
+| polar forget + erase (sign unused: effectively unsigned) | +0.003 | -0.002 | -0.003 |
+| signed f, beta in [0, 2], unit write, full-rank gate | +0.013 (2320) | +0.030 (1480) | +0.021 (2490) |
+| CKDA + mHC-4 (reference) | -0.051 | -0.040 | -0.037 |
