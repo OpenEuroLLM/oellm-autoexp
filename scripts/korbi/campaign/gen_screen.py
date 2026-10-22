@@ -1193,6 +1193,21 @@ def arms5iat(size: str = "s1"):
               "job.est_steps": 300, **BAD_NODES})]
 
 
+def arms5ssmax(size: str = "s2"):
+    """Scalable-Softmax in training (user 2026-10-22; Megatron 754aebf15): every attention layer's
+    query i scaled by s_h log n_i (n_i: its position in its document + 1, restarting per packed
+    document; s per head, init 1 / log 8192 = 0.111, so the scale is 1 at 8k and below 1 for
+    shorter contexts), on our recipe (CKDA 5:1 + mHC-4). Pairs with round 5's h5_moe_mhc4 of the
+    size (same data order / protocol, exit at 4000); then retrieval to 32k of both (ds5ssmax): does
+    training with SSMax beat eval-time log-n (s3: mHC-4 0.76 -> 0.90 kvret at 32k)?"""
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    w = {B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]}
+    return [("h5_moe_mhc4_ssmax", "CKDA 5:1 + mHC-4 + SSMax (s_h log n per head, init 1/log 8192)",
+             {**mhc4, **w, B + "attention_length_scaling": "ssmax",
+              B + "attention_length_scaling_base": 8192, **BAD_NODES})]
+
+
 def arms5udadapt(size: str = "s1"):
     """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
     the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
@@ -1384,6 +1399,7 @@ def write5():
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5iat", arms5iat("s1")),
+            ("s2", "screen5ssmax", arms5ssmax("s2")),
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             ("s2", "screen5udadapt", arms5udadapt("s2")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
