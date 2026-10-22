@@ -754,6 +754,15 @@ the dedup; built if the 128-node run shows the exchange matters.
 gbs 512 on 8 nodes), Engram 40B, 10 steps, QOS acc_xehpc (acc_ehpc caps jobs at 100 nodes).
 8-node reference (same config, 21.8B tables): **5,813 tok/s/GPU**.
 
+**Bad-node auto-exclusion** (config/slurm/marenostrum_autoexclude.yaml, after the JUPITER one;
+the speed suites use it): a shared list on the cluster (mn5_exclude_nodes.txt in $HYBRID_ENV),
+read by oc.exclude_nodes and re-read at render; written by the in-job watchdog, where each node
+records itself when its GPU probe at the start fails or when the job log shows a hardware-
+signature CUDA error on its own ranks only (rank // 4 = node: torchrun --node-rank
+$SLURM_NODEID) with no MoonEP barrier trap. Checked on this week's failure logs: the 128-node
+attempt and o16 -> as07r4b02, o14b -> as04r5b05; the MoonEP-trap runs (o13, o15) and an OOM ->
+nothing. Seeded with the 5 bad nodes found 2026-10-21/22.
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
