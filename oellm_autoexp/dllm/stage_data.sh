@@ -56,8 +56,19 @@ for arg in "${ARGS[@]}"; do
     LOCAL_OF["$arg"]=""
   fi
 done
-if [ "${#LOCAL_OF[@]}" -eq 0 ] || ! base="$(local_scratch)"; then
-  echo "[stage_data] no dataset prefix or no node-local scratch: reading the original paths"
+if [ "${#LOCAL_OF[@]}" -eq 0 ]; then
+  echo "[stage_data] no dataset prefix in the command: nothing to stage"
+  exec "${ARGS[@]}"
+fi
+if ! base="$(local_scratch)"; then
+  candidate="/scratch-local/${USER:-unknown}.${SLURM_JOB_ID:-unknown}"
+  if [ -d "$candidate" ]; then
+    detail="$candidate is on $(stat -f -c %T "$candidate")"
+  else
+    detail="$candidate does not exist"
+  fi
+  echo "[stage_data] no node-local scratch ($detail; TMPDIR=${TMPDIR:-unset}):" \
+    "reading the original paths"
   exec "${ARGS[@]}"
 fi
 
