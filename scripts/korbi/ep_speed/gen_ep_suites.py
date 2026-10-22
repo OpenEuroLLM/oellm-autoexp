@@ -1513,6 +1513,31 @@ def ckpt_offload():
     arm("s8_cand22", "8-node reference of s128: gbs 512, angular MuOwn, candidate, Engram 21.8B",
         base, hyb, moon, off, ctx16, mbs2, fused, eng2x, memb, cand, addmm, sparse, muown,
         {B + "train_iters": 10, "aux.array_tag": "_moonofffused_s8"})
+    # s128 round 2 (user 2026-10-22: account cns144, 5000 GPU-h, "close to 5800 tok/s/GPU
+    # again"; larger mbs and gbs allowed, up to 8192 = 134M tokens / step): 128 nodes, DP 128
+    cns = {"slurm.sbatch.account": "cns144", "slurm.sbatch.qos": "acc_xehpc"}
+    def big2(gbs, mbs=2, iters=10):
+        return dict(big, **cns, **{"aux.gbs": gbs, B + "micro_batch_size": mbs,
+                                   B + "train_iters": iters})
+    s128 = (base, hyb, moon, off, ctx16, mbs2, fused, eng40, memb, cand, addmm, sparse, muown)
+    arm("s128_g8192", "128 nodes, gbs 8192 (32 micro-batches / pipeline, as 8 nodes at 512)",
+        *s128, big2(8192, 2, 8), {"aux.array_tag": "_s128_g8192"})
+    arm("s128_g8192_m4", "128 nodes, gbs 8192, mbs 4 (16 / pipeline)", *s128, big2(8192, 4, 8),
+        {"aux.array_tag": "_s128_g8192m4"})
+    arm("s128_g4096_m4", "128 nodes, gbs 4096, mbs 4 (8 / pipeline: the mbs effect at 2048's count)",
+        *s128, big2(4096, 4), {"aux.array_tag": "_s128_g4096m4"})
+    arm("s128_bf16red", "128 nodes, gbs 2048, gradient reduction in bf16 (half the DP traffic)",
+        *s128, big2(2048), {B + "grad_reduce_in_bf16": True, "aux.array_tag": "_s128_bf16red"})
+    # VPP4: 16 chunks (4,3,...,3,2): 13 / 12 / 12 / 11 + head per stage; Engram before blocks 1
+    # and 24 stays on stages 0 and 3 (chunks 0 and 7)
+    pat_v4 = vpp_pattern("LLLLL*" * 8, (4,) + (3,) * 14 + (2,))
+    arm("s128_vpp4", "128 nodes, gbs 2048, PP4 x VPP4 (bubble 3/32 instead of 3/16)", *s128,
+        big2(2048), {"aux.pattern": with_engram(pat_v4, (1, 24)), "aux.array_tag": "_s128_vpp4"})
+    arm("s128_skip1", "128 nodes, gbs 2048, no recompute of the last chunk on every stage", *s128,
+        big2(2048), {"backend.env.RECOMPUTE_SKIP_CHUNKS": "1,1,1,1", "aux.array_tag": "_s128_skip1"})
+    arm("p_s128", "profile: 128 nodes, gbs 2048 (ranks 0 / 511, steps 5-6)", *s128, big2(2048, 2, 7),
+        {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 511],
+         B + "profile_step_start": 5, B + "profile_step_end": 6, "aux.array_tag": "_s128_prof"})
     # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
     # what is left in mHC after the stride fix
     prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
