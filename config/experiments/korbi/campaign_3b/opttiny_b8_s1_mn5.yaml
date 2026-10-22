@@ -126,6 +126,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -135,7 +136,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # tiny 7:1 + mHC-4, gbs 8: am_p05
         - aux.arm: am_p05
           backend.megatron.num_attention_heads: 3
@@ -211,6 +211,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -220,7 +221,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_u_decay_p: 0.5
         # tiny 7:1 + mHC-4, gbs 8: am_p0_s02
         - aux.arm: am_p0_s02
@@ -297,6 +297,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -306,7 +307,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_u_decay_p: 0.0
         # tiny 7:1 + mHC-4, gbs 8: am_p0_s005
         - aux.arm: am_p0_s005
@@ -383,6 +383,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -392,7 +393,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_u_decay_p: 0.0
           backend.megatron.angular_muown_extra_scale_factor: 0.05
         # tiny 7:1 + mHC-4, gbs 8: am_radius
@@ -470,6 +470,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -479,7 +480,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_u_decay_schedule: radius
           backend.megatron.angular_muown_u_decay_scale: 0.0074
           backend.megatron.angular_muown_u_radius_lambda: 0.083
@@ -558,6 +558,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -567,7 +568,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_c: 8.0
           backend.megatron.angular_muown_cooldown_fraction: 0.1
           backend.megatron.angular_muown_cooldown_end_ratio: 0.1
@@ -646,6 +646,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -655,7 +656,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_c: 22.0
           backend.megatron.angular_muown_cooldown_fraction: 0.1
           backend.megatron.angular_muown_cooldown_end_ratio: 0.1
@@ -734,6 +734,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -743,7 +744,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # tiny 7:1 + mHC-4, gbs 8: muown_cl_wd01
         - aux.arm: muown_cl_wd01
           backend.megatron.num_attention_heads: 3
@@ -819,6 +819,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -828,7 +829,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.muown_classical_v_weight_decay: 0.1
         # tiny 7:1 + mHC-4, gbs 8: muown_cl_wd001
         - aux.arm: muown_cl_wd001
@@ -905,6 +905,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -914,7 +915,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.muown_classical_v_weight_decay: 0.01
         # tiny 7:1 + mHC-4, gbs 8: muon_wd
         - aux.arm: muon_wd
@@ -991,6 +991,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -1000,7 +1001,6 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.muon_extra_scale_factor: 0.2
           backend.megatron.muon_momentum: 0.95
           backend.megatron.muon_nesterov: true
@@ -1080,6 +1080,7 @@ sweep:
           job.est_steps: 100000
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
           slurm.sbatch.cpus_per_task: 40
@@ -1089,5 +1090,4 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.weight_decay: 0.1

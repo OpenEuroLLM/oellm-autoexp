@@ -1360,7 +1360,13 @@ def arms5tiny(gbs: int = 8, smoke: bool = False):
             B + "eval_interval": max(steps // 50, 100), B + "eval_iters": 10, B + "log_interval": 20,
             B + "non_persistent_save_interval": 5000,
             "job.est_steps": 300 if smoke else steps, "job.est_step_time_s": 0.08,
-            "slurm.sbatch.time": "12:00:00", **ONE_GPU, **BAD_NODES}
+            "slurm.sbatch.time": "12:00:00", **BAD_NODES}
+    if smoke:
+        # the smoke builds the data index on a full node: a 1-GPU job's quarter of the host memory
+        # OOMs in the 452-prefix index build; the 1-GPU arms then only read it (mmap)
+        tiny[B + "micro_batch_size"] = gbs // 4
+    else:
+        tiny.update(ONE_GPU)
     var = _opt_variants(lr)
     names = {8: list(var), 32: ["am_p1", "am_p0_s02", "muown_classical", "muown_cl_wd01", "muon_wd"]}[gbs]
     if smoke:  # one arm: it builds the gbs's data index (concurrent builds of one cache race)

@@ -87,7 +87,7 @@ sweep:
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
-          backend.megatron.micro_batch_size: 32
+          backend.megatron.micro_batch_size: 8
           backend.megatron.optimizer: angular_muown
           backend.megatron.lr: 0.004
           backend.megatron.min_lr: 0.0004
@@ -126,13 +126,4 @@ sweep:
           job.est_steps: 300
           job.est_step_time_s: 0.08
           slurm.sbatch.time: '12:00:00'
-          slurm.sbatch.gres: gpu:1
-          slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 40
-          slurm.sbatch.exclusive: null
-          slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 40
-          slurm.env.SLURM_CPUS_PER_TASK: '40'
-          slurm.env.GPUS_PER_NODE: '1'
-          slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
