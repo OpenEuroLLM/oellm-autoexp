@@ -21,15 +21,18 @@ allow_new_param_groups_on_load: false  # When the loaded optimizer checkpoint ha
 angular_muown_batched_step: true  # Disable the batched AngularMuown step and update one parameter at a time
 angular_muown_beta1: 0.9  # Adam beta1 for the AngularMuown row magnitudes g. Default: 0.9.
 angular_muown_beta2: 0.95  # Adam beta2 for the AngularMuown row magnitudes g. Default: 0.95.
+angular_muown_c: null  # Independent angular C/(1 + updates since warmup), before matrix scaling, with extra factor fixed to 1. Required for angular_muown_simplified; fixed batch only.
 angular_muown_coefficient_type: simple  # Newton-Schulz coefficient type for AngularMuown. simple matches the original AngularMuown newtonschulz5 coefficients.
-angular_muown_extra_scale_factor: 0.2  # Additional scale factor for the AngularMuown U direction. The default 0.2 pairs with spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
+angular_muown_cooldown_end_ratio: 0.05  # Final angular rate / rate at cooldown start, in C/t mode. Default: 0.05.
+angular_muown_cooldown_fraction: 0.2  # Final fraction of the LR horizon for linear angular cooldown. Zero continues inverse-time decay. Default: 0.2, used only with --angular-muown-c.
+angular_muown_extra_scale_factor: null  # Extra factor for angular_muown and muown_classical; angular_muown_simplified fixes 1. The default 0.2 pairs with spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
 angular_muown_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmul precision for the AngularMuown Newton-Schulz iteration
 angular_muown_momentum: 0.95  # Momentum coefficient for the U-gradient buffer in AngularMuown
 angular_muown_nesterov: true  # Disable Nesterov-style lookahead for the AngularMuown U update
 angular_muown_num_ns_steps: 5  # Number of Newton-Schulz steps for AngularMuown
-angular_muown_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Shape-dependent scale for the AngularMuown U direction. spectral (default, with --angular-muown-extra-scale-factor 0.2) matches the Muon recipe convention so Adam-tuned learning rates transfer; shape_scaling (with extra scale factor 1.0) reproduces the original AngularMuown ratio scaling.
+angular_muown_scale_mode: null  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Shape-dependent scaling. Defaults to shape_scaling for angular_muown_simplified and spectral for angular_muown and muown. The C/t variant always uses extra factor 1.
 angular_muown_split_qkv: true  # Whether to split fused QKV parameters for AngularMuown orthogonalization
-angular_muown_tp_mode: duplicated  # choices: ['duplicated', 'distributed'] | How to perform NS calculation for tensor parallel weights. Blockwise mode is not supported for AngularMuown.
+angular_muown_tp_mode: duplicated  # choices: ['duplicated', 'distributed'] | How to perform NS calculation for tensor parallel weights. Blockwise mode is not supported for AngularMuown or Muown.
 angular_muown_u_decay_min_multiplier: 0.0  # Floor of the cosine U-decay schedule
 angular_muown_u_decay_p: 1.0  # Exponent for the poly U-decay schedule
 angular_muown_u_decay_scale: 0.001  # Scale for the poly U-decay schedule. Set --angular-muown-u-decay-p 0 to disable decay.
@@ -466,6 +469,7 @@ linear_key_head_dim: 128  # Query and key head dimension for the gated delta net
 linear_kronlstm_decouple_erase: true  # KronLSTM: beta gates the erase only and the target gate alone the write (the paper's default); needs linear_kronlstm_target_gate.
 linear_kronlstm_erase_angle: false  # KronLSTM polar erase gate: kept eigenvalue 1 - beta = r cos(phi) per head (beta in [0, 2], the write kept in [0, 1]), starting at the s = 1 beta.
 linear_kronlstm_forget_angle: false  # KronLSTM polar forget gate f = m cos(theta): magnitude m the softplus gate (linear_fla_gate softplus), angle theta = pi sigmoid(.) per key dimension, starting near 0 (f in [-m, m]).
+linear_kronlstm_forget_angle_init: narrow  # KronLSTM polar forget gate's initial angle: "narrow" (theta 0.157 on every channel: the softplus gate's start) or "broad" (the angle bias drawn per channel over [logit 0.05, logit 0.95]: cos(theta) in (-0.988, 0.988), both signs and a spread of magnitudes from step 0).
 linear_kronlstm_forget_offset: 0.0  # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012 is the polar forget gate's init cap without its angle.
 linear_kronlstm_neg_eigval_init_bias: false  # KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase gate at init (-ln 3) so s * beta starts at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0, 2] stays reachable.
 linear_kronlstm_normalize_v: true  # KronLSTM: L2-normalise v per head (the paper's default).
@@ -761,7 +765,7 @@ one_logger_project: megatron-lm  # The one-logger project name. Will ignore if -
 one_logger_run_name: null  # The one-logger run name displayed. Will ignore if --no-one-logger is set
 onnx_safe: null  # Use workarounds for known problems with Torch ONNX exporter
 openai_gelu: false  # Use OpenAIs GeLU implementation. This optionshould not be used unless for backward compatibilityreasons.
-optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap', 'adaptive_muon', 'angular_muown', 'muown'] | Optimizer function. Note: dist_muon is deprecated; use --optimizer muon with --use-distributed-optimizer instead. muown is Muon with explicit row-magnitude control (arXiv:2605.10797).
+optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap', 'adaptive_muon', 'angular_muown', 'muown', 'angular_muown_simplified', 'muown_classical'] | Optimizer function. Note: dist_muon is deprecated; use --optimizer muon with --use-distributed-optimizer instead. muown is Muon with explicit row-magnitude control (arXiv:2605.10797).
 optimizer_cpu_offload: false  # Offload optimizer state to CPU
 optimizer_cuda_graph: false  # Enable CUDA graph for optimizer step
 optimizer_offload_fraction: 1.0  # Ratio of optimizer state to offload to CPU

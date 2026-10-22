@@ -120,7 +120,7 @@ sweep:
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s2/h5_moe/ckpt_rolling
           backend.env.ROUTER_TRACE_OUT: '1'
           slurm.sbatch.time: 01:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # h5_moe_g2, step 4000: routing trace
         - aux.arm: h5_moe_g2
           backend.megatron.num_attention_heads: 8
@@ -190,4 +190,4 @@ sweep:
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s2/h5_moe_g2/ckpt_rolling
           backend.env.ROUTER_TRACE_OUT: '1'
           slurm.sbatch.time: 01:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02

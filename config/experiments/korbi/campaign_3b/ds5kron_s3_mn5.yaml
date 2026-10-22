@@ -117,7 +117,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5kronlr_s3/h5_moe_kron_lr/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5kronlr_s3/h5_moe_kron_lr/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
           backend.env.DOWNSTREAM_EVAL_TASKS: kvret,passkey,lambada
         # h5_moe_kron_lr_pfb (screen5kronpfb_s3, latest checkpoint): downstream eval
@@ -188,7 +188,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5kronpfb_s3/h5_moe_kron_lr_pfb/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5kronpfb_s3/h5_moe_kron_lr_pfb/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
           backend.env.DOWNSTREAM_EVAL_TASKS: kvret,passkey,lambada
         # h5_moe (screen5_s3, latest checkpoint): downstream eval
@@ -259,7 +259,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
           backend.env.DOWNSTREAM_EVAL_TASKS: kvret,passkey,lambada
         # h5_moe_mhc4 (screen5_s3, latest checkpoint): downstream eval
@@ -333,6 +333,6 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe_mhc4/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe_mhc4/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
           backend.env.DOWNSTREAM_EVAL_TASKS: kvret,passkey,lambada

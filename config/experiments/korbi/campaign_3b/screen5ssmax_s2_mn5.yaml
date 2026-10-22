@@ -117,4 +117,4 @@ sweep:
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           backend.megatron.attention_length_scaling: ssmax
           backend.megatron.attention_length_scaling_base: 8192
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02

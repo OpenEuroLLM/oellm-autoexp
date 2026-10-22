@@ -1132,7 +1132,7 @@ def arms5kron_pfb(size: str):
 
 
 # MN5 nodes that kill jobs at launch (torchrun NUMA binding: "Invalid device id"; EP agent 2026-10-21)
-BAD_NODES = {"slurm.sbatch.exclude": "as07r3b27,as06r2b26,as05r3b28"}
+BAD_NODES = {"slurm.sbatch.exclude": "as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02"}
 # the polar forget gate's init cap, |f| <= cos(pi * 0.05), as a fixed decay: -log cos(0.157)
 POLAR_OFFSET = round(-math.log(math.cos(math.pi * 0.05)), 5)
 
@@ -1206,6 +1206,78 @@ def arms5ssmax(size: str = "s2"):
     return [("h5_moe_mhc4_ssmax", "CKDA 5:1 + mHC-4 + SSMax (s_h log n per head, init 1/log 8192)",
              {**mhc4, **w, B + "attention_length_scaling": "ssmax",
               B + "attention_length_scaling_base": 8192, **BAD_NODES})]
+
+
+def _cklstm_variants(size: str):
+    """CKLSTM parametrizations (user 2026-10-22: CKLSTM vs CKDA, "be ambitious"), all on the final
+    recipe's residual (mHC-4, mixer lr x0.25) with the low-rank output gate:
+      kron_mhc4: KronLSTM paper gates (softplus forget in (0, 1], erase in [0, 1]): the unsigned baseline;
+      ckl_sgn: signed forget f in [-1, 1] (Complex KDA's signed_sigmoid2, its shipped init), erase
+        beta in [0, 2] (started at 0.5), write c in [0, 1] (unit write);
+      ckl_sgn_w2: as ckl_sgn with the write in [0, 2] (the op's s = 2 on the write too);
+      ckl_sgn_cpl: as ckl_sgn with erase and write coupled (decouple_erase off: both s beta in [0, 2],
+        c the target fraction) -- Complex KDA's delta-rule gate structure on the Kronecker association;
+      ckl_polar_broad: signed forget through the polar angle with a broad init (f = m cos theta, m the
+        paper's softplus magnitude with its short / long memory spread, theta spread over both signs
+        from step 0; FLA ecd3df8), erase in [0, 2], unit write."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    mhc = {k: v for k, v in pool["h5_moe_mhc4"].items() if k not in pool["h5_moe"] or pool["h5_moe"][k] != v}
+    paper = {**arms5kron_lowrank(size)[0][2], **mhc}
+    ext = {B + "linear_fla_allow_neg_eigval": True, B + "linear_kronlstm_neg_eigval_init_bias": True}
+    sgn = {**paper, **ext, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_kronlstm_unit_write": True}
+    return [
+        ("kron_mhc4", "KronLSTM paper gates + mHC-4 (unsigned baseline)", paper),
+        ("ckl_sgn", "CKLSTM: f in [-1, 1], beta in [0, 2], c in [0, 1] + mHC-4", sgn),
+        ("ckl_sgn_w2", "CKLSTM: f in [-1, 1], beta in [0, 2], c in [0, 2] + mHC-4",
+         {**sgn, B + "linear_kronlstm_unit_write": False}),
+        ("ckl_sgn_cpl", "CKLSTM: f in [-1, 1], erase = write = s beta in [0, 2] (coupled, CKDA's structure) + mHC-4",
+         {**sgn, B + "linear_kronlstm_unit_write": False, B + "linear_kronlstm_decouple_erase": False}),
+        ("ckl_polar_broad", "CKLSTM: polar forget, broad angle init, beta in [0, 2], c in [0, 1] + mHC-4",
+         {**paper, **ext, B + "linear_kronlstm_unit_write": True, B + "linear_kronlstm_forget_angle": True,
+          B + "linear_kronlstm_forget_angle_init": "broad"}),
+    ]
+
+
+def arms5ckl(size: str = "s1"):
+    """CKLSTM screen A (s1, all five variants) / D (s2: the two principled signed ones, launched with
+    A): paired with round 5's h5_moe_mhc4 (CKDA + mHC-4) of the size, same data order / protocol.
+    s1 workers 8 x 4, s2 6 x 3."""
+    arms = _cklstm_variants(size)
+    if size == "s2":
+        arms = [a for a in arms if a[0] in ("ckl_sgn", "ckl_sgn_cpl")]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    return [(n, d, {**kv, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1], **BAD_NODES})
+            for n, d, kv in arms]
+
+
+def arms5opt(size: str = "s1"):
+    """The PR's optimizers (user 2026-10-22; Megatron feat/angular-muown-simplified) against AngularMuown
+    p = 1 / p = 1/2 (screen5udcool_{size}'s cooled branches; same data order), each through the
+    stable phase and the 4000 -> 4800 WSD cooldown in one job (as screen5udadapt):
+      amsimp_c{C}: angular_muown_simplified, direction rate C / (1 + t) (shape_scaling, no internal
+        decay), its own linear cooldown over the same last 800 of 4800 steps to 0.1 x (as lr -> lr/10).
+        Calibration: our p = 1 default moves each square-matrix row by 4e-3 x 0.2 x sqrt(768) / (1 +
+        0.001 t) = 22 / (1000 + t) rad per step, so C = 22 has the same 1 / t tail (and a large first
+        step), C = 8 / 2 0.4x / 0.1x of it;
+      muown_classical: Muown with persistent direction norms (the implicit ~t^-1/2 decay), the
+        ordinary lr, spectral x 0.2 (AngularMuown's defaults).
+    s2: C = 8 and muown_classical."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
+             "job.est_steps": 4800, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1],
+             **BAD_NODES}
+    base = {**h5, **sched}
+    simp = lambda c: {**base, B + "optimizer": "angular_muown_simplified", B + "angular_muown_c": c,  # noqa: E731
+                      B + "angular_muown_cooldown_fraction": round(800 / 4800, 6),
+                      B + "angular_muown_cooldown_end_ratio": 0.1}
+    cs = {"s1": (2, 8, 22), "s2": (8,)}[size]
+    out = [(f"amsimp_c{c}", f"angular_muown_simplified, C = {c}", simp(float(c))) for c in cs]
+    out.append(("muown_classical", "classical Muown (persistent direction norms), ordinary lr",
+                {**base, B + "optimizer": "muown_classical"}))
+    return out
 
 
 def arms5udadapt(size: str = "s1"):
@@ -1419,6 +1491,8 @@ def write5():
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5iat", arms5iat("s1")),
+            *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
+            *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             *[(z, "trace5", arms5trace(z)) for z in ("s1", "s2")],
             # LDM's long-context retrieval (user 2026-10-22): does LDM generalize past the training

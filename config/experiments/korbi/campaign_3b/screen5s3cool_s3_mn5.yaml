@@ -121,7 +121,7 @@ sweep:
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
           backend.megatron.allow_new_param_groups_on_load: true
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # CKDA 5:1, cooled 4000 -> 4800
         - aux.arm: h5_moe
           backend.megatron.num_attention_heads: 10
@@ -189,7 +189,7 @@ sweep:
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
           backend.megatron.allow_new_param_groups_on_load: true
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # Qwen3.5-like, cooled 4000 -> 4800
         - aux.arm: qwen35_moe
           backend.megatron.num_attention_heads: 10
@@ -255,4 +255,4 @@ sweep:
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
           backend.megatron.allow_new_param_groups_on_load: true
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02

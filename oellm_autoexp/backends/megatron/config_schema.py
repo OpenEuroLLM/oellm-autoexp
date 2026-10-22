@@ -557,6 +557,12 @@ class MegatronConfig(ConfigInterface):
     # 0 (f in [-m, m]).
     linear_kronlstm_forget_angle: bool = False
 
+    # KronLSTM polar forget gate's initial angle: "narrow" (theta 0.157 on every channel: the
+    # softplus gate's start) or "broad" (the angle bias drawn per channel over [logit 0.05,
+    # logit 0.95]: cos(theta) in (-0.988, 0.988), both signs and a spread of magnitudes from
+    # step 0).
+    linear_kronlstm_forget_angle_init: str = "narrow"
+
     # KronLSTM polar erase gate: kept eigenvalue 1 - beta = r cos(phi) per head (beta in [0,
     # 2], the write kept in [0, 1]), starting at the s = 1 beta.
     linear_kronlstm_erase_angle: bool = False
@@ -1989,6 +1995,17 @@ class MegatronConfig(ConfigInterface):
     # adam.
     muon_scalar_optimizer: Literal["adam", "lion"] = "adam"
 
+    # Independent angular C/(1 + updates since warmup), before matrix scaling, with extra
+    # factor fixed to 1. Required for angular_muown_simplified; fixed batch only.
+    angular_muown_c: float | None = None
+
+    # Final fraction of the LR horizon for linear angular cooldown. Zero continues inverse-
+    # time decay. Default: 0.2, used only with --angular-muown-c.
+    angular_muown_cooldown_fraction: float = 0.2
+
+    # Final angular rate / rate at cooldown start, in C/t mode. Default: 0.05.
+    angular_muown_cooldown_end_ratio: float = 0.05
+
     # Momentum coefficient for the U-gradient buffer in AngularMuown
     angular_muown_momentum: float = 0.95
 
@@ -2004,15 +2021,14 @@ class MegatronConfig(ConfigInterface):
     # Whether to split fused QKV parameters for AngularMuown orthogonalization
     angular_muown_split_qkv: bool = True
 
-    # Shape-dependent scale for the AngularMuown U direction. spectral (default, with
-    # --angular-muown-extra-scale-factor 0.2) matches the Muon recipe convention so Adam-tuned
-    # learning rates transfer; shape_scaling (with extra scale factor 1.0) reproduces the
-    # original AngularMuown ratio scaling.
-    angular_muown_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] = "spectral"
+    # Shape-dependent scaling. Defaults to shape_scaling for angular_muown_simplified and
+    # spectral for angular_muown and muown. The C/t variant always uses extra factor 1.
+    angular_muown_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] | None = None
 
-    # Additional scale factor for the AngularMuown U direction. The default 0.2 pairs with
-    # spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
-    angular_muown_extra_scale_factor: float = 0.2
+    # Extra factor for angular_muown and muown_classical; angular_muown_simplified fixes 1.
+    # The default 0.2 pairs with spectral scaling to give the standard Muon 0.2 * sqrt(max(m,
+    # n)).
+    angular_muown_extra_scale_factor: float | None = None
 
     # FP32 matmul precision for the AngularMuown Newton-Schulz iteration
     angular_muown_fp32_matmul_prec: Literal["low", "medium", "high"] = "medium"
@@ -2025,7 +2041,7 @@ class MegatronConfig(ConfigInterface):
     angular_muown_num_ns_steps: int = 5
 
     # How to perform NS calculation for tensor parallel weights. Blockwise mode is not
-    # supported for AngularMuown.
+    # supported for AngularMuown or Muown.
     angular_muown_tp_mode: Literal["duplicated", "distributed"] = "duplicated"
 
     # Internal decay schedule for the AngularMuown directional step multiplier: poly, cosine,
@@ -2261,6 +2277,8 @@ class MegatronConfig(ConfigInterface):
         "adaptive_muon",
         "angular_muown",
         "muown",
+        "angular_muown_simplified",
+        "muown_classical",
     ] = "adam"
 
     # Multiplier on the base lr for the Muown row-magnitude (l-infinity sign) update.

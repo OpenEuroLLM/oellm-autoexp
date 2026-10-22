@@ -119,7 +119,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe/ckpt_rolling
           slurm.sbatch.time: 01:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # h5_moe_mhc4, step 4000, full precision
         - aux.arm: h5_moe_mhc4_fp
           backend.megatron.num_attention_heads: 10
@@ -191,7 +191,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe_mhc4/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/h5_moe_mhc4/ckpt_rolling
           slurm.sbatch.time: 01:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # qwen35_moe, step 4000, full precision
         - aux.arm: qwen35_moe_fp
           backend.megatron.num_attention_heads: 10
@@ -258,4 +258,4 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/qwen35_moe/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5_s3/qwen35_moe/ckpt_rolling
           slurm.sbatch.time: 01:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02

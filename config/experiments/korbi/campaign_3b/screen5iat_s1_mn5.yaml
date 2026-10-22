@@ -115,7 +115,7 @@ sweep:
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_internal_attention: compute
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # IAT full: latent read / write of all 4d by the mixers
         - aux.arm: h5_moe_iat4_full
           backend.megatron.num_attention_heads: 6
@@ -180,7 +180,7 @@ sweep:
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_internal_attention: full
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # mHC-4 + internal attention after every mixer
         - aux.arm: h5_moe_mhc4_iat
           backend.megatron.num_attention_heads: 6
@@ -245,7 +245,7 @@ sweep:
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_internal_attention: mhc
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
         # speed reference: mHC-4 at EP 2 (300 steps)
         - aux.arm: h5_moe_mhc4_ep2
           backend.megatron.num_attention_heads: 6
@@ -309,4 +309,4 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02

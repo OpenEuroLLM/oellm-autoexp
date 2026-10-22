@@ -122,7 +122,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5s3cool_s3/h5_moe_mhc4/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5s3cool_s3/h5_moe_mhc4/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
         # h5_moe (screen5s3cool_s3, ckpt): downstream + passkey
         - aux.arm: h5_moe
@@ -192,7 +192,7 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5s3cool_s3/h5_moe/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5s3cool_s3/h5_moe/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
         # qwen35_moe (screen5s3cool_s3, ckpt): downstream + passkey
         - aux.arm: qwen35_moe
@@ -260,5 +260,5 @@ sweep:
           backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5s3cool_s3/qwen35_moe/ckpt
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/screen5s3cool_s3/qwen35_moe/ckpt_rolling
           slurm.sbatch.time: 02:00:00
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl

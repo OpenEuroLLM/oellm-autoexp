@@ -116,6 +116,6 @@ sweep:
           backend.megatron.lr_wsd_decay_style: linear
           backend.megatron.lr_decay_iters: 4800
           backend.megatron.lr_wsd_decay_iters: 800
-          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.angular_muown_u_decay_p: 0.5
           backend.megatron.angular_muown_extra_scale_factor: 0.1
