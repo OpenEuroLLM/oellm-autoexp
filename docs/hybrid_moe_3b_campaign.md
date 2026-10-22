@@ -2617,3 +2617,17 @@ width, which would cost even more efficiency): IAttn +2.37M per mixer layer = 2 
 full +7.08M = 6 experts -> 138; EP 2 (neither divides by 4), with a 300-step EP-2 mHC-4 speed
 reference in the same launch. Active params stay higher (+2.4M / +7.1M per block), reported with
 tok/s. (A first launch, array 47748532, matched via expert width 504 / 488: cancelled after 5 min.)
+
+**Result (stopped at step ~1100-1170 on the user's decision "stay with mHC-4"; ~23 GPU-h used).**
+Paired gaps (200-step windows, flat from step 700 on; + = worse), tok/s/GPU at EP 2 vs the
+EP-2 mHC-4 speed reference (29.1k):
+
+| arm | vs h5_moe | vs h5_moe_mhc4 | tok/s/GPU |
+|---|---:|---:|---:|
+| h5_moe_iat4 (x_c only) | -0.009 | +0.046 | 26.8k (-8 %) |
+| h5_moe_iat4_full (latent read / write) | +0.029 | +0.084 | 27.0k (-7 %) |
+| h5_moe_mhc4_iat (mHC-4 + IAttn) | -0.044 | +0.010..0.015 | 24.6k (-16 %) |
+
+At matched total params (whole experts traded for the internal attention), no IAT variant beats
+mHC-4, all are slower; the paper's full-width variant is worse than the plain residual here.
+**Decision: mHC-4 stays the residual.**
