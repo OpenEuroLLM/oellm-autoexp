@@ -20,6 +20,7 @@ a multi-key retrieval in natural text (RULER-style: 16 facts, one asked; 10-way 
 
 import json
 import random
+import string
 import re
 import sys
 from pathlib import Path
@@ -120,7 +121,9 @@ def kv_rows(tok, raw_path, lengths=(2048, 4096, 8192, 16384, 32768), n=50, pairs
     rows = []
     for L in lengths:
         for j in range(n):
-            words = rng.sample(WORDS, pairs)
+            # more facts than words: two-word keys ("apple river")
+            pool = WORDS if pairs <= len(WORDS) else [f"{a} {b}" for a in WORDS for b in WORDS if a != b]
+            words = rng.sample(pool, pairs)
             vals = rng.sample(range(10000, 100000), pairs)
             facts = [tok.encode(f" The special number for {w} is {v}. ", add_special_tokens=False)
                      for w, v in zip(words, vals)]
@@ -141,6 +144,102 @@ def kv_rows(tok, raw_path, lengths=(2048, 4096, 8192, 16384, 32768), n=50, pairs
             rows.append({"task": f"kvret_{L // 1024}k", "qid": len(rows), "gold": 0, "kind": "mc",
                          "asked_pos": ask / (pairs - 1), "items": items})
     return rows
+
+
+def vt_rows(tok, raw_path, lengths=(4096, 8192, 16384, 32768, 65536), n=50, chains=8, hops=4, seed=2):
+    """Variable tracking in natural text (RULER's VT): `chains` assignment chains "VAR A = 12345."
+    "VAR B = VAR A." ... (`hops` re-assignments each), their statements interleaved (each chain in
+    order) and spread evenly through filler; asked for the value of one chain's last variable,
+    scored as a 10-way choice among the chains' values (+ 2 unused numbers)."""
+    rng = random.Random(seed)
+    filler = _filler(tok, raw_path)
+    rows = []
+    for L in lengths:
+        for j in range(n):
+            names = rng.sample(["".join(rng.choices(string.ascii_uppercase, k=5)) for _ in range(4 * chains * (hops + 1))],
+                               chains * (hops + 1))
+            vals = rng.sample(range(10000, 100000), chains + 2)
+            chain_names = [names[c * (hops + 1):(c + 1) * (hops + 1)] for c in range(chains)]
+            stmts = {c: [f" VAR {chain_names[c][0]} = {vals[c]}. "] +
+                     [f" VAR {chain_names[c][h]} = VAR {chain_names[c][h - 1]}. " for h in range(1, hops + 1)]
+                     for c in range(chains)}
+            order = [c for c in range(chains) for _ in range(hops + 1)]
+            rng.shuffle(order)
+            pos = {c: 0 for c in range(chains)}
+            seq = []
+            for c in order:
+                seq.append(tok.encode(stmts[c][pos[c]], add_special_tokens=False))
+                pos[c] += 1
+            ask = rng.randrange(chains)
+            question = tok.encode(f" Question: what is the value of VAR {chain_names[ask][-1]}? Answer: the "
+                                  f"value of VAR {chain_names[ask][-1]} is", add_special_tokens=False)
+            body = L - sum(map(len, seq)) - len(question) - 8
+            if body <= 0:
+                continue
+            start = rng.randrange(0, len(filler) - body)
+            hay = filler[start:start + body]
+            seg = len(hay) // len(seq)
+            ctx = [tok.bos_token_id]
+            for i, st in enumerate(seq):
+                ctx += hay[i * seg:(i + 1) * seg] + st
+            ctx += hay[len(seq) * seg:] + question
+            keys = [vals[ask]] + [v for i, v in enumerate(vals) if i != ask]
+            items = [{"ctx": ctx, "cont": tok.encode(f" {k}", add_special_tokens=False), "nchars": 6} for k in keys]
+            rows.append({"task": f"vt_{L // 1024}k", "qid": len(rows), "gold": 0, "kind": "mc", "items": items})
+    return rows
+
+
+def _filler(tok, raw_path):
+    texts = []
+    with open(raw_path) as f:
+        for line in f:
+            q = json.loads(line)
+            if q["task"] in ("lambada", "hellaswag"):
+                texts.append(q["items"][0]["ctx"] + q["items"][0]["cont"])
+    return tok.encode(" ".join(texts), add_special_tokens=False)
+
+
+def longdoc_rows(tok, prefixes, max_len=65536, n=24, seed=3):
+    """Long documents for the per-position loss ("ppl" items): `n` documents of at least `max_len`
+    tokens from Megatron indexed datasets (`prefixes`), cut to max_len (BOS first)."""
+    from megatron.core.datasets.indexed_dataset import IndexedDataset
+
+    rng = random.Random(seed)
+    docs = []
+    for prefix in prefixes:
+        ds = IndexedDataset(prefix)
+        lens = ds.sequence_lengths
+        cand = [i for i in range(len(lens)) if lens[i] >= max_len]
+        rng.shuffle(cand)
+        for i in cand[: n - len(docs)]:
+            docs.append([tok.bos_token_id] + ds[i][: max_len - 1].tolist())
+        if len(docs) >= n:
+            break
+    return [{"task": f"longppl_{max_len // 1024}k", "qid": q, "gold": 0, "kind": "ppl",
+             "items": [{"ctx": d, "cont": [], "nchars": 0}]} for q, d in enumerate(docs)]
+
+
+def longctx(out, tokdir, *prefixes):
+    """The harder long-context set (CKLSTM experiment C, user 2026-10-22) -> requests_longctx.jsonl:
+    long-document loss per position bin to 64k, multi-key retrieval with 64 facts (4k-64k), the
+    16-fact retrieval and the passkey at 64k, variable tracking (4k-64k)."""
+    from transformers import AutoTokenizer
+
+    out = Path(out)
+    tok = AutoTokenizer.from_pretrained(tokdir)
+    rows = longdoc_rows(tok, prefixes) if prefixes else []
+    rows += kv_rows(tok, out / "raw.jsonl", lengths=(4096, 8192, 16384, 32768, 65536), pairs=64, seed=4)
+    for r in rows:
+        if r["task"].startswith("kvret_"):
+            r["task"] = "kvret64_" + r["task"].split("_", 1)[1]
+    rows += kv_rows(tok, out / "raw.jsonl", lengths=(65536,), seed=5)
+    rows += passkey_rows(tok, lengths=(65536,))
+    rows += vt_rows(tok, out / "raw.jsonl")
+    with open(out / "requests_longctx.jsonl", "w") as g:
+        for q, r in enumerate(rows):
+            r["qid"] = q
+            g.write(json.dumps(r) + "\n")
+    print(f"{len(rows)} questions -> {out / 'requests_longctx.jsonl'}")
 
 
 def tokenize(out, tokdir):
@@ -172,4 +271,4 @@ def tokenize(out, tokdir):
 
 
 if __name__ == "__main__":
-    {"raw": raw, "tokenize": tokenize}[sys.argv[1]](*sys.argv[2:])
+    {"raw": raw, "tokenize": tokenize, "longctx": longctx}[sys.argv[1]](*sys.argv[2:])
