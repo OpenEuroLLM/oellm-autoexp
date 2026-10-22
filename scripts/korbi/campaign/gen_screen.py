@@ -1163,30 +1163,34 @@ def arms5iat(size: str = "s1"):
       iat4_full: the paper's low-rank temporal mixing through a latent: each mixer reads
         down(4d -> d) of all streams and writes up(d -> 4d) (user: "latent downprojection");
       mhc4_iat: mHC-4 (its read / write / stream mixer, mixer lr x0.25) + the internal attention.
-    Total parameters matched to the references through the routed experts' width (user:
-    "compensate ... with MLP params / experts"; 144 experts and EP 4 kept): per mixer layer the
-    internal attention adds 4 d^2 + 8 d (2.37M at s1), the latent read / write 8 d^2 (4.72M); one
-    unit of expert width is 144 x 3 d per MoE layer (0.33M at s1) -> width 512 - 8 (IAttn; -0.29M
-    per layer net) and 512 - 24 (full; -0.88M), multiples of 8. Active parameters stay higher
-    (+2.4M / +7.1M per block): the method's cost, reported with tok/s."""
+    Total parameters matched to the references by whole routed experts (user: cut experts, not
+    their width -- narrower experts would cost even more efficiency): per mixer layer the internal
+    attention adds 4 d^2 + 8 d (2.37M at s1) and the latent read / write 8 d^2 (4.72M); one expert
+    is 3 d w (1.18M) per MoE layer -> 144 - 2 = 142 experts (IAttn), 144 - 6 = 138 (full), both
+    exact to < 0.01M per layer. Neither divides by EP 4: EP 2 for these arms (tok/s: an EP
+    confound vs the references' EP 4). Active parameters stay higher (+2.4M / +7.1M per block):
+    the method's cost, reported with tok/s."""
     pool = dict((n, kv) for n, _, kv in arms5(size))
     hidden, *_ = R4_SIZES[size]
     w = {B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
-    unit = 144 * 3 * hidden  # one unit of routed-expert width, per MoE layer
-
     def iat(mode, ref):
         extra = 4 * hidden ** 2 + 8 * hidden + (8 * hidden ** 2 if mode == "full" else 0)
-        cut = round(extra / unit / 8) * 8
-        width = ref[B + "moe_ffn_hidden_size"] - cut
-        return {**ref, **w, B + "mhc_internal_attention": mode, B + "moe_ffn_hidden_size": width,
-                **BAD_NODES}
+        cut = round(extra / (3 * hidden * ref[B + "moe_ffn_hidden_size"]))
+        experts = ref[B + "num_experts"] - cut
+        ep = next(e for e in (4, 2, 1) if experts % e == 0)
+        return {**ref, **w, B + "mhc_internal_attention": mode, B + "num_experts": experts,
+                B + "expert_model_parallel_size": ep, **BAD_NODES}
 
     mhc4 = pool["h5_moe_mhc4"]
     return [("h5_moe_iat4", "IAT compute mode: sublayers on x_c, internal attention",
              iat("compute", mhc4)),
             ("h5_moe_iat4_full", "IAT full: latent read / write of all 4d by the mixers",
              iat("full", mhc4)),
-            ("h5_moe_mhc4_iat", "mHC-4 + internal attention after every mixer", iat("mhc", mhc4))]
+            ("h5_moe_mhc4_iat", "mHC-4 + internal attention after every mixer", iat("mhc", mhc4)),
+            # tok/s only: the reference at the IAT arms' EP 2 (300 steps, launched with them)
+            ("h5_moe_mhc4_ep2", "speed reference: mHC-4 at EP 2 (300 steps)",
+             {**mhc4, **w, B + "expert_model_parallel_size": 2, B + "exit_interval": 300,
+              "job.est_steps": 300, **BAD_NODES})]
 
 
 def arms5udadapt(size: str = "s1"):

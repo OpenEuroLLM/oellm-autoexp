@@ -70,15 +70,15 @@ sweep:
           backend.megatron.attention_output_gate: true
           backend.megatron.exclusive_self_attention: true
           aux.pattern: LELELELELE*ELELELELELE*E
-          backend.megatron.num_experts: 144
-          backend.megatron.moe_ffn_hidden_size: 504
+          backend.megatron.num_experts: 142
+          backend.megatron.moe_ffn_hidden_size: 512
           backend.megatron.moe_router_topk: 3
           backend.megatron.moe_shared_expert_intermediate_size: 512
           backend.megatron.moe_grouped_gemm: true
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.expert_model_parallel_size: 2
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -135,15 +135,15 @@ sweep:
           backend.megatron.attention_output_gate: true
           backend.megatron.exclusive_self_attention: true
           aux.pattern: LELELELELE*ELELELELELE*E
-          backend.megatron.num_experts: 144
-          backend.megatron.moe_ffn_hidden_size: 488
+          backend.megatron.num_experts: 138
+          backend.megatron.moe_ffn_hidden_size: 512
           backend.megatron.moe_router_topk: 3
           backend.megatron.moe_shared_expert_intermediate_size: 512
           backend.megatron.moe_grouped_gemm: true
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.expert_model_parallel_size: 2
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -200,15 +200,15 @@ sweep:
           backend.megatron.attention_output_gate: true
           backend.megatron.exclusive_self_attention: true
           aux.pattern: LELELELELE*ELELELELELE*E
-          backend.megatron.num_experts: 144
-          backend.megatron.moe_ffn_hidden_size: 504
+          backend.megatron.num_experts: 142
+          backend.megatron.moe_ffn_hidden_size: 512
           backend.megatron.moe_router_topk: 3
           backend.megatron.moe_shared_expert_intermediate_size: 512
           backend.megatron.moe_grouped_gemm: true
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.expert_model_parallel_size: 2
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -245,4 +245,68 @@ sweep:
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_internal_attention: mhc
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
+        # speed reference: mHC-4 at EP 2 (300 steps)
+        - aux.arm: h5_moe_mhc4_ep2
+          backend.megatron.num_attention_heads: 6
+          backend.megatron.num_query_groups: 2
+          backend.megatron.kv_channels: 128
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: 6
+          backend.megatron.linear_num_value_heads: 6
+          backend.megatron.experimental_attention_variant: complex_kda
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          aux.pattern: LELELELELE*ELELELELELE*E
+          backend.megatron.num_experts: 144
+          backend.megatron.moe_ffn_hidden_size: 512
+          backend.megatron.moe_router_topk: 3
+          backend.megatron.moe_shared_expert_intermediate_size: 512
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_token_dispatcher_type: alltoall
+          backend.megatron.moe_router_dtype: fp32
+          backend.megatron.moe_permute_fusion: true
+          backend.megatron.expert_model_parallel_size: 2
+          backend.megatron.moe_router_load_balancing_type: aux_loss
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_per_layer_logging: true
+          backend.megatron.moe_expert_viability_metrics: true
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.optimizer: angular_muown
+          backend.megatron.lr: 0.004
+          backend.megatron.min_lr: 0.004
+          backend.megatron.lr_warmup_iters: 0
+          backend.megatron.exit_interval: 300
+          job.est_steps: 300
+          backend.megatron.per_split_data_args_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
+          backend.megatron.split: 998,2,0
+          backend.megatron.seq_length: 8192
+          backend.megatron.max_position_embeddings: 8192
+          backend.megatron.dataloader_inter_document_masking: true
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 4
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
+          aux.seq: 8192
+          backend.megatron.global_batch_size: 64
+          aux.gbs: 64
+          backend.megatron.train_iters: 7629
+          backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.residual_mixer_lr_mult: 0.25
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
