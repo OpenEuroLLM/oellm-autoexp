@@ -4,7 +4,9 @@
 # bd3-q3_<size>-B<B>-sh<shift>-cm<comp>-w<weight>-t<tmin>_<tmax>-dm<doc>-sc<schedule>-lr<lr>-T<tokens>.
 # Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier0_qwen3_0.6B --dry-run
 # Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier0_qwen3_0.6B --submit-and-exit
-# One run: add --array-subset <index> (0: lr 1e-5, 1: lr 3e-5, 2: lr 1e-4).
+# One run: add --array-subset <index> (0: lr 1e-5, 1: lr 3e-5, 2: lr 1e-4, 3: lr 3e-4).
+# Index 3 is the edge step of the tier 0 rule (D-060): 1e-4 was best and beat 3e-5 by more than
+# 2 percent, so one run one step further. It has a 4 h limit (the first three took 1.4 h).
 
 defaults:
   - /backend: megadlm_bd_torchrun
@@ -65,3 +67,6 @@ sweep:
           backend.megatron.lr: 3.0e-5
         - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T0.5B"
           backend.megatron.lr: 1.0e-4
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-4-T0.5B"
+          backend.megatron.lr: 3.0e-4
+          backend.megatron.aux.walltime_s: 14400
