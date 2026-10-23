@@ -36,8 +36,8 @@ parameters twice (forward, recompute + backward) and reduce-scatters the gradien
 
     B_fsdp ~ Psi * (2*b + b_g) / T                    per token  (independent of m and n)
 
-(Keeping the gathered parameters between forward and backward, ZeRO-2 style, makes it
-Psi * (b + b_g) / T, at Psi * b of extra memory, ~17 GB here: too much.)
+(Keeping the parameters gathered across the step changes this: see the ZeRO-1 / ZeRO-2 table
+below, where the traffic falls with the tokens per GPU per step, m * T.)
 
 Break-even micro-batch: T* = Psi * (2b + b_g) / (2 v P n h b + 2 Psi b_g / m).
 
@@ -59,6 +59,11 @@ gradients) / ~190 (fp32) KB per token** -- below PP4 x VPP2's ~320 (mHC-4, m = 3
 bubble and no width term. Memory for ZeRO-1 with bf16 gradients: ~34 GB + ~15 GB activations
 (mbs 2) + ~6 GB non-PyTorch ~ 55 of 63 GB: tight but plausible (fp32 gradients would not fit).
 The same m per GPU is gbs 512 at 8 nodes with mbs 2, so 8-node tests measure this regime.
+
+ZeRO-1 / ZeRO-2 fall with m * T, the tokens per GPU per step: B_zero1 ~ Psi (b + b_g) x (number
+of GPUs) / (gbs x seq). A larger mbs and a larger m both help; mbs costs activation memory (the
+recompute working set grows with T), m only time. (ZeRO-3: only T.) ZeRO-1's Psi (b + b_g) is
+~45 GB at 160 experts (Psi = 11.25B), ~34 GB at 112 (8.45B): its tests use 112 experts.
 
 ## 2. Numbers
 
