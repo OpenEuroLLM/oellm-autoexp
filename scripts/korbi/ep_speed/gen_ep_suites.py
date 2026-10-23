@@ -1571,6 +1571,17 @@ def ckpt_offload():
         resa, fsdp, ldm, {"aux.array_tag": "_f_fsdp_ldm8_m2"})
     arm("f_fsdp_ldm8_m1", "... mbs 1 (gbs 512)", *f_base, resa, fsdp, ldm,
         {B + "micro_batch_size": 1, "aux.array_tag": "_f_fsdp_ldm8_m1"})
+    # f2: every 8-node FSDP arm OOMed in the first backward (inside MoonEP's backward, 54.5 GiB
+    # allocated at mbs 4): Megatron's all-to-all dispatcher (TE grouped GEMM) instead of MoonEP,
+    # and the MoonEP arm with an allocator trace of iteration 1 (the OOM snapshot)
+    arm("f_fsdp_plain_a2a", "7:1 PreNorm, Megatron-FSDP + EP4, all-to-all dispatcher (no MoonEP)",
+        *f_base, resa, fsdp, PLAIN,
+        {B + "moe_token_dispatcher_type": "alltoall", "aux.array_tag": "_f_fsdp_a2a"})
+    arm("f_fsdp_plain_trace", "7:1 PreNorm, Megatron-FSDP + EP4, MoonEP, memory trace (iteration 1)",
+        *f_base, resa, fsdp, PLAIN,
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain",
+         "backend.env.MEM_TRACE_ITER": "1", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_fsdp_trace"})
     # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
     arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
         {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
