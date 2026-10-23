@@ -11,8 +11,8 @@
 #   scripts/korbi/mn5_autoexp_bg.sh main scripts/run_autoexp.py \
 #       --config-name experiments/korbi/production/hybrid_main_mn5 --dry-run
 #
-# Scheduling: account cns144, QOS acc_xehpc (up to 512 nodes, 3-day wall time, 3 running jobs
-# per user; acc_ehpc caps jobs at 100 nodes and cns144 does not have it). A 3-day job resumes from the latest rolling checkpoint (load = save), the
+# Scheduling: account ehpc533, QOS acc_xehpc (up to 512 nodes, 3-day wall time, 3 running jobs
+# per user; acc_ehpc caps jobs at 100 nodes). A 3-day job resumes from the latest rolling checkpoint (load = save), the
 # monitor restarts it on TIMEOUT. Bad-GPU nodes: slurm/marenostrum_autoexclude.yaml (via
 # speed_base_mn5).
 defaults:
@@ -198,8 +198,8 @@ job:
 slurm:
   sbatch:
     nodes: ${aux.nodes}
-    # account cns144 (user 2026-10-22; data and run directories stay under ehpc533's paths)
-    account: cns144
+    # account ehpc533 (user 2026-10-23: cns144's priority too low; QOS acc_xehpc for >100 nodes)
+    account: ehpc533
     qos: acc_xehpc
     time: "3-00:00:00"
   env:

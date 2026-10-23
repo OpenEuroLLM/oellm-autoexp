@@ -5172,7 +5172,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
         # 128 nodes, gbs 8192, mbs 4 (16 / pipeline)
         - aux.arm: s128_g8192_m4
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -5268,7 +5268,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
         # 128 nodes, gbs 4096, mbs 4 (8 / pipeline: the mbs effect at 2048's count)
         - aux.arm: s128_g4096_m4
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -5364,7 +5364,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
         # 128 nodes, gbs 2048, gradient reduction in bf16 (half the DP traffic)
         - aux.arm: s128_bf16red
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -5460,7 +5460,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
           backend.megatron.grad_reduce_in_bf16: true
         # 128 nodes, gbs 2048, PP4 x VPP4 (bubble 3/32 instead of 3/16)
         - aux.arm: s128_vpp4
@@ -5557,7 +5557,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
         # 128 nodes, gbs 2048, no recompute of the last chunk on every stage
         - aux.arm: s128_skip1
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -5653,7 +5653,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
           backend.env.RECOMPUTE_SKIP_CHUNKS: 1,1,1,1
         # profile: 128 nodes, gbs 2048 (ranks 0 / 511, steps 5-6)
         - aux.arm: p_s128
@@ -5750,7 +5750,7 @@ sweep:
           slurm.sbatch.time: 00:30:00
           slurm.env.WATCHDOG_STARTUP_S: '1500'
           slurm.sbatch.qos: acc_xehpc
-          slurm.sbatch.account: cns144
+          slurm.sbatch.account: ehpc533
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
           backend.megatron.profile_ranks: [0, 511]
@@ -5825,8 +5825,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
         # 7:1 hybrid, Megatron-FSDP (ZeRO-3) + EP4, no PP, mbs 2, Adam
         - aux.arm: f_fsdp_m2
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E
@@ -5896,8 +5896,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -5972,8 +5972,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6048,8 +6048,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
         # 7:1 hybrid PreNorm, Megatron-FSDP + EP4, mbs 2, Adam
         - aux.arm: f_fsdp_plain_m2
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E
@@ -6119,8 +6119,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6195,8 +6195,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6279,8 +6279,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6363,8 +6363,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6439,8 +6439,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6518,8 +6518,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6599,8 +6599,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6680,8 +6680,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
         # plain, PP4 x VPP2, mbs 2, gbs 256 (m 16 = gbs 4096 at 128 nodes)
         - aux.arm: c_pp4_plain_g256
           aux.pattern: LELELELELELELE|*ELELELELELELE|LE*ELELELELELE|LELE*ELELELE|LELELELE*ELE|LELELELELELE|*ELELELELELE|LELE*E
@@ -6751,8 +6751,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
         # plain, FSDP ZeRO-3, mbs 4, gbs 512
         - aux.arm: c_z3_plain_m4
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E
@@ -6822,8 +6822,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -6898,8 +6898,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads
           backend.megatron.overlap_param_gather: true
@@ -6976,8 +6976,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim
           backend.megatron.overlap_param_gather: true
@@ -7054,8 +7054,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
         # mhc4, PP4 x VPP2, mbs 2, gbs 256 (m 16 = gbs 4096 at 128 nodes)
         - aux.arm: c_pp4_mhc4_g256
           aux.pattern: LELELELELELELE|*ELELELELELELE|LE*ELELELELELE|LELE*ELELELE|LELELELE*ELE|LELELELELELE|*ELELELELELE|LELE*E
@@ -7125,8 +7125,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
         # mhc4, FSDP ZeRO-3, mbs 4, gbs 512
         - aux.arm: c_z3_mhc4_m4
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E
@@ -7196,8 +7196,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -7272,8 +7272,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads
           backend.megatron.overlap_param_gather: true
@@ -7350,8 +7350,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim
           backend.megatron.overlap_param_gather: true
@@ -7428,8 +7428,8 @@ sweep:
           backend.env.MEM_BREAKDOWN: '1'
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
-          slurm.sbatch.account: cns144
-          slurm.sbatch.qos: acc_resa
+          slurm.sbatch.account: ehpc533
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true

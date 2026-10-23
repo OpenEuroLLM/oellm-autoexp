@@ -1517,7 +1517,9 @@ def ckpt_offload():
         {B + "train_iters": 10, "aux.array_tag": "_moonofffused_s8"})
     # s128 round 2 (user 2026-10-22: account cns144, 5000 GPU-h, "close to 5800 tok/s/GPU
     # again"; larger mbs and gbs allowed, up to 8192 = 134M tokens / step): 128 nodes, DP 128
-    cns = {"slurm.sbatch.account": "cns144", "slurm.sbatch.qos": "acc_xehpc"}
+    # (user 2026-10-23 evening: back to ehpc533 -- cns144's priority is too low; >100 nodes need
+    # QOS acc_xehpc on either account)
+    cns = {"slurm.sbatch.account": "ehpc533", "slurm.sbatch.qos": "acc_xehpc"}
     def big2(gbs, mbs=2, iters=10):
         return dict(big, **cns, **{"aux.gbs": gbs, B + "micro_batch_size": mbs,
                                    B + "train_iters": iters})
@@ -1544,7 +1546,7 @@ def ckpt_offload():
     # optimizer states sharded over DP; units = TransformerLayer / MoETransformerLayer) with EP4,
     # no pipeline, Adam (MuOwn has no FSDP path yet), no Engram (FSDP would re-shard the tables);
     # the decided 7:1 attention ratio. A/B against PP4 x VPP2 at the same flags.
-    resa = {"slurm.sbatch.account": "cns144", "slurm.sbatch.qos": "acc_resa"}
+    resa = {"slurm.sbatch.account": "ehpc533", "slurm.sbatch.qos": "acc_ehpc"}  # (was cns144)
     pat71 = "LLLLLLL*" * 6
     f_base = (base, hyb, moon, off, ctx16, mbs2, fused, memb, addmm,
               {"backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1"})
