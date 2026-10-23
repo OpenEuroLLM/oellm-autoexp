@@ -41,6 +41,25 @@ Psi * (b + b_g) / T, at Psi * b of extra memory, ~17 GB here: too much.)
 
 Break-even micro-batch: T* = Psi * (2b + b_g) / (2 v P n h b + 2 Psi b_g / m).
 
+**Batch size.** Without a pipeline every GPU is a data-parallel rank:
+gbs = mbs x (number of GPUs) x m, with m the micro-batches per GPU per step. At 128 nodes (512
+GPUs) mbs 8 and one micro-batch per step is gbs 8 x 4 x 128 = 4,096 sequences (67M tokens at
+16k); gbs 8,192 is e.g. mbs 2 x m 8. ZeRO-3 re-gathers the parameters for every micro-batch, so
+there only T (the micro-batch) amortizes the traffic, not the gbs. Keeping parameters (and
+gradients) across the micro-batches of a step makes the gbs the lever, at the cost of memory:
+
+| mode (Megatron-FSDP `data_parallel_sharding_strategy`) | bytes per token | extra memory per GPU |
+|---|---|---|
+| ZeRO-3 (`optim_grads_params`) | Psi (2b + b_g) / T | none (all sharded) |
+| ZeRO-2 (`optim_grads`): parameters kept, gradients reduce-scattered per micro-batch | Psi b / (m T) + Psi b_g / T | full bf16 parameters (Psi b ~ 17 GB) |
+| ZeRO-1 (`optim`): parameters and gradients kept, synchronized once per step | Psi (b + b_g) / (m T) | parameters + gradients (17 + 17-34 GB) |
+
+At 128 nodes, gbs 8,192 = mbs 2 x m 8 per GPU: ZeRO-3 1,550, ZeRO-2 ~580, **ZeRO-1 ~130 (bf16
+gradients) / ~190 (fp32) KB per token** -- below PP4 x VPP2's ~320 (mHC-4, m = 32), with no
+bubble and no width term. Memory for ZeRO-1 with bf16 gradients: ~34 GB + ~15 GB activations
+(mbs 2) + ~6 GB non-PyTorch ~ 55 of 63 GB: tight but plausible (fp32 gradients would not fit).
+The same m per GPU is gbs 512 at 8 nodes with mbs 2, so 8-node tests measure this regime.
+
 ## 2. Numbers
 
 KB per token per GPU; GB/s at 5,800 tok/s/GPU (the per-GPU InfiniBand link is ~25 GB/s,
@@ -97,6 +116,8 @@ Break-even for mHC-4 at m = 8: T* ~ 100k tokens, i.e. FSDP moves less than PP fr
 ## 5. Next
 
 1. Fix the FSDP OOM (f3 tells whether it is MoonEP's).
-2. 8-node A/B at the 7:1 layout: PP4 vs FSDP for PreNorm, mHC-4, LDM (f arms), mbs 2 / 4.
+2. 8-node A/B at the 7:1 layout: PP4 vs FSDP for PreNorm, mHC-4, LDM (f arms), mbs 2 / 4, and
+   the ZeRO-1 / ZeRO-2 strategies (`optim` / `optim_grads`, bf16 gradients) at gbs 512 (m = 8
+   per GPU, i.e. gbs 8,192 at 128 nodes).
 3. The large setting (mHC-4 + Engram, the candidate stack) under FSDP: Engram tables hidden from
    FSDP; then angular MuOwn for sharded parameters if FSDP wins.
