@@ -1,9 +1,13 @@
 # @package _global_
 defaults:
-  - datamix
+  - /experiments/datamix/datamix
   - _self_
 
-# AutoExp equivalent of train-gpt
+# AutoExp equivalent of train-gpt. One scale of the DataMix chain (_chain-datamix.yaml),
+# or run it on its own: --config-name experiments/datamix/scale/0.4B
+
+aux:
+  scale: 0.4B
 
 backend:
   megatron:

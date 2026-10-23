@@ -1,0 +1,23 @@
+# @package _global_
+#
+# DataMix chain: training + HF conversion + lm-eval of every checkpoint, for the
+# selected scales and stages, in one run_autoexp.py session (_chain-datamix.yaml).
+# Run dir per scale: <output_root>/<name>/<scale>. Keep run_autoexp.py running (tmux).
+# See chain_guide.md.
+
+defaults:
+  - _chain-datamix
+  - _self_
+
+aux:
+  name: ???                           # your experiment, e.g. fin-bin00: names run dirs, SLURM jobs, W&B runs
+  output_root: ${oc.env:OUTPUT_ROOT,output}   # relative to the repo root
+  scales: [0.1B, 0.4B, 1.4B]          # any subset
+  stages: [train, convert, eval]      # any subset, e.g. [convert, eval] for an existing training
+  # Training data: one list item per word of Megatron's --data-path. A single dataset is
+  # just its prefix; a mix alternates weight and prefix items ("0.3", prefix_a, "0.7",
+  # prefix_b, ...). prefix = path without .bin/.idx; weights quoted.
+  data_path:
+    - ${aux.project_dir}/users/${oc.env:USER}/pca_filtering/data/tokenization/fin_Latn/bin_00_text_document
+  eval_task_groups: [open-sci-0.01]   # needed for the eval stage
+  eval_limit: null                    # samples per task; null = full tasks

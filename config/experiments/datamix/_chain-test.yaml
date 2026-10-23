@@ -1,0 +1,38 @@
+# @package _global_
+#
+# Test-run settings for the chain: per scale 1 node, 100 iterations (~26M tokens),
+# checkpoints at 50 and 100, short convert/eval jobs - everything on dev-g.
+#
+# dev-g allows 2 jobs per user (MaxJobs=MaxSubmit=2, `sacctmgr show assoc user=$USER`)
+# and autoexp drops a job whose sbatch is rejected instead of retrying it. So every job
+# (training, convert, eval) is submitted only while fewer than 2 of your jobs are on
+# dev-g (aux.submit_guard); they run two at a time. Don't keep other dev-g jobs around
+# during a test run. Include it after chain-datamix, see chain-datamix-test.yaml.
+
+aux:
+  # 100 iters x 64 seqs x 4096 tokens -> train_iters=100, WSD cooldown=20
+  train_tokens: 26214400
+  output_root: output/test     # never the real run dirs (ignores OUTPUT_ROOT)
+  convert_time: "00:30:00"
+  convert_partition: dev-g
+  eval_time: "01:00:00"
+  eval_partition: dev-g
+  submit_guard: '[ "$(squeue -h -u $USER -p dev-g | wc -l)" -lt 2 ]'
+  eval_limit: 50              # samples per task
+
+slurm:
+  sbatch:
+    nodes: 1
+    partition: dev-g
+    time: "00:30:00"
+
+backend:
+  megatron:
+    global_batch_size: 64     # 8 GPUs x micro batch x accumulation steps
+    lr_warmup_iters: 10       # must be < train_iters - cooldown
+    eval_interval: 50
+    eval_iters: 5
+    save_interval: 50         # writes iter_0000050/ and iter_0000100/ into checkpoints/
+    log_interval: 10
+  env:
+    WANDB_MODE: offline       # keep test runs out of the W&B project

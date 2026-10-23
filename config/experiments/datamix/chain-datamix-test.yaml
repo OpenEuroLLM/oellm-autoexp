@@ -1,0 +1,16 @@
+# @package _global_
+#
+# Test of chain-datamix.yaml (_chain-test.yaml) on dev-g, all scales by default:
+#   train      1 node each, 100 iters   -> checkpoints/iter_0000050, iter_0000100
+#   convert_N  1 GCD each               -> hf/iter_N (+ hf/iter_N.done)
+#   eval_N     1 GCD each               -> eval/iter_N (50 samples per task)
+# at most 2 jobs at a time. Run dirs output/test/<name>/<scale>. Start it with
+# run_test.sh; keep it running (tmux). Quicker: 'aux.scales=[0.1B]'.
+
+defaults:
+  - chain-datamix
+  - _chain-test
+  - _self_
+
+aux:
+  name: datamix

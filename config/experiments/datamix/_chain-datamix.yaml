@@ -1,25 +1,204 @@
 # @package _global_
 #
-# Adapter: runs the datamix training configs (datamix-*-ne.yaml, left untouched)
-# through the per-checkpoint convert/eval pipeline (_chain-ckpt-convert.yaml /
-# _chain-ckpt-eval.yaml).
+# The DataMix chain: training, HF conversion and evaluation of every checkpoint, for
+# each selected scale, in one run_autoexp.py session. The settings to change are in
+# chain-datamix.yaml; this file holds the plumbing.
 #
-# The datamix configuration is kept as is (account, run dir, job name, W&B, container,
-# tokenizer, ...). This file only adds what _chain-ckpt-convert/_chain-ckpt-eval need
-# and the datamix files don't define:
-#   - the tokenizer as a local dir (conversion can't take an HF hub id)
-#   - the project dir holding the eval container
-#   - the bridge container for the convert jobs (the datamix training container lacks modelopt)
+# Jobs per scale S in aux.scales (stages filtered by aux.stages):
 #
-# Include it after the datamix file and after _chain-ckpt-convert, see chain-train-and-convert-datamix-*.yaml.
+#   train      -> <run dir>/                     scale/S.yaml training, checkpoints/iter_N
+#   convert_N  -> <run dir>/convert/iter_N/      Megatron-Bridge: checkpoints/iter_N -> hf/iter_N (+ hf/iter_N.done)
+#   eval_N     -> <run dir>/eval/iter_N/         oellm-eval (lm-eval-harness) on hf/iter_N (+ eval/iter_N.done)
+#
+# with <run dir> = aux.train_dir = $OUTPUT_ROOT/<aux.name>/S. convert_N starts as soon
+# as checkpoint N is fully saved (latest_checkpointed_iteration.txt holds >= N), eval_N
+# as soon as hf/iter_N.done exists, so both run while training continues.
+#
+# A job whose output already exists is not submitted (aux.skip_done): a finished
+# training (its final checkpoint is saved), a converted checkpoint (hf/iter_N.done),
+# an evaluated one (eval/iter_N.done). So the same config resumes a run, and the
+# stages can be split over cooperating sessions, e.g. aux.stages=[train,convert]
+# in one and aux.stages=[eval] in another.
+#
+# Every sweep point is composed on its own, with its scale/S.yaml. Values in `sweep`
+# that depend on the scale or the checkpoint are escaped (\\$) so they are resolved
+# per job; unescaped ones are resolved once, against the default scale below.
+
+defaults:
+  - scale@_global_: 0.1B    # replaced per job by the sweep (aux.scales)
+  - _self_
 
 aux:
-  # scratch of the billed project (slurm.sbatch.account); the containers live here
+  name: ???                # experiment name, see chain-datamix.yaml
+  output_root: ${oc.env:OUTPUT_ROOT,output}   # relative paths are relative to the repo root
+  scales: ???              # [0.1B, 0.4B, 1.4B] or a subset
+  stages: ???              # [train, convert, eval] or a subset
+  data_path: ???           # training data, see chain-datamix.yaml
+  eval_task_groups: ???    # e.g. [open-sci-0.01]; only needed for the eval stage
+  eval_limit: null         # samples per task; null = full tasks
+
+  run_name: ${aux.name}-${aux.scale}           # SLURM job + W&B name of the training, prefix of the others
+  train_dir: ${aux.output_root}/${aux.name}/${aux.scale}
+
+  # scratch of the billed project (slurm.sbatch.account); the eval container lives here
   project_dir: /scratch/${slurm.sbatch.account}
   # The datamix tokenizer (backend.megatron.tokenizer_model, an HF hub id loaded offline
-  # from $HF_HOME) resolved to its snapshot in the HF cache; used as is if it's a local dir.
-  # Needs HF_HOME, as in the datamix guide.
+  # from $HF_HOME) resolved to its snapshot in the HF cache, as conversion needs a local
+  # dir; used as is if it's a local dir. Needs HF_HOME, as in the datamix guide.
   tokenizer_cache: ${oc.env:HF_HOME,""}/hub/models--${oc.eval:'"${backend.megatron.tokenizer_model}".replace("/", "--")'}
   tokenizer_dir: >-
     ${oc.eval:'"${backend.megatron.tokenizer_model}" if Path("${backend.megatron.tokenizer_model}").is_dir() else "${aux.tokenizer_cache}/snapshots/" + Path("${aux.tokenizer_cache}/refs/main").read_text().strip()'}
+
+  # All checkpoint iterations the run will save: every save_interval, plus the final
+  # iteration (Megatron always saves at the end). Computed once, for the default scale:
+  # the datamix scales share train_iters and save_interval. Override with an explicit
+  # list to convert/evaluate only some of them, e.g. aux.ckpt_iters='[4000,47684]'.
+  ckpt_iters: "${oc.eval:'list(range(${backend.megatron.save_interval}, ${backend.megatron.train_iters}, ${backend.megatron.save_interval})) + [${backend.megatron.train_iters}]'}"
+  # the checkpoints to convert/evaluate; none if the stage isn't selected, so its jobs
+  # (and their settings, e.g. eval_task_groups) aren't needed
+  convert_iters: ${oc.eval:'${aux.ckpt_iters} if "convert" in ${aux.stages} else []'}
+  eval_iters: ${oc.eval:'${aux.ckpt_iters} if "eval" in ${aux.stages} else []'}
+  ckpt_iter: 0             # set per convert/eval job by the sweep
+  # Megatron writes the latest iteration here only after its checkpoint is fully saved
+  tracker: ${aux.train_dir}/checkpoints/latest_checkpointed_iteration.txt
+  trained_iters: ${oc.eval:'int(Path("${aux.tracker}").read_text()) if Path("${aux.tracker}").exists() else 0'}
+  # skip jobs whose output already exists; false redoes them
+  skip_done: true
+  done:
+    train: ${oc.eval:'${aux.trained_iters} >= ${backend.megatron.train_iters}'}
+    convert: ${oc.eval:'Path("${aux.train_dir}/hf/${oc.pad_iter:${aux.ckpt_iter}}.done").exists()'}
+    eval: ${oc.eval:'Path("${aux.train_dir}/eval/${oc.pad_iter:${aux.ckpt_iter}}.done").exists()'}
+
+  convert_time: "01:00:00"
+  convert_partition: small-g        # not dev-g: max 2 jobs per user there
+  # container of the convert jobs: the training container + nvidia-modelopt + pulp
   convert_container: ${oc.env:PWD}/artifacts/MegatronTrainingLumi_bridge_x86_64.sif
+  # ROCm eval container (laif, has vllm + transformers); lm-eval + oellm-eval are
+  # installed on top into $HOME/eval_local (scripts/install_eval_env.sh)
+  eval_container: ${.project_dir}/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
+  eval_time: "04:00:00"
+  eval_partition: small-g
+  # extra shell check every job must pass before it is submitted (convert/eval jobs on
+  # top of waiting for their input); `true` = none. _chain-test.yaml uses it to stay
+  # within the dev-g job limit, because autoexp drops a job whose sbatch is rejected.
+  submit_guard: "true"
+
+job:
+  name: ${aux.run_name}
+  base_output_dir: ${aux.train_dir}
+
+backend:
+  megatron:
+    data_path: ${aux.data_path}
+    wandb_exp_name: ${aux.run_name}
+
+sweep:
+  type: product
+  # per job: its stage is selected and its output doesn't exist yet
+  filter: "\\${oc.eval:'\"\\${stage}\" in \\${aux.stages} and not (\\${aux.skip_done} and \\${aux.done.\\${stage}})'}"
+  groups:
+    - type: product
+      params:
+        experiments/datamix/scale@_global_: ${aux.scales}
+
+    - type: list
+      configs:
+        - stage: train
+          job.start_condition:
+            class_name: ShellCommandCondition
+            command: "${aux.submit_guard}"
+
+        # one convert job per checkpoint
+        - type: product
+          defaults:
+            backend: megatron_bridge
+            slurm: lumi_bridge
+            container.image: "${aux.convert_container}"
+            job.name: "\\${aux.run_name}_convert_\\${aux.ckpt_iter}"   # SLURM job name
+            job.base_output_dir: "\\${aux.train_dir}/convert/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            job.start_condition:
+              # checkpoint N is complete once the tracker file holds N or a later iteration
+              class_name: ShellCommandCondition
+              command: "[ \"$(cat \\${aux.tracker} 2>/dev/null || echo 0)\" -ge \\${aux.ckpt_iter} ] && ${aux.submit_guard}"
+            backend.derive_hf_arch: qwen3
+            # reference tokenizer for the temporary dummy model; an absolute path works because
+            # run_export only checks that resources/<kind>/<hf_model> exists (Path join keeps it as is)
+            backend.hf_model: "${aux.tokenizer_dir}"
+            backend.tokenizer: "${aux.tokenizer_dir}"   # same as training; copied verbatim into the HF export
+            backend.megatron_config_path: "\\${aux.train_dir}/current.yaml"
+            backend.megatron_path: "\\${aux.train_dir}/checkpoints/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            backend.hf_path: "\\${aux.train_dir}/hf/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            backend.bridge_root: "${oc.env:PWD}/submodules/Megatron-Bridge"
+            backend.resources: "${oc.env:PWD}/oellm_autoexp/postprocess/resources/megatron_bridge"
+            # marker for the eval jobs: written only if the whole export (incl. tokenizer copy) succeeded
+            backend.extra_cli_args:
+              - "&&"
+              - touch
+              - "\\${aux.train_dir}/hf/\\${oc.pad_iter:\\${aux.ckpt_iter}}.done"
+            # only slurm.env reaches the container, and the container replaces a host
+            # PYTHONPATH, so it must go in as SINGULARITYENV_PYTHONPATH. Without it megatron.core
+            # isn't found and run_export falls back to Bridge's vendored Megatron-LM, which
+            # can't read v0.19 checkpoints ("common.pt does not exist").
+            slurm.env.SINGULARITYENV_PYTHONPATH: "${oc.env:PWD}/submodules/Megatron-LM:${oc.env:PWD}:${oc.env:PWD}/submodules/Megatron-Bridge/src:/opt/venv/lib/python3.12/site-packages"
+            # conversion is single-process on CPU (gloo); one GCD slice is enough
+            slurm.srun_opts: ""
+            slurm.sbatch.partition: "${aux.convert_partition}"
+            slurm.sbatch.nodes: 1
+            slurm.sbatch.ntasks_per_node: 1
+            slurm.sbatch.gpus_per_node: 1
+            slurm.sbatch.gres: "gpu:1"
+            slurm.sbatch.cpus_per_task: 7
+            slurm.sbatch.mem: "120G"
+            slurm.sbatch.exclusive: null
+            slurm.sbatch.time: "${aux.convert_time}"
+          params:
+            stage: [convert]
+            aux.ckpt_iter: ${aux.convert_iters}
+
+        # one eval job per checkpoint
+        - type: product
+          defaults:
+            backend: oellm_eval
+            container: lumi_eval
+            slurm: lumi_eval
+            job.name: "\\${aux.run_name}_eval_\\${aux.ckpt_iter}"   # SLURM job name
+            job.base_output_dir: "\\${aux.train_dir}/eval/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            job.start_condition:
+              # the conversion of checkpoint N finished
+              class_name: ShellCommandCondition
+              command: "[ -e \\${aux.train_dir}/hf/\\${oc.pad_iter:\\${aux.ckpt_iter}}.done ] && ${aux.submit_guard}"
+            container.image: "${aux.eval_container}"
+            container.bind:
+              - "/pfs/"
+              - "/scratch/"
+              - "/flash/"
+              - "${oc.env:HOME}"
+              - "${oc.env:PWD}"
+            backend.models:
+              - "\\${aux.train_dir}/hf/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            backend.task_groups: "\\${aux.eval_task_groups}"
+            backend.limit: "\\${aux.eval_limit}"
+            backend.venv_path: "${oc.env:HOME}/eval_venv_stub"   # empty stub; the container is the env
+            backend.local: true
+            backend.skip_checks: true
+            backend.verbose: true
+            backend.env.EVAL_BASE_DIR: "\\${aux.train_dir}/eval/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            backend.env.EVAL_OUTPUT_DIR: "\\${aux.train_dir}/eval/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
+            # marker for skipping on re-runs: written only if oellm-eval succeeded
+            backend.extra_cli_args:
+              - "&&"
+              - touch
+              - "\\${aux.train_dir}/eval/\\${oc.pad_iter:\\${aux.ckpt_iter}}.done"
+            slurm.srun_opts: ""
+            slurm.sbatch.partition: "${aux.eval_partition}"
+            slurm.sbatch.nodes: 1
+            slurm.sbatch.ntasks_per_node: 1
+            slurm.sbatch.gpus_per_node: 1
+            slurm.sbatch.gres: "gpu:1"
+            slurm.sbatch.cpus_per_task: 7
+            slurm.sbatch.mem: "60G"
+            slurm.sbatch.exclusive: null
+            slurm.sbatch.time: "${aux.eval_time}"
+          params:
+            stage: [eval]
+            aux.ckpt_iter: ${aux.eval_iters}

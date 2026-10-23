@@ -78,7 +78,8 @@ SLURM_ACCOUNT=project_462001516 SLURM_PARTITION=dev-g uv run python scripts/run_
 
 # Running of DataMix experiments
 
-Thee are three config files named `datamix-*.*B-ne.yaml` for each model size.
+There is one config file per model size, `scale/*.*B.yaml`.
+To run training, conversion and evaluation of all sizes in one go, see [chain_guide.md](chain_guide.md).
 
 To run the training you have to edit `backend:megatron:data_path:` and run the command:
 
@@ -87,5 +88,5 @@ cd /flash/project_462001516/users/vitiugin/oellm-autoexp
 export HF_HOME=/flash/project_462001516/users/vitiugin/.cache
 export SLURM_ACCOUNT=project_462001516
 
-uv run python scripts/run_autoexp.py --config-name /experiments/vitiugin/datamix-*.*B-ne
+uv run python scripts/run_autoexp.py --config-name experiments/datamix/scale/*.*B
 ```
