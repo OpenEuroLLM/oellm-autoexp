@@ -4,11 +4,11 @@
         [--n 20] [--min-cov 0.5] [--max-cov 1.0] [--bench gsm8k] [--seed 0] [--context 60]
 
 --shard selects hit directories by substring of the shard key (e.g. "mixture-vitae-1.0__megatron-lm__shard_0004",
-"agenttrove"). Coverage = matched distinct n-grams / the segment's n-grams in the table (finalize
-drops a document at coverage >= --frac). Prints first a summary of the selected pairs (coverage
+"agenttrove"). Coverage = the pair's longest verbatim run / the segment's canonical tokens (finalize
+drops a document at coverage >= --frac, or a run >= --abs-run tokens). Prints first a summary of the selected pairs (coverage
 histogram, benchmark sources by pair count), then --n random pairs: the benchmark source, coverage,
-the segment text, and the decoded document text around the matched span (matched part in
->>> <<<, --context tokens around it). Small enough for a login node: run it in the training image.
+the segment text, and the decoded document text around its longest run (in >>> <<<, --context
+tokens around it). Small enough for a login node: run it in the training image.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import Index, ngram_hashes  # noqa: E402
+from common import Index, ngram_hashes, runs  # noqa: E402
 from scan import shard_key  # noqa: E402
 
 TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
@@ -50,7 +50,7 @@ def main():
     tdir = os.path.join(args.work, "table")
     segs = np.load(os.path.join(tdir, "segments.npz"))
     meta = json.load(open(os.path.join(tdir, "sources.json")))
-    src_names, n_grams = meta["sources"], segs["n_grams"].astype(np.int64)
+    src_names, n_tok = meta["sources"], segs["n_tokens"].astype(np.int64)
     prefixes = {shard_key(os.path.join(args.root, line.split()[1]), args.root): os.path.join(args.root, line.split()[1])
                 for line in open(os.path.join(args.root, "datamix.txt")) if line.strip()}
 
@@ -68,7 +68,7 @@ def main():
         rows.append(h)
         keys.append(np.full(len(h), i, np.int32))
     hits, which = np.concatenate(rows), np.concatenate(keys)
-    cov = hits[:, 2] / np.maximum(n_grams[hits[:, 1]], 1)
+    cov = hits[:, 2] / np.maximum(n_tok[hits[:, 1]], 1)
     sel = (cov >= args.min_cov) & (cov <= args.max_cov)
     if args.bench:
         bench_ok = np.array([args.bench.lower() in s.lower() for s in src_names])
@@ -78,12 +78,12 @@ def main():
           f"(coverage {args.min_cov}..{args.max_cov}{', bench ' + args.bench if args.bench else ''})")
     if not len(hits):
         return
-    edges = [0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0001]
+    edges = [0, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9, 10]
     hist = np.histogram(cov, edges)[0]
-    print("# coverage histogram: " + "  ".join(f"[{a:g},{min(b, 1):g}): {n}" for a, b, n in zip(edges, edges[1:], hist)))
+    print("# coverage histogram: " + "  ".join(f"[{a:g},{b:g}): {n}" for a, b, n in zip(edges, edges[1:], hist)))
     bench = Counter(src_names[s] for s in segs["src"][hits[:, 1]])
-    hi = Counter(src_names[s] for s in segs["src"][hits[cov >= 0.5, 1]])
-    print("# benchmark sources by pairs (all / coverage >= 0.5):")
+    hi = Counter(src_names[s] for s in segs["src"][hits[cov >= 0.9, 1]])
+    print("# benchmark sources by pairs (all / coverage >= 0.9):")
     for k, v in bench.most_common(15):
         print(f"#   {k:50s} {v:9d} {hi.get(k, 0):9d}")
 
@@ -102,7 +102,7 @@ def main():
     table, csr_off, csr_seg = tab["hash"], tab["csr_off"], tab["csr_seg"]
     idx_cache = {}
     for k, i in enumerate(pick):
-        seq, seg, matched = (int(x) for x in hits[i])
+        seq, seg, run = (int(x) for x in hits[i, :3])
         key = files[which[i]][0]
         prefix = prefixes[key]
         idx = idx_cache.setdefault(prefix, Index(prefix + ".idx"))
@@ -113,19 +113,23 @@ def main():
         n = int(segs["n"][seg])
         seg_hashes = table[np.searchsorted(csr_off, np.flatnonzero(csr_seg == seg), "right") - 1]
         h = ngram_hashes(torch.from_numpy(canon[pos]), n).numpy()
-        m = np.flatnonzero(np.isin(h, seg_hashes))
+        m = torch.from_numpy(np.flatnonzero(np.isin(h, seg_hashes)))
         text, split, rfile = texts[seg]
         print(f"\n=== [{k + 1}/{len(pick)}] {src_names[segs['src'][seg]]} ({split}, {rfile[:60]}) | "
-              f"coverage {cov[i]:.2f} ({matched}/{n_grams[seg]} {n}-grams) | {key} seq {seq} ({len(toks)} tokens)")
+              f"coverage {cov[i]:.2f} (longest run {run} of {n_tok[seg]} tokens, {int(hits[i, 4])} runs, {n}-grams) | "
+              f"{key} seq {seq} ({len(toks)} tokens)")
         print("--- benchmark segment:")
         print(text[:700] + (" ..." if len(text) > 700 else ""))
         if len(m):
-            a, b = int(pos[m[0]]), int(pos[min(m[-1] + n - 1, len(pos) - 1)]) + 1
+            z = torch.zeros(len(m), dtype=torch.int64)
+            _, _, ra, rb, _ = runs(m, z, z, torch.tensor([n]))
+            best = int(torch.argmax(rb - ra))
+            a, b = int(pos[int(ra[best])]), int(pos[min(int(rb[best]) - 1, len(pos) - 1)]) + 1
             pre = sp.decode(toks[max(0, a - args.context):a].tolist())
             mid = sp.decode(toks[a:b].tolist())
             post = sp.decode(toks[b:b + args.context].tolist())
             mid = mid if len(mid) <= 1500 else mid[:700] + f" [... {len(mid) - 1400} chars ...] " + mid[-700:]
-            print(f"--- document (tokens {a}-{b} of {len(toks)}):")
+            print(f"--- document, longest run (tokens {a}-{b} of {len(toks)}):")
             print(f"{pre}>>>{mid}<<<{post}")
         else:
             print("--- (match not re-found in the sequence)")
