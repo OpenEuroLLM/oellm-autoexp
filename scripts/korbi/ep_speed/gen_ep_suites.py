@@ -1582,8 +1582,15 @@ def ckpt_offload():
     arm("f_fsdp_plain_trace", "7:1 PreNorm, Megatron-FSDP + EP4, MoonEP, memory trace (iteration 1)",
         *f_base, resa, fsdp, PLAIN,
         {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain",
-         "backend.env.MEM_TRACE_ITER": "1", "backend.env.MEM_TRACE_RANKS": "0",
+         # the OOM is in the first step = iteration 0 of the trace hook (1 never came)
+         "backend.env.MEM_TRACE_ITER": "0", "backend.env.MEM_TRACE_RANKS": "0",
          "aux.array_tag": "_f_fsdp_trace"})
+    arm("f_fsdp_plain_a2a_trace", "... all-to-all dispatcher (fits), memory trace (iteration 2)",
+        *f_base, resa, fsdp, PLAIN,
+        {B + "moe_token_dispatcher_type": "alltoall",
+         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain_a2a",
+         "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_fsdp_a2a_trace"})
     # 1-node versions of the f3 diagnostics (start sooner): a leak of FSDP's unsharded gradient
     # buffers shows at 8 blocks too, just smaller (memory trace of iteration 2)
     smoke = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
