@@ -2903,3 +2903,19 @@ Classical vs p=1, gbs 8: +0.001 / +0.088 / +0.117 / +0.071 / +0.012 / -0.006 / -
 At gbs 32 the gap stays at +0.005-0.008 up to 15k steps. The screens end at 4800 steps, i.e.
 before the peak, so their trends say nothing about the production horizon (~10^5 steps).
 The 2-node s2 classical run vs its own am_p1 is at -0.003 at 2000 steps (s1 at the same step: +0.038).
+
+**Update 18:10, 2026-10-23.**
+- Tiny, gbs 32, 25k steps, classical Muown vs p=1: +0.005 / +0.008 / +0.005 / +0.000 / -0.002 at
+  5k / 10k / 15k / 20k / 22.5k steps (stable), and -0.025 after the cooldown. The crossover sits at
+  ~20k steps, as at gbs 8 (~18k): it is set by step count, not by tokens.
+  - cl_wd01 +0.021, muon_wd +0.039, p0_s02 +0.124 (cooled).
+- s2, 2-node, vs its own am_p1 (step 4050 of 4800):
+  - classical: -0.018 / -0.003 / +0.006 / +0.011 at 1k / 2k / 3k / 4k;
+  - cl_wd01: -0.017 / +0.007 / +0.024 / +0.038.
+  - Same shape as s1 (classical +0.055 at 4k), but 5x smaller.
+- amsimp_c8 at s2: +0.032 at 4000, +0.011 cooled.
+- Tiny gbs 8 reruns at ~50k steps: amsimp_c22 -0.008 (crossed at ~25k); radius +0.16, cl_wd01 +0.25,
+  muon_wd +0.29, p0_s02 +0.67 (stable).
+- CKLSTM s3 (ckl_sgn + mHC-4 vs CKDA + mHC-4, paired): +0.128 / +0.017 / +0.009 / +0.005 / +0.0038
+  / +0.0037 at 500 / 1000 / 1500 / 2000 / 3000 / 3500. Trend -0.0035 at 4B, -0.010 at 10B tokens
+  (s2: -0.004 / -0.014). The gap shrinks at the same rate as at s2, not faster.
