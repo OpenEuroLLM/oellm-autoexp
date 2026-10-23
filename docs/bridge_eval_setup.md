@@ -204,7 +204,7 @@ What the `lumi` branch of the installer does, and why:
    non-empty `$HOME/eval_local` is never replaced.
 2. Inside the container, writes the container's `pip list` to
    `eval_local/lib/python3.12/container_constraints.txt`, so the install
-   below keeps the container's versions (e.g. its `transformers` needs
+   below keeps the container's versions (for example its `transformers` needs
    `huggingface-hub<1.0`, its `numba` needs `numpy<2.3`).
 3. Installs `oellm-eval[eval-base]` with
    `pip install --target ~/eval_local/lib/python3.12/site-packages -c <constraints>`.
