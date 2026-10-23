@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import gzip
 import json
 import os
 import sys
@@ -29,6 +30,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--work", required=True)
     ap.add_argument("--out", default="")
+    ap.add_argument("--by-config", action="store_true",
+                    help="key benchmarks as source + first component of the file path (super_glue/boolq, ai2_arc/ARC-Easy, ...)")
     args = ap.parse_args()
     tdir = os.path.join(args.work, "table")
     tab = np.load(os.path.join(tdir, "table.npz"))
@@ -48,14 +51,21 @@ def main():
     total = np.bincount(seg_of, minlength=S)
     hits = np.bincount(seg_of[np.repeat(hit, nseg)], minlength=S)
 
-    attrib = load_attrib(meta["refs"], S)
+    if args.by_config:
+        p = meta["refs"].replace(".jsonl.gz", ".attrib.jsonl.gz")
+        attrib = []
+        with gzip.open(p, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                attrib.append(sorted({f"{a[0]}/{a[2].split('/')[0]}" for a in json.loads(line)["also_in"] if a[3]}))
+    else:
+        attrib = load_attrib(meta["refs"], S)
     names = meta["sources"]
     acc = defaultdict(lambda: np.zeros(5, np.int64))     # segments, total, hit, segs >= 1 hit, segs >= 50 %
     for sg in np.flatnonzero((segs["n"] > 0) & (total > 0)):
         row = np.array([1, total[sg], hits[sg], hits[sg] > 0, 2 * hits[sg] >= total[sg]], np.int64)
         for b in (attrib[sg] if attrib is not None else [names[segs["src"][sg]]]):
             acc[b] += row
-    out = args.out or os.path.join(args.work, "_report_ngrams.tsv")
+    out = args.out or os.path.join(args.work, "_report_ngrams" + ("_by_config" if args.by_config else "") + ".tsv")
     with open(out, "w") as fh:
         fh.write("benchmark_source\tsegments\ttotal_ngrams\thit_ngrams\thit_pct\tsegments_any_hit_pct\tsegments_half_hit_pct\n")
         for b, (n, t, h, a, half) in sorted(acc.items(), key=lambda x: -x[1][2] / max(x[1][1], 1)):
