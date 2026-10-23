@@ -2796,3 +2796,14 @@ and FAILED was closed without a retry.
 - then gives up.
 
 It applies to launches from this commit on; monitors already running keep their plan-time config.
+
+**Second gap (found on the retry, 2026-10-23).** The MN5 sbatch template ran `srun ...` followed by
+`echo` lines, so every job ended COMPLETED 0:0, even when its training step FAILED or was OOM-killed
+(sacct: step OUT_OF_MEMORY 0:125, job COMPLETED 0:0). The monitor closed those as finished, so the
+FAILED / OUT_OF_MEMORY retries could never fire. `templates/marenostrum.sbatch` now exits with the
+step's status.
+
+**muown_classical at s2 still does not fit.** Peak host RSS at the step-500 save was 479 GB with
+compact checkpoints and 4 x 2 workers (AngularMuown at s2: 472 GB, plain Muon: 307 GB; 503 GB nodes).
+A node lost mid-save also left `iter_0000500` incomplete, so the retry could not load
+(`auto_restart_ckptreset` handles that rollback).
