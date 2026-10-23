@@ -65,6 +65,15 @@ of GPUs) / (gbs x seq). A larger mbs and a larger m both help; mbs costs activat
 recompute working set grows with T), m only time. (ZeRO-3: only T.) ZeRO-1's Psi (b + b_g) is
 ~45 GB at 160 experts (Psi = 11.25B), ~34 GB at 112 (8.45B): its tests use 112 experts.
 
+**Expert parallelism.** EP does not enter the batch size: EP ranks are data-parallel ranks for
+the dense part (each processes its own micro-batch; tokens go to the expert owners by
+all-to-all), so gbs = mbs x (number of GPUs) x m with or without EP (only TP, PP, CP divide
+it). EP enters Psi: Psi = dense + experts / EP, and every FSDP / ZeRO term is proportional to
+it -- EP8 would make it 2.1B + 3.2B = 5.3B (~0.6x the traffic), but on MN5 EP beyond a node only
+runs on the slower ncclep backend. EP's own all-to-all (MoonEP dispatch / combine, ~top-k x h x b
+per token and direction, ~120 KB per token with backward and recompute) is the same in both
+layouts and stays on NVLink inside the node at EP4, so it cancels from the comparison.
+
 ## 2. Numbers
 
 KB per token per GPU; GB/s at 5,800 tok/s/GPU (the per-GPU InfiniBand link is ~25 GB/s,
