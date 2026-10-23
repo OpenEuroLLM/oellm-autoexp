@@ -1259,6 +1259,14 @@ def arms5ckl2(size: str = "s2"):
             for n, d, kv in _cklstm_variants(size) if n == "ckl_sgn_w2"]
 
 
+def arms5ckl3(size: str = "s3"):
+    """ckl_sgn + mHC-4 at s3 (user 2026-10-23: the size trend of the best CKLSTM -- step-4000 gap to
+    CKDA + mHC-4 +0.021 at s1, +0.004 at s2; best 64-fact retrieval with log-n at s2, CKDA + mHC-4
+    better on long-document loss beyond 32k). Round 5's s3 layout (4 nodes, EP 16, 4 x 2 workers),
+    paired with screen5_s3's h5_moe_mhc4."""
+    return [(n, d, {**kv, **BAD_NODES}) for n, d, kv in _cklstm_variants(size) if n == "ckl_sgn"]
+
+
 def arms5opt(size: str = "s1"):
     """The PR's optimizers (user 2026-10-22; Megatron feat/angular-muown-simplified) against AngularMuown
     p = 1 / p = 1/2 (screen5udcool_{size}'s cooled branches; same data order), each through the
@@ -1667,6 +1675,7 @@ def write5():
             ("s1", "screen5iat", arms5iat("s1")),
             *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
             ("s2", "screen5ckl2", arms5ckl2("s2")),
+            ("s3", "screen5ckl3", arms5ckl3("s3")),
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5r7", arms5r7("s2")),
             ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
