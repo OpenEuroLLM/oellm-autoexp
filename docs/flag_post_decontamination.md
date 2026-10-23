@@ -279,6 +279,34 @@ PolyMath partly GSM8K); query by content or by all attributions. Planned: re-ext
 `also_in` list of every source of a segment (same line order, so table and scan stay valid) and
 report per benchmark family.
 
+### 4.4 v3 (word-level canonical stream, runs >= 20) and the external n-gram table (2026-10-23)
+
+| step (v3) | job | nodes x elapsed | GPU-h | result |
+|---|---|---|---|---|
+| selftest / build | 47884202 / 47884279 | 1 x ~0:02 each | 0.3 | LUT 262144 ids -> 186,434 word keys, 3,015 punctuation-only pieces dropped; 1.34M matchable segments (1.30M n=13, 23k n=24, 9.4k n=40), 1.07M too short; 58.5M n-grams (escaped variants mostly collapse), 61k template n-grams dropped |
+| count / prune | 47884403 / 47884421 | 2 x ~0:04 / 1 x ~0:01 | 0.6 | 336k n-grams seen in the 105B sample, 8.2k dropped (> 50), 2 segments made unmatchable |
+| scan | 47884465 | 8 x 0:53:50 | 28.7 | 13.55T tokens, ~141M tok/s/GPU; 3.36M of 58.5M table n-grams occur in the mix |
+| ngrams | 47888458 | 1 x short | 0.1 | `_report_ngrams.tsv`, `_report_ngrams_by_config.tsv` (all attributions) |
+| dry run | 47889027 | 1 x short | 0.3 | **--frac 0.7/0.8/0.9/1.0: 430k/326k/274k/183k docs, 5.98B/4.83B/3.79B/2.96B tokens (0.044/0.036/0.028/0.022 %)** -- about 2x v2 (formatting variants and 20-29-token questions now found) |
+
+Cross-match with the n-gram overlap table another group shared (`dump/image23.png`, OCR in
+`docs/flag_decon/external_ngram_overlap_image23.tsv`; its n-gram size and corpus are not stated):
+`docs/flag_decon/crossmatch_image23_v3.tsv`. 14 of its 40 benchmarks are in our suite (the other 26 --
+RACE, MathQA, TriviaQA, NQ, MMLU-Pro/Redux, PubMedQA, SciQ, SVAMP, AQuA-RAT, AlpacaEval, AdvBench,
+MedMCQA, WikiAnn, Tatoeba, MultiLoKo, DeepSeek LeetCode, the Spanish / Catalan / French / Basque bench
+parts, SciRIFF, NorIdiom -- are not in our references and not decontaminated). Agreement: the same
+benchmarks top both lists (BoolQ, WSC); HellaSwag (17.1 vs 19.3 %) and LiveCodeBench (29.2 vs 27.6 %)
+nearly match. Ours are higher for ARC (13 vs > 99 %), SocialIQA (21 vs 99 %), MMLU (12 vs 30 %),
+Include (12 vs 28 %), MBPP (10 vs 30 %), HumanEval (13 vs 31-71 %), because (1) we count only matchable
+segments (>= 20 word tokens, >= 80 chars): for ARC / SocialIQA the long items only, which are the ones
+copied; (2) the whole flag mix incl. GitHub repos that ship benchmark data files; (3) our 13-gram is
+over word fragments (~8-10 words) and case / punctuation-insensitive. HumanEvalPlus is lower (1.6 %)
+because its segments include the huge Plus test-input dumps. LiveCodeBench by release batch shows the
+expected time pattern: 38.7 % (v1) .. 6.4 % (v6) of n-grams hit. The stronger measure -- matchable
+items present >= 90 % verbatim somewhere: ARC 99.95 %, SQuAD 99.7 %, SocialIQA 97.9 %, WSC 97.6 %,
+CoQA 84.5 %, BoolQ 70.9 %, HumanEval (openai) 58.4 %, GSM8K 54.3 %, MBPP 47-49 %, AIME24 48.3 %,
+MATH500 28.7 %, MMLU 26.8 %, LiveCodeBench 15.6 %, HellaSwag 13.4 %, Include 9.3 %.
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
