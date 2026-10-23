@@ -1559,6 +1559,17 @@ def ckpt_offload():
         fsdp, {"aux.array_tag": "_f_fsdp_m2"})
     arm("f_fsdp_m4", "7:1 hybrid, Megatron-FSDP + EP4, no PP, mbs 4, Adam", *f_base, resa, fsdp,
         {B + "micro_batch_size": 4, "aux.array_tag": "_f_fsdp_m4"})
+    # (user 2026-10-23) if FSDP is fast and mHC-4 costs nothing over PreNorm there, LDM (better,
+    # but too slow under PP: its state crossed the stages) is back on the table: PreNorm in both
+    # layouts, LDM under FSDP
+    arm("f_pp4_plain", "7:1 hybrid PreNorm (no mHC), PP4 x VPP2, Adam", *f_base, resa, PLAIN,
+        {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3)), "aux.array_tag": "_f_pp4_plain"})
+    arm("f_fsdp_plain_m2", "7:1 hybrid PreNorm, Megatron-FSDP + EP4, mbs 2, Adam", *f_base, resa,
+        fsdp, PLAIN, {"aux.array_tag": "_f_fsdp_plain"})
+    arm("f_fsdp_ldm8_m2", "7:1 hybrid LDM K 8 (CuTe, segments), Megatron-FSDP + EP4, mbs 2", *f_base,
+        resa, fsdp, ldm, {"aux.array_tag": "_f_fsdp_ldm8_m2"})
+    arm("f_fsdp_ldm8_m1", "... mbs 1 (gbs 512)", *f_base, resa, fsdp, ldm,
+        {B + "micro_batch_size": 1, "aux.array_tag": "_f_fsdp_ldm8_m1"})
     # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
     arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
         {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
