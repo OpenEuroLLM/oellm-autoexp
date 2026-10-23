@@ -2893,3 +2893,13 @@ statistic. Paired step comparisons plus long-horizon runs stay the tools.
   attention layers, each one carries the retrieval alone and sharpens more. One seed, 50 questions per bin
   (standard error ~0.07), so the 4-16k differences are within noise; the 32-64k ones are not.
 - It supports the 7:1 choice; log-n at eval adds a little on top (0.68 at 64k).
+
+**Why log-trend extrapolation fails for the optimizers** (2026-10-23). Every stable-phase gap to p=1 at s1
+and s2 grows over steps 1000-4000. Fitting a + b ln t then puts every arm further behind with more tokens,
+e.g. muown_classical s1 +0.055 at 4000 -> +0.09 at 10B tokens. The tiny runs show this shape is
+non-monotone, because p=1's direction decay acts as a hidden annealing early on and a freeze later.
+Classical vs p=1, gbs 8: +0.001 / +0.088 / +0.117 / +0.071 / +0.012 / -0.006 / -0.041 at
+2k / 4k / 5k / 10k / 15k / 20k / 90k steps. The peak is at ~5k steps and p=1 is overtaken at ~18k.
+At gbs 32 the gap stays at +0.005-0.008 up to 15k steps. The screens end at 4800 steps, i.e.
+before the peak, so their trends say nothing about the production horizon (~10^5 steps).
+The 2-node s2 classical run vs its own am_p1 is at -0.003 at 2000 steps (s1 at the same step: +0.038).
