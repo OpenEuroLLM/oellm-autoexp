@@ -342,6 +342,40 @@ def test_collect_throughput_matches_logs_by_run_name(tmp_path: Path) -> None:
     assert result == {BD3_NAME: 400.0, AR_NAME: None}
 
 
+def test_collect_throughput_reads_logs_in_run_directories(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The tier jobs write runs/<run>/slurm-<id>.log, so the directory names
+    the run."""
+    for run, values in ((BD3_NAME, [1.0, 2.0, 30.0, 40.0, 50.0]), (AR_NAME, [9.0, 9.0, 7.0])):
+        run_dir = tmp_path / "runs" / run
+        run_dir.mkdir(parents=True)
+        (run_dir / "slurm-28458579.log").write_text(_throughput_log(values), encoding="utf-8")
+    stray = tmp_path / "runs" / "probe_x"
+    stray.mkdir()
+    (stray / "slurm-1.log").write_text(_throughput_log([5.0, 5.0, 5.0]), encoding="utf-8")
+    result = cr.collect_throughput(str(tmp_path / "runs/*/slurm-*.log"), [BD3_NAME, AR_NAME])
+    assert result == {BD3_NAME: 40.0, AR_NAME: 7.0}
+    assert "probe_x" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_load_eval_dir_rejects_a_non_finite_metric(tmp_path: Path, value: float) -> None:
+    _write_json(tmp_path / f"{BD3_NAME}.m1.json", {"bits_per_token": value})
+    with pytest.raises(ValueError, match="not finite"):
+        cr.load_eval_dir(tmp_path)
+
+
+def test_main_write_refuses_an_empty_collection(tmp_path: Path) -> None:
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir()
+    results_md = tmp_path / "RESULTS.md"
+    results_md.write_text(RESULTS_MD, encoding="utf-8")
+    argv = ["--eval-dir", str(eval_dir), "--results-md", str(results_md), "--write"]
+    assert cr.main(argv) == 1
+    assert results_md.read_text(encoding="utf-8") == RESULTS_MD
+
+
 def test_tier1_table_reports_dm1_ties_and_missing_values() -> None:
     rows = [
         {

@@ -525,7 +525,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if block_size is None:
             raise ValueError("bd3 needs --block-size or dllm_block_size in config.json")
         token_shift = _from_flag_or_config(args.token_shift, config, "dllm_token_shift")
-        token_shift = 0 if token_shift is None else token_shift
+        if token_shift is None:
+            raise ValueError("bd3 needs --token-shift or dllm_token_shift in config.json")
         mask_id = _from_flag_or_config(args.mask_token_id, config, "dllm_mask_token_id")
         clean_attention = _resolve_clean_attention(args.clean_attention, config)
     tokenizer = None
@@ -536,6 +537,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError("the tokenizer has no eos_token_id; pass --eod-id")
     if args.objective == "bd3" and mask_id is None:
         mask_id = len(tokenizer)
+    if args.objective == "bd3" and not 0 <= mask_id < config.vocab_size:
+        # Spec section 12: M must be a row of the padded vocabulary.
+        raise ValueError(f"mask id {mask_id} is outside the vocabulary [0, {config.vocab_size})")
     model = transformers.AutoModelForCausalLM.from_pretrained(
         args.model, dtype=_DTYPES[args.dtype], attn_implementation="sdpa"
     )
@@ -561,6 +565,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "eod_id": eod_id,
         "mask_token_id": mask_id,
         "dtype": args.dtype,
+        "device": str(args.device),
     }
     text = json.dumps(payload, indent=2)
     args.out.parent.mkdir(parents=True, exist_ok=True)

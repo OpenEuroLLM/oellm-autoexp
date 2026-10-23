@@ -262,6 +262,8 @@ def _read_number(path: Path, key: str) -> float:
     value = data[key]
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise TypeError(f"{path}: field {key!r} is not a number: {value!r}")
+    if not math.isfinite(value):
+        raise ValueError(f"{path}: field {key!r} is not finite: {value!r}")
     return float(value)
 
 
@@ -331,9 +333,10 @@ def collect_throughput(
     """Map each run to the median tokens/s/GPU over its training log(s) (metric
     M4).
 
-    A log belongs to the longest run name that occurs in its file name. The first
-    ``skip_first`` throughput values of each log are dropped as warm-up, and the medians are
-    taken over the values of all logs of the run.
+    A log belongs to the longest run name that occurs in its file name or equals the name of
+    its directory (the tier jobs write ``runs/<run>/slurm-<id>.log``). Logs that match no run
+    are reported on stderr. The first ``skip_first`` throughput values of each log are dropped
+    as warm-up, and the medians are taken over the values of all logs of the run.
 
     Args:
         logs_glob: Glob pattern of training logs. Environment variables are expanded. An
@@ -357,8 +360,12 @@ def collect_throughput(
             path = Path(name)
             if not path.is_file():
                 continue
-            candidates = [run for run in run_list if run in path.name]
+            candidates = [run for run in run_list if run in path.name or run == path.parent.name]
             if not candidates:
+                print(
+                    f"skipped log {name}: no run name in its file or directory name",
+                    file=sys.stderr,
+                )
                 continue
             log_text = path.read_text(encoding="utf-8", errors="replace")
             series[max(candidates, key=len)].append(_throughput_values(log_text))
@@ -627,7 +634,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--logs-glob",
         default="",
-        help="glob of training logs (quote it); each log name must contain its run name",
+        help=(
+            "glob of training logs (quote it), for example '$OUTPUT_DIR/dllm-ablations/runs/*/"
+            "slurm-*.log'; a log's file name contains its run name, or its directory is named after it"
+        ),
     )
     parser.add_argument(
         "--results-md",
@@ -697,6 +707,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"base run: {base_run if base_run is not None else '-'}")
 
     if args.write:
+        if not rows:
+            print(
+                f"no run collected from {args.eval_dir}; {args.results_md} is unchanged",
+                file=sys.stderr,
+            )
+            return 1
         text = args.results_md.read_text(encoding="utf-8")
         text = replace_table(text, "## Tier 0", tier0_text)
         text = replace_table(text, "## Tier 1", tier1_text)

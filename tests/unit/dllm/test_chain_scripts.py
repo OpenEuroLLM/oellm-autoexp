@@ -317,13 +317,69 @@ def test_eval_chain_exports_the_checkpoint_and_names_the_ar_result(tmp_path: Pat
     export, m1, gsm8k = calls.read_text().splitlines()
     model = f"{tmp_path}/eval/hf/run"
     assert export.split() == [
-        "-m", "oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3", "--megatron", "/ckpt",
-        "--hf-base", "Qwen/Qwen3-0.6B-Base", "--out", model, "--block-size", "1",
-        "--token-shift", "1", "--mask-token-id", "151669", "--layout", "te",
-        "--clean-attention", "block",
-    ]  # fmt: skip
+        "-m",
+        "oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3",
+        "--megatron",
+        "/ckpt",
+        "--hf-base",
+        "Qwen/Qwen3-0.6B-Base",
+        "--out",
+        model,
+        "--block-size",
+        "1",
+        "--token-shift",
+        "1",
+        "--mask-token-id",
+        "151669",
+        "--layout",
+        "te",
+    ]  # fmt: skip  (no --clean-attention: the exporter takes it from bd_objective)
     assert "--doc-mask 0" in m1 and f"--model {model}" in m1
     assert gsm8k.endswith(f"--out {tmp_path}/eval/run.gsm8k_ar.json")
+
+
+def test_eval_chain_passes_a_set_clean_attention_to_the_export(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    (bin_dir / "python").write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    (bin_dir / "python").chmod(0o755)
+    env = _chain_env(
+        tmp_path,
+        bin_dir,
+        EVAL_CKPT="/ckpt",
+        EVAL_BLOCK_SIZE="32",
+        EVAL_TOKEN_SHIFT="0",
+        EVAL_MASK_ID="151669",
+        EVAL_CLEAN_ATTENTION="causal",
+        EVAL_NUM_SEQS="0",
+        EVAL_MODES="none",
+    )
+    result = _run(["bash", str(EVAL_CHAIN)], env)
+    assert result.returncode == 0, result.stderr
+    (export,) = calls.read_text().splitlines()
+    assert export.endswith("--layout te --clean-attention causal")
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"EVAL_DTYPE": "float16"}, "EVAL_DTYPE"),
+        ({"EVAL_NUM_SEQS": "many"}, "EVAL_NUM_SEQS"),
+        ({"EVAL_PARALLEL": "1"}, "found no GPU"),
+    ],
+)
+def test_eval_chain_fails_on_settings_that_would_skip_or_break_tasks(
+    tmp_path: Path, extra: dict[str, str], message: str
+) -> None:
+    bin_dir, calls = _stub_python(tmp_path)
+    (bin_dir / "nvidia-smi").write_text("#!/usr/bin/env bash\nexit 0\n")  # lists no GPU
+    (bin_dir / "nvidia-smi").chmod(0o755)
+    env = _chain_env(tmp_path, bin_dir, CUDA_VISIBLE_DEVICES="", **extra)  # none visible
+    result = _run(["bash", str(EVAL_CHAIN)], env)
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert not calls.exists()
 
 
 def test_stage_data_needs_a_command(tmp_path: Path) -> None:

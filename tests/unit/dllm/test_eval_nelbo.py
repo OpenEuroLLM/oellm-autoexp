@@ -736,6 +736,22 @@ def test_main_takes_the_clean_attention_from_the_config_unless_the_flag_is_given
     assert causal["nats_sum"] != block["nats_sum"]
 
 
+@pytest.mark.parametrize(
+    ("fields", "match"),
+    [({"dllm_token_shift": None}, "token-shift"), ({"dllm_mask_token_id": _VOCAB}, "mask id")],
+)
+def test_main_rejects_a_bd3_config_without_shift_or_with_mask_id_outside_the_vocabulary(
+    tmp_path: Path, fields: dict[str, Any], match: str
+) -> None:
+    model_dir = _save_tiny_bd3_model(tmp_path / "model", **fields)
+    prefix = tmp_path / "data"
+    _write_indexed_dataset(prefix, _windows(2, 12).tolist())
+    out = tmp_path / "bad.json"
+    with pytest.raises(ValueError, match=match):
+        main([*_m1_arguments(model_dir, prefix, "bd3"), "--out", str(out)])
+    assert not out.exists()
+
+
 def test_main_rejects_an_unsupported_clean_attention_in_the_config(tmp_path: Path) -> None:
     model_dir = _save_tiny_bd3_model(tmp_path / "model", dllm_clean_attention="full")
     prefix = tmp_path / "data"

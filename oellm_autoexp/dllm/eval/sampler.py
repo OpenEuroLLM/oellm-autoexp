@@ -178,8 +178,11 @@ class BlockDiffusionSampler:
             mode: ``"static"`` or ``"dynamic"``.
             tau: Confidence threshold of ``"dynamic"``. It must be finite and at least 0. A value
                 above 1 unmasks one position per pass.
-            steps: Denoise passes per block of ``"static"``, at least 1. It defaults to the block
-                size. It must be None for ``"dynamic"``.
+            steps: Step budget per block of ``"static"``, at least 1: each pass unmasks
+                ``ceil(B / steps)`` positions, so a block takes ``ceil(B / ceil(B / steps))``
+                passes, which can be fewer than ``steps`` (B = 8, steps = 3: 3 per pass, 3
+                passes; B = 8, steps = 5: 2 per pass, 4 passes). It defaults to the block size.
+                It must be None for ``"dynamic"``.
 
         Returns:
             A :class:`SampleResult`. Its tokens are cut to ``max_new_tokens`` and then after the

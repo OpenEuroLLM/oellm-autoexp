@@ -56,17 +56,19 @@ _DTYPES = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torc
 
 
 def _normalize_number(raw: str) -> str:
-    """Remove the commas, a trailing period, and a ``.0`` suffix from a matched
-    number.
+    """Remove the commas, a trailing period, and trailing zeros of the decimal
+    part from a matched number.
 
     Args:
-        raw: A number as matched in text, such as ``"1,234"`` or ``"3.0"``.
+        raw: A number as matched in text, such as ``"1,234"``, ``"3.0"`` or ``"2.50"``.
 
     Returns:
-        The normalized number, such as ``"1234"`` or ``"3"``.
+        The normalized number, such as ``"1234"``, ``"3"`` or ``"2.5"``.
     """
     text = raw.replace(",", "").removesuffix(".")
-    return text.removesuffix(".0")
+    if "." in text:
+        text = text.rstrip("0").removesuffix(".")
+    return text
 
 
 def extract_answer(text: str) -> str | None:

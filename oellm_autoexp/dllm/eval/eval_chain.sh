@@ -13,8 +13,9 @@
 #   EVAL_CKPT           MegaDLMs checkpoint root to export, or empty
 #   EVAL_ITERATION      checkpoint iteration to export (default: the tracker file)
 #   EVAL_LAYOUT         layer spec of the checkpoint: te (default) or local
-#   EVAL_CLEAN_ATTENTION  clean-stream attention written to config.json: block (default) or
-#                       causal (objective nld, spec section 15)
+#   EVAL_CLEAN_ATTENTION  clean-stream attention written to config.json: block or causal
+#                       (objective nld, spec section 15); default: the exporter takes it from the
+#                       checkpoint's bd_objective
 #   EVAL_BLOCK_SIZE, EVAL_TOKEN_SHIFT, EVAL_MASK_ID   bd3 settings of the run (export only)
 #   EVAL_OBJECTIVE      M1 estimator: bd3 or ar
 #   EVAL_DATA_PREFIX    Megatron .bin/.idx prefix of the held-out split
@@ -25,13 +26,21 @@
 #                       none skips GSM8K)
 #   EVAL_GSM8K_N        number of GSM8K test problems (default 250)
 #   EVAL_TAU            confidence threshold of the dynamic mode (default 0.9)
-#   EVAL_DTYPE          weights dtype of M1 and GSM8K: bfloat16 (default), float16, or float32
-#                       (the GPU I8 check compares AR and B = 1 decoding in float32)
+#   EVAL_DTYPE          weights dtype of M1 and GSM8K: bfloat16 (default) or float32 (the GPU I8
+#                       check compares AR and B = 1 decoding in float32, D-058)
 #   EVAL_PARALLEL       1 runs M1 and the GSM8K modes at the same time, one per visible GPU (with
 #                       more tasks than GPUs, tasks share GPUs), with one log each in
 #                       $EVAL_DIR/logs (default 0: one after another)
 set -euo pipefail
 : "${EVAL_RUN:?}" "${EVAL_DIR:?}" "${EVAL_HF_BASE:?}" "${EVAL_OBJECTIVE:?}" "${EVAL_DATA_PREFIX:?}"
+case "${EVAL_DTYPE:-bfloat16}" in
+  bfloat16 | float32) ;;
+  *) echo "[eval] EVAL_DTYPE must be bfloat16 or float32, got '${EVAL_DTYPE}'" >&2; exit 1 ;;
+esac
+if ! [[ "${EVAL_NUM_SEQS:-1000}" =~ ^[0-9]+$ ]]; then
+  echo "[eval] EVAL_NUM_SEQS must be a non-negative integer, got '${EVAL_NUM_SEQS}'" >&2
+  exit 1
+fi
 mkdir -p "$EVAL_DIR"
 MODEL="$EVAL_HF_BASE"
 
@@ -41,11 +50,13 @@ if [ -n "${EVAL_CKPT:-}" ]; then
   echo "[eval] 1/3 export $EVAL_CKPT -> $MODEL"
   ITER_ARGS=()
   [ -n "${EVAL_ITERATION:-}" ] && ITER_ARGS=(--iteration "$EVAL_ITERATION")
+  CLEAN_ARGS=()
+  [ -n "${EVAL_CLEAN_ATTENTION:-}" ] && CLEAN_ARGS=(--clean-attention "$EVAL_CLEAN_ATTENTION")
   python -m oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3 \
     --megatron "$EVAL_CKPT" --hf-base "$EVAL_HF_BASE" --out "$MODEL" \
     --block-size "$EVAL_BLOCK_SIZE" --token-shift "$EVAL_TOKEN_SHIFT" \
     --mask-token-id "$EVAL_MASK_ID" --layout "${EVAL_LAYOUT:-te}" \
-    --clean-attention "${EVAL_CLEAN_ATTENTION:-block}" "${ITER_ARGS[@]}"
+    "${CLEAN_ARGS[@]}" "${ITER_ARGS[@]}"
 else
   echo "[eval] 1/3 no checkpoint: evaluating $MODEL"
 fi
@@ -84,7 +95,11 @@ if [ "${EVAL_PARALLEL:-0}" = "1" ] && [ "${#NAMES[@]}" -gt 1 ]; then
   if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
     IFS=',' read -r -a GPUS <<< "$CUDA_VISIBLE_DEVICES"
   else
-    mapfile -t GPUS < <(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 )))
+    mapfile -t GPUS < <(seq 0 $(( $(nvidia-smi -L 2>/dev/null | wc -l) - 1 )))
+  fi
+  if [ "${#GPUS[@]}" -eq 0 ]; then
+    echo "[eval] EVAL_PARALLEL=1 found no GPU (CUDA_VISIBLE_DEVICES unset, nvidia-smi lists none)" >&2
+    exit 1
   fi
   mkdir -p "$EVAL_DIR/logs"
   PIDS=()
