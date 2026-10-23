@@ -2,7 +2,7 @@
 # Qwen3-0.6B-Base with the bd3lm method preset (D-055): BD3-LM: block size 4 with the clipped noise schedule t ~ U[0.45, 0.95] (BD3-LM's best setting for block 4).
 # 2B tokens = 3815 iterations of 256 sequences x L = 2048 on 1 node(s), TP 1, learning rate
 # 3e-5 (ABLATIONS.md: the tier 0 LR for 0.6B and 1.7B, half of it for 4B and 8B; placeholder until the tier 0 decision).
-# The job stages the data on the node-local disk, trains, and evaluates the last checkpoint.
+# The job trains, reading the data from GPFS (D-061), and evaluates the last checkpoint.
 # Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_0.6B_bd3lm --dry-run
 # Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_0.6B_bd3lm --submit-and-exit
 
@@ -27,7 +27,7 @@ job:
 backend:
   aux:
     difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
-    dist_prefix: "./oellm_autoexp/dllm/stage_data.sh ./oellm_autoexp/dllm/train_then_eval.sh "
+    dist_prefix: "./oellm_autoexp/dllm/train_then_eval.sh "
   env:
     EVAL_RUN: ${job.name}
     EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"

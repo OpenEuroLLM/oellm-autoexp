@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stage the tokenized dataset on the node-local disk for one training job, run the command on the
 # local copy, and delete the copy when the job ends (D-049: GPFS random reads limit throughput).
-# Used as the first part of backend.aux.dist_prefix, for example
+# Staging is opt-in: it copies only with DLLM_STAGE_DATA=1. Otherwise it runs the command on the
+# original paths. On Snellius the jobs read GPFS and no config sets it (D-061). Used as the first
+# part of backend.aux.dist_prefix, for example
 #   stage_data.sh ./oellm_autoexp/dllm/train_then_eval.sh torchrun <flags> <launcher> <flags>
 # Every argument that is a Megatron dataset prefix (an absolute path with <arg>.bin and <arg>.idx)
 # is copied to <local dir>/dllm-data and replaced by the local prefix; data cache paths and all
@@ -48,6 +50,10 @@ fi
 if [ "$#" -eq 0 ]; then
   echo "usage: stage_data.sh <command> [args...] | stage_data.sh --check" >&2
   exit 64
+fi
+if [ "${DLLM_STAGE_DATA:-0}" != "1" ]; then
+  echo "[stage_data] staging is off (D-061; DLLM_STAGE_DATA=1 enables it): reading the original paths"
+  exec "$@"
 fi
 ARGS=("$@")
 declare -A LOCAL_OF=()

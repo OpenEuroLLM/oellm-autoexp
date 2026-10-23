@@ -134,7 +134,10 @@ PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/smo
 Size defaults (tensor parallel, micro batch, nodes): 0.6B (1, 4, 1), 1.7B (1, 2, 2), 4B (2, 2, 4),
 8B (2, 1, 8), 14B (4, 1, 8). Global batch 256 sequences of 2048 tokens, WSD schedule (1 percent
 warmup with at least 50 steps, 20 percent linear decay to 0.1 x LR), bf16, torch checkpoints.
-A job resubmitted with the same config resumes from its last checkpoint.
+A job resubmitted with the same config resumes from its last checkpoint. Jobs read the tokenized
+data from GPFS with 8 loader workers per rank (tier 0: about 30k tokens/s/GPU at 0.6B);
+`oellm_autoexp/dllm/stage_data.sh` can copy it to a node-local disk on systems that have one
+(opt-in `DLLM_STAGE_DATA=1`; Snellius gpu_h100 nodes have none).
 
 | Experiment | Purpose |
 |---|---|

@@ -2,7 +2,7 @@
 # Qwen3-8B-Base with the nld method preset (D-055): NLD-style hybrid (spec section 15): AR cross entropy of the token-causal clean stream + 0.3 x block diffusion with block size 32, the first 20 percent of the iterations AR-only.
 # 2B tokens = 3815 iterations of 256 sequences x L = 2048 on 8 node(s), TP 2, learning rate
 # 1.5e-5 (ABLATIONS.md: the tier 0 LR for 0.6B and 1.7B, half of it for 4B and 8B; placeholder until the tier 0 decision).
-# The job stages the data on the node-local disk, trains, and evaluates the last checkpoint.
+# The job trains, reading the data from GPFS (D-061), and evaluates the last checkpoint.
 # Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_8B_nld --dry-run
 # Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_8B_nld --submit-and-exit
 
@@ -27,7 +27,7 @@ job:
 backend:
   aux:
     difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
-    dist_prefix: "./oellm_autoexp/dllm/stage_data.sh ./oellm_autoexp/dllm/train_then_eval.sh "
+    dist_prefix: "./oellm_autoexp/dllm/train_then_eval.sh "
   env:
     EVAL_RUN: ${job.name}
     EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"

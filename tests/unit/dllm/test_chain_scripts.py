@@ -256,7 +256,8 @@ def test_stage_data_copies_rewrites_and_deletes_the_local_copy(tmp_path: Path) -
     local.mkdir()
     args = [str(command), "--train-data-path", "1.0", prefix_a, "--valid-data-path", prefix_b,
             "--data-cache-path", str(tmp_path / "cache")]  # fmt: skip
-    result = _run(["bash", str(STAGE_DATA), *args], {"DLLM_LOCAL_SCRATCH": str(local)})
+    env = {"DLLM_STAGE_DATA": "1", "DLLM_LOCAL_SCRATCH": str(local)}
+    result = _run(["bash", str(STAGE_DATA), *args], env)
     assert result.returncode == 0, result.stderr
     lines = record.read_text().splitlines()
     staged = [line.removesuffix(" bin") for line in lines if line.endswith(" bin")]
@@ -277,7 +278,7 @@ def test_stage_data_copies_rewrites_and_deletes_the_local_copy(tmp_path: Path) -
 def test_stage_data_keeps_the_paths_without_local_scratch(tmp_path: Path) -> None:
     (prefix,) = _dataset(tmp_path, "shard_00_text_document")
     command, record = _recording_command(tmp_path)
-    env = {"TMPDIR": str(tmp_path), "SLURM_JOB_ID": "0"}
+    env = {"DLLM_STAGE_DATA": "1", "TMPDIR": str(tmp_path), "SLURM_JOB_ID": "0"}
     result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
     assert result.returncode == 0, result.stderr
     assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]
@@ -288,7 +289,7 @@ def test_stage_data_deletes_the_copy_after_a_failed_command(tmp_path: Path) -> N
     command, _ = _recording_command(tmp_path)
     local = tmp_path / "local"
     local.mkdir()
-    env = {"DLLM_LOCAL_SCRATCH": str(local), "RECORD_EXIT": "3"}
+    env = {"DLLM_STAGE_DATA": "1", "DLLM_LOCAL_SCRATCH": str(local), "RECORD_EXIT": "3"}
     result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
     assert result.returncode == 3
     assert not (local / "dllm-data").exists()
@@ -382,6 +383,21 @@ def test_eval_chain_fails_on_settings_that_would_skip_or_break_tasks(
     assert not calls.exists()
 
 
+def test_stage_data_copies_nothing_unless_staging_is_enabled(tmp_path: Path) -> None:
+    """D-061: without DLLM_STAGE_DATA=1 the command reads the original paths,
+    even with a local scratch directory."""
+    (prefix,) = _dataset(tmp_path, "shard_00_text_document")
+    command, record = _recording_command(tmp_path)
+    local = tmp_path / "local"
+    local.mkdir()
+    env = {"DLLM_LOCAL_SCRATCH": str(local)}
+    result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
+    assert result.returncode == 0, result.stderr
+    assert "staging is off" in result.stdout
+    assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]
+    assert list(local.iterdir()) == []
+
+
 def test_stage_data_needs_a_command(tmp_path: Path) -> None:
     result = _run(["bash", str(STAGE_DATA)], {})
     assert result.returncode == 64
@@ -391,7 +407,7 @@ def test_stage_data_needs_a_command(tmp_path: Path) -> None:
 def test_stage_data_falls_back_when_the_override_directory_is_missing(tmp_path: Path) -> None:
     (prefix,) = _dataset(tmp_path, "shard_00_text_document")
     command, record = _recording_command(tmp_path)
-    env = {"DLLM_LOCAL_SCRATCH": str(tmp_path / "absent")}
+    env = {"DLLM_STAGE_DATA": "1", "DLLM_LOCAL_SCRATCH": str(tmp_path / "absent")}
     result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
     assert result.returncode == 0, result.stderr
     assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]
