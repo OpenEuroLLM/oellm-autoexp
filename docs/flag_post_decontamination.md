@@ -220,6 +220,40 @@ was word of mouth)
 | step (v2) | job | nodes x elapsed | GPU-h | result |
 |---|---|---|---|---|
 | selftest | (decon2_selftest) | 1 x ~0:01 | 0.1 | 6/6 passed on an H100 |
+| build (1st) | 47851767 | 1 x 0:43 | 2.9 | cancelled: one multithreaded sp.encode call per segment oversubscribed the node -> one single-threaded call per batch |
+| build | 47854517 | 1 x 0:02:38 | 0.2 | 1.40M matchable segments (1.31M n=13, 81k n=24, 9.6k n=40), 1.0M too short (357k Global-MMLU options, m_hellaswag endings, subtitles, ARC options); 130.5M n-grams (escaped variants), 519k template n-grams dropped |
+| count + prune | 47854719 / 47855122 | 2 x ~0:04 / 1 x ~0:01 | 0.6 | 424k of 130M n-grams seen in the 105B sample, 10.5k dropped (> 50), 1 segment made unmatchable |
+| scan | 47855150 | 8 x 1:01:39 | 32.9 | 13.55T tokens, ~120M tok/s/GPU (3 n, 2x table); 14.5M pairs with runs >= 30 tokens (0.58 GB) |
+| dry run | 47859725 | 1 x 0:06:55 | 0.5 | --frac 0.7/0.8/0.9/1.0: 4.95B / 4.38B / 3.73B / 3.19B tokens; stackv2 2.79B of the 3.73B at 0.9 -> sampled: `\uXXXX` runs |
+| recheck (1st, 2nd) | 47860904 / 47863568 | 1 x 0:31 / 1 x 1:00 | 6.1 | cancelled / timed out: per-segment rehash, then rewriting 50k unit files on GPFS (0.4 s each) -> one overlay file |
+| recheck | 47867711 | 1 x 0:11:35 | 0.8 | 793k candidate pairs (>= 0.7 or >= 200 tokens); 401k with a changed segment rechecked, 346k of them fall below 30 tokens (escape false positives), 55k stay candidates |
+| dry run (fixed) | 47869067 | 1 x ~0:05 | 0.3 | **0.7/0.8/0.9/1.0: 229k/175k/144k/93k docs, 2.86B/2.44B/1.91B/1.52B tokens (0.021/0.018/0.014/0.011 %)** |
+| audit | 47869329 | 1 x 0:04:29 | 0.3 | 100k docs each: agenttrove 9/17 text-flagged docs also token-flagged, megamath 3/17 (see below) |
+
+Corrected per-source drops at 0.9 (all classes, before the answer-aware policy): stackv2 1.8k docs /
+1.02B tokens (0.14 %: GitHub repos shipping benchmark data files -- a BoolQ TSV, ARC data, MultiPL-E
+prompts, Universal Dependencies treebanks behind multiblimp, up to 1.5M tokens each), dclm 43k / 231M
+(0.006 %), finepdfs 2.0k / 171M, hplt 15k / 134M, mixture-vitae 35k / 82M (0.019 %), nemotron-cc
+19k / 73M, megamath 14k / 72M (0.023 %), finemath 3.1k / 13M (0.034 %), openwebmath 0.8k / 7M
+(0.05 %), agenttrove ~170 docs / ~2.7M (~0.013 %).
+
+Audit misses, inspected: **megamath -- real**: formatting variants (LaTeX `\[...\]` vs `$...$`,
+`$a,b,c,d,$` vs `$a$, $b$`, code `f( num)` vs `f(num)`, re-wrapped lists) change the token
+sequence; and segments of 20-29 canonical tokens can never flag (the scan stores runs >= 30, the rule
+requires >= 30 -- a bug: an MMLU question of 24 tokens copied with its answer). **agenttrove --
+mostly text-matcher false alarms**: generic code (`import numpy as np ...` against a 49k-token
+HumanEvalPlus test dump via the 150-word rule; the 15-word `balance = 0 / for op in operations` loop).
+
+Attribution (extract_refs.py --attribute, JUPITER, 2026-10-23): 687,819 of 2,406,959 segments occur
+in more than one benchmark; 1,908,405 items (rows with their segments by field and their short
+fields); no included text missing from the refs. refs.attrib.jsonl.gz (sha256 012a4653...),
+refs.attrib.items.jsonl.gz (42efdad4...) next to the refs on MN5.
+
+Proposed v3 (pending the user): word-level canonical stream (lowercase, punctuation stripped from
+pieces, pure-punctuation pieces dropped), runs >= 20 tokens stored and flaggable, the escape fix in
+the build, then answer-aware classes (A answer/solution, B question + answer nearby, C question
+only, D context only, E completion-style gold continuation; drop A/B/E?) and a normalized-code check
+on code candidates; audit with a tightened text rule.
 
 ### 4.3 GSM8K in agenttrove, and how v1's inspection missed it (2026-10-23)
 
