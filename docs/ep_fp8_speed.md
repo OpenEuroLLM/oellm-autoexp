@@ -779,6 +779,33 @@ Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
 
+### 6d-8. 128 nodes, round 2 (2026-10-23)
+
+Candidate (mHC-4 + Engram 40B, angular MuOwn lr 4e-3, 5 warmup steps), 128 nodes, PP4 x VPP2,
+mbs 2 unless noted (suite s128r2; queued on cns144, started once moved to ehpc533):
+
+| arm | micro-batches / pipeline | tok/s/GPU | TFLOP/s | result |
+|---|---:|---:|---:|---|
+| gbs 2048 (round 1) | 8 | 4,803 | 82.3 | |
+| **gbs 8192** | 32 | **5,013** | 86.0 | +4.4 %; **diverged**: loss 12.9 -> 9.2 (step 6) -> 12.9, grad norm 0.8 -> 33 |
+| gbs 2048, **VPP4** | 8 | **3,147** | 54.0 | **-35 %**: twice the 4-wide stage transfers |
+| gbs 4096 / 8192, mbs 4 | 8 / 16 | OOM | | |
+| gbs 2048, no recompute of the last chunk per stage | 8 | OOM | | |
+| gbs 2048, grad_reduce_in_bf16 | 8 | fail | | "MoonEP experts need fp32 main grads" |
+| profile, gbs 2048 (ranks 0 / 511) | 8 | 4,011 (profiler) | | SendRecv 3.55 s (36 %), D2H 1.24 s, MoonEP inter-rank sync 0.53 s |
+
+- **The bubble is not the whole story at scale.** gbs 8192 should gain ~13 % over 2048 from the
+  bubble alone (1.1875 / 1.047); it gains 4.4 %. Against 8 nodes at the same 32 micro-batches per
+  pipeline (5,813) 128 nodes are **-14 %**. The per-step gradient sync cannot be it (4x smaller
+  per token at 8192 than at 2048, yet the gap grew): a per-micro-batch cost that grows with the
+  ranks -- the Engram group exchanges (over 128 ranks per stage, a host sync per group;
+  ENGRAM_ASYNC_GROUPS removes those syncs) or MoonEP's inter-rank synchronisation.
+- **VPP4 confirms the width cost of PP** (docs/pp_vs_fsdp.md): 16 instead of 8 crossings of the
+  [s, b, 4, h] streams per micro-batch.
+- **The divergence at gbs 8192** is with the speed tests' lr 4e-3 and a 5-step warmup -- not a
+  verdict on large batches, but a warning for "large batch without warmup" at this learning rate;
+  the critical-batch test should include the learning rate.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
