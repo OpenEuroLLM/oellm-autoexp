@@ -127,6 +127,28 @@ Break-even for mHC-4 at m = 8: T* ~ 100k tokens, i.e. FSDP moves less than PP fr
   MoonEP's expert-gradient path (it writes fp32 wgrads through FSDP's lazily allocated
   unsharded `main_grad` buffers).
 
+### Measured (2026-10-23, 8 nodes, 7:1 hybrid, Adam, no Engram, 16k)
+
+c1 (112 experts; PP and ZeRO-3 with MoonEP), tok/s/GPU:
+
+| | PreNorm | mHC-4 |
+|---|---:|---:|
+| PP4 x VPP2, mbs 2, gbs 512 (= gbs 8192 at 128 nodes) | **7,780** | **6,128** (-21 %) |
+| PP4 x VPP2, mbs 2, gbs 256 (= gbs 4096 at 128 nodes) | 7,437 | 5,846 |
+| FSDP ZeRO-3, MoonEP, mbs 4, gbs 512 | 6,699 (memory 100 %) | OOM |
+| FSDP ZeRO-2 / ZeRO-1 (bf16 gradients), mbs 2 | OOM | OOM |
+
+f3 (160 experts, PreNorm, ZeRO-3, mbs 2): **all-to-all dispatcher 5,649 (memory 0.88), MoonEP
+OOM.**
+
+- **FSDP's problem is memory, not speed:** ZeRO-3 runs as soon as it fits, at -14 % vs PP with
+  the memory saturated (the allocator under pressure). The estimate above (~13 GB shards + ~15 GB
+  activations) is far below the ~60 GB measured: something besides the shards and the activations
+  takes ~30 GB. ZeRO-1 / ZeRO-2 add the full parameters (+ gradients) on top and OOM.
+- **MoonEP adds memory under FSDP** (all-to-all fits at 160 experts and mbs 2, MoonEP does not).
+- **mHC-4 costs -21 % under PP** at both batch sizes: the layout cost FSDP should remove.
+- Memory traces of the 1-node smoke (MoonEP vs all-to-all, iteration 2) are queued (f5).
+
 ## 5. Next
 
 1. Fix the FSDP OOM (f3 tells whether it is MoonEP's).
