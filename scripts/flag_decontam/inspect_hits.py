@@ -44,6 +44,7 @@ def main():
     ap.add_argument("--context", type=int, default=60, help="tokens shown before / after the match")
     ap.add_argument("--max-files", type=int, default=400, help="hit files read (random subset)")
     ap.add_argument("--tokenizer", default=TOKENIZER)
+    ap.add_argument("--fixes", default="recheck_fixes.npz", help="recheck.py's corrections, applied if present")
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
 
@@ -63,8 +64,10 @@ def main():
     if len(files) > args.max_files:
         files = [files[i] for i in rng.choice(len(files), args.max_files, replace=False)]
     keys, rows = [], []
+    from finalize import apply_fixes, load_fixes
+    fixes = load_fixes(args.work, args.fixes) if os.path.exists(os.path.join(args.work, args.fixes)) else {}
     for i, (key, f) in enumerate(files):
-        h = np.load(f)["hits"]
+        h = apply_fixes(np.load(f)["hits"], fixes.get(key), 30)
         rows.append(h)
         keys.append(np.full(len(h), i, np.int32))
     hits, which = np.concatenate(rows), np.concatenate(keys)

@@ -190,6 +190,15 @@ def test_resume_and_count(tmp_path):
     assert counts.shape[0] == len(np.load(work / "table" / "table.npz")["hash"])
 
 
+def test_fixes_overlay(tmp_path):
+    from finalize import apply_fixes, load_fixes
+    np.savez(tmp_path / "fx.npz", keys=np.array(["a__b"]), fixes=np.array([[0, 5, 1, 12, 3, 2], [0, 7, 2, 90, 9, 1]]))
+    fx = load_fixes(str(tmp_path), "fx.npz")
+    h = np.array([[5, 1, 80, 9, 1], [6, 1, 50, 4, 1], [7, 2, 95, 9, 1]])
+    out = apply_fixes(h, fx["a__b"], 30)
+    assert out.tolist() == [[6, 1, 50, 4, 1], [7, 2, 90, 9, 1]]       # (5, 1) fell below min_run, (7, 2) updated
+
+
 def test_filter_index_multi_sequence_docs():
     class I:  # 3 documents of 2, 1, 2 sequences
         lengths = np.array([5, 6, 7, 8, 9], np.int32)

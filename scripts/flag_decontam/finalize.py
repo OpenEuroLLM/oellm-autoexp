@@ -59,6 +59,30 @@ def load_hits(work, key, seq_count, hits_dir="hits"):
     return h, complete
 
 
+def load_fixes(work, fixes):
+    """{shard key: (seq, seg) -> (run, windows, runs)} from recheck.py's corrections file, or {}."""
+    if not fixes:
+        return {}
+    z = np.load(os.path.join(work, fixes))
+    out = defaultdict(dict)
+    for k, seq, seg, run, w, nr in z["fixes"]:
+        out[str(z["keys"][k])][(int(seq), int(seg))] = (int(run), int(w), int(nr))
+    return out
+
+
+def apply_fixes(hits, fix, min_run):
+    if not fix or not len(hits):
+        return hits
+    h = hits.copy()
+    keep = np.ones(len(h), bool)
+    for i in range(len(h)):
+        v = fix.get((int(h[i, 0]), int(h[i, 1])))
+        if v is not None:
+            h[i, 2:5] = v
+            keep[i] = v[0] >= min_run
+    return h[keep]
+
+
 def md5(path):
     m = hashlib.md5()
     with open(path, "rb") as f:
@@ -242,7 +266,8 @@ def main():
     ap.add_argument("--min-run", type=int, default=30)
     ap.add_argument("--max-docs", type=int, default=20000)
     ap.add_argument("--dry-run", action="store_true", help="reports only ($WORK/_report/frac_<f>), no tree")
-    ap.add_argument("--hits-dir", default="hits", help="hits (scan) or hits_fixed (recheck.py)")
+    ap.add_argument("--hits-dir", default="hits")
+    ap.add_argument("--fixes", default="", help="recheck.py's corrections (recheck_fixes.npz), applied to the hits")
     args = ap.parse_args()
     if not args.dry_run and len(args.frac) != 1:
         sys.exit("writing the tree takes exactly one --frac")
@@ -257,12 +282,15 @@ def main():
             w, prefix = line.split()
             rows.append((float(w), prefix))
 
+    fixes = load_fixes(args.work, args.fixes)
     shards, totals, incomplete = {}, {}, []
     for _, rel in rows:
         p = os.path.join(args.root, rel)
         idx = Index(p + ".idx")
         assert idx.multimodal_tail == 0, f"multimodal index {p}"
-        hits, complete = load_hits(args.work, shard_key(p, args.root), idx.seq_count, args.hits_dir)
+        key = shard_key(p, args.root)
+        hits, complete = load_hits(args.work, key, idx.seq_count, args.hits_dir)
+        hits = apply_fixes(hits, fixes.get(key), args.min_run)
         if not complete:
             incomplete.append(rel)
         seq2doc = np.searchsorted(idx.doc_idx, hits[:, 0], "right") - 1
@@ -284,7 +312,7 @@ def main():
                 refs_text[i] = json.loads(line)["text"][:300].replace("\t", " ").replace("\n", " ")
 
     for fr, (flagged, generic, seg_docs) in decisions.items():
-        rdir = (os.path.join(args.work, "_report" + ("" if args.hits_dir == "hits" else "_" + args.hits_dir), f"frac_{fr:g}")
+        rdir = (os.path.join(args.work, "_report" + ("_fixed" if args.fixes else ""), f"frac_{fr:g}")
                 if args.dry_run else os.path.join(args.out, "_report"))
         report(rdir, fr, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib)
         print(open(os.path.join(rdir, "sources.tsv")).read(), flush=True)

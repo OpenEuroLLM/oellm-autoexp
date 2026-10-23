@@ -10,9 +10,9 @@ change a decision. For those whose segment build_table.variants() now hashes dif
 document is re-read, its windows hashed and matched against the segment's corrected n-grams
 (also intersected with the scanned table, i.e. after pruning), and the run recomputed.
 
-Writes $WORK/hits_fixed/<shard>/<unit>.npz for every unit (unchanged rows copied; corrected rows
-updated, dropped below --min-run) and hits_fixed/recheck_report.json. finalize.py --hits-dir
-hits_fixed then decides on the corrected runs.
+Writes $WORK/recheck_fixes.npz (keys: shard keys; fixes: shard index, seq, seg, run, windows,
+runs of every rechecked pair) and recheck_report.json; finalize.py --fixes recheck_fixes.npz
+applies it as an overlay on the scan's hits (rows below --min-run drop out).
 """
 
 from __future__ import annotations
@@ -153,33 +153,19 @@ def main():
             for seq, seg, run, w, nr in res:
                 fixed[(key, seq, seg)] = (run, w, nr)
 
-    out_root = os.path.join(args.work, "hits_fixed")
-    stats = {"candidates": int(sum(len(r) for _, r in cand)), "rechecked": len(fixed), "still_candidates": 0,
-             "rows_dropped": 0}
-    changed_arr = np.array(sorted(changed), dtype=np.int64)
-    by_file = defaultdict(dict)
-    for (key, seq, seg), v in fixed.items():
-        by_file[key][(seq, seg)] = v
-    for f in files:
-        key = os.path.basename(os.path.dirname(f))
-        z = np.load(f)
-        h = z["hits"].copy()
-        keep = np.ones(len(h), bool)
-        fk = by_file.get(key)
-        if fk and len(h):
-            for i in np.flatnonzero(np.isin(h[:, 1], changed_arr)):
-                v = fk.get((int(h[i, 0]), int(h[i, 1])))
-                if v is not None:
-                    h[i, 2:5] = v
-                    keep[i] = h[i, 2] >= args.min_run
-                    stats["still_candidates"] += int(h[i, 2] >= need[h[i, 1]])
-        stats["rows_dropped"] += int((~keep).sum())
-        dst = os.path.join(out_root, key, os.path.basename(f))
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        np.savez(dst, hits=h[keep], seq_range=z["seq_range"])
-    with open(os.path.join(out_root, "recheck_report.json"), "w") as fh:
-        json.dump({**stats, "frac": args.frac, "abs_run": args.abs_run, "min_run": args.min_run,
-                   "segments_corrected": len(changed)}, fh, indent=1)
+    # one corrections file (an overlay applied by finalize.py --fixes), not a rewrite of every unit file
+    keys = sorted({k for k, _, _ in fixed})
+    kid = {k: i for i, k in enumerate(keys)}
+    arr = np.array([(kid[k], seq, seg, *v) for (k, seq, seg), v in fixed.items()], dtype=np.int64).reshape(-1, 6)
+    out = os.path.join(args.work, "recheck_fixes.npz")
+    np.savez(out + ".tmp.npz", keys=np.array(keys), fixes=arr)
+    os.replace(out + ".tmp.npz", out)
+    still = int((arr[:, 3] >= need[arr[:, 2]]).sum()) if len(arr) else 0
+    stats = {"candidates": int(sum(len(r) for _, r in cand)), "rechecked": len(arr), "still_candidates": still,
+             "below_min_run": int((arr[:, 3] < args.min_run).sum()) if len(arr) else 0,
+             "segments_corrected": len(changed), "frac": args.frac, "abs_run": args.abs_run, "min_run": args.min_run}
+    with open(os.path.join(args.work, "recheck_report.json"), "w") as fh:
+        json.dump(stats, fh, indent=1)
     print(json.dumps(stats), flush=True)
 
 

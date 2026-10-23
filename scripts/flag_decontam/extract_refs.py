@@ -16,7 +16,8 @@ count is not inflated by such repetition. Next to it, <out>.manifest.tsv lists e
 seen with its split and whether it was included.
 
 --attribute REFS: instead of extracting, write for every line of an existing refs file all the
-(source, split, file, included) that hold its exact text (deduplication credits a text to the
+(source, split, file, included, row, field) that hold its exact text, and an items file (per row:
+its segments with fields, and its short fields -- answers, labels, options) (deduplication credits a text to the
 first source only: MGSM-en *is* GSM8K test, but is stored as MGSM). Same line order as REFS.
 
 Split policy: test / validation / dev / devtest / unknown splits are included; a source's
@@ -77,6 +78,22 @@ def texts_of(value, out: list[str]) -> None:
     elif isinstance(value, (list, tuple)):
         for v in value:
             texts_of(v, out)
+
+
+def is_segment(t: str) -> bool:
+    return 25 <= len(t) <= 100_000 and len(WORDY.findall(t[:4000])) >= 4
+
+
+def fields_of(value, path: str, out: list) -> None:
+    """(field path, value) of every string / number leaf of a row; list indices dropped from the path."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            fields_of(v, f"{path}.{k}" if path else str(k), out)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            fields_of(v, path, out)
+    elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        out.append((path, value))
 
 
 def rows_of(path: str):
@@ -163,15 +180,19 @@ def _key(t):
 
 
 def attribute(args, files, splits_by_src):
-    """For every line of an existing refs file: all (src, split, file, included) holding that exact
-    text, train splits included (flagged). Keeps the refs' line ids, so tables and scans built on
-    them stay valid. Texts of included files missing from the refs (data added since) are counted."""
+    """For every line of an existing refs file: all (src, split, file, included, row, field) holding
+    that exact text, train splits included (flagged). Keeps the refs' line ids, so tables and scans
+    built on them stay valid. Also writes <out>.items.jsonl.gz: per row of an included file that holds
+    a refs segment, its segments with their fields and its short fields (answers, labels, options,
+    numbers: what is too short to be a segment), so a matched question can be checked for its answer.
+    Texts of included files missing from the refs (data added since) are counted."""
     ids = {}
     with gzip.open(args.attribute, "rt", encoding="utf-8") as f:
         for i, line in enumerate(f):
             ids[_key(json.loads(line)["text"])] = i
     attrib = [[] for _ in range(len(ids))]
-    missing = 0
+    missing = n_items = 0
+    items = gzip.open(args.out.replace(".jsonl.gz", "") + ".items.jsonl.gz", "wt", encoding="utf-8")
     for src, full, rel in files:
         split = split_of(rel)
         only_train = splits_by_src[src] <= {"train"}
@@ -179,26 +200,38 @@ def attribute(args, files, splits_by_src):
         include = split != "train" or (only_train and not generic)
         hit = 0
         try:
-            for row in rows_of(full):
-                texts: list[str] = []
-                texts_of(row, texts)
-                for t in texts:
-                    i = ids.get(_key(t))
-                    if i is None:
-                        missing += include
-                        continue
-                    e = [src, split, rel, int(include)]
-                    if e not in attrib[i][-4:]:
-                        attrib[i].append(e)
-                        hit += 1
+            for r, row in enumerate(rows_of(full)):
+                fl: list = []
+                fields_of(row, "", fl)
+                segs, short = [], []
+                for path, v in fl:
+                    if isinstance(v, str) and is_segment(v):
+                        i = ids.get(_key(v))
+                        if i is None:
+                            missing += include
+                            continue
+                        e = [src, split, rel, int(include), r, path]
+                        if len(attrib[i]) < 64:                  # bounded: a passage shared by many rows
+                            attrib[i].append(e)
+                            hit += 1
+                        segs.append([i, path])
+                    elif len(short) < 64:
+                        sv = str(v)
+                        if 0 < len(sv) <= 300:
+                            short.append([path, sv])
+                if include and segs:
+                    items.write(json.dumps({"src": src, "split": split, "file": rel, "row": r, "segs": segs,
+                                            "short": short}, ensure_ascii=False) + "\n")
+                    n_items += 1
         except Exception as e:
             print(f"! {src} {rel}: {type(e).__name__}: {str(e)[:120]}", flush=True)
         print(f"{'+' if include else '-'} {src:50s} {split:10s} attributions={hit:7d} {rel[:80]}", flush=True)
+    items.close()
     with gzip.open(args.out, "wt", encoding="utf-8") as out:
         for a in attrib:
             out.write(json.dumps({"also_in": a}, ensure_ascii=False) + "\n")
     multi = sum(len({x[0] for x in a}) > 1 for a in attrib)
-    print(f"{len(attrib)} refs lines attributed; {multi} in more than one source; "
+    print(f"{len(attrib)} refs lines attributed; {multi} in more than one source; {n_items} items; "
           f"{missing} texts of included files not in the refs -> {args.out}")
 
 
