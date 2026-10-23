@@ -1627,6 +1627,14 @@ def ckpt_offload():
         arm(f"c_z1_{res}_m2", f"{res}, FSDP ZeRO-1 (optim, bf16 grads), mbs 2, gbs 512", *f_base, resa,
             e112, rd, fsdp, bf16g,
             {B + "data_parallel_sharding_strategy": "optim", "aux.array_tag": f"_c_z1_{res}_m2"})
+    # c2: which EP backend works under FSDP (MoonEP OOMs there, the all-to-all fits): HybridEP
+    # (flex, TE grouped experts) and the all-to-all, ZeRO-3, mbs 2, 112 experts, PreNorm / mHC-4;
+    # vs c1's PP4 at gbs 512
+    a2a = {B + "moe_token_dispatcher_type": "alltoall"}
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        for ep_name, epd in (("hep", HEP), ("a2a", a2a)):
+            arm(f"c_z3_{res}_{ep_name}_m2", f"{res}, FSDP ZeRO-3, {ep_name} dispatcher, mbs 2, gbs 512",
+                *f_base, resa, e112, rd, fsdp, epd, {"aux.array_tag": f"_c_z3_{res}_{ep_name}"})
     # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
     arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
         {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
