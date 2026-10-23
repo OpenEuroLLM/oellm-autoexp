@@ -15,6 +15,9 @@ passage shared by many questions (SQuAD, Belebele, CoQA) is one segment, and an 
 count is not inflated by such repetition. Next to it, <out>.manifest.tsv lists every data file
 seen with its split and whether it was included.
 
+--append-to REFS: extend an existing refs file (new benchmarks): its lines are copied first, so
+existing segment ids stay valid, then the new unique texts follow.
+
 --attribute REFS: instead of extracting, write for every line of an existing refs file all the
 (source, split, file, included, row, field) that hold its exact text, and an items file (per row:
 its segments with fields, and its short fields -- answers, labels, options) (deduplication credits a text to the
@@ -68,6 +71,14 @@ def split_of(path: str) -> str:
     return "unknown"
 
 
+def joined(value) -> str | None:
+    """A pre-tokenised sentence (WikiAnn, UD-style datasets): >= 8 one-word strings, joined with spaces."""
+    if isinstance(value, (list, tuple)) and len(value) >= 8 and all(
+            isinstance(v, str) and v and " " not in v and len(v) <= 40 for v in value):
+        return " ".join(value)
+    return None
+
+
 def texts_of(value, out: list[str]) -> None:
     if isinstance(value, str):
         if 25 <= len(value) <= 100_000 and len(WORDY.findall(value[:4000])) >= 4:
@@ -76,6 +87,9 @@ def texts_of(value, out: list[str]) -> None:
         for v in value.values():
             texts_of(v, out)
     elif isinstance(value, (list, tuple)):
+        j = joined(value)
+        if j is not None:
+            texts_of(j, out)
         for v in value:
             texts_of(v, out)
 
@@ -90,6 +104,9 @@ def fields_of(value, path: str, out: list) -> None:
         for k, v in value.items():
             fields_of(v, f"{path}.{k}" if path else str(k), out)
     elif isinstance(value, (list, tuple)):
+        j = joined(value)
+        if j is not None:
+            out.append((path, j))
         for v in value:
             fields_of(v, path, out)
     elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
@@ -237,16 +254,20 @@ def attribute(args, files, splits_by_src):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--hf-home", required=True)
+    ap.add_argument("--hf-home", required=True, action="append", help="HF cache root (repeat for several caches)")
     ap.add_argument("--evalchemy", default="/opt/evalchemy/eval/chat_benchmarks")
     ap.add_argument("--human-eval", default="/opt/human-eval/data")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--append-to", metavar="REFS", help="extend an existing refs file: its lines first, unchanged "
+                    "(same segment ids), then the new unique segments of --hf-home / bundled data")
+    ap.add_argument("--no-bundled", action="store_true", help="skip the Evalchemy / human-eval data of the image")
     ap.add_argument("--attribute", metavar="REFS", help="attribution mode: every source of each line of an "
                     "existing refs file -> --out (one JSON line per refs line, same order)")
     args = ap.parse_args()
 
-    files = list(hub_files(args.hf_home)) + list(arrow_files(args.hf_home)) + \
-        list(bundled_files(args.evalchemy, args.human_eval))
+    files = [f for h in args.hf_home for f in list(hub_files(h)) + list(arrow_files(h))]
+    if not args.no_bundled:
+        files += list(bundled_files(args.evalchemy, args.human_eval))
     splits_by_src = defaultdict(set)
     for src, full, rel in files:
         splits_by_src[src].add(split_of(rel))
@@ -257,6 +278,12 @@ def main():
     manifest = []
     n_out = 0
     with gzip.open(args.out, "wt", encoding="utf-8") as out:
+        if args.append_to:          # keep the existing segments and their ids; only new texts are added
+            with gzip.open(args.append_to, "rt", encoding="utf-8") as f:
+                for line in f:
+                    seen.add(_key(json.loads(line)["text"]))
+                    out.write(line)
+            print(f"{len(seen)} existing segments kept from {args.append_to}", flush=True)
         for src, full, rel in files:
             split = split_of(rel)
             only_train = splits_by_src[src] <= {"train"}
@@ -272,7 +299,7 @@ def main():
                         texts_of(row, texts)
                         for t in texts:
                             segs += 1
-                            key = hashlib.blake2b(t.encode("utf-8", "replace"), digest_size=16).digest()
+                            key = _key(t)
                             if key in seen:
                                 continue
                             seen.add(key)
