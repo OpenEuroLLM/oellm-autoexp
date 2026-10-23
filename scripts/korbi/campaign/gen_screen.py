@@ -1307,7 +1307,10 @@ def arms5r7(size: str = "s2"):
 ONE_GPU = {"slurm.sbatch.gres": "gpu:1", "slurm.sbatch.gpus_per_node": 1, "slurm.sbatch.cpus_per_task": 40,
            "slurm.sbatch.exclusive": None, "slurm.srun.exclusive": False, "slurm.srun.cpus_per_task": 40,
            "slurm.env.SLURM_CPUS_PER_TASK": "40", "slurm.env.GPUS_PER_NODE": "1",
-           "slurm.env.NUM_GPUS_PER_NODE": "1"}
+           "slurm.env.NUM_GPUS_PER_NODE": "1",
+           # 1-GPU jobs share nodes: a fixed rendezvous port (marenostrum.yaml: 20074) made the 2nd
+           # torchrun on a node fail at startup ("DistNetworkError: Failed to recv")
+           "slurm.env.MASTER_PORT": "$((20100 + SLURM_JOB_ID % 20000))"}
 
 
 def _opt_variants(lr: float):
@@ -1661,6 +1664,12 @@ def write5():
             # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact
             # retrieval / passkey at 64k) on the s2 mixers' step-4000 checkpoints (KronLSTM paper
             # gates: its last, 3000), plain and with eval-time log-n
+            # ckl_sgn's s2 run finished later (NODE_FAIL resumes): its own suites
+            *[("s2", f"ds5lcckl3{tag}", arms5downstream_any(
+                [("ckl_sgn", "screen5ckl_s2", "ckl_sgn",
+                  {**dict((m, x) for m, _, x in arms5ckl("s2"))["ckl_sgn"], **extra})], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
             # the signed CKLSTM s2 checkpoints on the same long-context set (user 2026-10-23)
             *[("s2", f"ds5lcckl{tag}", arms5downstream_any(
                 [(n, su, n, {**kv, **extra}) for n, su, kv in (

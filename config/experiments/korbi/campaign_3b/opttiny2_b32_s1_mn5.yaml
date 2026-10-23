@@ -136,6 +136,7 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
+          slurm.env.MASTER_PORT: $((20100 + SLURM_JOB_ID % 20000))
         # tiny 7:1 + mHC-4, gbs 32: am_p0_s02
         - aux.arm: am_p0_s02
           backend.megatron.num_attention_heads: 3
@@ -221,6 +222,7 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
+          slurm.env.MASTER_PORT: $((20100 + SLURM_JOB_ID % 20000))
           backend.megatron.angular_muown_u_decay_p: 0.0
         # tiny 7:1 + mHC-4, gbs 32: muown_classical
         - aux.arm: muown_classical
@@ -307,6 +309,7 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
+          slurm.env.MASTER_PORT: $((20100 + SLURM_JOB_ID % 20000))
         # tiny 7:1 + mHC-4, gbs 32: muown_cl_wd01
         - aux.arm: muown_cl_wd01
           backend.megatron.num_attention_heads: 3
@@ -392,6 +395,7 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
+          slurm.env.MASTER_PORT: $((20100 + SLURM_JOB_ID % 20000))
           backend.megatron.muown_classical_v_weight_decay: 0.1
         # tiny 7:1 + mHC-4, gbs 32: muon_wd
         - aux.arm: muon_wd
@@ -478,6 +482,7 @@ sweep:
           slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
+          slurm.env.MASTER_PORT: $((20100 + SLURM_JOB_ID % 20000))
           backend.megatron.muon_extra_scale_factor: 0.2
           backend.megatron.muon_momentum: 0.95
           backend.megatron.muon_nesterov: true
