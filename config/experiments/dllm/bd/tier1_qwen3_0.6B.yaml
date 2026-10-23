@@ -1,6 +1,6 @@
 # @package _global_
 # Tier 1 (.claude/dllm/ABLATIONS.md): one factor at a time against R00 for Qwen3-0.6B-Base, 2B tokens
-# = 3815 iterations of 256 sequences x L = 2048, one node per run, learning rate 1e-4 (provisional pick of the tier 0 rule; T0-d at 3e-4 pending, D-060 and D-062).
+# = 3815 iterations of 256 sequences x L = 2048, one node per run, learning rate 1e-4 (fixed for all 12 arms, D-065).
 # R05 (complementary masking) halves the global and micro batch, so its FLOPs per step match R00.
 # R08 writes its schedule 0:4,0.15:8 as 0-4_0.15-8 in the run name (D-044). R10 is the AR control.
 # R11 is the NLD-style hybrid (spec section 15, D-054): AR loss of a token-causal clean stream +
