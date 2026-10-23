@@ -6448,7 +6448,7 @@ sweep:
           backend.megatron.ckpt_format: fsdp_dtensor
           backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain
           backend.env.MEM_TRACE_ITER: '0'
-          backend.env.MEM_TRACE_RANKS: '0'
+          backend.env.MEM_TRACE_RANKS: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
         # ... all-to-all dispatcher (fits), memory trace (iteration 2)
         - aux.arm: f_fsdp_plain_a2a_trace
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E

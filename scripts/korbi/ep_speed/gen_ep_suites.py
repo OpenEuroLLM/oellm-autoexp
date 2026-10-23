@@ -1582,8 +1582,10 @@ def ckpt_offload():
     arm("f_fsdp_plain_trace", "7:1 PreNorm, Megatron-FSDP + EP4, MoonEP, memory trace (iteration 1)",
         *f_base, resa, fsdp, PLAIN,
         {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain",
-         # the OOM is in the first step = iteration 0 of the trace hook (1 never came)
-         "backend.env.MEM_TRACE_ITER": "0", "backend.env.MEM_TRACE_RANKS": "0",
+         # the OOM is in the first step = iteration 0 of the trace hook (1 never came); every rank
+         # (the OOM hits varying ranks, rank 0 survived): each dumps its own _oom snapshot
+         "backend.env.MEM_TRACE_ITER": "0",
+         "backend.env.MEM_TRACE_RANKS": ",".join(str(r) for r in range(32)),
          "aux.array_tag": "_f_fsdp_trace"})
     arm("f_fsdp_plain_a2a_trace", "... all-to-all dispatcher (fits), memory trace (iteration 2)",
         *f_base, resa, fsdp, PLAIN,
