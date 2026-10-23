@@ -25,5 +25,12 @@ def test_session_is_looked_up_in_monitor_state_dir(tmp_path, monitored_dir):
 
 
 def test_session_dir_takes_precedence(tmp_path, monitored_dir):
-    argv = ["--session", "ignored", "--session-dir", str(tmp_path), "--monitor-state-dir", "/nonexistent"]
+    argv = [
+        "--session",
+        "ignored",
+        "--session-dir",
+        str(tmp_path),
+        "--monitor-state-dir",
+        "/nonexistent",
+    ]
     assert monitored_dir(argv) == tmp_path
