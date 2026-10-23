@@ -221,6 +221,30 @@ was word of mouth)
 |---|---|---|---|---|
 | selftest | (decon2_selftest) | 1 x ~0:01 | 0.1 | 6/6 passed on an H100 |
 
+### 4.3 GSM8K in agenttrove, and how v1's inspection missed it (2026-10-23)
+
+v2 scan, whole agenttrove shard, longest verbatim run >= 0.9 of the question: **48 GSM8K test
+questions in 48 documents** (43 credited to CohereLabs/global-mgsm `en/test`, 5 to Qwen/PolyMath
+`en`), none credited to `openai/gsm8k` (its other ~1,070 test questions and all solutions: 0).
+They sit in "Solve the following math problem step by step and write the final answer to
+answer.txt" tasks. All fall in the MGSM / PolyMath subset: agenttrove likely took its math tasks
+from those GSM8K-derived sets. megamath holds many more verbatim GSM8K test questions
+("Question: ... Answer: ..." pages, credited to openai/gsm8k).
+
+The v1 report "no verbatim GSM8K in agenttrove" was wrong, for three reasons:
+1. `extract_refs.py` dedupes identical texts and credits each to the first source in alphabetical
+   file order; MGSM-en is GSM8K's first 250 test questions verbatim and `CohereLabs/...` sorts
+   before `openai/...`, so those questions are stored as MGSM only.
+2. `inspect_hits.py --bench gsm8k` filters by source *name*, so MGSM / PolyMath never showed.
+3. A negative claim without a positive control: the printed v1 summary listed `global-mgsm` pairs
+   at >= 0.5 and was not connected to GSM8K.
+
+Rules from this: before reporting a benchmark absent, search a known item of it and its derived
+benchmarks (MGSM-en ⊂ GSM8K test, MATH500 ⊂ MATH test, Global-MMLU-en ≈ MMLU, ARC-MT ⊂ ARC,
+PolyMath partly GSM8K); query by content or by all attributions. Planned: re-extract with an
+`also_in` list of every source of a segment (same line order, so table and scan stay valid) and
+report per benchmark family.
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
