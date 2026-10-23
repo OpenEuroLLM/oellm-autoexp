@@ -2919,3 +2919,12 @@ The 2-node s2 classical run vs its own am_p1 is at -0.003 at 2000 steps (s1 at t
 - CKLSTM s3 (ckl_sgn + mHC-4 vs CKDA + mHC-4, paired): +0.128 / +0.017 / +0.009 / +0.005 / +0.0038
   / +0.0037 at 500 / 1000 / 1500 / 2000 / 3000 / 3500. Trend -0.0035 at 4B, -0.010 at 10B tokens
   (s2: -0.004 / -0.014). The gap shrinks at the same rate as at s2, not faster.
+
+**Does classical Muown grow out of bounds?** Measured in the tiny gbs-8 checkpoints (90k and 100k steps,
+the cooldown in between; init row norm 0.02 sqrt(384) = 0.39). Muown has no weight decay on v or g (paper).
+- ||v|| median: 20-24 (max 83). That is ~50x the init, exactly sqrt(0.39^2 + (0.063)^2 t). The rotation
+  per step falls from ~0.16 to ~3e-3 rad. ||v|| is optimizer state only (W = g v / ||v||), so it never
+  overflows. The risk is the endless annealing: by the same law ~1.4e-3 rad/step at ~5e5 steps.
+- g (Adam, no weight decay): medians 0.4-2.7, max 19. It grows 1-4 % from 90k to 100k, and p=1's g is
+  the same (medians 0.4-2.5, max 18.6). The magnitudes are not specific to classical Muown.
+- s2 cooled (step 4800): classical +0.0037, cl_wd01 +0.0045 vs p=1 (s1: +0.013 / +0.023).
