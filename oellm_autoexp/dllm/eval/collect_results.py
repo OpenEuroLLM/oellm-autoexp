@@ -36,6 +36,10 @@ EDGE_NOTE = "edge: consider one more step"
 TIE_LR_NOTE = "tie within 0.5 percent: lower LR picked"
 TIE_LR_PERCENT = 0.5
 EDGE_BEAT_PERCENT = 2.0
+# M2 veto of the tier 0 rule (D-064, D-065): the higher LR of the two best runs by M1 loses when its
+# GSM8K static accuracy is more than this many points below the other run's.
+M2_VETO_POINTS = 3.0
+M2_PENDING_NOTE = "M2 check pending"
 TIE_DM1_PERCENT = 0.3
 TIER_SIZE = "0.6B"
 TIER0_TOKENS = 500_000_000
@@ -53,7 +57,7 @@ BASE_BD3: dict[str, Any] = {
     "schedule": None,
 }
 
-TIER0_HEADER = ("| Run | LR | M1 | Notes |", "|---|---|---|---|")
+TIER0_HEADER = ("| Run | LR | M1 | M2 static | Notes |", "|---|---|---|---|---|")
 TIER1_HEADER = (
     "| Run | Change | M1 | dM1 vs R00 (%) | M2 static | M2 dyn@0.9 | M3 | M4 | Notes |",
     "|---|---|---|---|---|---|---|---|---|",
@@ -441,19 +445,24 @@ def _describe_change(parsed: Mapping[str, Any], base_lr: float | None) -> str:
 
 
 def pick_lr(rows: Sequence[Mapping[str, Any]]) -> tuple[float, str]:
-    """Pick the tier 0 learning rate by the rule in ``ABLATIONS.md``.
+    """Pick the tier 0 learning rate by the rule in ``ABLATIONS.md`` (the tier
+    2 LR, D-065).
 
     The best run has the lowest M1. Every run whose M1 is within 0.5 percent of that value
-    ties with it, and the tie goes to the lower LR. If the picked LR is the lowest or the
-    highest of the sorted LR list (the edge rule needs at least three runs) and its M1 beats
-    the M1 of the middle LR by more than 2 percent, the note asks for one more step.
+    ties with it, and the tie goes to the lower LR. If the sweep has three LRs, the picked LR is
+    the lowest or the highest, and its M1 beats the M1 of the middle LR by more than 2 percent,
+    the note asks for one more step (the rule allows one; a fourth LR gets no edge note). M2 veto
+    (D-064, D-065): when the pick has the higher LR of the two best runs by M1, the lower LR is
+    picked instead if the pick's ``m2_static`` is more than 3 points below the other run's; while
+    either value is missing, the note says that the M2 check is pending.
 
     Args:
-        rows: Tier 0 rows with ``lr`` (float) and ``m1`` (float or None). Rows without M1
-            are ignored.
+        rows: Tier 0 rows with ``lr`` (float), ``m1`` (float or None), and optionally
+            ``m2_static`` (GSM8K static accuracy in percent). Rows without M1 are ignored.
 
     Returns:
-        The picked LR and a note. The note is empty, or the tie and edge notes joined by "; ".
+        The picked LR and a note. The note is empty, or the tie, edge, and M2 notes joined by
+        "; ".
 
     Raises:
         ValueError: If no row has an M1 value, or two rows with an M1 value share an LR.
@@ -471,20 +480,36 @@ def pick_lr(rows: Sequence[Mapping[str, Any]]) -> tuple[float, str]:
     notes: list[str] = []
     if len(tied) > 1:
         notes.append(TIE_LR_NOTE)
-    if len(ordered) >= 3 and picked["lr"] in (ordered[0]["lr"], ordered[-1]["lr"]):
-        middle = ordered[len(ordered) // 2]
+    if len(ordered) == 3 and picked["lr"] in (ordered[0]["lr"], ordered[-1]["lr"]):
+        middle = ordered[1]
         if middle["m1"] - picked["m1"] > middle["m1"] * EDGE_BEAT_PERCENT / 100:
             notes.append(EDGE_NOTE)
+    two_best = sorted(measured, key=lambda row: row["m1"])[:2]
+    if len(two_best) == 2 and any(row is picked for row in two_best):
+        other = two_best[1] if two_best[0] is picked else two_best[0]
+        if other["lr"] < picked["lr"]:
+            m2_picked, m2_other = picked.get("m2_static"), other.get("m2_static")
+            if m2_picked is None or m2_other is None:
+                notes.append(M2_PENDING_NOTE)
+            elif m2_other - m2_picked > M2_VETO_POINTS:
+                notes.append(
+                    f"M2 veto: lr {format_lr(picked['lr'])} is {m2_other - m2_picked:.1f} points "
+                    f"below lr {format_lr(other['lr'])} on M2 static, lower LR picked"
+                )
+                picked = other
     return float(picked["lr"]), "; ".join(notes)
 
 
 def tier0_table(rows: Sequence[Mapping[str, Any]]) -> str:
-    """Render the Tier 0 table (Run | LR | M1 | Notes), sorted by LR.
+    """Render the Tier 0 table (Run | LR | M1 | M2 static | Notes), sorted by
+    LR.
 
-    The run that :func:`pick_lr` picks gets the note "picked", followed by the pick note.
+    The run that :func:`pick_lr` picks (the tier 2 LR, D-065) gets the note "picked", followed by
+    the pick note.
 
     Args:
-        rows: Tier 0 rows with ``run``, ``lr``, and ``m1`` (None when missing).
+        rows: Tier 0 rows with ``run``, ``lr``, ``m1`` (None when missing), and optionally
+            ``m2_static``.
 
     Returns:
         The markdown table, without a trailing newline.
@@ -496,10 +521,11 @@ def tier0_table(rows: Sequence[Mapping[str, Any]]) -> str:
     lines = list(TIER0_HEADER)
     for row in sorted(rows, key=lambda item: item["lr"]):
         m1_text = _fmt(row.get("m1"), ".4f")
+        m2_text = _fmt(row.get("m2_static"), ".1f")
         notes = ""
         if picked_lr is not None and row.get("m1") is not None and row["lr"] == picked_lr:
             notes = "; ".join(part for part in ("picked", pick_note) if part)
-        lines.append(f"| {row['run']} | {format_lr(row['lr'])} | {m1_text} | {notes} |")
+        lines.append(f"| {row['run']} | {format_lr(row['lr'])} | {m1_text} | {m2_text} | {notes} |")
     return "\n".join(lines)
 
 
@@ -610,9 +636,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Build the Tier 0 and Tier 1 tables, print them, and optionally write
     them.
 
-    Tier 0 holds the bd3 runs with the R00 configuration at size 0.6B and 0.5B tokens. Tier 1
-    holds every run at size 0.6B and 2B tokens. Its base run is the R00 configuration at the LR
-    that :func:`pick_lr` picks from Tier 0. Evaluation files whose names are not block-diffusion
+    Tier 0 holds the bd3 runs with the R00 configuration at size 0.6B and 0.5B tokens; the LR
+    that :func:`pick_lr` picks from it is the tier 2 LR (D-065). Tier 1 holds every run at size
+    0.6B and 2B tokens, all at lr 1e-4 (D-065). Its base run is its run with the R00
+    configuration. Evaluation files whose names are not block-diffusion
     or AR run names (for example reference models) are reported on stderr and skipped.
 
     Args:
@@ -675,20 +702,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     picked_lr: float | None = None
     pick_note = ""
-    base_run: str | None = None
     measured0 = [row for row in tier0 if row.get("m1") is not None]
     if measured0:
         picked_lr, pick_note = pick_lr(measured0)
-        matches = [
-            row["run"]
-            for row in tier1
-            if _is_base_bd3(row) and math.isclose(row["lr"], picked_lr, rel_tol=1e-9)
-        ]
-        if len(matches) > 1:
-            raise ValueError(
-                f"more than one Tier 1 base run at LR {format_lr(picked_lr)}: {matches}"
-            )
-        base_run = matches[0] if matches else None
+    matches = [row["run"] for row in tier1 if _is_base_bd3(row)]
+    if len(matches) > 1:
+        raise ValueError(f"more than one Tier 1 base run: {matches}")
+    base_run = matches[0] if matches else None
 
     tier0_text = tier0_table(tier0)
     tier1_sorted = sorted(tier1, key=lambda row: (row["run"] != base_run, row["run"]))
@@ -700,7 +720,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("pick: no Tier 0 run has an M1 value yet")
     else:
         note = f" ({pick_note})" if pick_note else ""
-        print(f"pick: LR {format_lr(picked_lr)}{note}")
+        print(f"pick (tier 2 LR): LR {format_lr(picked_lr)}{note}")
     print()
     print("## Tier 1")
     print(tier1_text)

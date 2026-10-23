@@ -25,8 +25,8 @@ T0_RUNS = {
     "1e-4": "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T0.5B",
 }
 T0_M1 = {"1e-5": 1.30, "3e-5": 1.20, "1e-4": 1.25}
-SEP_TIER0 = "|---|---|---|---|"
-HEADER_TIER0 = "| Run | LR | M1 | Notes |"
+SEP_TIER0 = "|---|---|---|---|---|"
+HEADER_TIER0 = "| Run | LR | M1 | M2 static | Notes |"
 HEADER_TIER1 = "| Run | Change | M1 | dM1 vs R00 (%) | M2 static | M2 dyn@0.9 | M3 | M4 | Notes |"
 SEP_TIER1 = "|---|---|---|---|---|---|---|---|---|"
 
@@ -61,9 +61,9 @@ RESULTS_LINES = [
 RESULTS_MD = "\n".join(RESULTS_LINES) + "\n"
 
 EXPECTED_TIER0 = [
-    f"| {T0_RUNS['1e-5']} | 1e-5 | 1.3000 |  |",
-    f"| {T0_RUNS['3e-5']} | 3e-5 | 1.2000 | picked |",
-    f"| {T0_RUNS['1e-4']} | 1e-4 | 1.2500 |  |",
+    f"| {T0_RUNS['1e-5']} | 1e-5 | 1.3000 | - |  |",
+    f"| {T0_RUNS['3e-5']} | 3e-5 | 1.2000 | - | picked |",
+    f"| {T0_RUNS['1e-4']} | 1e-4 | 1.2500 | - |  |",
 ]
 EXPECTED_TIER1 = [
     f"| {BD3_NAME} | none | 1.2000 | +0.00 | 30.5 | 29.0 | 2.40 | 400 | base |",
@@ -470,7 +470,41 @@ def test_pick_lr_flags_a_low_edge_that_beats_the_middle_by_two_percent() -> None
 def test_pick_lr_flags_a_high_edge_that_beats_the_middle_by_two_percent() -> None:
     lr, note = cr.pick_lr(_tier0_rows((1e-5, 1.10), (3e-5, 1.05), (1e-4, 1.00)))
     assert lr == 1e-4
-    assert note == cr.EDGE_NOTE
+    # 1e-4 has the higher LR of the two best runs by M1, so the M2 check is still open.
+    assert note == f"{cr.EDGE_NOTE}; {cr.M2_PENDING_NOTE}"
+
+
+def _with_m2(rows: list[dict[str, Any]], *m2: float | None) -> list[dict[str, Any]]:
+    """Add m2_static values to tier 0 rows, in order."""
+    return [{**row, "m2_static": value} for row, value in zip(rows, m2, strict=True)]
+
+
+def test_pick_lr_m2_veto_takes_the_lower_lr_when_m2_drops_more_than_three_points() -> None:
+    """D-064, D-065: 3e-4 has the best M1 but 3.5 points less M2 static than
+    1e-4."""
+    rows = _with_m2(
+        _tier0_rows((1e-5, 1.30), (3e-5, 1.20), (1e-4, 1.10), (3e-4, 1.05)), None, None, 40.0, 36.5
+    )
+    lr, note = cr.pick_lr(rows)
+    assert lr == 1e-4
+    assert note == "M2 veto: lr 3e-4 is 3.5 points below lr 1e-4 on M2 static, lower LR picked"
+
+
+@pytest.mark.parametrize("m2_high", [37.0, 41.0])
+def test_pick_lr_keeps_the_higher_lr_within_three_m2_points(m2_high: float) -> None:
+    rows = _with_m2(
+        _tier0_rows((1e-5, 1.30), (3e-5, 1.20), (1e-4, 1.10), (3e-4, 1.05)),
+        None,
+        None,
+        40.0,
+        m2_high,
+    )
+    assert cr.pick_lr(rows) == (3e-4, "")  # four LRs: no further edge step
+
+
+def test_pick_lr_needs_no_m2_check_when_the_lower_lr_wins_on_m1() -> None:
+    rows = _tier0_rows((1e-5, 1.30), (3e-5, 1.20), (1e-4, 1.10), (3e-4, 1.15))
+    assert cr.pick_lr(rows) == (1e-4, "")
 
 
 def test_pick_lr_edge_without_a_two_percent_gain_has_no_note() -> None:
@@ -496,9 +530,9 @@ def test_tier0_table_marks_the_pick_and_its_edge_note() -> None:
     assert cr.tier0_table(rows).splitlines() == [
         HEADER_TIER0,
         SEP_TIER0,
-        "| run-0 | 1e-5 | 1.0000 | picked; edge: consider one more step |",
-        "| run-1 | 3e-5 | 1.0500 |  |",
-        "| run-2 | 1e-4 | 1.1000 |  |",
+        "| run-0 | 1e-5 | 1.0000 | - | picked; edge: consider one more step |",
+        "| run-1 | 3e-5 | 1.0500 | - |  |",
+        "| run-2 | 1e-4 | 1.1000 | - |  |",
     ]
 
 
@@ -583,8 +617,29 @@ def test_main_without_write_prints_tables_and_keeps_the_file(
     out_lines = capsys.readouterr().out.splitlines()
     for line in EXPECTED_TIER0 + EXPECTED_TIER1:
         assert line in out_lines
-    assert "pick: LR 3e-5" in out_lines
+    assert "pick (tier 2 LR): LR 3e-5" in out_lines
     assert f"base run: {BD3_NAME}" in out_lines
+
+
+def test_main_tier1_base_is_its_r00_run_whatever_the_tier0_pick(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D-065: tier 1 runs at one LR; the tier 0 pick (here 1e-4) is the tier 2 LR only, and the
+    tier 0 table shows the M2 static values of the M2 check."""
+    eval_dir = _write_eval_dir(tmp_path)
+    _write_json(eval_dir / f"{T0_RUNS['1e-4']}.m1.json", {"bits_per_token": 1.19})  # no edge note
+    _write_json(eval_dir / f"{T0_RUNS['1e-4']}.gsm8k_static.json", {"accuracy": 33.6})
+    _write_json(eval_dir / f"{T0_RUNS['3e-5']}.gsm8k_static.json", {"accuracy": 34.0})
+    results_md = tmp_path / "RESULTS.md"
+    results_md.write_text(RESULTS_MD, encoding="utf-8")
+    assert cr.main(["--eval-dir", str(eval_dir), "--results-md", str(results_md)]) == 0
+    out_lines = capsys.readouterr().out.splitlines()
+    assert "pick (tier 2 LR): LR 1e-4" in out_lines
+    assert (
+        f"| {T0_RUNS['1e-4']} | 1e-4 | 1.1900 | 33.6 | picked |" in out_lines
+    )  # 0.4 points: no veto
+    assert f"| {T0_RUNS['3e-5']} | 3e-5 | 1.2000 | 34.0 |  |" in out_lines
+    assert f"base run: {BD3_NAME}" in out_lines  # the tier 1 R00 run at 3e-5
 
 
 def test_main_adds_an_nld_run_to_tier_1_and_keeps_tier_0(
@@ -618,7 +673,7 @@ def test_main_adds_an_nld_run_to_tier_1_and_keeps_tier_0(
         HEADER_TIER0,
         SEP_TIER0,
         *EXPECTED_TIER0,
-        "pick: LR 3e-5",
+        "pick (tier 2 LR): LR 3e-5",
         "",
     ]
     assert out_lines[tier1_start:base_line] == [
