@@ -1681,6 +1681,13 @@ def write5():
             # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact
             # retrieval / passkey at 64k) on the s2 mixers' step-4000 checkpoints (KronLSTM paper
             # gates: its last, 3000), plain and with eval-time log-n
+            # the 7:1 + mHC-4 s2 arm on the long-context set (retrieval with 2 instead of 3 attention
+            # layers; compare with ds5lc_s2's ckda_mhc4)
+            *[("s2", f"ds5lcr7{tag}", arms5downstream_any(
+                [("ckda_mhc4_r7", "screen5r7_s2", "h5_moe_mhc4_r7", {**arms5r7("s2")[0][2], **extra})],
+                requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
             # ckl_sgn's s2 run finished later (NODE_FAIL resumes): its own suites
             *[("s2", f"ds5lcckl3{tag}", arms5downstream_any(
                 [("ckl_sgn", "screen5ckl_s2", "ckl_sgn",
