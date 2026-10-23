@@ -127,6 +127,42 @@ def load_attrib(refs_path, n_segments):
     return out
 
 
+ROLE_ORDER = ["answer", "tests", "question", "options", "context", "other"]   # most severe first
+_ROLE_RULES = [  # (role, substrings of the field path, lower-cased) -- first match wins
+    ("answer", ["canonical_solution", "solution", "answer", "target", "completion", "output", "label_text",
+                "rationale", "explanation", "final", "gold", "response"]),
+    ("tests", ["test", "assert", "check"]),
+    ("question", ["question", "problem", "prompt", "query", "goal", "instruction", "input", "sentence",
+                  "premise", "ctx", "activity_label", "task", "description", "statement", "claim"]),
+    ("options", ["choice", "option", "ending", "endings", "mc", "distractor", "candidates", "sol1", "sol2"]),
+    ("context", ["context", "passage", "story", "article", "text", "document", "paragraph", "background",
+                 "abstract", "flores", "sentence_", "src", "tgt", "source", "translation"]),
+]
+
+
+def role_of(path: str) -> str:
+    p = path.lower()
+    for role, keys in _ROLE_RULES:
+        if any(k in p for k in keys):
+            return role
+    return "other"
+
+
+def load_roles(refs_path, n_segments):
+    """Most severe role of each segment over all its fields (refs.attrib.jsonl.gz with field paths), or None."""
+    p = refs_path.replace(".jsonl.gz", ".attrib.jsonl.gz")
+    if not os.path.exists(p):
+        return None
+    rank = {r: i for i, r in enumerate(ROLE_ORDER)}
+    out = np.full(n_segments, len(ROLE_ORDER) - 1, np.int8)
+    with gzip.open(p, "rt", encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            paths = [a[5] for a in json.loads(line)["also_in"] if a[3] and len(a) > 5]
+            if paths:
+                out[i] = min(rank[role_of(x)] for x in paths)
+    return out
+
+
 def decide(shards, segs, frac, args):
     """Per shard (flagged pairs, their docs); the generic segments left out; docs per segment."""
     n_tok = segs["n_tokens"].astype(np.int64)
@@ -149,7 +185,8 @@ def decide(shards, segs, frac, args):
     return flagged, set(generic.tolist()), seg_docs
 
 
-def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib=None):
+def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib=None,
+           roles=None):
     os.makedirs(rdir, exist_ok=True)
     S, nsrc = len(segs["n"]), len(src_names)
     n_tok = segs["n_tokens"]
@@ -173,6 +210,26 @@ def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, s
             seg_pairs += np.bincount(seg, minlength=S)
             pair_per_src += np.bincount(segs["src"][seg], minlength=nsrc)
     total = [sum(v[i] for v in by_src.values()) for i in range(4)]
+    if roles is not None:     # dropped docs / tokens by the most severe role among a doc's flagged segments
+        by_role = np.zeros((len(ROLE_ORDER), 2), np.int64)
+        for _, rel in rows:
+            idx = shards[rel][0]
+            f, d = flagged[rel]
+            if not len(f):
+                continue
+            r = roles[f[:, 1]]
+            order = np.lexsort((r, d))
+            dd, rr = d[order], r[order]
+            first = np.ones(len(dd), bool)
+            first[1:] = dd[1:] != dd[:-1]
+            docs, rmin = dd[first], rr[first]
+            tok = doc_tokens(idx, docs)
+            np.add.at(by_role[:, 0], rmin, 1)
+            np.add.at(by_role[:, 1], rmin, tok)
+        with open(os.path.join(rdir, "roles.tsv"), "w") as fh:
+            fh.write("role\tdocs_dropped\ttokens_dropped\n")
+            for i, r in enumerate(ROLE_ORDER):
+                fh.write(f"{r}\t{by_role[i, 0]}\t{by_role[i, 1]}\n")
     with open(os.path.join(rdir, "sources.tsv"), "w") as fh:
         fh.write("source\tshards\tdocs\ttokens\tdocs_dropped\ttokens_dropped\tdoc_pct\ttoken_pct\n")
         for k, (dd, t, ddr, tdr, ns) in sorted(by_src.items(), key=lambda x: -x[1][3]):
@@ -301,6 +358,7 @@ def main():
     print(f"hits loaded: {sum(len(v[1]) for v in shards.values())} (sequence, segment) pairs", flush=True)
 
     attrib = load_attrib(meta["refs"], len(segs["n"]))
+    roles = load_roles(meta["refs"], len(segs["n"]))
     decisions = {fr: decide(shards, segs, fr, args) for fr in args.frac}
     want = set()
     for _, generic, seg_docs in decisions.values():
@@ -314,7 +372,8 @@ def main():
     for fr, (flagged, generic, seg_docs) in decisions.items():
         rdir = (os.path.join(args.work, "_report" + ("_fixed" if args.fixes else ""), f"frac_{fr:g}")
                 if args.dry_run else os.path.join(args.out, "_report"))
-        report(rdir, fr, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib)
+        report(rdir, fr, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib,
+               roles)
         print(open(os.path.join(rdir, "sources.tsv")).read(), flush=True)
     if not args.dry_run:
         write_tree(args, rows, shards, decisions[args.frac[0]][0], segs)

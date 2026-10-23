@@ -145,8 +145,9 @@ def make_setup(tmp_path):
             f.write(json.dumps({"src": f"bench{i}", "split": "test", "text": f"segment {i}"}) + "\n")
     with gzip.open(str(refs).replace(".jsonl.gz", ".attrib.jsonl.gz"), "wt") as f:   # segment 0 is also in "alias"
         for i in range(3):
-            f.write(json.dumps({"also_in": [[f"bench{i}", "test", "x", 1]] + ([["alias", "test", "y", 1]] if i == 0 else [])
-                                + [["trainonly", "train", "z", 0]]}) + "\n")
+            f.write(json.dumps({"also_in": [[f"bench{i}", "test", "x", 1, 0, ["question", "context", "answer"][i]]]
+                                + ([["alias", "test", "y", 1, 3, "question"]] if i == 0 else [])
+                                + [["trainonly", "train", "z", 0, 0, "answer"]]}) + "\n")
     json.dump({"sources": ["bench0", "bench1", "bench2"], "splits": ["test"], "refs": str(refs)},
               open(work / "table" / "sources.json", "w"))
     return root, work, prefix, tmp_path
@@ -175,6 +176,8 @@ def test_end_to_end(tmp_path):
     assert not out.exists()
     alltsv = open(work / "_report" / "frac_0.9" / "benchmarks_all.tsv").read()
     assert "alias\t1\t1\t100.00\t1" in alltsv and "trainonly" not in alltsv
+    roles = dict(l.split("\t")[:2] for l in open(work / "_report" / "frac_0.9" / "roles.tsv").read().splitlines()[1:])
+    assert roles["question"] == "1" and roles["context"] == "1" and roles["answer"] == "0"   # doc 17: seg 0, doc 99: seg 1
     for fr in ("0.7", "0.9"):
         assert json.load(open(work / "_report" / f"frac_{fr}" / "report.json"))["docs_dropped"] == 2
     subprocess.run(fin, check=True)
