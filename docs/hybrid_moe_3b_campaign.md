@@ -2928,3 +2928,15 @@ the cooldown in between; init row norm 0.02 sqrt(384) = 0.39). Muown has no weig
 - g (Adam, no weight decay): medians 0.4-2.7, max 19. It grows 1-4 % from 90k to 100k, and p=1's g is
   the same (medians 0.4-2.5, max 18.6). The magnitudes are not specific to classical Muown.
 - s2 cooled (step 4800): classical +0.0037, cl_wd01 +0.0045 vs p=1 (s1: +0.013 / +0.023).
+
+**CKLSTM vs CKDA at s3, long context** (ds5lcs3, ds5lcs3logn; both + mHC-4, step 4000; log-n in brackets):
+
+| s3 | NLL 16-32k | NLL 32-64k | kvret64 4k / 8k / 16k / 32k / 64k | kvret16 @64k | passkey 64k |
+|---|---:|---:|---|---:|---:|
+| CKDA | 2.276 (2.260) | 2.284 (2.244) | 0.88 / 0.90 / 0.56 (0.70) / 0.50 (0.64) / 0.30 (0.60) | 0.60 (0.90) | 1.0 |
+| ckl_sgn | 2.432 (2.336) | 2.705 (2.430) | 0.86 / 0.60 / 0.36 (0.42) / 0.22 (0.40) / 0.04 (0.14) | 0.14 (0.32) | 1.0 |
+
+- s3 widens the long-context gap that s2 showed. The 32-64k loss gap goes from +0.14 (s2) to +0.42
+  (+0.19 with log-n). CKLSTM's s2 retrieval lead at 8-32k becomes a deficit from 8k on.
+- Pre-training loss: +0.0037 at 4000 at both s2 and s3. The trend crosses zero at ~4B tokens (-0.010 at 10B).
+- Recommendation: CKDA as the mixer.
