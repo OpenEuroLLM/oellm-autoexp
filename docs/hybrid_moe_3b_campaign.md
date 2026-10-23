@@ -2807,3 +2807,72 @@ step's status.
 compact checkpoints and 4 x 2 workers (AngularMuown at s2: 472 GB, plain Muon: 307 GB; 503 GB nodes).
 A node lost mid-save also left `iter_0000500` incomplete, so the retry could not load
 (`auto_restart_ckptreset` handles that rollback).
+
+### 12.14 Optimizer study and CKLSTM s2 results so far (2026-10-23)
+
+**Screen protocol** (stable to 4000, WSD to lr / 10 at 4800; cooled loss 4700-4800, paired gap vs
+p = 1; + = worse):
+
+| s1 | gap | s2 | gap |
+|---|---:|---|---:|
+| p = 1 (default) | 0 | p = 1 | 0 |
+| C/t, C = 22 | +0.005 | Muon + WD 0.1 | +0.006 |
+| muown_classical + v WD 0.01 | +0.010 | p = 1/2 (step 0.2) | +0.008 |
+| Muon + WD 0.1 | +0.012 | radius | +0.013 |
+| muown_classical | +0.013 | p = 1/2, step 0.1 | +0.023 |
+| p = 1/2, step 0.1 / + v WD 0.1 / radius | +0.019 | p = 0 (step 0.2) | +0.082 |
+| C/t, C = 8 | +0.028 | | |
+| p = 1/2 (step 0.2) | +0.032 | | |
+| p = 0 (step 0.25) | +0.037 | | |
+| C/t, C = 2 | +0.196 | | |
+
+s2 muown_classical (+/- v WD) does not fit a 1-node host at the save (~470-480 of 503 GB): it reruns
+on 2 nodes with its own 2-node p = 1 reference (`screen5opt4_s2`).
+
+**Long horizon** (`opttiny2`: hidden 384 x 8 blocks, 7:1 + mHC-4, 16 x 384 top-2 MoE, 2k context,
+no masking, 1 GPU per arm, 1.6B tokens, WSD with the last 10 % as cooldown; gap vs p = 1):
+
+| gbs 8 x 2k, 100k steps | @20 % | @50 % | @90 % (stable end) | final (cooled) |
+|---|---:|---:|---:|---:|
+| muown_classical | -0.011 | -0.028 | -0.043 | **-0.075** |
+| muown_classical + v WD 0.01 | +0.019 | +0.033 | +0.038 | -0.064 |
+| p = 1/2 | +0.063 | +0.045 | +0.021 | -0.057 |
+| p = 0, step 0.05 | +0.090 | +0.126 | +0.151 | -0.032 |
+| C/t, C = 8 | +0.047 | +0.075 | +0.080 | +0.085 |
+| AdamW (2e-3, 1000 warmup) | +0.30 | +0.65 | +0.32 | +0.094 |
+
+- gbs 32 x 2k, 25k steps (same tokens): p = 1 best, Muon + WD +0.039, p = 0 (step 0.2) +0.124.
+- 7 arms died at startup (co-located 1-GPU torchruns on one MASTER_PORT) and are rerunning with a
+  per-job port: gbs 8 radius / C = 22 / p = 0 step 0.2 / v WD 0.1 / Muon + WD; gbs 32 the two
+  classical arms.
+- **Reading: the horizon effect shows.** p = 1 wins every 4800-step screen; at 100k steps the
+  variants whose rotation does not vanish overtake it, and the paper's muown_classical (horizon-free
+  ~t^-1/2 annealing per row) leads.
+- Caveats: one seed, a tiny model; gbs 8 is a very noisy regime (its loss is ~0.4 above gbs 32 at
+  equal tokens).
+
+**Angular time does not collapse the curves.** Fitting L = E + A tau^-alpha in tau = the
+cumulative per-row rotation (sum of kappa, or C / (1 + t)) instead of steps:
+- the exponents still range 0.24-0.84 over the kappa schedules;
+- the C/t fits degenerate (tau ~ C ln t);
+- p = 1 and radius reach the same tau(4000) = 35 rad but differ by 0.019 cooled;
+- backtests are no better (radius ~0).
+
+The row magnitudes (Adam, constant lr) learn in step time, so rotation is not a sufficient
+statistic. Paired step comparisons plus long-horizon runs stay the tools.
+
+**CKLSTM vs CKDA + mHC-4 at s2** (all + mHC-4; paired gap; trend a + b ln t from step 1000):
+
+| arm | @1000 | @2000 | @3000 | @4000 | -> 4B / 10B |
+|---|---:|---:|---:|---:|---|
+| ckl_sgn | +0.027 | +0.009 | +0.005 | +0.004 | -0.004 / -0.014 |
+| ckl_sgn_cpl | +0.016 | +0.012 | +0.009 | +0.007 | +0.003 / -0.002 |
+| ckl_sgn_w2 | +0.045 | +0.022 | +0.017 | +0.014 | +0.004 / -0.008 |
+
+- The step-4000 gap halves from s1 to s2.
+- 64-fact retrieval at 4k / 8k / 16k / 32k / 64k (log-n beyond 8k in brackets):
+  - CKDA + mHC-4: 0.78 / 0.64 / 0.44 / 0.36 (0.66) / 0.12 (0.36);
+  - ckl_sgn_cpl: 0.78 / 0.84 / 0.78 / 0.60 (0.74) / 0.10 (0.22);
+  - ckl_sgn_w2: 0.44 / 0.46 / 0.30 / 0.18 / 0.10.
+- Long-document loss at 32-64k: CKDA + mHC-4 2.353 (2.277); cpl 2.445 (2.340); w2 2.398 (2.334).
+- ckl_sgn's long-context eval follows (ds5lcckl3); the s3 confirmation waits for it (user).
