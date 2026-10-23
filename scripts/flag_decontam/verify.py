@@ -115,12 +115,33 @@ def longest_common_run(a, b):
     return m.size
 
 
+_A = {}
+
+
+def _audit_init(tokenizer, shard):
+    import sentencepiece as spm   # the reference dicts come with the fork (module global _A)
+    _A.update(sp=spm.SentencePieceProcessor(model_file=tokenizer), shard=shard, idx=Index(shard + ".idx"))
+
+
+def _audit_doc(d):
+    w = words(unescape(_A["sp"].decode(doc_tokens(_A["shard"], _A["idx"], int(d)).tolist())))
+    cand = {}
+    for h in word_grams(w):
+        for s in _A["gram_segs"].get(h, ()):
+            cand[s] = cand.get(s, 0) + 1
+    for s, c in cand.items():
+        if c >= 3:
+            run = longest_common_run(w, _A["seg_words"][s])
+            if run >= _A["frac"] * len(_A["seg_words"][s]) or run >= _A["abs_words"]:
+                return int(d)
+    return None
+
+
 def audit(args):
     """Recall of the token matcher against a text matcher (JSON-unescaped, lower-cased words):
     a document is text-flagged when its longest common contiguous word run with a segment
     covers >= --frac of the segment's words, or is >= --abs-words words."""
-    import sentencepiece as spm
-    sp = spm.SentencePieceProcessor(model_file=args.tokenizer)
+    from multiprocessing import Pool
     meta = json.load(open(os.path.join(args.work, "table", "sources.json")))
     seg_words, gram_segs = {}, {}
     with gzip.open(meta["refs"], "rt", encoding="utf-8") as f:
@@ -136,25 +157,15 @@ def audit(args):
     idx = Index(args.shard + ".idx")
     rng = np.random.default_rng(0)
     docs = np.sort(rng.choice(idx.doc_count - 1, size=min(args.docs, idx.doc_count - 1), replace=False))
-    text_flag = set()
-    for d in docs:
-        w = words(unescape(sp.decode(doc_tokens(args.shard, idx, int(d)).tolist())))
-        cand = {}
-        for h in word_grams(w):
-            for s in gram_segs.get(h, ()):
-                cand[s] = cand.get(s, 0) + 1
-        for s, c in cand.items():
-            if c >= 3:
-                run = longest_common_run(w, seg_words[s])
-                if run >= args.frac * len(seg_words[s]) or run >= args.abs_words:
-                    text_flag.add(int(d))
-                    break
+    _A.update(seg_words=seg_words, gram_segs=gram_segs, frac=args.frac, abs_words=args.abs_words)
+    with Pool(args.procs, initializer=_audit_init, initargs=(args.tokenizer, args.shard)) as pool:
+        text_flag = {d for d in pool.imap_unordered(_audit_doc, docs.tolist(), chunksize=64) if d is not None}
     from scan import shard_key
     segs = np.load(os.path.join(args.work, "table", "segments.npz"))
     n_tok = segs["n_tokens"].astype(np.int64)
     need = np.maximum(30, np.minimum(np.ceil(args.frac * n_tok), 200))
     tok_flag = set()
-    for f in glob.glob(os.path.join(args.work, "hits", shard_key(args.shard, args.root), "*.npz")):
+    for f in glob.glob(os.path.join(args.work, args.hits_dir, shard_key(args.shard, args.root), "*.npz")):
         h = np.load(f)["hits"]
         h = h[h[:, 2] >= need[h[:, 1]]]
         tok_flag |= set((np.searchsorted(idx.doc_idx, h[:, 0], "right") - 1).tolist())
@@ -178,6 +189,8 @@ def main():
     ap.add_argument("--docs", type=int, default=300)
     ap.add_argument("--frac", type=float, default=0.9, help="audit: run / segment length that flags")
     ap.add_argument("--abs-words", type=int, default=150, help="audit: a run of this many words flags")
+    ap.add_argument("--hits-dir", default="hits")
+    ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
     args = ap.parse_args()
     {"roundtrip": roundtrip, "tree": tree, "audit": audit}[args.cmd](args)
 

@@ -12,7 +12,8 @@
 #     scan      the full scan of every shard of the mix (all nodes of the job share it)
 #     recheck   recompute candidate pairs against corrected n-gram sets (no rescan)
 #     finalize  drop decisions + new tree in $OUT (FINALIZE_ARGS, e.g. --dry-run)
-#     verify    new tree loads in Megatron, kept documents are unchanged, recall audit
+#     verify    new tree loads in Megatron, kept documents are unchanged
+#     audit     recall of the token matcher vs. a text matcher (agenttrove, megamath; 100k docs each)
 set -euo pipefail
 step=$1; shift || true
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -44,9 +45,11 @@ scan)      python scripts/flag_decontam/scan.py --mode scan --work "$WORK" --roo
                --shards "$WORK/shards_all.txt" "$@" ;;
 recheck)   python scripts/flag_decontam/recheck.py --work "$WORK" --root "$ROOT" "$@" ;;
 finalize)  python scripts/flag_decontam/finalize.py --work "$WORK" --root "$ROOT" --out "$OUT" "$@" ;;
-verify)    python scripts/flag_decontam/verify.py tree --out "$OUT" --root "$ROOT"
-           python scripts/flag_decontam/verify.py audit --work "$WORK" --root "$ROOT" --docs 5000 \
-               --shard "$ROOT/agenttrove-0.0/megatron-lm/data/shard_0000_text_document" ;;
+verify)    python scripts/flag_decontam/verify.py tree --out "$OUT" --root "$ROOT" ;;
+audit)     for s in agenttrove-0.0/megatron-lm/data/shard_0000 megamath-0.0.0/megatron-lm/shard_0000; do
+               python scripts/flag_decontam/verify.py audit --work "$WORK" --root "$ROOT" --docs 100000 \
+                   --shard "$ROOT/${s}_text_document" "$@"
+           done ;;
 *) echo "unknown step $step" >&2; exit 2 ;;
 esac
 echo "[$step] done"
