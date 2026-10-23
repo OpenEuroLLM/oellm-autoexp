@@ -1426,6 +1426,22 @@ def arms5opt3(size: str = "s2"):
              {**base["muown_cl_wd01"], **env})]
 
 
+def arms5opt4(size: str = "s2"):
+    """muown_classical at s2 on 2 nodes (user 2026-10-23: the fastest layout that fits per scale): the
+    distributed optimizer shards its state over 8 GPUs, halving the host RAM of the save (1 node:
+    ~470-480 of 503 GB, the classical arms OOM-killed). 2-node runs do not pair with the 1-node ones
+    (round 5d), so the p = 1 reference runs in the same setup. Protocol as screen5opt2 (stable to
+    4000, WSD to lr / 10 at 4800); compact row-state checkpoints for all three (format only)."""
+    base = {n: kv for n, _, kv in arms5opt2(size)}["muown_cl_wd01"]
+    common = {k: v for k, v in base.items() if k not in (B + "optimizer", B + "muown_classical_v_weight_decay")}
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 6, B + "dataloader_prefetch_factor": 3,
+            "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}
+    return [("am_p1", "AngularMuown p = 1 (the reference), 2 nodes", {**common, **fast, B + "optimizer": "angular_muown"}),
+            ("muown_classical", "muown_classical (the paper's), 2 nodes", {**common, **fast, B + "optimizer": "muown_classical"}),
+            ("muown_cl_wd01", "muown_classical + v weight decay 0.1, 2 nodes",
+             {**common, **fast, B + "optimizer": "muown_classical", B + "muown_classical_v_weight_decay": 0.1})]
+
+
 def arms5udadapt(size: str = "s1"):
     """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
     the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
@@ -1658,6 +1674,7 @@ def write5():
             # opttiny_b{8,32}: the first launch (document masking, no graphs; cancelled 2026-10-23)
             *[(z, "screen5opt2", arms5opt2(z)) for z in ("s1", "s2")],
             ("s2", "screen5opt3", arms5opt3("s2")),
+            ("s2", "screen5opt4", arms5opt4("s2")),
             *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:

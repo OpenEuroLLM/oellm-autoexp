@@ -111,6 +111,38 @@ job:
   # under angular MuOwn on 2026-10-17. One rank dies at step 0, SLURM says COMPLETED 0:0, the
   # monitor finished the job. Transient: a fresh start passes. Bounded restart.
   log_events:
+    # checkpoint recovery (config/job/auto_restart_ckptreset.yaml, which see): a save cut off by
+    # a lost node leaves a checkpoint with short shards -> quarantine it (renamed failed_iter_N,
+    # tracker rolled back, at most 2) and resume from the last loadable one; a checkpoint written
+    # at another world size, or one that cannot be opened at all, cancels instead (a restart would
+    # loop on it, or silently start from scratch). The rolling directory is where our saves die.
+    - name: ckpt_corrupt_quarantine
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      extract_groups: {iteration: 1}
+      match_once: true
+      action:
+        class_name: QuarantineCheckpointAction
+        checkpoint_dir: ${backend.megatron.non_persistent_global_ckpt_dir}
+        iteration: "{iteration}"
+        quarantine_prefix: "failed_"
+        max_rollbacks: 2
+    - name: ckpt_corrupt_restart
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      match_once: true
+      condition: {class_name: MaxActionFiresCondition, max_fires: 5}
+      action: {class_name: RestartAction, cancel_first: true, reason: "checkpoint quarantined; resuming from the last loadable one"}
+    - name: err_ckpt_world_size_mismatch
+      pattern: "Missing key in checkpoint state_dict: rerun_state_machine_state/shard_\\d+_(\\d+)"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint written at a different world size"}
+    - name: err_ckpt_unloadable
+      pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint cannot be opened (interrupted save) -- needs a hand rollback"}
     - name: cuda_graph_capture_invalidated
       pattern: "cudaErrorStreamCaptureInvalidated|Invalid stream capture status|operation failed due to a previous error during capture"
       pattern_type: regex
