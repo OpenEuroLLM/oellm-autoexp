@@ -11,9 +11,9 @@ roundtrip: the premise of token-level matching. Decode documents of the .bin wit
 tree:      every rewritten .idx loads with Megatron's IndexedDataset; kept documents are
            token-identical to the original documents, dropped ones are gone, counts add up.
 audit:     recall of the token matcher against a plain text matcher: decode --docs documents
-           of one shard, flag them with lower-cased word 13-grams (>= 50 % of a segment's
-           word n-grams, math / code / QA benchmark segments) and compare with the documents the
-           scan flagged (needs the scan's hits for that shard).
+           of one shard, undo JSON escapes, and flag them when their longest common contiguous
+           run of lower-cased words with a (math / code / QA benchmark) segment covers >= --frac
+           of it or is >= --abs-words long; compare with the documents the scan flagged.
 """
 
 from __future__ import annotations
@@ -92,40 +92,67 @@ def tree(args):
     print("tree ok")
 
 
-def word_grams(text, n=13):
-    w = re.findall(r"\w+", text.lower())
+_ESC = re.compile(r"\\u([0-9a-fA-F]{4})|\\([nrt\"\\/])")
+
+
+def unescape(text):
+    """Undo JSON string escapes (agent trajectories store their text JSON-escaped)."""
+    return _ESC.sub(lambda m: chr(int(m.group(1), 16)) if m.group(1) else
+                    {"n": "\n", "r": "\r", "t": "\t"}.get(m.group(2), m.group(2)), text)
+
+
+def words(text):
+    return re.findall(r"\w+", text.lower())
+
+
+def word_grams(w, n=13):
     return {hash(tuple(w[i:i + n])) for i in range(len(w) - n + 1)}
 
 
+def longest_common_run(a, b):
+    from difflib import SequenceMatcher
+    m = SequenceMatcher(None, a, b, autojunk=False).find_longest_match(0, len(a), 0, len(b))
+    return m.size
+
+
 def audit(args):
+    """Recall of the token matcher against a text matcher (JSON-unescaped, lower-cased words):
+    a document is text-flagged when its longest common contiguous word run with a segment
+    covers >= --frac of the segment's words, or is >= --abs-words words."""
     import sentencepiece as spm
     sp = spm.SentencePieceProcessor(model_file=args.tokenizer)
     meta = json.load(open(os.path.join(args.work, "table", "sources.json")))
-    seg_grams, gram_segs = {}, {}
+    seg_words, gram_segs = {}, {}
     with gzip.open(meta["refs"], "rt", encoding="utf-8") as f:
         for i, line in enumerate(f):
             r = json.loads(line)
-            if AUDIT_SOURCES.search(r["src"]):
-                g = word_grams(r["text"])
-                if len(g) >= 3:
-                    seg_grams[i] = len(g)
-                    for h in g:
-                        gram_segs.setdefault(h, []).append(i)
-    print(f"audit references: {len(seg_grams)} segments", flush=True)
+            if AUDIT_SOURCES.search(r["src"]) and len(r["text"]) >= 80:
+                w = words(r["text"])
+                if len(w) >= 13:
+                    seg_words[i] = w
+                    for h in word_grams(w):
+                        gram_segs.setdefault(h, set()).add(i)
+    print(f"audit references: {len(seg_words)} segments", flush=True)
     idx = Index(args.shard + ".idx")
     rng = np.random.default_rng(0)
     docs = np.sort(rng.choice(idx.doc_count - 1, size=min(args.docs, idx.doc_count - 1), replace=False))
     text_flag = set()
     for d in docs:
-        counts = {}
-        for h in word_grams(sp.decode(doc_tokens(args.shard, idx, int(d)).tolist())):
+        w = words(unescape(sp.decode(doc_tokens(args.shard, idx, int(d)).tolist())))
+        cand = {}
+        for h in word_grams(w):
             for s in gram_segs.get(h, ()):
-                counts[s] = counts.get(s, 0) + 1
-        if any(c >= max(3, 0.5 * seg_grams[s]) for s, c in counts.items()):
-            text_flag.add(int(d))
+                cand[s] = cand.get(s, 0) + 1
+        for s, c in cand.items():
+            if c >= 3:
+                run = longest_common_run(w, seg_words[s])
+                if run >= args.frac * len(seg_words[s]) or run >= args.abs_words:
+                    text_flag.add(int(d))
+                    break
     from scan import shard_key
     segs = np.load(os.path.join(args.work, "table", "segments.npz"))
-    need = np.maximum(3, np.ceil(0.5 * segs["n_grams"]))
+    n_tok = segs["n_tokens"].astype(np.int64)
+    need = np.maximum(30, np.minimum(np.ceil(args.frac * n_tok), 200))
     tok_flag = set()
     for f in glob.glob(os.path.join(args.work, "hits", shard_key(args.shard, args.root), "*.npz")):
         h = np.load(f)["hits"]
@@ -135,6 +162,7 @@ def audit(args):
     both = text_flag & tok_flag
     print(json.dumps({"docs": len(docs), "text_flagged": len(text_flag), "token_flagged": len(tok_flag),
                       "both": len(both), "text_only": sorted(text_flag - tok_flag)[:20],
+                      "token_only": sorted(tok_flag - text_flag)[:20],
                       "recall_vs_text": len(both) / max(len(text_flag), 1)}))
 
 
@@ -148,6 +176,8 @@ def main():
     ap.add_argument("--out", default="/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1")
     ap.add_argument("--tokenizer", default=TOKENIZER)
     ap.add_argument("--docs", type=int, default=300)
+    ap.add_argument("--frac", type=float, default=0.9, help="audit: run / segment length that flags")
+    ap.add_argument("--abs-words", type=int, default=150, help="audit: a run of this many words flags")
     args = ap.parse_args()
     {"roundtrip": roundtrip, "tree": tree, "audit": audit}[args.cmd](args)
 

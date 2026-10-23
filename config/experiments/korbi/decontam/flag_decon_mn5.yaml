@@ -2,8 +2,8 @@
 # Decontamination of the pre-tokenised "flag" training mix against every benchmark we evaluate
 # (docs/flag_post_decontamination.md). One step of scripts/flag_decontam/run_step.sh per launch,
 # on aux.nodes MareNostrum 5 nodes (the step runs once per node; `scan` splits the shards over
-# them by SLURM_NODEID). Sync first (./sync_to_marenostrum.sh decon), then on the login node in
-# $R/autoexp_decon:
+# them by SLURM_NODEID). Sync first (./sync_to_marenostrum.sh decon2), then on the login node in
+# $R/autoexp_decon2:
 #
 #   scripts/korbi/mn5_autoexp_bg.sh decon_<step> scripts/run_autoexp.py \
 #       --config-name experiments/korbi/decontam/flag_decon_mn5 --yes aux.step=<step> \
@@ -22,7 +22,9 @@ aux:
   nodes: 1
   time: "00:30:00"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
-  work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v1
+  # v2 (longest verbatim runs, 2026-10-23); v1 (n-gram coverage) stays in flag_decon_v1 for comparison
+  work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v2
+  refs: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v1/refs/refs.jsonl.gz
   out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v1
   root: /gpfs/projects/ehpc533/training-data-collection/flag
   # the NGC 26.09 training image: torch, sentencepiece, pytest
@@ -35,13 +37,14 @@ backend:
   env:
     PYTHONPATH: ".:submodules/Megatron-LM"
     WORK: ${aux.work}
+    REFS: ${aux.refs}
     OUT: ${aux.out}
     ROOT: ${aux.root}
     OMP_NUM_THREADS: "8"
 
 job:
   name: flag_decon_${aux.step}
-  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_decon/${aux.step}"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_decon/v2/${aux.step}"
   est_steps: 1
   est_step_time_s: 1800
   concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}

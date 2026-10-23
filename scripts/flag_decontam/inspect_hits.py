@@ -33,13 +33,13 @@ TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v1")
+    ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v2")
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
     ap.add_argument("--shard", required=True, help="substring of the shard key")
     ap.add_argument("--bench", default="", help="substring of the benchmark source (e.g. gsm8k, mmlu)")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--min-cov", type=float, default=0.0)
-    ap.add_argument("--max-cov", type=float, default=1.0)
+    ap.add_argument("--max-cov", type=float, default=10.0)   # > 1 possible: escaped copies are longer
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--context", type=int, default=60, help="tokens shown before / after the match")
     ap.add_argument("--max-files", type=int, default=400, help="hit files read (random subset)")
