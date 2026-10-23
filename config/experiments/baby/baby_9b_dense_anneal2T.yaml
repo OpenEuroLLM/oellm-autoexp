@@ -63,7 +63,7 @@ slurm:
     nodes: 256
     time: "24:00:00"
     qos: qos_oellm #same as before
-    exclude: "lrdn[0057,0070,0621-0622,1486,2131]"
+    exclude: "lrdn[0018,0044,0057,0070,0380,0384,0408,0436,0450,0493,0534,0572,0596,0621-0622,0865,0920,0945,0985,1145,1170,1202,1240,1265,1281,1293,1299,1322,1332,1341,1360,1365,1389,1403,1423,1444,1456,1477,1486,1489,1509,1516,1539,1545,1727,2038,2131,2164,2937,3772]"
     # reservation: s_int_oellm
 
     # slurm signal to process to stop training and checkpoint right before time limit
