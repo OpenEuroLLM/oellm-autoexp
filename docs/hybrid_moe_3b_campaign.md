@@ -2876,3 +2876,20 @@ statistic. Paired step comparisons plus long-horizon runs stay the tools.
   - ckl_sgn_w2: 0.44 / 0.46 / 0.30 / 0.18 / 0.10.
 - Long-document loss at 32-64k: CKDA + mHC-4 2.353 (2.277); cpl 2.445 (2.340); w2 2.398 (2.334).
 - ckl_sgn's long-context eval follows (ds5lcckl3); the s3 confirmation waits for it (user).
+- ckl_sgn: 0.80 / 0.84 / 0.68 (0.76) / 0.56 (0.74) / 0.24 (0.42); long-document loss 2.495 (2.317).
+  CKDA keeps the better long-document loss, so the s3 run `screen5ckl3_s3` (ckl_sgn + mHC-4) finishes
+  the comparison (user).
+
+**7:1 + mHC-4 at s2, long context** (ds5lcr7, ds5lcr7logn; same eval set as above; log-n in brackets):
+
+| s2 model | NLL 16-32k | NLL 32-64k | kvret64 4k / 8k / 16k / 32k / 64k | kvret16 @64k | passkey 64k |
+|---|---:|---:|---|---:|---:|
+| 5:1 + mHC-4 | 2.314 (2.289) | 2.353 (2.277) | 0.78 / 0.64 / 0.44 / 0.36 / 0.12 (0.56 / 0.66 / 0.36 beyond 8k) | 0.36 (0.68) | 1.0 |
+| 7:1 + mHC-4 | 2.293 (2.281) | 2.281 (2.253) | 0.80 / 0.76 / 0.72 / 0.64 / 0.62 (0.70 / 0.66 / 0.68) | 0.78 (0.90) | 1.0 |
+
+- 7:1 is better at every length and on every long-context metric. Without log-n it holds
+  0.62 retrieval at 64k, where 5:1 falls to 0.12. Its 32-64k loss is 0.07 lower.
+- This is the opposite of "more attention layers = better retrieval". One plausible reason: with fewer
+  attention layers, each one carries the retrieval alone and sharpens more. One seed, 50 questions per bin
+  (standard error ~0.07), so the 4-16k differences are within noise; the 32-64k ones are not.
+- It supports the 7:1 choice; log-n at eval adds a little on top (0.68 at 64k).
