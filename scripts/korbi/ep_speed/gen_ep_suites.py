@@ -1637,6 +1637,13 @@ def ckpt_offload():
         for ep_name, epd in (("hep", HEP), ("a2a", a2a)):
             arm(f"c_z3_{res}_{ep_name}_m2", f"{res}, FSDP ZeRO-3, {ep_name} dispatcher, mbs 2, gbs 512",
                 *f_base, resa, e112, rd, fsdp, epd, {"aux.array_tag": f"_c_z3_{res}_{ep_name}"})
+    # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
+    arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
+        *f_base, resa, e112, fsdp, HEP,
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_mhc4_hep",
+         "backend.env.MEM_TRACE_ITER": "0",
+         "backend.env.MEM_TRACE_RANKS": ",".join(str(r) for r in range(32)),
+         "aux.array_tag": "_c_z3_mhc4_hep_trace"})
     # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
     arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
         {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
