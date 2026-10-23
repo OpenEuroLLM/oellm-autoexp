@@ -126,6 +126,10 @@ def make_setup(tmp_path):
     with gzip.open(refs, "wt") as f:
         for i in range(3):
             f.write(json.dumps({"src": f"bench{i}", "split": "test", "text": f"segment {i}"}) + "\n")
+    with gzip.open(str(refs).replace(".jsonl.gz", ".attrib.jsonl.gz"), "wt") as f:   # segment 0 is also in "alias"
+        for i in range(3):
+            f.write(json.dumps({"also_in": [[f"bench{i}", "test", "x", 1]] + ([["alias", "test", "y", 1]] if i == 0 else [])
+                                + [["trainonly", "train", "z", 0]]}) + "\n")
     json.dump({"sources": ["bench0", "bench1", "bench2"], "splits": ["test"], "refs": str(refs)},
               open(work / "table" / "sources.json", "w"))
     return root, work, prefix, tmp_path
@@ -147,6 +151,8 @@ def test_end_to_end(tmp_path):
     fin = [sys.executable, os.path.join(HERE, "finalize.py"), "--work", str(work), "--root", str(root), "--out", str(out)]
     subprocess.run(fin + ["--dry-run", "--frac", "0.5,0.9"], check=True)
     assert not out.exists()
+    alltsv = open(work / "_report" / "frac_0.9" / "benchmarks_all.tsv").read()
+    assert "alias\t1\t1\t100.00\t1" in alltsv and "trainonly" not in alltsv
     for fr in ("0.5", "0.9"):
         assert json.load(open(work / "_report" / f"frac_{fr}" / "report.json"))["docs_dropped"] == 2
     subprocess.run(fin, check=True)

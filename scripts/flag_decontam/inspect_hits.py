@@ -70,9 +70,17 @@ def main():
     hits, which = np.concatenate(rows), np.concatenate(keys)
     cov = hits[:, 2] / np.maximum(n_tok[hits[:, 1]], 1)
     sel = (cov >= args.min_cov) & (cov <= args.max_cov)
-    if args.bench:
-        bench_ok = np.array([args.bench.lower() in s.lower() for s in src_names])
-        sel &= bench_ok[segs["src"][hits[:, 1]]]
+    if args.bench:   # any attribution (refs.attrib.jsonl.gz), else the one source extraction kept
+        ap_ = meta["refs"].replace(".jsonl.gz", ".attrib.jsonl.gz")
+        if os.path.exists(ap_):
+            seg_ok = np.zeros(len(n_tok), bool)
+            with gzip.open(ap_, "rt", encoding="utf-8") as fh:
+                for i, line in enumerate(fh):
+                    seg_ok[i] = any(args.bench.lower() in a[0].lower() for a in json.loads(line)["also_in"] if a[3])
+            sel &= seg_ok[hits[:, 1]]
+        else:
+            bench_ok = np.array([args.bench.lower() in s.lower() for s in src_names])
+            sel &= bench_ok[segs["src"][hits[:, 1]]]
     hits, which, cov = hits[sel], which[sel], cov[sel]
     print(f"# {len(hits)} pairs in {len(files)} hit files of shards matching {args.shard!r} "
           f"(coverage {args.min_cov}..{args.max_cov}{', bench ' + args.bench if args.bench else ''})")

@@ -20,7 +20,9 @@ every shard of <root>/datamix.txt:
   <shard>.info.json   the original's, with the new .idx size / md5 / counts
   <prefix>.removed.npz   dropped documents: doc, seq, seg, run, windows, runs, n_tokens (per flagged pair)
 plus datamix.txt (unchanged weights) and _report/{report.json, sources.tsv, benchmarks.tsv,
-top_segments.tsv, generic_segments.tsv}.
+benchmarks_all.tsv, top_segments.tsv, generic_segments.tsv}. benchmarks.tsv credits a segment to the
+one source extraction kept; benchmarks_all.tsv (when refs.attrib.jsonl.gz exists next to the refs)
+to every benchmark that holds the exact text.
 """
 
 from __future__ import annotations
@@ -88,6 +90,19 @@ def shard_totals(root, rel, idx):
     return int(idx.lengths.astype(np.int64).sum())
 
 
+def load_attrib(refs_path, n_segments):
+    """Every included source of each segment (refs.attrib.jsonl.gz from extract_refs.py --attribute), or None."""
+    p = refs_path.replace(".jsonl.gz", ".attrib.jsonl.gz")
+    if not os.path.exists(p):
+        return None
+    out = []
+    with gzip.open(p, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            out.append(sorted({a[0] for a in json.loads(line)["also_in"] if a[3]}))
+    assert len(out) == n_segments, f"{p}: {len(out)} lines for {n_segments} segments"
+    return out
+
+
 def decide(shards, segs, frac, args):
     """Per shard (flagged pairs, their docs); the generic segments left out; docs per segment."""
     n_tok = segs["n_tokens"].astype(np.int64)
@@ -110,13 +125,14 @@ def decide(shards, segs, frac, args):
     return flagged, set(generic.tolist()), seg_docs
 
 
-def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text):
+def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib=None):
     os.makedirs(rdir, exist_ok=True)
     S, nsrc = len(segs["n"]), len(src_names)
     n_tok = segs["n_tokens"]
     by_src = defaultdict(lambda: [0, 0, 0, 0, 0])        # docs, tokens, docs dropped, tokens dropped, shards
     pair_per_src = np.zeros(nsrc, np.int64)               # (doc, segment) pairs per benchmark source
     found = np.zeros(S, bool)
+    seg_pairs = np.zeros(S, np.int64)
     for _, rel in rows:
         idx = shards[rel][0]
         f, d = flagged[rel]
@@ -130,6 +146,7 @@ def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, s
         if len(f):
             seg = np.unique(d * S + f[:, 1]) % S
             found[seg] = True
+            seg_pairs += np.bincount(seg, minlength=S)
             pair_per_src += np.bincount(segs["src"][seg], minlength=nsrc)
     total = [sum(v[i] for v in by_src.values()) for i in range(4)]
     with open(os.path.join(rdir, "sources.tsv"), "w") as fh:
@@ -145,6 +162,19 @@ def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, s
                 break
             m = int(matchable[k])
             fh.write(f"{src_names[k]}\t{m}\t{int(seg_found[k])}\t{100 * seg_found[k] / max(m, 1):.2f}\t{int(pair_per_src[k])}\n")
+    if attrib is not None:   # every benchmark holding the exact text (MGSM-en questions are GSM8K test questions)
+        allm, allf, allp = defaultdict(int), defaultdict(int), defaultdict(int)
+        for sg in np.flatnonzero(segs["n"] > 0):
+            for a in attrib[sg]:
+                allm[a] += 1
+        for sg in np.flatnonzero(found):
+            for a in attrib[sg]:
+                allf[a] += 1
+                allp[a] += int(seg_pairs[sg])
+        with open(os.path.join(rdir, "benchmarks_all.tsv"), "w") as fh:
+            fh.write("benchmark_source\tsegments_matchable\tsegments_found\tpct_found\tdoc_segment_pairs\n")
+            for k in sorted(allp, key=lambda x: -allp[x]):
+                fh.write(f"{k}\t{allm[k]}\t{allf[k]}\t{100 * allf[k] / max(allm[k], 1):.2f}\t{allp[k]}\n")
     applied = seg_docs.copy()
     applied[list(generic)] = 0
     top = np.argsort(-applied)[:300]
@@ -242,6 +272,7 @@ def main():
         sys.exit(f"scan incomplete for {len(incomplete)} shards, e.g. {incomplete[:3]}: rerun scan.py --mode scan")
     print(f"hits loaded: {sum(len(v[1]) for v in shards.values())} (sequence, segment) pairs", flush=True)
 
+    attrib = load_attrib(meta["refs"], len(segs["n"]))
     decisions = {fr: decide(shards, segs, fr, args) for fr in args.frac}
     want = set()
     for _, generic, seg_docs in decisions.values():
@@ -255,7 +286,7 @@ def main():
     for fr, (flagged, generic, seg_docs) in decisions.items():
         rdir = (os.path.join(args.work, "_report" + ("" if args.hits_dir == "hits" else "_" + args.hits_dir), f"frac_{fr:g}")
                 if args.dry_run else os.path.join(args.out, "_report"))
-        report(rdir, fr, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text)
+        report(rdir, fr, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib)
         print(open(os.path.join(rdir, "sources.tsv")).read(), flush=True)
     if not args.dry_run:
         write_tree(args, rows, shards, decisions[args.frac[0]][0], segs)

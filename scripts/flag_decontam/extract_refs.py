@@ -15,6 +15,10 @@ passage shared by many questions (SQuAD, Belebele, CoQA) is one segment, and an 
 count is not inflated by such repetition. Next to it, <out>.manifest.tsv lists every data file
 seen with its split and whether it was included.
 
+--attribute REFS: instead of extracting, write for every line of an existing refs file all the
+(source, split, file, included) that hold its exact text (deduplication credits a text to the
+first source only: MGSM-en *is* GSM8K test, but is stored as MGSM). Same line order as REFS.
+
 Split policy: test / validation / dev / devtest / unknown splits are included; a source's
 `train` files are excluded whenever the source has any other split (few-shot pools and training
 sets are legitimate pretraining data), and included when train is its only split (GPQA,
@@ -154,12 +158,58 @@ def bundled_files(evalchemy: str, human_eval: str):
         yield "openai/human-eval", full, os.path.basename(full)
 
 
+def _key(t):
+    return hashlib.blake2b(t.encode("utf-8", "replace"), digest_size=16).digest()
+
+
+def attribute(args, files, splits_by_src):
+    """For every line of an existing refs file: all (src, split, file, included) holding that exact
+    text, train splits included (flagged). Keeps the refs' line ids, so tables and scans built on
+    them stay valid. Texts of included files missing from the refs (data added since) are counted."""
+    ids = {}
+    with gzip.open(args.attribute, "rt", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            ids[_key(json.loads(line)["text"])] = i
+    attrib = [[] for _ in range(len(ids))]
+    missing = 0
+    for src, full, rel in files:
+        split = split_of(rel)
+        only_train = splits_by_src[src] <= {"train"}
+        generic = src.split(":")[0] in ("parquet", "json", "csv")
+        include = split != "train" or (only_train and not generic)
+        hit = 0
+        try:
+            for row in rows_of(full):
+                texts: list[str] = []
+                texts_of(row, texts)
+                for t in texts:
+                    i = ids.get(_key(t))
+                    if i is None:
+                        missing += include
+                        continue
+                    e = [src, split, rel, int(include)]
+                    if e not in attrib[i][-4:]:
+                        attrib[i].append(e)
+                        hit += 1
+        except Exception as e:
+            print(f"! {src} {rel}: {type(e).__name__}: {str(e)[:120]}", flush=True)
+        print(f"{'+' if include else '-'} {src:50s} {split:10s} attributions={hit:7d} {rel[:80]}", flush=True)
+    with gzip.open(args.out, "wt", encoding="utf-8") as out:
+        for a in attrib:
+            out.write(json.dumps({"also_in": a}, ensure_ascii=False) + "\n")
+    multi = sum(len({x[0] for x in a}) > 1 for a in attrib)
+    print(f"{len(attrib)} refs lines attributed; {multi} in more than one source; "
+          f"{missing} texts of included files not in the refs -> {args.out}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hf-home", required=True)
     ap.add_argument("--evalchemy", default="/opt/evalchemy/eval/chat_benchmarks")
     ap.add_argument("--human-eval", default="/opt/human-eval/data")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--attribute", metavar="REFS", help="attribution mode: every source of each line of an "
+                    "existing refs file -> --out (one JSON line per refs line, same order)")
     args = ap.parse_args()
 
     files = list(hub_files(args.hf_home)) + list(arrow_files(args.hf_home)) + \
@@ -168,6 +218,8 @@ def main():
     for src, full, rel in files:
         splits_by_src[src].add(split_of(rel))
 
+    if args.attribute:
+        return attribute(args, files, splits_by_src)
     seen: set[bytes] = set()
     manifest = []
     n_out = 0
