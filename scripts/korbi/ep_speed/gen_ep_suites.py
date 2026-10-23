@@ -1597,6 +1597,27 @@ def ckpt_offload():
          "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke_a2a",
          "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
          "aux.array_tag": "_f_smoke_a2a_trace"})
+    # c: PP vs FSDP at the 128-node batch regimes (user 2026-10-23), emulated on 8 nodes: what sets
+    # both is per GPU -- PP's micro-batches per pipeline (gbs 512 / 256 here = 8192 / 4096 at 128
+    # nodes, m = 32 / 16) and the tokens per GPU per step for FSDP. 112 experts (ZeRO-1 keeps the
+    # full parameters + gradients: Psi (b + b_g) ~ 34 GB with bf16 gradients), 7:1, Adam, no
+    # Engram; PreNorm and mHC-4. docs/pp_vs_fsdp.md.
+    e112 = {B + "num_experts": 112}
+    bf16g = {B + "megatron_fsdp_main_grads_dtype": "bf16", B + "megatron_fsdp_grad_comm_dtype": "bf16"}
+    pp4 = {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3))}
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        arm(f"c_pp4_{res}_g512", f"{res}, PP4 x VPP2, mbs 2, gbs 512 (m 32 = gbs 8192 at 128 nodes)",
+            *f_base, resa, e112, rd, pp4, {"aux.array_tag": f"_c_pp4_{res}_g512"})
+        arm(f"c_pp4_{res}_g256", f"{res}, PP4 x VPP2, mbs 2, gbs 256 (m 16 = gbs 4096 at 128 nodes)",
+            *f_base, resa, e112, rd, pp4, {"aux.gbs": 256, "aux.array_tag": f"_c_pp4_{res}_g256"})
+        arm(f"c_z3_{res}_m4", f"{res}, FSDP ZeRO-3, mbs 4, gbs 512", *f_base, resa, e112, rd, fsdp,
+            {B + "micro_batch_size": 4, "aux.array_tag": f"_c_z3_{res}_m4"})
+        arm(f"c_z2_{res}_m2", f"{res}, FSDP ZeRO-2 (optim_grads, bf16 grads), mbs 2, gbs 512", *f_base,
+            resa, e112, rd, fsdp, bf16g,
+            {B + "data_parallel_sharding_strategy": "optim_grads", "aux.array_tag": f"_c_z2_{res}_m2"})
+        arm(f"c_z1_{res}_m2", f"{res}, FSDP ZeRO-1 (optim, bf16 grads), mbs 2, gbs 512", *f_base, resa,
+            e112, rd, fsdp, bf16g,
+            {B + "data_parallel_sharding_strategy": "optim", "aux.array_tag": f"_c_z1_{res}_m2"})
     # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
     arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
         {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
