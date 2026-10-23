@@ -7,6 +7,9 @@ no piece spans a space and a word tokenises the same wherever it stands -- excep
 removes that: every id maps through a lookup table to the id of its piece with surrounding
 whitespace stripped, and pieces that are only whitespace (and control tokens: <bos>, <eos>, ...)
 are dropped. Matching canonical n-grams is then matching word sequences up to whitespace.
+v3 (build_lut(words=True)): the key is the piece lower-cased with every non-alphanumeric
+character removed, and pieces without letters or digits are dropped -- matching is then on word
+fragments, insensitive to case, punctuation, LaTeX delimiters and spacing around brackets.
 
 Matching unit (v2): the longest *run* of consecutive matching windows of one segment in one
 sequence (gaps of up to n // 2 windows bridged: pruned common n-grams inside a copied passage),
@@ -59,8 +62,18 @@ def ngram_hashes(canon: torch.Tensor, n: int) -> torch.Tensor:
     return _mix(h)
 
 
-def build_lut(sp) -> tuple[np.ndarray, list[str]]:
-    """Canonical id per token id (DROP for whitespace / control) from a SentencePieceProcessor."""
+def word_key(piece: str) -> str:
+    """v3 canonical key of a piece: lower-cased, every non-alphanumeric character removed."""
+    return "".join(ch for ch in piece.lower() if ch.isalnum())
+
+
+def build_lut(sp, words: bool = True) -> tuple[np.ndarray, list[str]]:
+    """Canonical id per token id (DROP for whitespace / control) from a SentencePieceProcessor.
+
+    words=True (v3): the key is word_key(piece) -- case, punctuation, LaTeX delimiters, spacing
+    around brackets no longer change the stream; pieces without letters or digits are dropped.
+    words=False (v1 / v2): the piece with surrounding whitespace stripped.
+    """
     V = sp.get_piece_size()
     lut = np.full(V, DROP, dtype=np.int64)
     keys: dict[str, int] = {}
@@ -69,11 +82,12 @@ def build_lut(sp) -> tuple[np.ndarray, list[str]]:
             continue
         if sp.is_byte(i):
             b = int(sp.id_to_piece(i)[1:-1], 16)            # <0x0A>
-            if chr(b).isspace():
+            if chr(b).isspace() or (words and b < 128 and not chr(b).isalnum()):
                 continue
             key = f"<byte {b:02X}>"
         else:
-            key = sp.id_to_piece(i).replace("▁", " ").strip()
+            piece = sp.id_to_piece(i).replace("\u2581", " ")
+            key = word_key(piece) if words else piece.strip()
             if not key:
                 continue
         lut[i] = keys.setdefault(key, len(keys))

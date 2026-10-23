@@ -33,7 +33,7 @@ TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v2")
+    ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v3")
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
     ap.add_argument("--shard", required=True, help="substring of the shard key")
     ap.add_argument("--bench", default="", help="substring of the benchmark source (e.g. gsm8k, mmlu)")
@@ -67,7 +67,7 @@ def main():
     from finalize import apply_fixes, load_fixes
     fixes = load_fixes(args.work, args.fixes) if os.path.exists(os.path.join(args.work, args.fixes)) else {}
     for i, (key, f) in enumerate(files):
-        h = apply_fixes(np.load(f)["hits"], fixes.get(key), 30)
+        h = apply_fixes(np.load(f)["hits"], fixes.get(key), 20)
         rows.append(h)
         keys.append(np.full(len(h), i, np.int32))
     hits, which = np.concatenate(rows), np.concatenate(keys)

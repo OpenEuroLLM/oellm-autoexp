@@ -73,6 +73,23 @@ def test_runs():
     assert got == [(0, 0, 28, 13), (0, 40, 54, 2), (1, 5, 18, 1)]
 
 
+def test_lut_words():
+    from common import build_lut
+
+    class FakeSP:                                   # <bos>, ▁April, april., (num, ▁\\[, ▁, <0x2E>, <0xC3>
+        pieces = ["<bos>", "\u2581April", "april.", "(num", "\u2581\\[", "\u2581", "<0x2E>", "<0xC3>", "num"]
+        def get_piece_size(self): return len(self.pieces)
+        def is_control(self, i): return i == 0
+        def is_unknown(self, i): return False
+        def is_byte(self, i): return self.pieces[i].startswith("<0x")
+        def id_to_piece(self, i): return self.pieces[i]
+    lut, keys = build_lut(FakeSP())
+    assert lut[0] == lut[4] == lut[5] == lut[6] == -1          # control, punctuation-only, whitespace, ASCII '.'
+    assert lut[1] == lut[2] and lut[3] == lut[8] and lut[7] >= 0  # case / punctuation insensitive; non-ASCII byte kept
+    lut2, _ = build_lut(FakeSP(), words=False)
+    assert lut2[1] != lut2[2] and lut2[4] >= 0                 # v2 keys keep case and punctuation
+
+
 def test_variants():
     assert variants('He said "hi"\nok') == ['He said "hi"\nok', 'He said \\"hi\\"\\nok']
     assert variants("Janet’s ducks") == ["Janet’s ducks", "Janet\\u2019s ducks"]
@@ -145,15 +162,20 @@ def test_end_to_end(tmp_path):
     best = {(int(s), int(g)): int(r) for s, g, r, _, _ in hits}
     assert best[(17, 0)] == 40 and best[(99, 1)] == 220 and (60, 0) not in best
     assert best.get((30, 0), 0) < 30 and (50, 2) not in best and (51, 2) not in best
+    grams = np.concatenate([np.load(f)["grams"] for f in sorted((work / "hits").glob("*/*.npz"))])
+    assert len(np.unique(grams)) > 0
+    subprocess.run([sys.executable, os.path.join(HERE, "ngram_report.py"), "--work", str(work)], check=True)
+    rep = open(work / "_report_ngrams.tsv").read()
+    assert "bench0" in rep and "alias" in rep
     anomalies = json.load(open(work / "anomalies" / "scan_part000_gpu0.json"))
     assert len(anomalies) == 1 and anomalies[0]["max"] == V + 7
     out = tmp / "flag-decon"
     fin = [sys.executable, os.path.join(HERE, "finalize.py"), "--work", str(work), "--root", str(root), "--out", str(out)]
-    subprocess.run(fin + ["--dry-run", "--frac", "0.5,0.9"], check=True)
+    subprocess.run(fin + ["--dry-run", "--frac", "0.7,0.9"], check=True)
     assert not out.exists()
     alltsv = open(work / "_report" / "frac_0.9" / "benchmarks_all.tsv").read()
     assert "alias\t1\t1\t100.00\t1" in alltsv and "trainonly" not in alltsv
-    for fr in ("0.5", "0.9"):
+    for fr in ("0.7", "0.9"):
         assert json.load(open(work / "_report" / f"frac_{fr}" / "report.json"))["docs_dropped"] == 2
     subprocess.run(fin, check=True)
     removed = np.load(str(out / "src" / "shard_0000_text_document.removed.npz"))

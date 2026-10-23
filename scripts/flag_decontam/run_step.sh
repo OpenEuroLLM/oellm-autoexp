@@ -11,6 +11,7 @@
 #     prune     drop the n-grams the count found common
 #     scan      the full scan of every shard of the mix (all nodes of the job share it)
 #     recheck   recompute candidate pairs against corrected n-gram sets (no rescan)
+#     ngrams    per-benchmark n-gram hit rates over the whole mix (_report_ngrams.tsv)
 #     finalize  drop decisions + new tree in $OUT (FINALIZE_ARGS, e.g. --dry-run)
 #     verify    new tree loads in Megatron, kept documents are unchanged
 #     audit     recall of the token matcher vs. a text matcher (agenttrove, megamath; 100k docs each)
@@ -18,7 +19,7 @@ set -euo pipefail
 step=$1; shift || true
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=${ROOT:-/gpfs/projects/ehpc533/training-data-collection/flag}
-WORK=${WORK:-/gpfs/scratch/ehpc533/users/korbip/flag_decon_v2}
+WORK=${WORK:-/gpfs/scratch/ehpc533/users/korbip/flag_decon_v3}
 OUT=${OUT:-/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1}
 REFS=${REFS:-$WORK/refs/refs.jsonl.gz}
 mkdir -p "$WORK"
@@ -44,6 +45,7 @@ prune)     python scripts/flag_decontam/build_table.py --work "$WORK" --prune "$
 scan)      python scripts/flag_decontam/scan.py --mode scan --work "$WORK" --root "$ROOT" \
                --shards "$WORK/shards_all.txt" "$@" ;;
 recheck)   python scripts/flag_decontam/recheck.py --work "$WORK" --root "$ROOT" "$@" ;;
+ngrams)    python scripts/flag_decontam/ngram_report.py --work "$WORK" "$@" ;;
 finalize)  python scripts/flag_decontam/finalize.py --work "$WORK" --root "$ROOT" --out "$OUT" "$@" ;;
 verify)    python scripts/flag_decontam/verify.py tree --out "$OUT" --root "$ROOT" ;;
 audit)     for s in agenttrove-0.0/megatron-lm/data/shard_0000 megamath-0.0.0/megatron-lm/shard_0000; do

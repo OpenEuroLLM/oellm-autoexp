@@ -22,8 +22,9 @@ aux:
   nodes: 1
   time: "00:30:00"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
-  # v2 (longest verbatim runs, 2026-10-23); v1 (n-gram coverage) stays in flag_decon_v1 for comparison
-  work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v2
+  # v3 (word-level canonical stream, runs >= 20, 2026-10-23); v1 / v2 stay in flag_decon_v1 / _v2
+  version: v3
+  work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_${aux.version}
   refs: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v1/refs/refs.jsonl.gz
   out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v1
   root: /gpfs/projects/ehpc533/training-data-collection/flag
@@ -44,7 +45,7 @@ backend:
 
 job:
   name: flag_decon_${aux.step}
-  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_decon/v2/${aux.step}"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_decon/${aux.version}/${aux.step}"
   est_steps: 1
   est_step_time_s: 1800
   concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}

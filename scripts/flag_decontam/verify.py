@@ -163,13 +163,13 @@ def audit(args):
     from scan import shard_key
     segs = np.load(os.path.join(args.work, "table", "segments.npz"))
     n_tok = segs["n_tokens"].astype(np.int64)
-    need = np.maximum(30, np.minimum(np.ceil(args.frac * n_tok), 200))
+    need = np.maximum(20, np.minimum(np.ceil(args.frac * n_tok), 200))
     from finalize import apply_fixes, load_fixes
     fixes = load_fixes(args.work, args.fixes) if os.path.exists(os.path.join(args.work, args.fixes)) else {}
     key = shard_key(args.shard, args.root)
     tok_flag = set()
     for f in glob.glob(os.path.join(args.work, args.hits_dir, key, "*.npz")):
-        h = apply_fixes(np.load(f)["hits"], fixes.get(key), 30)
+        h = apply_fixes(np.load(f)["hits"], fixes.get(key), 20)
         h = h[h[:, 2] >= need[h[:, 1]]]
         tok_flag |= set((np.searchsorted(idx.doc_idx, h[:, 0], "right") - 1).tolist())
     tok_flag &= set(docs.tolist())

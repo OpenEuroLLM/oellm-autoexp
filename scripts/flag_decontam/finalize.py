@@ -263,7 +263,7 @@ def main():
     ap.add_argument("--frac", type=lambda s: [float(x) for x in s.split(",")], default=[0.9],
                     help="longest run / segment tokens (comma list with --dry-run)")
     ap.add_argument("--abs-run", type=int, default=200, help="a run this long flags whatever the segment length")
-    ap.add_argument("--min-run", type=int, default=30)
+    ap.add_argument("--min-run", type=int, default=20)
     ap.add_argument("--max-docs", type=int, default=20000)
     ap.add_argument("--dry-run", action="store_true", help="reports only ($WORK/_report/frac_<f>), no tree")
     ap.add_argument("--hits-dir", default="hits")

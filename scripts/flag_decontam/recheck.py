@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
     ap.add_argument("--frac", type=float, default=0.7)
     ap.add_argument("--abs-run", type=int, default=200)
-    ap.add_argument("--min-run", type=int, default=30)
+    ap.add_argument("--min-run", type=int, default=20)
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
     ap.add_argument("--tokenizer", default=TOKENIZER)
     args = ap.parse_args()
