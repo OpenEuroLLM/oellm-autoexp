@@ -36,13 +36,12 @@ from common import Index, ngram_hashes, runs  # noqa: E402
 _G = {}
 
 
-def _init(args, lut, table, seg_n, seg_hashes, prefixes):
-    _G.update(args=args, lut=lut, table=table, seg_n=seg_n, seg_hashes=seg_hashes, prefixes=prefixes, idx={})
+def _init():
+    _G["idx"] = {}                 # the lookup table and n-gram sets come with the fork (module global _G)
     torch.set_num_threads(1)
 
 
-def longest_run(canon, n, allowed):
-    h = ngram_hashes(torch.from_numpy(canon), n).numpy()
+def longest_run(h, n, allowed):
     m = np.flatnonzero(np.isin(h, allowed))
     if not len(m):
         return 0, 0, 0
@@ -63,11 +62,14 @@ def _recheck(job):
     bad = (t < 0) | (t >= len(lut))
     c = lut[np.where(bad, 0, t)]
     c[bad] = -1
-    c = c[c >= 0]
+    c = torch.from_numpy(c[c >= 0])
+    hashes = {}                                   # one hash pass per n, shared by the segments
     out = []
     for seg in seglist:
-        r = longest_run(c, int(_G["seg_n"][seg]), _G["seg_hashes"][seg])
-        out.append((seq, seg, *r))
+        n = int(_G["seg_n"][seg])
+        if n not in hashes:
+            hashes[n] = ngram_hashes(c, n).numpy()
+        out.append((seq, seg, *longest_run(hashes[n], n, _G["seg_hashes"][seg])))
     return key, out
 
 
@@ -141,25 +143,36 @@ def main():
                 jobs[(key, int(h[r, 0]))].append(int(h[r, 1]))
     print(f"{sum(len(v) for v in jobs.values())} pairs in {len(jobs)} sequences to recheck", flush=True)
     fixed = {}
-    with Pool(args.procs, initializer=_init, initargs=(args, lut, table, seg_n, seg_hashes, prefixes)) as pool:
-        for key, res in pool.imap_unordered(_recheck, [(k, s, v) for (k, s), v in jobs.items()], chunksize=16):
+    _G.update(lut=lut, seg_n=seg_n, seg_hashes=seg_hashes, prefixes=prefixes)
+    del table
+    with Pool(args.procs, initializer=_init) as pool:
+        for j, (key, res) in enumerate(pool.imap_unordered(_recheck, [(k, s, v) for (k, s), v in jobs.items()],
+                                                         chunksize=16)):
+            if j % 5000 == 0:
+                print(f"  {j}/{len(jobs)} sequences rechecked", flush=True)
             for seq, seg, run, w, nr in res:
                 fixed[(key, seq, seg)] = (run, w, nr)
 
     out_root = os.path.join(args.work, "hits_fixed")
     stats = {"candidates": int(sum(len(r) for _, r in cand)), "rechecked": len(fixed), "still_candidates": 0,
              "rows_dropped": 0}
+    changed_arr = np.array(sorted(changed), dtype=np.int64)
+    by_file = defaultdict(dict)
+    for (key, seq, seg), v in fixed.items():
+        by_file[key][(seq, seg)] = v
     for f in files:
         key = os.path.basename(os.path.dirname(f))
         z = np.load(f)
         h = z["hits"].copy()
         keep = np.ones(len(h), bool)
-        for i in range(len(h)):
-            k = (key, int(h[i, 0]), int(h[i, 1]))
-            if k in fixed:
-                h[i, 2:5] = fixed[k]
-                keep[i] = h[i, 2] >= args.min_run
-                stats["still_candidates"] += int(h[i, 2] >= need[h[i, 1]])
+        fk = by_file.get(key)
+        if fk and len(h):
+            for i in np.flatnonzero(np.isin(h[:, 1], changed_arr)):
+                v = fk.get((int(h[i, 0]), int(h[i, 1])))
+                if v is not None:
+                    h[i, 2:5] = v
+                    keep[i] = h[i, 2] >= args.min_run
+                    stats["still_candidates"] += int(h[i, 2] >= need[h[i, 1]])
         stats["rows_dropped"] += int((~keep).sum())
         dst = os.path.join(out_root, key, os.path.basename(f))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
