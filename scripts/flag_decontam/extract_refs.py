@@ -183,6 +183,13 @@ def arrow_files(hf_home: str):
         yield src, full, rel
 
 
+def plain_files(hf_home: str):
+    """Data files fetched outside the Hub ($HF_HOME/files, fetch_extra.py)."""
+    for full in sorted(glob.glob(f"{hf_home}/files/*")):
+        if os.path.isfile(full) and full.lower().endswith(DATA_EXT):
+            yield "file/" + os.path.basename(full).split(".")[0], full, os.path.basename(full)
+
+
 def bundled_files(evalchemy: str, human_eval: str):
     for full in sorted(glob.glob(f"{evalchemy}/*/**/data/**/*", recursive=True)):
         if os.path.isfile(full) and full.lower().endswith(DATA_EXT) and not EVALCHEMY_SKIP.search(full):
@@ -265,7 +272,7 @@ def main():
                     "existing refs file -> --out (one JSON line per refs line, same order)")
     args = ap.parse_args()
 
-    files = [f for h in args.hf_home for f in list(hub_files(h)) + list(arrow_files(h))]
+    files = [f for h in args.hf_home for f in list(hub_files(h)) + list(arrow_files(h)) + list(plain_files(h))]
     if not args.no_bundled:
         files += list(bundled_files(args.evalchemy, args.human_eval))
     splits_by_src = defaultdict(set)

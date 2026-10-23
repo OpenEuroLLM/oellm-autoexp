@@ -12,7 +12,8 @@ Two sources (docs/flag_post_decontamination.md, 2026-10-24):
      Catalan / French / Basque bench groups) -- as lm-eval task names where lm-eval has them, so
      the data is fetched exactly as the harness reads it;
   2. the rest as plain Hugging Face dataset ids (all configs, all splits; extract_refs.py applies
-     the split policy).
+     the split policy); script-based ones from the parquet branch; lm-eval language-bench groups
+     subtask by subtask; DeepSeek-Coder's LeetCode contest file from GitHub into $HF_HOME/files.
 Every task / dataset is tried on its own; failures (gated, renamed, missing) are listed at the end
 and in fetch_extra.report.json, never fatal.
 """
@@ -45,11 +46,39 @@ HF_DATASETS = [  # (repo id, config or None) -- the external table's benchmarks 
     ("allenai/SciRIFF", None), ("TIGER-Lab/MMLU-Pro", None), ("edinburgh-dawg/mmlu-redux-2.0", None),
     ("ehovy/race", "all"), ("allenai/math_qa", None), ("google-research-datasets/nq_open", None),
     ("mandarjoshi/trivia_qa", "rc.nocontext"), ("qiaojin/PubMedQA", "pqa_labeled"), ("allenai/sciq", None),
-    ("openlifescienceai/medmcqa", None), ("greengerong/leetcode", None),
+    ("openlifescienceai/medmcqa", None),
     ("google-research-datasets/paws-x", None), ("facebook/xnli", None), ("li-lab/MMLU-ProX", None),
     ("openai/MMMLU", None), ("Muennighoff/xwinograd", None), ("juletxara/xstory_cloze", None),
     ("cambridgeltl/xcopa", None), ("rajpurkar/squad_v2", None), ("jbross-ibm-research/mgsm", None),
+    ("ltg/noridiom", None), ("Helsinki-NLP/tatoeba_mt", "eng-nor"), ("Helsinki-NLP/tatoeba", None),
 ]
+# script-based datasets the current `datasets` refuses: Hugging Face's auto-converted parquet branch
+PARQUET_FALLBACK = ["allenai/math_qa", "tatsu-lab/alpaca_eval"]
+# lm-eval groups whose subtasks are fetched one by one (one script-based or gated subtask fails a whole group)
+LM_EVAL_GROUPS = ["spanish_bench", "catalan_bench", "french_bench", "basque_bench"]
+# files outside the Hub: DeepSeek-Coder's LeetCode contest benchmark
+URLS = ["https://raw.githubusercontent.com/deepseek-ai/DeepSeek-Coder/main/Evaluation/LeetCode/data/20240121-Jul.jsonl"]
+
+
+def group_subtasks(tm, group):
+    """Leaf task names of an lm-eval group (from the group yaml's `task:` list, recursively)."""
+    import yaml
+
+    class _L(yaml.SafeLoader):
+        pass
+    _L.add_multi_constructor("!", lambda loader, suffix, node: None)
+    info = tm.task_index.get(group)
+    if not info or info.get("type") not in ("group", "tag"):
+        return [group]
+    if info.get("type") == "tag":
+        return list(info.get("task", [])) or [group]
+    cfg = yaml.load(open(info["yaml_path"]), Loader=_L) or {}
+    out = []
+    for t in cfg.get("task", []):
+        name = t if isinstance(t, str) else (t or {}).get("task")
+        if name:
+            out += group_subtasks(tm, name) if tm.task_index.get(name, {}).get("type") == "group" else [name]
+    return out
 
 
 def main():
@@ -72,7 +101,36 @@ def main():
             report["lm_eval_failed"][t] = f"{type(e).__name__}: {str(e)[:200]}"
             print(f"FAIL lm-eval {t}: {type(e).__name__}: {str(e)[:160]}", flush=True)
 
+    for g in LM_EVAL_GROUPS:
+        for t in group_subtasks(tm, g):
+            try:
+                get_task_dict([t], tm)
+                report["lm_eval_ok"].append(f"{g}/{t}")
+                print(f"ok   lm-eval {g}/{t}", flush=True)
+            except Exception as e:
+                report["lm_eval_failed"][f"{g}/{t}"] = f"{type(e).__name__}: {str(e)[:200]}"
+                print(f"FAIL lm-eval {g}/{t}: {type(e).__name__}: {str(e)[:160]}", flush=True)
+
     from datasets import get_dataset_config_names, load_dataset
+    for repo in PARQUET_FALLBACK:
+        try:
+            load_dataset(repo, revision="refs/convert/parquet")
+            report["hf_ok"].append(f"{repo}@parquet")
+            print(f"ok   hf {repo}@parquet", flush=True)
+        except Exception as e:
+            report["hf_failed"][f"{repo}@parquet"] = f"{type(e).__name__}: {str(e)[:200]}"
+            print(f"FAIL hf {repo}@parquet: {type(e).__name__}: {str(e)[:160]}", flush=True)
+    import urllib.request
+    fdir = os.path.join(os.environ["HF_HOME"], "files")
+    os.makedirs(fdir, exist_ok=True)
+    for u in URLS:
+        try:
+            urllib.request.urlretrieve(u, os.path.join(fdir, os.path.basename(u)))
+            report["hf_ok"].append(u)
+            print(f"ok   url {u}", flush=True)
+        except Exception as e:
+            report["hf_failed"][u] = f"{type(e).__name__}: {str(e)[:200]}"
+            print(f"FAIL url {u}: {e}", flush=True)
     for repo, cfg in HF_DATASETS:
         try:
             cfgs = [cfg] if cfg else get_dataset_config_names(repo)
