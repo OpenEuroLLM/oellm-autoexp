@@ -100,8 +100,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 6
-          backend.megatron.dataloader_prefetch_factor: 3
+          backend.megatron.num_workers: 4
+          backend.megatron.dataloader_prefetch_factor: 2
           backend.megatron.manual_gc: true
           backend.megatron.manual_gc_interval: 10
           backend.megatron.mmap_bin_files: false
@@ -166,8 +166,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 6
-          backend.megatron.dataloader_prefetch_factor: 3
+          backend.megatron.num_workers: 4
+          backend.megatron.dataloader_prefetch_factor: 2
           backend.megatron.manual_gc: true
           backend.megatron.manual_gc_interval: 10
           backend.megatron.mmap_bin_files: false

@@ -1414,7 +1414,10 @@ def arms5opt3(size: str = "s2"):
     keep = ("muown_cl_wd01",)
     base = {n: kv for n, _, kv in arms5opt2(size)}
     cl = {**{k: v for k, v in base["muown_cl_wd01"].items() if k != B + "muown_classical_v_weight_decay"}}
-    env = {"backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}
+    # + 4 x 2 data workers: s2's peak host RSS is ~470 of 503 GB with 6 x 3 (AngularMuown radius,
+    # sacct); the compact relaunch still OOM-killed at 400 GB at the step-500 save. The worker count
+    # does not change the data order (the runs resume from their compact step-250 checkpoints).
+    env = {"backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1", B + "num_workers": 4, B + "dataloader_prefetch_factor": 2}
     return [("muown_classical", "muown_classical (the paper's), compact checkpoints", {**cl, **env}),
             ("muown_cl_wd01", "muown_classical + v weight decay 0.1, compact checkpoints",
              {**base["muown_cl_wd01"], **env})]
