@@ -25,6 +25,8 @@
 #                       none skips GSM8K)
 #   EVAL_GSM8K_N        number of GSM8K test problems (default 250)
 #   EVAL_TAU            confidence threshold of the dynamic mode (default 0.9)
+#   EVAL_DTYPE          weights dtype of M1 and GSM8K: bfloat16 (default), float16, or float32
+#                       (the GPU I8 check compares AR and B = 1 decoding in float32)
 #   EVAL_PARALLEL       1 runs M1 and the GSM8K modes at the same time, one per visible GPU (with
 #                       more tasks than GPUs, tasks share GPUs), with one log each in
 #                       $EVAL_DIR/logs (default 0: one after another)
@@ -60,11 +62,12 @@ if [ "${EVAL_NUM_SEQS:-1000}" -gt 0 ]; then
   add_task m1 python -m oellm_autoexp.dllm.eval.eval_nelbo --model "$MODEL" \
     --data-prefix "$EVAL_DATA_PREFIX" --num-sequences "${EVAL_NUM_SEQS:-1000}" \
     --objective "$EVAL_OBJECTIVE" --doc-mask "${EVAL_DOC_MASK:-1}" \
-    --out "$EVAL_DIR/$EVAL_RUN.m1.json"
+    --dtype "${EVAL_DTYPE:-bfloat16}" --out "$EVAL_DIR/$EVAL_RUN.m1.json"
   if [ "${EVAL_M1_AR:-0}" = "1" ]; then
     add_task m1_ar python -m oellm_autoexp.dllm.eval.eval_nelbo --model "$MODEL" \
       --data-prefix "$EVAL_DATA_PREFIX" --num-sequences "${EVAL_NUM_SEQS:-1000}" \
-      --objective ar --doc-mask "${EVAL_DOC_MASK:-1}" --out "$EVAL_DIR/$EVAL_RUN.m1_ar.json"
+      --objective ar --doc-mask "${EVAL_DOC_MASK:-1}" --dtype "${EVAL_DTYPE:-bfloat16}" \
+      --out "$EVAL_DIR/$EVAL_RUN.m1_ar.json"
   fi
 fi
 MODES="${EVAL_MODES:-static,dynamic}"
@@ -73,7 +76,7 @@ if [ "$MODES" != "none" ]; then
   for mode in "${MODE_LIST[@]}"; do
     add_task "gsm8k_$mode" python -m oellm_autoexp.dllm.eval.eval_gsm8k --model "$MODEL" \
       --mode "$mode" --tau "${EVAL_TAU:-0.9}" --n "${EVAL_GSM8K_N:-250}" \
-      --out "$EVAL_DIR/$EVAL_RUN.gsm8k_$mode.json"
+      --dtype "${EVAL_DTYPE:-bfloat16}" --out "$EVAL_DIR/$EVAL_RUN.gsm8k_$mode.json"
   done
 fi
 

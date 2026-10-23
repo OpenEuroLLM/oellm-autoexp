@@ -15,6 +15,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TRAIN_THEN_EVAL = REPO_ROOT / "oellm_autoexp/dllm/train_then_eval.sh"
 EVAL_CHAIN = REPO_ROOT / "oellm_autoexp/dllm/eval/eval_chain.sh"
@@ -358,6 +360,25 @@ def test_nld_run_is_evaluated_as_diffusion_with_causal_clean_stream_and_ar_mode(
     assert (settings["EVAL_BLOCK_SIZE"], settings["EVAL_TOKEN_SHIFT"]) == ("32", "0")
     assert (settings["EVAL_CLEAN_ATTENTION"], settings["EVAL_M1_AR"]) == ("causal", "1")
     assert settings["EVAL_MODES"] == "static,dynamic"
+
+
+@pytest.mark.parametrize(("dtype", "expected"), [(None, "bfloat16"), ("float32", "float32")])
+def test_eval_chain_passes_the_weights_dtype_to_every_task(
+    tmp_path: Path, dtype: str | None, expected: str
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    (bin_dir / "python").write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    (bin_dir / "python").chmod(0o755)
+    extra = {"EVAL_M1_AR": "1", "EVAL_MODES": "ar,static"}
+    if dtype is not None:
+        extra["EVAL_DTYPE"] = dtype
+    result = _run(["bash", str(EVAL_CHAIN)], _chain_env(tmp_path, bin_dir, **extra))
+    assert result.returncode == 0, result.stderr
+    lines = calls.read_text().splitlines()
+    assert len(lines) == 4  # m1, m1_ar, gsm8k_ar, gsm8k_static
+    assert all(f"--dtype {expected} " in line for line in lines)
 
 
 def test_eval_chain_adds_the_ar_mode_m1_when_asked(tmp_path: Path) -> None:
