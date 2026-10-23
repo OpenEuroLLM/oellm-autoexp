@@ -1717,6 +1717,15 @@ def write5():
                 requests=LONGCTX))
               for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
                                                      B + "attention_length_scaling_base": 8192}))],
+            # CKLSTM vs CKDA at s3 (user 2026-10-23): ckl_sgn + mHC-4 and CKDA + mHC-4, both at their
+            # step-4000 checkpoints (uncooled, as at s2), on the long-context set, plain and log-n
+            *[("s3", f"ds5lcs3{tag}", arms5downstream_any(
+                [("ckda_mhc4", "screen5_s3", "h5_moe_mhc4",
+                  {**dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"], **extra}),
+                 ("ckl_sgn", "screen5ckl3_s3", "ckl_sgn", {**arms5ckl3("s3")[0][2], **extra})],
+                requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
             # ckl_sgn's s2 run finished later (NODE_FAIL resumes): its own suites
             *[("s2", f"ds5lcckl3{tag}", arms5downstream_any(
                 [("ckl_sgn", "screen5ckl_s2", "ckl_sgn",
