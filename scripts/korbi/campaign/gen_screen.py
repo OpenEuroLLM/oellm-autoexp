@@ -730,9 +730,17 @@ def arms4ry(size: str):
     ])
 
 
-def hybrid_every(blocks: int, period: int, mixer: str) -> str:
+def hybrid_every(blocks: int, period: int, mixer: str, attn_first: bool = False) -> str:
     """Attention every ``period``-th block, ``mixer`` elsewhere, MoE after each (a remainder of
-    linear blocks at the end when ``period`` does not divide ``blocks``)."""
+    linear blocks at the end when ``period`` does not divide ``blocks``). ``attn_first``: each
+    period opens with the attention block instead of closing with it (arXiv 2609.35378's "reverse
+    periodic"; user 2026-10-23: the first hybrid layer is always attention), the same number of
+    attention blocks, spread evenly from block 0 (= every ``period``-th from 0 when ``period``
+    divides ``blocks``; otherwise no attention-free tail)."""
+    if attn_first:
+        n = blocks // period
+        at = {i * blocks // n for i in range(n)}
+        return "".join(("*" if i in at else mixer) + "E" for i in range(blocks))
     return "".join(("*" if i % period == period - 1 else mixer) + "E" for i in range(blocks))
 
 
@@ -1311,6 +1319,17 @@ def arms5r7(size: str = "s2"):
               B + "dataloader_prefetch_factor": w[1], **BAD_NODES})]
 
 
+def arms5r7first(size: str = "s2"):
+    """7:1 + mHC-4 with the attention block first in each period (arXiv 2609.35378: hybrids that
+    start with full attention learn faster, mostly on multilingual data; user 2026-10-23: always
+    attention first). s2's 18 blocks: attention at blocks 1 and 10 instead of 8 and 16, otherwise
+    h5_moe_mhc4_r7 (same parameters, data order and cache), so it pairs with screen5r7_s2."""
+    hidden, blocks, *_ = R4_SIZES[size]
+    name, _, kv = arms5r7(size)[0]
+    return [(name + "_af", "CKDA 7:1 + mHC-4, attention first in each period",
+             {**kv, "aux.pattern": hybrid_every(blocks, 8, "L", attn_first=True)})]
+
+
 # one GPU per task (the tiny optimizer study: a model this small does not scale over 4 GPUs)
 ONE_GPU = {"slurm.sbatch.gres": "gpu:1", "slurm.sbatch.gpus_per_node": 1, "slurm.sbatch.cpus_per_task": 40,
            "slurm.sbatch.exclusive": None, "slurm.srun.exclusive": False, "slurm.srun.cpus_per_task": 40,
@@ -1678,6 +1697,7 @@ def write5():
             ("s3", "screen5ckl3", arms5ckl3("s3")),
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5r7", arms5r7("s2")),
+            ("s2", "screen5r7af", arms5r7first("s2")),
             ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
             ("s1", "opttinysmoke32", arms5tiny(32, smoke=True)),
             # opttiny_b{8,32}: the first launch (document masking, no graphs; cancelled 2026-10-23)
