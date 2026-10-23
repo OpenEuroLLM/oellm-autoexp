@@ -641,6 +641,10 @@ def _matching_args(*, tied: bool = False, **overrides: Any) -> argparse.Namespac
         "add_bias_linear": False,
         "normalization": "RMSNorm",
         "position_embedding_type": "rope",
+        "apply_layernorm_1p": False,
+        "apply_residual_connection_post_layernorm": False,
+        "use_rope_scaling": False,
+        "rotary_percent": 1.0,
         "tensor_model_parallel_size": 1,
         "mask_token": MASK_ID,
     }
@@ -676,6 +680,14 @@ _SINGLE_MISMATCHES = [
         "position_embedding_type",
         id="position-embedding-type",
     ),
+    pytest.param({"apply_layernorm_1p": True}, "apply_layernorm_1p", id="layernorm-1p"),
+    pytest.param(
+        {"apply_residual_connection_post_layernorm": True},
+        "apply_residual_connection_post_layernorm",
+        id="post-layernorm-residual",
+    ),
+    pytest.param({"use_rope_scaling": True}, "use_rope_scaling", id="rope-scaling"),
+    pytest.param({"rotary_percent": 0.5}, "rotary_percent", id="rotary-percent"),
 ]
 
 

@@ -1021,6 +1021,11 @@ def check_args_against_hf(args: Any, hf_config: dict, layout: str) -> None:
         ("add_bias_linear", False, _flag),
         ("normalization", "RMSNorm", _same),
         ("position_embedding_type", "rope", _same),
+        # Megatron options that change the forward function, which Qwen3 does not use.
+        ("apply_layernorm_1p", False, _flag),
+        ("apply_residual_connection_post_layernorm", False, _flag),
+        ("use_rope_scaling", False, _flag),
+        ("rotary_percent", 1.0, _as_float),
     ]
     if groups < heads:
         checks.append(("group_query_attention", True, _flag))

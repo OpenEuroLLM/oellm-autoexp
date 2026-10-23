@@ -12,6 +12,8 @@ pytest.importorskip("torch")
 import torch
 
 from oellm_autoexp.dllm.eval.parity_check import (
+    I3_MAX_TOL,
+    I3_MEAN_TOL,
     KL_MAX,
     TOP1_MIN,
     add_parity_args,
@@ -57,15 +59,33 @@ def test_i3_compare_matches_shifted_ar_logits() -> None:
 
 def test_parity_verdict_thresholds() -> None:
     good = {"top1": TOP1_MIN, "kl_mean": KL_MAX}
-    assert parity_verdict(good, {"mean_abs_diff": 0.0}, 1e-2) == (True, True)
-    assert parity_verdict({"top1": 0.98, "kl_mean": 0.0}, {"mean_abs_diff": 0.02}, 1e-2) == (
-        False,
-        False,
-    )
-    assert (
-        parity_verdict({"top1": 1.0, "kl_mean": 2e-3}, {"mean_abs_diff": float("nan")}, 1.0)[1]
-        is False
-    )
+    exact = {"mean_abs_diff": 0.0, "max_abs_diff": 0.0}
+    assert parity_verdict(good, exact, 1e-2, 1e-1) == (True, True)
+    worse = {"mean_abs_diff": 0.02, "max_abs_diff": 0.02}
+    assert parity_verdict({"top1": 0.98, "kl_mean": 0.0}, worse, 1e-2, 1e-1) == (False, False)
+    nan = {"mean_abs_diff": float("nan"), "max_abs_diff": 0.0}
+    assert parity_verdict({"top1": 1.0, "kl_mean": 2e-3}, nan, 1.0, 1.0)[1] is False
+
+
+def test_i3_gate_rejects_a_localized_error_and_accepts_the_recorded_fp32_runs() -> None:
+    """D-063: four positions off by 5 nats keep the mean below 1e-2 but fail the
+    maximum; the worst recorded fp32 conversion (8B TP 2) passes."""
+    torch.manual_seed(0)
+    ar = torch.randn(4, 512, 16)
+    x0 = torch.randint(0, 16, (4, 512))
+    bd3 = torch.zeros_like(ar)
+    bd3[:, 1:] = ar[:, :-1]
+    target = x0[:, 1:]
+    for row in range(4):
+        # Moving the target logit by 5 changes its cross entropy by about 5 nats.
+        bd3[row, 7, target[row, 6]] -= 5.0
+    stats = i3_compare(bd3, ar, x0)
+    assert stats["mean_abs_diff"] < 1e-2  # the old mean-only gate passed this
+    good = {"top1": 1.0, "kl_mean": 0.0}
+    assert parity_verdict(good, stats)[1] is False
+    recorded_8b = {"mean_abs_diff": 4.29e-4, "max_abs_diff": 6.00e-3}
+    assert parity_verdict(good, recorded_8b) == (True, True)
+    assert I3_MEAN_TOL < 1e-2 and I3_MAX_TOL < 1.0
 
 
 def test_add_parity_args_defaults() -> None:
@@ -74,6 +94,7 @@ def test_add_parity_args_defaults() -> None:
     assert args.parity_num_seqs == 4
     assert args.parity_seq_len == 512
     assert args.parity_nld_block_size == 32  # the R11 block size; divides 512
+    assert (args.parity_i3_tol, args.parity_i3_max_tol) == (I3_MEAN_TOL, I3_MAX_TOL)
 
 
 def test_parity_dtype_follows_the_megatron_run() -> None:

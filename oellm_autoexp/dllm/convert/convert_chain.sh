@@ -19,6 +19,13 @@ set -euo pipefail
 : "${CHAIN_HF:?}" "${CHAIN_TEMPLATE:?}" "${CHAIN_OUT:?}" "${CHAIN_DATA_PREFIX:?}" "${CHAIN_NPROC:?}"
 PARITY_OUT="${CHAIN_PARITY_OUT:-$CHAIN_OUT/parity.json}"
 STEPS=",${CHAIN_STEPS:-template,convert,parity},"
+IFS=',' read -r -a STEP_LIST <<< "${CHAIN_STEPS:-template,convert,parity}"
+for step in "${STEP_LIST[@]}"; do
+  case "$step" in
+    template | convert | parity) ;;
+    *) echo "[chain] unknown step '$step' in CHAIN_STEPS (template, convert, parity)" >&2; exit 64 ;;
+  esac
+done
 RUN=(torchrun --standalone --nnodes 1 --nproc-per-node "$CHAIN_NPROC")
 
 if [[ "$STEPS" == *,template,* ]]; then

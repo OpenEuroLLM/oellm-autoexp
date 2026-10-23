@@ -42,6 +42,7 @@ from oellm_autoexp.dllm.convert.qwen3_layout import (
     restore_vocab_tail,
 )
 from oellm_autoexp.dllm.masks import CLEAN_ATTENTIONS, clean_attention_of
+from oellm_autoexp.dllm.schedule import block_size_at, parse_block_schedule
 
 # Largest total size in bytes of the tensors in one weight file (4 GiB). A larger export is split
 # into shards.
@@ -289,6 +290,43 @@ def _check_token_shift(args: Any, objective: str | None, token_shift: int) -> No
         )
 
 
+def _check_block_size(args: Any, objective: str | None, iteration: int, block_size: int) -> None:
+    """Raise ValueError when a bd3 or nld checkpoint trained with another block
+    size.
+
+    The trained block size is the one in effect at the checkpoint's iteration: the schedule entry
+    that has started by then (spec section 8), else ``bd_block_size``. The evaluators read
+    ``dllm_block_size`` by default, so a wrong value would score and decode the model with blocks
+    it never trained with; to evaluate at another block size, pass ``--block-size`` to the
+    evaluators. The ar objective has no block size, and args without ``bd_block_size`` are not
+    checked.
+
+    Args:
+        args: Arguments of the checkpoint, such as ``checkpoint["args"]``.
+        objective: ``bd_objective`` of the args, or None when the args lack it.
+        iteration: Iteration of the checkpoint.
+        block_size: Block size that the exporter was given.
+
+    Raises:
+        ValueError: If the objective is bd3 or nld and the trained block size differs.
+    """
+    trained = getattr(args, "bd_block_size", _MISSING)
+    if objective in (None, "ar") or trained is _MISSING:
+        return
+    schedule = parse_block_schedule(str(getattr(args, "bd_block_schedule", "") or ""))
+    train_iters = getattr(args, "train_iters", None)
+    if schedule and train_iters is None:
+        expected = schedule[-1][1]
+    else:
+        expected = block_size_at(iteration, int(train_iters or 1), schedule, int(trained))
+    if block_size != expected:
+        raise ValueError(
+            f"block_size {block_size} differs from {expected}, the block size of the checkpoint at "
+            f"iteration {iteration} (bd_block_size {trained!r}, bd_block_schedule "
+            f"{getattr(args, 'bd_block_schedule', None)!r})"
+        )
+
+
 def _trained_clean_attention(requested: str | None, objective: str | None) -> str:
     """Return the clean attention to export, checked against the checkpoint's
     objective.
@@ -394,6 +432,7 @@ def export(
         out_dir: Output directory. It must differ from the base model directory. Weight and index
             files of an earlier export in out_dir are removed.
         block_size: Diffusion block size B, written as ``dllm_block_size``. Must be at least 1.
+            A trained bd3 or nld checkpoint must have trained with it at its iteration.
         token_shift: Prediction shift, 0 or 1, written as ``dllm_token_shift``. A trained bd3 or
             nld checkpoint must hold the same ``bd_token_shift``.
         mask_token_id: Mask token id M, written as ``dllm_mask_token_id``. Must be a row of the
@@ -417,9 +456,10 @@ def export(
         TypeError: If a rank file holds a ``model`` entry that is not a dict.
         ValueError: If a setting is unsupported (block size, token shift, mask token id, or clean
             attention), out_dir is the base directory, the checkpoint args do not match the base
-            config, the checkpoint's mask_token differs from mask_token_id, the token shift or
-            clean_attention differs from a trained checkpoint's bd_token_shift or bd_objective, a
-            rank file does not match the base model, or one tensor is larger than the shard limit.
+            config, the checkpoint's mask_token differs from mask_token_id, the block size, token
+            shift, or clean_attention differs from what a trained checkpoint trained with, a
+            trained checkpoint has no args, a rank file does not match the base model, or one
+            tensor is larger than the shard limit.
     """
     check_layout(layout)
     hf_dir = resolve_hf_dir(str(hf_base))
@@ -444,6 +484,10 @@ def export(
             if trained:
                 objective = getattr(ckpt["args"], "bd_objective", None)
                 _check_token_shift(ckpt["args"], objective, token_shift)
+                iteration_done = int(dir_name.removeprefix("iter_"))
+                _check_block_size(ckpt["args"], objective, iteration_done, block_size)
+        elif rank == 0 and trained:
+            raise ValueError(f"{path} has no 'args' entry, which the export checks need")
         shards.append(ckpt["model"])
     clean_attention = _trained_clean_attention(clean_attention, objective)
     merged = megatron_to_hf_state(shards, dims, layout=layout)

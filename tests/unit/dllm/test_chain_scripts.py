@@ -20,6 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TRAIN_THEN_EVAL = REPO_ROOT / "oellm_autoexp/dllm/train_then_eval.sh"
 EVAL_CHAIN = REPO_ROOT / "oellm_autoexp/dllm/eval/eval_chain.sh"
+CONVERT_CHAIN = REPO_ROOT / "oellm_autoexp/dllm/convert/convert_chain.sh"
 _EVAL_KEYS = (
     "EVAL_CKPT",
     "EVAL_OBJECTIVE",
@@ -396,6 +397,47 @@ def test_stage_data_copies_nothing_unless_staging_is_enabled(tmp_path: Path) -> 
     assert "staging is off" in result.stdout
     assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]
     assert list(local.iterdir()) == []
+
+
+def _convert_chain_env(tmp_path: Path, steps: str) -> tuple[dict[str, str], Path]:
+    """Stub torchrun and python on PATH that log their arguments, and the
+    CHAIN_* settings."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    for tool in ("torchrun", "python"):
+        (bin_dir / tool).write_text(f'#!/usr/bin/env bash\necho "{tool} $*" >> {calls}\n')
+        (bin_dir / tool).chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CHAIN_HF": "Qwen/Qwen3-0.6B-Base",
+        "CHAIN_TEMPLATE": str(tmp_path / "template"),
+        "CHAIN_OUT": str(tmp_path / "converted"),
+        "CHAIN_DATA_PREFIX": "/data/prefix",
+        "CHAIN_NPROC": "2",
+        "CHAIN_STEPS": steps,
+    }
+    return env, calls
+
+
+def test_convert_chain_parity_runs_in_fp32_without_bf16(tmp_path: Path) -> None:
+    """D-046: the parity step drops --bf16 and keeps every other launcher flag."""
+    env, calls = _convert_chain_env(tmp_path, "parity")
+    result = _run(["bash", str(CONVERT_CHAIN), "--bf16", "--seq-length", "2049"], env)
+    assert result.returncode == 0, result.stderr
+    (call,) = calls.read_text().splitlines()
+    assert call.startswith("torchrun --standalone --nnodes 1 --nproc-per-node 2 ")
+    assert "oellm_autoexp/dllm/eval/parity_check.py --seq-length 2049 --load " in call
+    assert "--bf16" not in call
+    assert call.endswith(f"--parity-out {tmp_path}/converted/parity.json")
+
+
+def test_convert_chain_rejects_an_unknown_step(tmp_path: Path) -> None:
+    env, calls = _convert_chain_env(tmp_path, "template,partiy")
+    result = _run(["bash", str(CONVERT_CHAIN), "--bf16"], env)
+    assert result.returncode == 64
+    assert "unknown step 'partiy'" in result.stderr
+    assert not calls.exists()
 
 
 def test_stage_data_needs_a_command(tmp_path: Path) -> None:

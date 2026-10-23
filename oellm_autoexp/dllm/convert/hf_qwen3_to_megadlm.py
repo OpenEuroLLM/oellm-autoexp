@@ -424,13 +424,25 @@ def convert(
     for rank, ckpt in enumerate(checkpoints):
         if "args" not in ckpt:
             raise ValueError(f"template rank {rank} has no 'args' entry")
-    check_args_against_hf(checkpoints[0]["args"], config, layout)
+    template_args = checkpoints[0]["args"]
+    check_args_against_hf(template_args, config, layout)
     tp = len(checkpoints)
+    template_tp = getattr(template_args, "tensor_model_parallel_size", None)
+    if template_tp is not None and int(template_tp) != tp:
+        raise ValueError(
+            f"the template has {tp} rank file(s) but tensor_model_parallel_size {template_tp}"
+        )
     padded_vocab = _padded_vocab(checkpoints[0]["model"], tp)
     if real_vocab is None:
         real_vocab = _tokenizer_length(hf_path)
     if mask_token_id is None:
         mask_token_id = real_vocab
+    template_mask = getattr(template_args, "mask_token", None)
+    if template_mask is not None and int(template_mask) != mask_token_id:
+        # Training masks with args.mask_token, so the mean-initialized row must be that row.
+        raise ValueError(
+            f"mask_token_id {mask_token_id} differs from the template's mask_token {template_mask}"
+        )
     parts = hf_to_megatron_state(
         state,
         dims,

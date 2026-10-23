@@ -11,10 +11,12 @@ converted checkpoint and the ``--parity-*`` flags:
 
 The model runs in AR mode (``ar_logits``) on ``--parity-num-seqs`` sequences of
 ``--parity-seq-len`` tokens from the held-out split. Rank 0 compares the logits with
-``Qwen3ForCausalLM`` in bfloat16 over the ids below ``len(tokenizer)``: PASS when the top-1
-agreement is at least 99 percent and the mean KL(HF || Megatron) is at most 1e-3 nats. I3: with
-block size 1, token shift 1 and every position masked, the bd3 per-token cross entropy must equal
-the AR next-token cross entropy (within ``--parity-i3-tol`` nats on average).
+``Qwen3ForCausalLM`` in the dtype of the Megatron run (float32 in ``convert_chain.sh``, D-046) over
+the ids below ``len(tokenizer)``: PASS when the top-1 agreement is at least 99 percent and the mean
+KL(HF || Megatron) is at most 1e-3 nats. I3: with block size 1, token shift 1 and every position
+masked, the bd3 per-token cross entropy must equal the AR next-token cross entropy, within
+``--parity-i3-tol`` nats on average and ``--parity-i3-max-tol`` nats at every position (float32
+defaults, D-063).
 """
 
 from __future__ import annotations
@@ -37,6 +39,11 @@ from torch import Tensor
 
 TOP1_MIN = 0.99
 KL_MAX = 1e-3
+# I3 tolerances in nats for a float32 run (D-063). The recorded conversions reach a mean of at
+# most 4.3e-4 and a maximum of at most 6.0e-3 (8B TP 2), from different kernel reduction orders for
+# 2L and L tokens; a shifted source or a wrong mask gives errors of order 1 nat.
+I3_MEAN_TOL = 2e-3
+I3_MAX_TOL = 5e-2
 
 
 def parity_dtype(bf16: bool, fp16: bool) -> torch.dtype:
@@ -113,19 +120,26 @@ def i3_compare(bd3_logits: Tensor, ar_logits: Tensor, x0: Tensor) -> dict[str, f
     }
 
 
-def parity_verdict(logit_stats: dict[str, float], i3_stats: dict[str, float], i3_tol: float):
+def parity_verdict(
+    logit_stats: dict[str, float],
+    i3_stats: dict[str, float],
+    i3_tol: float = I3_MEAN_TOL,
+    i3_max_tol: float = I3_MAX_TOL,
+):
     """Return (parity_pass, i3_pass) for the thresholds of spec section 13.
 
     Args:
         logit_stats: Output of ``compare_logits``.
         i3_stats: Output of ``i3_compare``.
         i3_tol: Allowed mean absolute cross-entropy difference for I3, in nats.
+        i3_max_tol: Allowed absolute cross-entropy difference at any position for I3, in nats.
 
     Returns:
         A tuple of two booleans.
     """
     parity = logit_stats["top1"] >= TOP1_MIN and logit_stats["kl_mean"] <= KL_MAX
-    i3 = math.isfinite(i3_stats["mean_abs_diff"]) and i3_stats["mean_abs_diff"] <= i3_tol
+    mean, largest = i3_stats["mean_abs_diff"], i3_stats["max_abs_diff"]
+    i3 = math.isfinite(mean) and math.isfinite(largest) and mean <= i3_tol and largest <= i3_max_tol
     return parity, i3
 
 
@@ -157,8 +171,14 @@ def add_parity_args(parser):
     group.add_argument(
         "--parity-i3-tol",
         type=float,
-        default=1e-2,
-        help="mean absolute CE difference allowed for I3 (nats, bf16)",
+        default=I3_MEAN_TOL,
+        help="mean absolute CE difference allowed for I3 (nats, float32; D-063)",
+    )
+    group.add_argument(
+        "--parity-i3-max-tol",
+        type=float,
+        default=I3_MAX_TOL,
+        help="absolute CE difference allowed for I3 at any position (nats, float32; D-063)",
     )
     group.add_argument(
         "--parity-nld-block-size",
@@ -239,9 +259,11 @@ def main() -> int:
             hf_logits = hf(input_ids=x0).logits
         logit_stats = compare_logits(hf_logits, meg_ar, real_vocab)
         i3_stats = i3_compare(meg_bd3[..., :real_vocab], meg_ar[..., :real_vocab], x0)
-        parity_ok, i3_ok = parity_verdict(logit_stats, i3_stats, args.parity_i3_tol)
+        parity_ok, i3_ok = parity_verdict(
+            logit_stats, i3_stats, args.parity_i3_tol, args.parity_i3_max_tol
+        )
         nld_stats = compare_logits(hf_logits, meg_nld, real_vocab)
-        nld_ok, _ = parity_verdict(nld_stats, i3_stats, args.parity_i3_tol)
+        nld_ok, _ = parity_verdict(nld_stats, i3_stats, args.parity_i3_tol, args.parity_i3_max_tol)
         result = {
             "load": args.load,
             "hf": args.parity_hf,
@@ -265,7 +287,8 @@ def main() -> int:
             flush=True,
         )
         print(
-            f"I3 {'PASS' if i3_ok else 'FAIL'}: mean_abs_diff={i3_stats['mean_abs_diff']:.2e}",
+            f"I3 {'PASS' if i3_ok else 'FAIL'}: mean_abs_diff={i3_stats['mean_abs_diff']:.2e} "
+            f"max_abs_diff={i3_stats['max_abs_diff']:.2e}",
             flush=True,
         )
         print(

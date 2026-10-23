@@ -486,6 +486,24 @@ def test_convert_refuses_an_out_dir_that_already_holds_release_ranks(tmp_path: P
     assert not _rank_file(out, 0).exists()
 
 
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    [({"tensor_model_parallel_size": 2}, "rank file"), ({"mask_token": MASK_ID + 1}, "mask_token")],
+)
+def test_convert_rejects_a_template_whose_tp_or_mask_token_differs(
+    tmp_path: Path, changes: dict[str, Any], match: str
+) -> None:
+    """The rank count must equal the template's TP size, and the mask row must
+    be the template's mask_token."""
+    hf_dir = _save_hf_model(tmp_path, tied=False)
+    template = _write_template(tmp_path, hf_dir, tp=1)
+    _set_rank0_args(template, **changes)
+    out = tmp_path / "megatron"
+    with pytest.raises(ValueError, match=match):
+        convert(hf_dir, template, out, mask_token_id=MASK_ID, real_vocab=REAL_VOCAB)
+    assert not out.exists()
+
+
 def test_convert_rejects_template_args_that_do_not_match_the_hf_config(tmp_path: Path) -> None:
     """A template trained with the wrong RoPE base raises ValueError, and
     nothing is written."""
@@ -755,6 +773,65 @@ def test_export_of_a_release_conversion_ignores_the_template_settings(tmp_path: 
     config = json.loads((export_dir / "config.json").read_text())
     assert config["dllm_token_shift"] == TOKEN_SHIFT
     assert config["dllm_clean_attention"] == "block"
+
+
+@pytest.mark.parametrize(
+    ("trained", "iteration", "requested", "accepted"),
+    [
+        ({"bd_block_size": BLOCK_SIZE, "bd_block_schedule": "none"}, 100, BLOCK_SIZE, True),
+        ({"bd_block_size": 2 * BLOCK_SIZE, "bd_block_schedule": "none"}, 100, BLOCK_SIZE, False),
+        # Scheduled run: B = 2 for the first half, then B = 4 (the last entry at the end).
+        ({"bd_block_size": 2, "bd_block_schedule": "0:2,0.5:4"}, 100, 4, True),
+        ({"bd_block_size": 2, "bd_block_schedule": "0:2,0.5:4"}, 100, 2, False),
+        ({"bd_block_size": 2, "bd_block_schedule": "0:2,0.5:4"}, 40, 2, True),
+    ],
+)
+def test_export_checks_the_block_size_that_the_checkpoint_trained_with(
+    tmp_path: Path, trained: dict[str, Any], iteration: int, requested: int, accepted: bool
+) -> None:
+    """dllm_block_size must be the block size in effect at the checkpoint's
+    iteration (spec section 8)."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _as_trained_run(megatron, iteration, bd_objective="bd3", train_iters=100, **trained)
+    out = tmp_path / "out"
+    settings = {"token_shift": TOKEN_SHIFT, "mask_token_id": MASK_ID}
+    if accepted:
+        export(megatron, hf_dir, out, block_size=requested, **settings)
+        assert json.loads((out / "config.json").read_text())["dllm_block_size"] == requested
+    else:
+        with pytest.raises(ValueError, match="block size of the checkpoint"):
+            export(megatron, hf_dir, out, block_size=requested, **settings)
+        assert not out.exists()
+
+
+def test_export_of_an_ar_checkpoint_ignores_its_block_size(tmp_path: Path) -> None:
+    """The ar objective has no block size; train_then_eval.sh exports ar runs
+    with B = 1."""
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _as_trained_run(megatron, bd_objective="ar", bd_block_size=8, train_iters=100)
+    out = tmp_path / "out"
+    export(megatron, hf_dir, out, block_size=1, token_shift=1, mask_token_id=MASK_ID)
+    assert json.loads((out / "config.json").read_text())["dllm_block_size"] == 1
+
+
+def test_export_rejects_a_trained_checkpoint_without_args(tmp_path: Path) -> None:
+    hf_dir, megatron = _convert_model(tmp_path, tied=False, tp=1)
+    _as_trained_run(megatron)
+    path = megatron / "iter_0000100" / "mp_rank_00" / _RANK_FILE
+    checkpoint = torch.load(path, weights_only=False)
+    del checkpoint["args"]
+    torch.save(checkpoint, path)
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="no 'args' entry"):
+        export(
+            megatron,
+            hf_dir,
+            out,
+            block_size=BLOCK_SIZE,
+            token_shift=TOKEN_SHIFT,
+            mask_token_id=MASK_ID,
+        )
+    assert not out.exists()
 
 
 def test_export_rejects_an_unsupported_clean_attention(tmp_path: Path) -> None:
