@@ -160,7 +160,11 @@ def test_argparse_resolver_does_not_freeze_cached_interpolations(tmp_path, fresh
         arg_metadata={"save": ArgMetadata(arg_type=str, default=None)},
         action_specs={
             "save": ActionSpec(
-                option_strings=("--save",), action_type="store", nargs=None, const=None, default=None
+                option_strings=("--save",),
+                action_type="store",
+                nargs=None,
+                const=None,
+                default=None,
             )
         },
         skip_defaults=False,
