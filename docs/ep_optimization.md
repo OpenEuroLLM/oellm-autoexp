@@ -359,3 +359,25 @@ details in `../oellm-autoexp-hybrid-ep/docs/ep_fp8_speed.md` §6c):
 - The speed candidate with all flags (`ENGRAM_STEP_GROUP=8`, the stride fix, `MEGATRON_LAZY_SINGLETON_GROUPS=1`, `RECOMPUTE_OFFLOAD_LEAF=1`, `LIGER_WGRAD_ADDMM=1`, pylibs_moonep2) reaches 5,876 tok/s/GPU, up from 5,601 this morning.
 - **Another bad MN5 node: as07r4b02** (local GPU 1). It raised a lone "CUDA error: unspecified launch failure" in two jobs: an 8-node run at iteration 2, and the first 128-node test in the optimizer step. That looks like a code bug in whichever kernel happens to run, so map the failing rank to its node (rank // 4 = position in NODELIST) before debugging. Exclusion list now: `+slurm.sbatch.exclude="as07r3b27,as06r2b26,as05r3b28,as07r4b02"`. For >100-node jobs use QOS `acc_xehpc` (acc_ehpc caps at 100 nodes).
 - **MN5 bad-node auto-exclusion** (branch feat/ep-fp8-speed: `config/slurm/marenostrum_autoexclude.yaml` + `scripts/korbi/hybrid_speed/job_watchdog.py`). Use `/slurm: marenostrum_autoexclude` instead of `marenostrum_ehpc533`. It reads the shared list `/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt` (5 nodes so far: as07r3b27, as06r2b26, as05r3b28, as04r5b05, as07r4b02). The in-job watchdog (needs `templates/marenostrum_watchdog.sbatch`) appends nodes whose GPU probe fails, or whose own ranks show a hardware-signature CUDA error with no MoonEP trap. Don't combine it with `+slurm.sbatch.exclude`.
+
+### 2026-10-23 (campaign agent) -- decisions for the production layout, infra fixes, merge question
+- **Decided (user):**
+  - attention ratio **7:1** (NSA2 later on top);
+  - **no SSMax** in training;
+  - **mHC-4** (LDM and IAT dropped);
+  - **Engram 30 %**;
+  - **16k** pre-training context with document masking, no CP;
+  - stable-only schedule without warmup, large batch.
+- **Still open:** CKDA vs signed CKLSTM (`ckl_sgn_cpl`, same speed), and the optimizer (AngularMuown
+  variants / `angular_muown_simplified` / `muown_classical`).
+- `templates/marenostrum.sbatch` now exits with the training step's status (7461ddc): before, every
+  job was COMPLETED 0:0 even when the step failed or was OOM-killed.
+- `base_train_mn5.yaml`: bounded NODE_FAIL / FAILED / TIMEOUT / OOM retries that re-read
+  `mn5_exclude_nodes.txt`.
+- **Host RAM at s2 saves:** AngularMuown ~472 GB of 503 vs plain Muon 307 GB. `muown_classical`
+  OOMs even with `ANGULAR_MUOWN_COMPACT_CKPT=1`. Check host RAM at save time for the production
+  layout.
+- **Merge:** Megatron ep-fp8-speed-r5 and oellm/v0.19-hybrid have diverged (AngularMuown PR,
+  length scaling CP/decode, router traces, ppl eval here; MoonEP, Engram groups, lazy groups, Liger
+  addmm, per-layer mHC there). Which one becomes the production branch, and who merges? (Also sent
+  as a direct message.)
