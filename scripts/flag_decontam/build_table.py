@@ -4,9 +4,11 @@
     python scripts/flag_decontam/build_table.py --work $WORK --prune --max-count 50         # prune
 
 build: tokenise every reference segment with the training tokenizer, map it to the canonical
-stream (common.py), and hash its distinct n-grams (n = 13; n = 8 for segments with fewer than
-20 canonical tokens; segments with fewer than 8 can't be matched and are only counted). N-grams
-shared by more than --max-segments distinct segments are prompt / template text and dropped.
+stream (common.py), and hash its distinct n-grams, with n the smallest of 13 / 24 / 40 whose
+n-grams span >= 30 characters (median; byte-fallback scripts get longer n). The JSON-escaped
+forms of the segment are hashed too, under the same segment id. Segments shorter than 20
+canonical tokens or 80 characters are not matched (counted as too short). N-grams shared by
+more than --max-segments distinct segments are prompt / template text and dropped.
 Writes $WORK/table/{lut.npy, table.npz, segments.npz, sources.json, build_report.json}:
   table.npz:    hash (sorted unique int64), csr_off / csr_seg (the segments of each hash)
   segments.npz: per segment its source id, split id, n, its number of n-grams in the table
@@ -33,30 +35,54 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import SHORT_BELOW, build_lut, ngram_hashes  # noqa: E402
+from common import MIN_GRAM_CHARS, MIN_SEG_CHARS, MIN_SEG_TOKENS, NGRAM_SIZES, build_lut, key_chars, ngram_hashes  # noqa: E402
 
 TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
-_sp = _lut = None
+_sp = _lut = _chars = None
 
 
-def _init(tok_path, lut):
-    global _sp, _lut
+def _init(tok_path, lut, chars):
+    global _sp, _lut, _chars
     import sentencepiece as spm
     _sp = spm.SentencePieceProcessor(model_file=tok_path)
-    _lut = lut
+    _lut, _chars = lut, chars
     torch.set_num_threads(1)
+
+
+def _canon(ids):
+    c = _lut[np.asarray(ids, dtype=np.int64)] if ids else np.zeros(0, np.int64)
+    return c[c >= 0]
+
+
+def choose_n(c, chars):
+    """Smallest n whose n-grams span >= MIN_GRAM_CHARS characters (median), else the largest."""
+    cs = np.concatenate([[0.0], np.cumsum(chars[c], dtype=np.float64)])
+    for n in NGRAM_SIZES:
+        if len(c) >= n and np.median(cs[n:] - cs[:-n]) >= MIN_GRAM_CHARS:
+            return n
+    return NGRAM_SIZES[-1]
+
+
+def variants(text):
+    """The text and its JSON-escaped forms (copies inside agent trajectories / JSON dumps)."""
+    out = [text]
+    for v in (json.dumps(text, ensure_ascii=False)[1:-1], json.dumps(text)[1:-1]):
+        if v not in out:
+            out.append(v)
+    return out
 
 
 def _hash_batch(texts):
     out = []
-    for ids in _sp.encode(texts):
-        c = _lut[np.asarray(ids, dtype=np.int64)] if ids else np.zeros(0, np.int64)
-        c = c[c >= 0]
-        if len(c) < 8:
+    for text in texts:
+        vs = variants(text)
+        cs = [_canon(ids) for ids in _sp.encode(vs)]
+        c = cs[0]
+        n = choose_n(c, _chars) if len(c) else NGRAM_SIZES[0]
+        if len(c) < max(MIN_SEG_TOKENS, n + 2) or len(text) < MIN_SEG_CHARS:
             out.append((len(c), 0, None))
             continue
-        n = 13 if len(c) >= SHORT_BELOW else 8
-        h = np.unique(ngram_hashes(torch.from_numpy(c), n).numpy())
+        h = np.unique(np.concatenate([ngram_hashes(torch.from_numpy(v), n).numpy() for v in cs if len(v) >= n]))
         out.append((len(c), n, h))
     return out
 
@@ -65,6 +91,9 @@ def make_table(hashes, seg_ids, n_segments, max_segments):
     """Sorted unique hashes with their segments (CSR), dropping hashes of > max_segments segments."""
     order = np.lexsort((seg_ids, hashes))
     hashes, seg_ids = hashes[order], seg_ids[order]
+    first = np.ones(len(hashes), bool)                  # one entry per (hash, segment)
+    first[1:] = (hashes[1:] != hashes[:-1]) | (seg_ids[1:] != seg_ids[:-1])
+    hashes, seg_ids = hashes[first], seg_ids[first]
     uniq, nseg = np.unique(hashes, return_counts=True)
     common = nseg > max_segments
     seg_ids = seg_ids[np.repeat(~common, nseg)]
@@ -80,7 +109,9 @@ def build(args):
     os.makedirs(tdir, exist_ok=True)
     sp = spm.SentencePieceProcessor(model_file=args.tokenizer)
     lut, keys = build_lut(sp)
+    chars = key_chars(keys)
     np.save(os.path.join(tdir, "lut.npy"), lut)
+    np.save(os.path.join(tdir, "canon_chars.npy"), chars)
     print(f"lut: {len(lut)} ids -> {len(keys)} canonical, {(lut < 0).sum()} dropped", flush=True)
 
     texts, src_of, split_of = [], [], []
@@ -95,7 +126,7 @@ def build(args):
 
     B = 2000
     batches = [texts[i:i + B] for i in range(0, len(texts), B)]
-    with Pool(args.procs, initializer=_init, initargs=(args.tokenizer, lut)) as pool:
+    with Pool(args.procs, initializer=_init, initargs=(args.tokenizer, lut, chars)) as pool:
         res = [r for batch in pool.imap(_hash_batch, batches, chunksize=4) for r in batch]
     ntok = np.array([r[0] for r in res], dtype=np.int64)
     nsz = np.array([r[1] for r in res], dtype=np.int8)
@@ -111,7 +142,8 @@ def build(args):
         json.dump({"sources": list(srcs), "splits": list(splits), "refs": os.path.abspath(args.refs)}, f, indent=1)
     report = {
         "segments": len(texts), "too_short": int((nsz == 0).sum()),
-        "n8_segments": int((nsz == 8).sum()), "n13_segments": int((nsz == 13).sum()),
+        **{f"n{n}_segments": int((nsz == n).sum()) for n in NGRAM_SIZES},
+        "min_seg_tokens": MIN_SEG_TOKENS, "min_seg_chars": MIN_SEG_CHARS, "min_gram_chars": MIN_GRAM_CHARS,
         "unique_ngrams": int(len(uniq)), "template_ngrams_dropped": int(common.sum()),
         "max_segments": args.max_segments,
         "too_short_by_source": dict(Counter(list(srcs)[s] for s, n in zip(src_of, nsz) if n == 0).most_common()),
@@ -140,7 +172,7 @@ def prune(args):
     segs["n_grams"] = np.bincount(seg, minlength=len(segs["n"])).astype(np.int32)
     np.savez(os.path.join(tdir, "segments.npz"), **segs)
     # matchable (>= 3 n-grams, finalize's --min-hits) before pruning, not after
-    lost = (segs["n_grams_built"] >= 3) & (segs["n_grams"] < 3)
+    lost = (segs["n_grams_built"] > 0) & (segs["n_grams"] == 0)
     hist = {f">{t}": int((counts > t).sum()) for t in (0, 1, 5, 10, 20, 50, 100, 1000, 10000)}
     seen_seg = np.bincount(tab["csr_seg"][np.repeat(counts > 0, nseg)], minlength=len(segs["n"]))
     rep = {"count_files": len(files), "ngrams_with_count": hist,

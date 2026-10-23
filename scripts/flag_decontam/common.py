@@ -8,6 +8,11 @@ removes that: every id maps through a lookup table to the id of its piece with s
 whitespace stripped, and pieces that are only whitespace (and control tokens: <bos>, <eos>, ...)
 are dropped. Matching canonical n-grams is then matching word sequences up to whitespace.
 
+Matching unit (v2): the longest *run* of consecutive matching windows of one segment in one
+sequence (gaps of up to n // 2 windows bridged: pruned common n-grams inside a copied passage),
+in canonical tokens. A verbatim copy is one run as long as the segment; a changed word removes n
+consecutive windows and splits it; n-grams scattered over a long document are many short runs.
+
 N-gram hashes: a polynomial over canonical ids in int64 arithmetic (wrapping), seeded with n and
 finalised with a xor-shift-multiply mix, computed by the same torch code for the reference table
 (CPU) and the scan (GPU), so the two agree bit for bit.
@@ -22,8 +27,10 @@ import struct
 import numpy as np
 import torch
 
-NGRAM_SIZES = (8, 13)          # n used per reference segment: 13, or 8 for short segments
-SHORT_BELOW = 20               # segments with fewer canonical tokens use n = 8
+NGRAM_SIZES = (13, 24, 40)     # n per reference segment: the smallest whose n-grams span MIN_GRAM_CHARS
+MIN_GRAM_CHARS = 30            # median characters of a segment's n-grams (byte-fallback scripts need larger n)
+MIN_SEG_TOKENS = 20            # shorter segments (answer options, short premises) are not matched alone
+MIN_SEG_CHARS = 80
 DROP = -1
 
 _M = -7046029254386353131      # 0x9E3779B97F4A7C15 as int64
@@ -71,6 +78,32 @@ def build_lut(sp) -> tuple[np.ndarray, list[str]]:
                 continue
         lut[i] = keys.setdefault(key, len(keys))
     return lut, list(keys)
+
+
+def key_chars(keys: list[str]) -> np.ndarray:
+    """Characters per canonical id; a byte-fallback piece counts 1/3 (a UTF-8 character is 2-4 bytes)."""
+    return np.array([1 / 3 if k.startswith("<byte ") else len(k) for k in keys], dtype=np.float32)
+
+
+def runs(pos: torch.Tensor, seg: torch.Tensor, seq: torch.Tensor, n_of_seg: torch.Tensor):
+    """Runs of matching windows: (seq, seg, start, end, windows) per run, end exclusive in tokens.
+
+    pos: position of each matching window in the canonical stream (a window covers pos .. pos+n-1),
+    seg / seq: its segment and sequence. Windows of one segment whose positions differ by at most
+    n // 2 + 1 belong to one run.
+    """
+    if pos.numel() == 0:
+        e = pos.new_zeros(0)
+        return e, e, e, e, e
+    key = seg * (int(pos.max()) + 2) + pos
+    order = torch.argsort(key)
+    pos, seg, seq = pos[order], seg[order], seq[order]
+    n = n_of_seg[seg]
+    new = torch.ones_like(pos, dtype=torch.bool)
+    new[1:] = (seg[1:] != seg[:-1]) | (seq[1:] != seq[:-1]) | (pos[1:] - pos[:-1] > n[1:] // 2 + 1)
+    first = torch.nonzero(new).squeeze(1)
+    last = torch.cat([first[1:] - 1, first.new_tensor([pos.numel() - 1])])
+    return seq[first], seg[first], pos[first], pos[last] + n[last], last - first + 1
 
 
 def save_lut(path: str, lut: np.ndarray) -> None:

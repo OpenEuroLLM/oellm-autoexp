@@ -6,15 +6,16 @@
 Every node runs this once (part = SLURM_NODEID, nparts = SLURM_NNODES by default); it splits its
 share of the work into units of whole sequences (~--chunk-tokens tokens each) and runs one worker
 process per visible GPU. Per unit a worker reads the token range from the .bin (--readers threads
-keep the next units loading), maps it to the canonical stream, hashes the 8- and 13-gram windows
+keep the next units loading), maps it to the canonical stream, hashes the 13-, 24- and 40-gram windows
 that stay inside one sequence and looks them up in the sorted reference table.
 
   count: per reference n-gram, how often it occurs (sampling the first --sample-tokens of every
          shard). build_table.py --prune drops the n-grams that are common in ordinary data.
-  scan:  per unit, every (sequence, reference segment) pair with >= --min-hits distinct matched
-         n-grams -> $WORK/hits/<shard key>/<first seq>.npz (seq, seg, matched). Thresholds are
-         applied later (finalize.py), so they can change without rescanning. Units already done
-         are skipped: a rerun resumes.
+  scan:  per unit, every (sequence, reference segment) pair whose longest run of matching windows
+         (common.runs) spans >= --min-run canonical tokens -> $WORK/hits/<shard key>/<first seq>.npz,
+         columns (seq, seg, longest run in tokens, matching windows, runs). Thresholds are applied
+         later (finalize.py), so they can change without rescanning. Units already done are
+         skipped: a rerun resumes.
 Token ids outside the tokenizer's vocabulary are dropped from the canonical stream and reported
 ($WORK/anomalies/*.json and a WARNING line).
 """
@@ -34,7 +35,7 @@ import torch
 import torch.multiprocessing as mp
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import NGRAM_SIZES, Index, ngram_hashes  # noqa: E402
+from common import NGRAM_SIZES, Index, ngram_hashes, runs  # noqa: E402
 
 
 def shard_key(prefix: str, root: str) -> str:
@@ -81,7 +82,7 @@ def read_unit(prefix, s0, s1, idx_cache):
     return toks, lengths
 
 
-def process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, mode, min_hits, counts, bad_info):
+def process(toks, lengths, s0, lut, table, csr_off, csr_seg, n_of_seg, dev, mode, min_run, counts, bad_info):
     t = torch.from_numpy(toks.astype(np.int64, copy=False)).to(dev, non_blocking=True)
     bad = (t < 0) | (t >= lut.shape[0])
     n_bad = int(bad.sum())
@@ -97,7 +98,7 @@ def process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, mode, min_hits
     keep = c >= 0
     c, seq = c[keep], seq[keep]
     del keep
-    hit_seq, hit_gram = [], []
+    hit_pos, hit_gram = [], []
     for n in NGRAM_SIZES:
         h = ngram_hashes(c, n)
         if h.numel() == 0:
@@ -108,29 +109,32 @@ def process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, mode, min_hits
         j.clamp_(max=table.shape[0] - 1)
         found = (table[j] == h) & valid
         del h, valid
-        hit_seq.append(seq[:L][found])
+        hit_pos.append(torch.nonzero(found).squeeze(1))
         hit_gram.append(j[found])
-    if not hit_seq:
+    if not hit_pos:
         return None
-    hs, hg = torch.cat(hit_seq), torch.cat(hit_gram)
+    hp, hg = torch.cat(hit_pos), torch.cat(hit_gram)
     if mode == "count":
         counts += torch.bincount(hg, minlength=counts.shape[0])
         return None
-    if hs.numel() == 0:
-        return np.zeros((0, 3), dtype=np.int64)
-    pairs = torch.unique(torch.stack([hs, hg], 1), dim=0).cpu().numpy()   # distinct (seq, gram)
-    g = pairs[:, 1]
-    k = csr_off[g + 1] - csr_off[g]                                       # segments per gram
-    rep_seq = np.repeat(pairs[:, 0], k)
-    starts = np.repeat(csr_off[g] - np.concatenate([[0], np.cumsum(k)[:-1]]), k)
-    segs = csr_seg[starts + np.arange(k.sum())]
-    sp, matched = np.unique(np.stack([rep_seq, segs], 1), axis=0, return_counts=True)
-    sel = matched >= min_hits
-    out = np.empty((int(sel.sum()), 3), dtype=np.int64)
-    out[:, 0] = sp[sel, 0] + s0
-    out[:, 1] = sp[sel, 1]
-    out[:, 2] = matched[sel]
-    return out
+    if hp.numel() == 0:
+        return np.zeros((0, 5), dtype=np.int64)
+    # every matching window -> each segment its n-gram belongs to (an n-gram has one n)
+    k = csr_off[hg + 1] - csr_off[hg]
+    rep = torch.repeat_interleave(torch.arange(hg.numel(), device=dev), k)
+    excl = torch.cumsum(k, 0) - k
+    seg = csr_seg[csr_off[hg][rep] + torch.arange(rep.numel(), device=dev) - excl[rep]].long()
+    pos = hp[rep]
+    r_seq, r_seg, r_start, r_end, r_win = runs(pos, seg, seq[pos], n_of_seg)
+    # per (sequence, segment): the longest run, all matching windows, the number of runs
+    S = n_of_seg.shape[0]
+    pair, inv = torch.unique(r_seq * S + r_seg, return_inverse=True)
+    best = torch.zeros(pair.numel(), dtype=torch.int64, device=dev).scatter_reduce_(0, inv, r_end - r_start, "amax")
+    wins = torch.zeros_like(best).scatter_add_(0, inv, r_win)
+    nrun = torch.zeros_like(best).scatter_add_(0, inv, torch.ones_like(r_win))
+    sel = best >= min_run
+    out = torch.stack([pair // S + s0, pair % S, best, wins, nrun], 1)[sel]
+    return out.cpu().numpy()
 
 
 def worker(rank, ngpu, units, args):
@@ -138,7 +142,8 @@ def worker(rank, ngpu, units, args):
     dev = torch.device(f"cuda:{rank % ngpu}") if torch.cuda.is_available() else torch.device("cpu")
     tab = np.load(os.path.join(args.work, "table", "table.npz"))
     table = torch.from_numpy(tab["hash"]).to(dev)
-    csr_off, csr_seg = tab["csr_off"], tab["csr_seg"]
+    csr_off, csr_seg = torch.from_numpy(tab["csr_off"]).to(dev), torch.from_numpy(tab["csr_seg"]).to(dev)
+    n_of_seg = torch.from_numpy(np.load(os.path.join(args.work, "table", "segments.npz"))["n"].astype(np.int64)).to(dev)
     lut = torch.from_numpy(np.load(os.path.join(args.work, "table", "lut.npy"))).to(dev)
     counts = torch.zeros(table.shape[0], dtype=torch.int64, device=dev) if args.mode == "count" else None
     mine = units[rank::ngpu]
@@ -172,7 +177,7 @@ def worker(rank, ngpu, units, args):
             raise item
         (prefix, s0, s1, ntok), out, toks, lengths = item
         bad_info = []
-        res = process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, args.mode, args.min_hits, counts,
+        res = process(toks, lengths, s0, lut, table, csr_off, csr_seg, n_of_seg, dev, args.mode, args.min_run, counts,
                       bad_info)
         if bad_info:
             n, lo, hi = bad_info[0]
@@ -182,7 +187,7 @@ def worker(rank, ngpu, units, args):
                   f"in {shard_key(prefix, args.root)} seqs {s0}-{s1}", flush=True)
         if args.mode == "scan":
             os.makedirs(os.path.dirname(out), exist_ok=True)
-            np.savez(out + ".tmp.npz", hits=res if res is not None else np.zeros((0, 3), np.int64),
+            np.savez(out + ".tmp.npz", hits=res if res is not None else np.zeros((0, 5), np.int64),
                      seq_range=np.array([s0, s1]))
             os.replace(out + ".tmp.npz", out)
         done_tok += ntok
@@ -212,7 +217,7 @@ def main():
     ap.add_argument("--nparts", type=int, default=int(os.environ.get("SLURM_NNODES", 1)))
     ap.add_argument("--chunk-tokens", type=int, default=1 << 28)
     ap.add_argument("--sample-tokens", type=int, default=0, help="count: tokens read per shard (0 = all)")
-    ap.add_argument("--min-hits", type=int, default=3)
+    ap.add_argument("--min-run", type=int, default=30, help="scan: keep pairs whose longest run has >= this many tokens")
     ap.add_argument("--gpus", type=int, default=0, help="worker processes (default: visible GPUs)")
     ap.add_argument("--readers", type=int, default=2, help="reader threads per worker")
     args = ap.parse_args()

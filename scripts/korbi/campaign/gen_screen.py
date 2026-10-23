@@ -1406,6 +1406,20 @@ def arms5opt2(size: str = "s1"):
     return [(n, f"optimizer variant {n}, stable 4000 + WSD 800", {**h5, **sched, **var[n]}) for n in names]
 
 
+def arms5opt3(size: str = "s2"):
+    """muown_classical at s2 again, with compact row-state checkpoints (ANGULAR_MUOWN_COMPACT_CKPT=1):
+    its extra per-row state (||v||), expanded to weight shape for the save, host-OOM-killed both s2
+    runs at the step-500 save (screen5opt_s2 / screen5opt2_s2). Fresh (one checkpoint format per
+    run); protocol and pairing as screen5opt2."""
+    keep = ("muown_cl_wd01",)
+    base = {n: kv for n, _, kv in arms5opt2(size)}
+    cl = {**{k: v for k, v in base["muown_cl_wd01"].items() if k != B + "muown_classical_v_weight_decay"}}
+    env = {"backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}
+    return [("muown_classical", "muown_classical (the paper's), compact checkpoints", {**cl, **env}),
+            ("muown_cl_wd01", "muown_classical + v weight decay 0.1, compact checkpoints",
+             {**base["muown_cl_wd01"], **env})]
+
+
 def arms5udadapt(size: str = "s1"):
     """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
     the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
@@ -1637,6 +1651,7 @@ def write5():
             ("s1", "opttinysmoke32", arms5tiny(32, smoke=True)),
             # opttiny_b{8,32}: the first launch (document masking, no graphs; cancelled 2026-10-23)
             *[(z, "screen5opt2", arms5opt2(z)) for z in ("s1", "s2")],
+            ("s2", "screen5opt3", arms5opt3("s2")),
             *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
