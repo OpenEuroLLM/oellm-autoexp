@@ -185,22 +185,39 @@ container.
 ### Lumi
 
 Lumi follows the same pattern as Leonardo but the container is
-`laif-rocm-…` (ROCm pytorch) and the user-site install goes to
+`laif-rocm-…` (ROCm pytorch) and the install goes to
 `$HOME/eval_local` by way of `pip install --target` (Lumi's container has its
 own `/opt/venv` so `--user` is rejected; `--target` plus a `PYTHONPATH`
 override in `slurm/lumi_eval.yaml` is the workaround).
 
 ```bash
-mkdir -p ~/eval_local/lib/python3.12/site-packages
-singularity exec --bind $HOME --bind /pfs \
-    /scratch/project_462000963/containers/laif-rocm-….sif \
-    bash -c "pip install --no-cache-dir --upgrade \
-        --target \$HOME/eval_local/lib/python3.12/site-packages \
-        -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp/submodules/oellm_evals \
-        -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp \
-        compoconf==0.1.14 'lm_eval>=0.4.12' 'datasets>=4.0' \
-        jsonargparse rich pandas pyyaml"
+# Optional, recommended: the env is ~40k files and the Lumi home quota is
+# 100k files, so put it on scratch.
+export EVAL_LOCAL_DIR=/scratch/<project>/users/$USER/eval_local
+bash scripts/install_eval_env.sh --cluster lumi
 ```
+
+What the `lumi` branch of the installer does, and why:
+
+1. If `EVAL_LOCAL_DIR` is set, creates it and makes `$HOME/eval_local` a
+   symlink to it (`slurm/lumi_eval.yaml` uses that path). An existing
+   non-empty `$HOME/eval_local` is never replaced.
+2. Inside the container, writes the container's `pip list` to
+   `eval_local/lib/python3.12/container_constraints.txt`, so the install
+   below keeps the container's versions (e.g. its `transformers` needs
+   `huggingface-hub<1.0`, its `numba` needs `numpy<2.3`).
+3. Installs `oellm-eval[eval-base]` with
+   `pip install --target ~/eval_local/lib/python3.12/site-packages -c <constraints>`.
+   Non-editable: Python doesn't read `.pth` files in a directory that is only
+   on `PYTHONPATH`. Without `oellm-autoexp`: the eval job doesn't need it,
+   and its antlr4 pin conflicts with `lm-eval[math]`.
+4. Writes the `~/eval_local/bin/oellm-eval` entry point itself; pip can't,
+   because a dependency (`rouge`) installs a `bin` package into the same
+   place.
+5. Creates the stub venv `~/eval_venv_stub`. Unlike on Leonardo, its
+   `bin/python` is a wrapper that runs the container's `/opt/venv/bin/python3`,
+   and `activate` puts it on `PATH`: `slurm/lumi_eval.yaml` replaces the
+   container's `PATH`, so `python` isn't found there otherwise.
 
 Status (as of writing): Lumi `sbatch` returns `AssocMaxSubmitJobLimit`
 for `project_462000963` because the project allocation has been
