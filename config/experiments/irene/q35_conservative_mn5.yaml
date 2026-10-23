@@ -20,7 +20,7 @@ defaults:
 aux:
   experiment_group: q35_conservative
   family: q35
-  suite: w1
+  suite: run_1
   arm: main
   nodes: 32
   gbs: 2048                       # 2048 x 8192 = 16.8M tokens per step
