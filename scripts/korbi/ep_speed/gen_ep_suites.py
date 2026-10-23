@@ -1582,6 +1582,21 @@ def ckpt_offload():
         {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain",
          "backend.env.MEM_TRACE_ITER": "1", "backend.env.MEM_TRACE_RANKS": "0",
          "aux.array_tag": "_f_fsdp_trace"})
+    # 1-node versions of the f3 diagnostics (start sooner): a leak of FSDP's unsharded gradient
+    # buffers shows at 8 blocks too, just smaller (memory trace of iteration 2)
+    smoke = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+             "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 4}
+    arm("f_smoke_trace", "smoke + memory trace: Megatron-FSDP + EP4, MoonEP, 8 blocks", *f_base, resa,
+        fsdp, PLAIN, smoke,
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke",
+         "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_smoke_trace"})
+    arm("f_smoke_a2a_trace", "smoke + memory trace: Megatron-FSDP + EP4, all-to-all dispatcher",
+        *f_base, resa, fsdp, PLAIN, smoke,
+        {B + "moe_token_dispatcher_type": "alltoall",
+         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke_a2a",
+         "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_smoke_a2a_trace"})
     # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
     arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
         {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
