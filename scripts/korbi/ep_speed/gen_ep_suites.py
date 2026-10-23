@@ -1540,6 +1540,30 @@ def ckpt_offload():
     arm("p_s128", "profile: 128 nodes, gbs 2048 (ranks 0 / 511, steps 5-6)", *s128, big2(2048, 2, 7),
         {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 511],
          B + "profile_step_start": 5, B + "profile_step_end": 6, "aux.array_tag": "_s128_prof"})
+    # f: EP + FSDP instead of PP (user 2026-10-23). Megatron-FSDP (ZeRO-3: params, grads and
+    # optimizer states sharded over DP; units = TransformerLayer / MoETransformerLayer) with EP4,
+    # no pipeline, Adam (MuOwn has no FSDP path yet), no Engram (FSDP would re-shard the tables);
+    # the decided 7:1 attention ratio. A/B against PP4 x VPP2 at the same flags.
+    resa = {"slurm.sbatch.account": "cns144", "slurm.sbatch.qos": "acc_resa"}
+    pat71 = "LLLLLLL*" * 6
+    f_base = (base, hyb, moon, off, ctx16, mbs2, fused, memb, addmm,
+              {"backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1"})
+    fsdp = {B + "use_megatron_fsdp": True, B + "data_parallel_sharding_strategy": "optim_grads_params",
+            B + "overlap_param_gather": True, B + "overlap_grad_reduce": True,
+            B + "pipeline_model_parallel_size": 1, B + "overlap_p2p_comm": False,
+            "aux.pattern": vpp_pattern(pat71, (48,))}
+    arm("f_pp4_ref", "7:1 hybrid (160 experts, no Engram), PP4 x VPP2, Adam (reference of f)",
+        *f_base, resa, {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3)),
+                        "aux.array_tag": "_f_pp4"})
+    arm("f_fsdp_m2", "7:1 hybrid, Megatron-FSDP (ZeRO-3) + EP4, no PP, mbs 2, Adam", *f_base, resa,
+        fsdp, {"aux.array_tag": "_f_fsdp_m2"})
+    arm("f_fsdp_m4", "7:1 hybrid, Megatron-FSDP + EP4, no PP, mbs 4, Adam", *f_base, resa, fsdp,
+        {B + "micro_batch_size": 4, "aux.array_tag": "_f_fsdp_m4"})
+    # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
+    arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
+        {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+         "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 8,
+         "aux.array_tag": "_f_smoke"})
     # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
     # what is left in mHC after the stride fix
     prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
