@@ -5902,6 +5902,7 @@ sweep:
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
         # 7:1 hybrid, Megatron-FSDP + EP4, no PP, mbs 4, Adam
         - aux.arm: f_fsdp_m4
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E
@@ -5977,6 +5978,7 @@ sweep:
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
         # 7:1 hybrid PreNorm (no mHC), PP4 x VPP2, Adam
         - aux.arm: f_pp4_plain
           aux.pattern: LELELELELELELE|*ELELELELELELE|LE*ELELELELELE|LELE*ELELELE|LELELELE*ELE|LELELELELELE|*ELELELELELE|LELE*E
@@ -6123,6 +6125,7 @@ sweep:
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
         # 7:1 hybrid LDM K 8 (CuTe, segments), Megatron-FSDP + EP4, mbs 2
         - aux.arm: f_fsdp_ldm8_m2
           aux.pattern: LELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE*E
@@ -6198,6 +6201,7 @@ sweep:
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
           backend.megatron.depth_memory: true
           backend.megatron.depth_memory_impl: cute
           backend.megatron.depth_memory_segments: true
@@ -6281,6 +6285,7 @@ sweep:
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
           backend.megatron.depth_memory: true
           backend.megatron.depth_memory_impl: cute
           backend.megatron.depth_memory_segments: true
@@ -6364,6 +6369,7 @@ sweep:
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
           aux.nodes: 1
           slurm.sbatch.nodes: 1
         # profile: candidate (Engram 31 %, groups of 8, lazy groups, leaf offload)

@@ -1551,6 +1551,7 @@ def ckpt_offload():
     fsdp = {B + "use_megatron_fsdp": True, B + "data_parallel_sharding_strategy": "optim_grads_params",
             B + "overlap_param_gather": True, B + "overlap_grad_reduce": True,
             B + "pipeline_model_parallel_size": 1, B + "overlap_p2p_comm": False,
+            B + "ckpt_format": "fsdp_dtensor",  # asserted by Megatron-FSDP
             "aux.pattern": vpp_pattern(pat71, (48,))}
     arm("f_pp4_ref", "7:1 hybrid (160 experts, no Engram), PP4 x VPP2, Adam (reference of f)",
         *f_base, resa, {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3)),
