@@ -1587,7 +1587,7 @@ def ckpt_offload():
     # 1-node versions of the f3 diagnostics (start sooner): a leak of FSDP's unsharded gradient
     # buffers shows at 8 blocks too, just smaller (memory trace of iteration 2)
     smoke = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
-             "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 4}
+             "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 8}  # > 5 warmup steps
     arm("f_smoke_trace", "smoke + memory trace: Megatron-FSDP + EP4, MoonEP, 8 blocks", *f_base, resa,
         fsdp, PLAIN, smoke,
         {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke",
