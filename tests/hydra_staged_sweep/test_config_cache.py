@@ -136,6 +136,67 @@ def test_repeated_interpolations_resolve_identically(config_dir, fresh_cache):
     assert (first, second) == ("base-7", "base-8")
 
 
+@dataclass(kw_only=True)
+class ArgsTestConfig(StagedSweepRoot):
+    name: str = ""
+    run_dir: str = ""
+    megatron: dict[str, Any] = field(default_factory=dict)
+    args: list[str] = field(default_factory=list)
+
+
+def test_argparse_resolver_does_not_freeze_cached_interpolations(tmp_path, fresh_cache):
+    """The repo cache shares loaded configs between compositions, so a resolver
+    must not resolve its input in place: that would replace ``${run_dir}`` in
+    the shared node with the first sweep point's value.
+
+    Layout as in experiments/datamix: each sweep point selects its own group
+    file, and every group file includes the same shared file holding the
+    interpolation."""
+    from oellm_autoexp.argparse_schema import ActionSpec, ArgMetadata
+    from oellm_autoexp.argparse_schema.resolver import register_argparse_resolver
+
+    register_argparse_resolver(
+        "argcachetest",
+        arg_metadata={"save": ArgMetadata(arg_type=str, default=None)},
+        action_specs={
+            "save": ActionSpec(
+                option_strings=("--save",), action_type="store", nargs=None, const=None, default=None
+            )
+        },
+        skip_defaults=False,
+    )
+    conf = tmp_path / "conf"
+    (conf / "scale").mkdir(parents=True)
+    (conf / "config.yaml").write_text(
+        textwrap.dedent("""\
+            defaults:
+              - scale@_global_: small
+              - _self_
+            args: ${oc.argcachetest:${megatron}}
+            """)
+    )
+    for name in ("small", "large"):
+        (conf / "scale" / f"{name}.yaml").write_text(
+            f"# @package _global_\ndefaults:\n  - /shared\n  - _self_\nname: {name}\n"
+        )
+    (conf / "shared.yaml").write_text(
+        textwrap.dedent("""\
+            # @package _global_
+            run_dir: /out/${name}
+            megatron:
+              save: ${run_dir}/checkpoints
+            """)
+    )
+
+    def load(scale):
+        return load_hydra_config(
+            "config", conf, [f"scale@_global_={scale}"], config_class=ArgsTestConfig
+        )
+
+    assert list(load("small").args) == ["--save", "/out/small/checkpoints"]
+    assert list(load("large").args) == ["--save", "/out/large/checkpoints"]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
