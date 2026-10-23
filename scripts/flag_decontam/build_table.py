@@ -72,11 +72,20 @@ def variants(text):
     return out
 
 
+def _encode(texts):
+    try:   # one call per batch, single-threaded: the pool already uses every core
+        return _sp.encode(texts, num_threads=1)
+    except TypeError:  # older sentencepiece without num_threads
+        return _sp.encode(texts)
+
+
 def _hash_batch(texts):
-    out = []
-    for text in texts:
-        vs = variants(text)
-        cs = [_canon(ids) for ids in _sp.encode(vs)]
+    vss = [variants(t) for t in texts]
+    flat = _encode([v for vs in vss for v in vs])
+    out, k = [], 0
+    for text, vs in zip(texts, vss):
+        cs = [_canon(ids) for ids in flat[k:k + len(vs)]]
+        k += len(vs)
         c = cs[0]
         n = choose_n(c, _chars) if len(c) else NGRAM_SIZES[0]
         if len(c) < max(MIN_SEG_TOKENS, n + 2) or len(text) < MIN_SEG_CHARS:
