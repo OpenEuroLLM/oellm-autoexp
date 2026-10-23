@@ -185,10 +185,41 @@ singularity exec --cleanenv -B /gpfs ../container/MegatronTraining-hybrid-ep_x86
   >= 0.5 of 577 such pairs in the shard. Either rewritten variants (a sampled MATH problem with
   changed numbers) or copies inside JSON-escaped text (`\n`, `\"`, `’`) the token matcher misses.
 
-Proposed v2 (pending the user's go-ahead, ~25 GPU-h rescan): locality (most distinct n-grams of a
-segment inside one window of ~2x its length; needs match positions), n per segment chosen so an
-n-gram spans >= ~30 characters (13 / 24 / 40), segments >= 20 canonical tokens and ~80 characters
-(no n = 8 path), and a recall audit on JSON-escaped agenttrove text.
+MATH500 (asked 2026-10-23): found three ways -- agenttrove holds *modified* test problems inside
+agent templates ("angle BAC" -> "exterior angle BAC", cos -> sin, a changed polynomial, the full
+`[asy]` code of a solution); megamath holds verbatim contest problems from the web ("Four distinct
+circles are drawn in a plane...", coverage 1.0); short MATH500 expressions (`x^8 + x^7 + ... + 1`)
+match ordinary algebra pages (false positives).
+
+### 4.2 v2 matcher (user, 2026-10-23: go ahead; "re-phrases and modified questions (cos -> sin)
+should probably not be filtered out, although long 1:1 matches are bad"; GSM8K in agenttrove
+was word of mouth)
+
+- **Score = the longest verbatim run** of a segment in a sequence (`common.runs`): consecutive
+  matching windows, gaps of <= n // 2 windows bridged (pruned common n-grams inside a copied
+  passage); a changed word removes n consecutive windows and splits the run. Scattered n-grams
+  are many short runs. scan.py stores (seq, seg, longest run in canonical tokens, matching
+  windows, runs) for runs >= 30 tokens.
+- **Drop rule** (finalize.py): longest run >= --frac (default 0.9) of the segment's canonical
+  tokens, or >= --abs-run (200) tokens (a long 1:1 excerpt of a passage), and >= 30 tokens.
+  Modified / rephrased items stay.
+- **n by characters:** the smallest of 13 / 24 / 40 whose n-grams span >= 30 characters
+  (median; a byte-fallback piece counts 1/3 character), so Tamil / Georgian / Telugu text gets long
+  n-grams instead of 4-character ones.
+- **Segments >= 20 canonical tokens and >= 80 characters** (no n = 8 path): answer options,
+  short premises and list fragments are not matched alone.
+- **JSON-escaped variants** of every segment (`json.dumps`, with and without `ensure_ascii`)
+  hashed under the same segment id: copies inside agent trajectories (`\n`, `\"`, `’`).
+- **Audit** (`verify.py audit`): text matcher on JSON-unescaped, lower-cased words with the same
+  rule (longest common word run >= 0.9 of the segment or >= 150 words), against the token flags.
+- Work dir `flag_decon_v2` (v1 kept in `flag_decon_v1`), same refs; snapshot `$R/autoexp_decon2`;
+  job logs under `.../flag_decon/v2/<step>`. Tests: `test_runs`, `test_variants`, and planted
+  verbatim (dropped) / one-word-modified (kept) / scattered (kept) / 220-of-300-token passage
+  excerpt (dropped via --abs-run) cases in `test_end_to_end`.
+
+| step (v2) | job | nodes x elapsed | GPU-h | result |
+|---|---|---|---|---|
+| selftest | (decon2_selftest) | 1 x ~0:01 | 0.1 | 6/6 passed on an H100 |
 
 ## 5. Caveats
 

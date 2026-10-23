@@ -76,6 +76,7 @@ def test_runs():
 def test_variants():
     assert variants('He said "hi"\nok') == ['He said "hi"\nok', 'He said \\"hi\\"\\nok']
     assert variants("Janet’s ducks") == ["Janet’s ducks", "Janet\\u2019s ducks"]
+    assert variants("Цена уговора је била") == ["Цена уговора је била"]      # no \\uXXXX form for non-ASCII text
 
 
 def make_setup(tmp_path):

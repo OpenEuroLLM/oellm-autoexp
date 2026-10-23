@@ -10,6 +10,7 @@
 #     count     n-gram counts over a sample of the ordinary (web / code) shards
 #     prune     drop the n-grams the count found common
 #     scan      the full scan of every shard of the mix (all nodes of the job share it)
+#     recheck   recompute candidate pairs against corrected n-gram sets (no rescan)
 #     finalize  drop decisions + new tree in $OUT (FINALIZE_ARGS, e.g. --dry-run)
 #     verify    new tree loads in Megatron, kept documents are unchanged, recall audit
 set -euo pipefail
@@ -41,6 +42,7 @@ count)     # counts/ keeps one file per node and GPU: remove it before counting 
 prune)     python scripts/flag_decontam/build_table.py --work "$WORK" --prune "$@" ;;
 scan)      python scripts/flag_decontam/scan.py --mode scan --work "$WORK" --root "$ROOT" \
                --shards "$WORK/shards_all.txt" "$@" ;;
+recheck)   python scripts/flag_decontam/recheck.py --work "$WORK" --root "$ROOT" "$@" ;;
 finalize)  python scripts/flag_decontam/finalize.py --work "$WORK" --root "$ROOT" --out "$OUT" "$@" ;;
 verify)    python scripts/flag_decontam/verify.py tree --out "$OUT" --root "$ROOT"
            python scripts/flag_decontam/verify.py audit --work "$WORK" --root "$ROOT" --docs 5000 \

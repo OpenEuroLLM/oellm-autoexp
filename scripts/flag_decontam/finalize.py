@@ -42,8 +42,8 @@ from common import Index, filter_index, write_index  # noqa: E402
 from scan import shard_key  # noqa: E402
 
 
-def load_hits(work, key, seq_count):
-    files = sorted(glob.glob(os.path.join(work, "hits", key, "*.npz")))
+def load_hits(work, key, seq_count, hits_dir="hits"):
+    files = sorted(glob.glob(os.path.join(work, hits_dir, key, "*.npz")))
     hits, covered = [], np.zeros(seq_count + 1, dtype=np.int64)   # hits: seq, seg, run, windows, runs
     for f in files:
         z = np.load(f)
@@ -212,6 +212,7 @@ def main():
     ap.add_argument("--min-run", type=int, default=30)
     ap.add_argument("--max-docs", type=int, default=20000)
     ap.add_argument("--dry-run", action="store_true", help="reports only ($WORK/_report/frac_<f>), no tree")
+    ap.add_argument("--hits-dir", default="hits", help="hits (scan) or hits_fixed (recheck.py)")
     args = ap.parse_args()
     if not args.dry_run and len(args.frac) != 1:
         sys.exit("writing the tree takes exactly one --frac")
@@ -231,7 +232,7 @@ def main():
         p = os.path.join(args.root, rel)
         idx = Index(p + ".idx")
         assert idx.multimodal_tail == 0, f"multimodal index {p}"
-        hits, complete = load_hits(args.work, shard_key(p, args.root), idx.seq_count)
+        hits, complete = load_hits(args.work, shard_key(p, args.root), idx.seq_count, args.hits_dir)
         if not complete:
             incomplete.append(rel)
         seq2doc = np.searchsorted(idx.doc_idx, hits[:, 0], "right") - 1
@@ -252,7 +253,8 @@ def main():
                 refs_text[i] = json.loads(line)["text"][:300].replace("\t", " ").replace("\n", " ")
 
     for fr, (flagged, generic, seg_docs) in decisions.items():
-        rdir = os.path.join(args.work, "_report", f"frac_{fr:g}") if args.dry_run else os.path.join(args.out, "_report")
+        rdir = (os.path.join(args.work, "_report" + ("" if args.hits_dir == "hits" else "_" + args.hits_dir), f"frac_{fr:g}")
+                if args.dry_run else os.path.join(args.out, "_report"))
         report(rdir, fr, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text)
         print(open(os.path.join(rdir, "sources.tsv")).read(), flush=True)
     if not args.dry_run:

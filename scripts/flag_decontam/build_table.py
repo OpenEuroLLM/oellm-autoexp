@@ -63,10 +63,21 @@ def choose_n(c, chars):
     return NGRAM_SIZES[-1]
 
 
+MAX_ASCII_ESCAPES = 3
+
+
 def variants(text):
-    """The text and its JSON-escaped forms (copies inside agent trajectories / JSON dumps)."""
+    """The text and its JSON-escaped forms (copies inside agent trajectories / JSON dumps).
+
+    The `ensure_ascii` form (\\uXXXX) only for texts with <= MAX_ASCII_ESCAPES non-ASCII
+    characters (curly quotes, an accent): for Cyrillic / Greek / ... text it is a run of hex
+    escapes whose n-grams span a few real characters and match unrelated escaped strings in code.
+    """
     out = [text]
-    for v in (json.dumps(text, ensure_ascii=False)[1:-1], json.dumps(text)[1:-1]):
+    vs = [json.dumps(text, ensure_ascii=False)[1:-1]]
+    if sum(ord(ch) > 127 for ch in text) <= MAX_ASCII_ESCAPES:
+        vs.append(json.dumps(text)[1:-1])
+    for v in vs:
         if v not in out:
             out.append(v)
     return out
