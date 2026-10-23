@@ -2776,3 +2776,23 @@ documents (trained at 8k):
 - **Variable tracking** is near chance for every s2 model: uninformative at this size.
 - **Passkey** at 64k is 1.00 for all.
 - The signed CKLSTM s2 checkpoints get the same evals when D finishes.
+
+### 12.13 Monitor gap: node failures were never acted on (2026-10-23)
+
+Overnight (2026-10-22/23) five s2 runs died and sat dead until checked by hand:
+- `ckl_sgn`, the 7:1 arm, `amsimp_c8` and p = 0: NODE_FAIL;
+- both `muown_classical` arms: host OOM at the step-500 save. Their extra per-row ||v|| state,
+  expanded to weight shape for the save, needs `ANGULAR_MUOWN_COMPACT_CKPT=1`.
+
+**Cause.** The training base inherited the speed-test base's state events (`speed_base_mn5.yaml`:
+"TIMEOUT -> finished", right for short speed tests). The monitor closes only COMPLETED / FAILED /
+CANCELLED on its own, so NODE_FAIL / OUT_OF_MEMORY / TIMEOUT left a run "active" and never acted on,
+and FAILED was closed without a retry.
+
+**Fix.** `base_train_mn5.yaml` now has its own `job.state_events`, as `config/job/array_task.yaml`:
+- bounded retries that resume from the rolling checkpoint: NODE_FAIL x3, FAILED x2, TIMEOUT x2,
+  OUT_OF_MEMORY x1;
+- each re-reads the shared MN5 exclusion list (`mn5_exclude_nodes.txt`) before resubmitting;
+- then gives up.
+
+It applies to launches from this commit on; monitors already running keep their plan-time config.
