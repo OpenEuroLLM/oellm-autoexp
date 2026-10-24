@@ -200,6 +200,21 @@ Two MoonEP bugs under Megatron-FSDP (Megatron moonep.py):
   1.00 -> 1.53 (steps 5-7); HybridEP's step grew 15 % there (the routing specialises when the LR
   reaches its peak; the expert bias pulls it back to ~1.06 by step 15).
 
+### FSDP overheads (2026-10-24, e1: mHC-4, ZeRO-3 + MoonEP, mbs 4, same setup)
+
+| arm | tok/s/GPU | TFLOP/s | mem | note |
+|---|---:|---:|---:|---|
+| c_z3_mhc4_moon_m4 (ref) | 7,320 | 124.7 | | |
+| **e_db: `fsdp_double_buffer`** | **7,537** | **128.4** | **0.80** | steady 34.8 s/step; target reached |
+| e_rn4: 4 layers per FSDP unit | 7,312 | | 0.93 | fewer, larger gathers do not help |
+| e_nooff_m2: no recompute offload, mbs 2 | 6,408 | | 0.95 | |
+| e_fg: fine-grained gather | - | | | Triton illegal memory access (open) |
+
+- **Double buffering** (static gather buffers, ping-pong per unit) brings mHC-4 to **7,537
+  tok/s/GPU**, i.e. at the ~7,500 PreNorm + PP reference, and lowers peak memory (no allocator
+  churn of gathered parameters). Next (e2): double buffering with mbs 8, PreNorm, and LDM K 8
+  (mbs 2 / 4), which OOMed without it.
+
 ## 5. Next
 
 1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
