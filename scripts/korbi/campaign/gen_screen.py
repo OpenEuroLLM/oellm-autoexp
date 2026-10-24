@@ -13,6 +13,7 @@ scripts/korbi/campaign/count_params.py; arms missing there use the base d_ffn an
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import yaml
@@ -729,9 +730,17 @@ def arms4ry(size: str):
     ])
 
 
-def hybrid_every(blocks: int, period: int, mixer: str) -> str:
+def hybrid_every(blocks: int, period: int, mixer: str, attn_first: bool = False) -> str:
     """Attention every ``period``-th block, ``mixer`` elsewhere, MoE after each (a remainder of
-    linear blocks at the end when ``period`` does not divide ``blocks``)."""
+    linear blocks at the end when ``period`` does not divide ``blocks``). ``attn_first``: each
+    period opens with the attention block instead of closing with it (arXiv 2609.35378's "reverse
+    periodic"; user 2026-10-23: the first hybrid layer is always attention), the same number of
+    attention blocks, spread evenly from block 0 (= every ``period``-th from 0 when ``period``
+    divides ``blocks``; otherwise no attention-free tail)."""
+    if attn_first:
+        n = blocks // period
+        at = {i * blocks // n for i in range(n)}
+        return "".join(("*" if i in at else mixer) + "E" for i in range(blocks))
     return "".join(("*" if i % period == period - 1 else mixer) + "E" for i in range(blocks))
 
 
@@ -978,6 +987,675 @@ def arms5ldm2_s2():
             ("h5_moe_ldmc_lr2", "LDM (CuTe) x2.0", {**pool["h5_moe"], **ldm, **fast})]
 
 
+def arms5kron(size: str = "s1"):
+    """KronLSTM (user 2026-10-20; github.com/NX-AI/KronLSTM, the Kronecker delta rule) in place of
+    CKDA as the 5:1 mixer, plain residual, round 5d's 2-node setting -- pairs with screen5ldm2's
+    2-node h5_moe (CKDA) run, same data order. The paper's layer (softplus forget gate in (0, 1],
+    beta in [0, 1]) and the extended ranges as CKDA over KDA: the signed forget gate in [-1, 1]
+    (Complex KDA's signed_sigmoid2 with its standard init, via the sign gauge) and beta in [0, 2].
+    Head grid as CKDA (128-wide, hidden / 128 heads). The layer's dense output gate is
+    hidden x hidden per mixer (CKDA's is low rank): more parameters, reported with the result."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    kron = {**{k: v for k, v in h5.items() if k not in CKDA_STD},
+            B + "experimental_attention_variant": "kronlstm", **fast}
+    return [
+        ("h5_moe_kron", "KronLSTM 5:1 (softplus forget gate, beta in [0, 1])",
+         {**kron, B + "linear_fla_gate": "softplus", B + "linear_fla_allow_neg_eigval": False}),
+        ("h5_moe_kron_ext", "KronLSTM 5:1, forget gate in [-1, 1] and beta in [0, 2]",
+         {**kron, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_fla_allow_neg_eigval": True}),
+    ]
+
+
+def arms5kron_scale(size: str):
+    """KronLSTM's scaling (user 2026-10-20): the paper's layer (softplus forget gate, beta in
+    [0, 1]; it trailed CKDA by +0.02 at step 1000 in the 2-node screen, the extended ranges by
+    +0.15) as the 5:1 mixer in round 5's own setting at s1 / s2 / s3 (1 node; s3 4 nodes, EP16),
+    so each arm pairs with round 5's CKDA h5_moe of its size (same data order). The fused qkv_proj
+    is split for angular MuOwn as complex_kda's three projections are (Megatron b8c7069b7)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    kron = {**{k: v for k, v in h5.items() if k not in CKDA_STD},
+            B + "experimental_attention_variant": "kronlstm", B + "linear_fla_gate": "softplus",
+            B + "linear_fla_allow_neg_eigval": False}
+    # data workers per layout (FLAG8K's 4 x 2 capped s1 at ~23.8k tok/s/GPU; s2 OOM-killed
+    # nodes at saves with 16 x 8): loss unaffected, the tok/s comparable to round 5d
+    workers = {"s1": (8, 4), "s2": (6, 3)}.get(size)
+    if workers:
+        kron.update({B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]})
+    out = [("h5_moe_kron", "KronLSTM 5:1 (paper's gates), round 5's setting", kron)]
+    if size == "s1":
+        # the extended ranges again, with the signed gate's init fixed (FLA f82079c: A_log = 0 as in
+        # Complex KDA; the screen's arm ran with 96 % of the forget gates saturated at |f| = 1)
+        out.append(("h5_moe_kron_ext", "KronLSTM 5:1, f in [-1, 1] + beta in [0, 2] (init fixed)",
+                    {**kron, B + "linear_fla_gate": "signed_sigmoid2",
+                     B + "linear_fla_allow_neg_eigval": True}))
+    return out
+
+
+def arms5udecay(size: str):
+    """Angular MuOwn's hidden U-decay (user via the EP agent, 2026-10-20): Megatron's defaults
+    (angular_muown_u_decay_schedule poly, scale 1e-3, p 1) multiply the direction step by
+    m(t) = 1 / (1 + 0.001 t) ON TOP of the lr schedule (0.2 at step 4000, ~0.001 at 1M steps);
+    every MuOwn arm so far carried it. Here it is off (p = 0: m = 1) on round 5's plain h5_moe,
+    paired with round 5's h5_moe of the size (decay on, same data order), with a sweep of the
+    direction step (the lr was tuned with the decay): angular_muown_extra_scale_factor -- it scales
+    the U step alone, so the Adam-routed parameters (row magnitudes, embeddings, norms) keep their lr
+    -- x1 / x0.5 / x0.25 of 0.2 at s1, x1 / x0.5 at s2. The fair comparison -- the decay in the
+    visible schedule vs the hidden one -- follows as cooldown branches from step 4000."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    off = {**h5, B + "angular_muown_u_decay_p": 0.0, B + "num_workers": workers[0],
+           B + "dataloader_prefetch_factor": workers[1]}
+    mults = (1.0, 0.5, 0.25) if size == "s1" else (1.0, 0.5)
+    tag = lambda m: "" if m == 1.0 else f"_u{m:g}".replace(".", "")  # noqa: E731
+    return [(f"h5_moe_udoff{tag(m)}", f"angular MuOwn U-decay off, direction step x{m:g} ({0.2 * m:g})",
+             {**off, B + "angular_muown_extra_scale_factor": 0.2 * m}) for m in mults]
+
+
+def arms5kron_ext(size: str):
+    """KronLSTM's extended ranges at every size (user 2026-10-21), started as the paper's layer: the
+    signed forget gate with Complex KDA's shipped init (A_log = 0, f = +exp(-dt) in (0, 1) at step
+    0: positive bias), and beta in [0, 2] with the erase gate biased to start at mean 0.5, mostly in
+    [0, 1] (linear_kronlstm_neg_eigval_init_bias). The write gate stays c in [0, 1] by construction
+    (linear_kronlstm_unit_write: the op's s = 2 would double it). Own suite (the kronscale suites
+    have running arms); pairs with round 5's h5_moe."""
+    kron = arms5kron_scale(size)[0][2]
+    return [("h5_moe_kron_extb", "KronLSTM 5:1, f in [-1, 1] + erase in [0, 2] (started in [0, 1]), write in [0, 1]",
+             {**kron, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_fla_allow_neg_eigval": True,
+              B + "linear_kronlstm_neg_eigval_init_bias": True, B + "linear_kronlstm_unit_write": True})]
+
+
+def arms5udecay_sqrt(size: str):
+    """Angular MuOwn's U-decay at p = 1/2 (user 2026-10-21): kappa = (1 + 0.001 t)^-1/2 -- the
+    t^-1/2 that plain Muown's growing row norms give implicitly (arXiv 2606.23637, Table 1),
+    sustainable to ~1M steps (kappa ~0.03 there; p = 1: ~0.001). Default direction step (0.2).
+    Pairs with round 5's h5_moe (p = 1) and screen5udecay's p = 0 arms; own suite (those run)."""
+    off = arms5udecay(size)[0][2]
+    return [("h5_moe_udp05", "angular MuOwn U-decay p = 1/2 (c = 0.001), direction step 0.2",
+             {**off, B + "angular_muown_u_decay_p": 0.5})]
+
+
+def arms5kron_lowrank(size: str):
+    """KronLSTM with complex_kda's low-rank output gate (user 2026-10-21: low-rank from now on, so
+    the comparison with CKDA is the recurrence alone, parameter-matched), in round 5's setting,
+    paired with its h5_moe: the paper's gates at s1 / s2 / s3, and at s1 the polar gates (FLA
+    fab34df) -- f = m cos(theta) with m the paper's softplus gate (its short- and long-memory spread)
+    and the angle starting near 0, so each arm starts as the paper's layer: the forget angle alone,
+    + the erase angle (1 - beta = r cos(phi): beta in [0, 2], the write kept in [0, 1]), + the
+    signed write c in [-1, 1]."""
+    paper = {**arms5kron_scale(size)[0][2], B + "linear_kronlstm_output_gate": "lowrank"}
+    out = [("h5_moe_kron_lr", "KronLSTM 5:1, paper's gates, low-rank output gate", paper)]
+    if size == "s1":
+        f = {**paper, B + "linear_kronlstm_forget_angle": True}
+        fb = {**f, B + "linear_kronlstm_erase_angle": True}
+        out += [("h5_moe_kron_lr_pf", "+ polar forget gate (f = m cos theta)", f),
+                ("h5_moe_kron_lr_pfb", "+ polar forget and erase gates", fb),
+                ("h5_moe_kron_lr_pfbc", "+ polar forget and erase gates, signed write c in [-1, 1]",
+                 {**fb, B + "linear_kronlstm_signed_write": True})]
+    return out
+
+
+# the step-4000 checkpoints each cooldown branch starts from (hard-linked into the branch's
+# ckpt_rolling before the launch: scripts/korbi/campaign/link_branch_ckpt.sh)
+UDCOOL_FROM = {"h5_moe_p1": "screen5_{z}/h5_moe", "h5_moe_p05": "screen5udecaysqrt_{z}/h5_moe_udp05",
+               "h5_moe_p0_u025": "screen5udecay_{z}/h5_moe_udoff_u025"}
+
+
+def arms5udcool(size: str):
+    """Angular MuOwn's U-decay, the fair comparison (user 2026-10-20/21): each schedule cooled down
+    the visible way -- WSD, linear to lr / 10 over steps 4000-4800 -- from its own step-4000
+    checkpoint (same data order: train_iters unchanged, the branch resumes at 4000), so the hidden
+    decay's annealing advantage in the stable phase is matched by the visible one. p = 1 (round 5's
+    h5_moe), p = 1/2 (screen5udecaysqrt) and, at s1, p = 0 at direction step 0.05 (the best p = 0
+    arm; s2's best p = 0 arm died at step 3360 from a node failure, past the point of interest)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    cool = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+            B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "override_opt_param_scheduler": True,
+            # min_lr is part of the optimizer's param-group key: load each group's state from its
+            # structurally equivalent saved group, keeping the new lr bounds
+            B + "allow_new_param_groups_on_load": True,
+            B + "exit_interval": 4800, "job.est_steps": 800}
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    w = {B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]}
+    # round 5's s2 checkpoint has the pre-1bbeb2b55 compact layout for factory weights
+    legacy = {"backend.env.ANGULAR_MUOWN_LEGACY_FACTORY_ROWS": "1"} if size == "s2" else {}
+    out = [("h5_moe_p1", "p = 1 (default), cooled down 4000 -> 4800", {**h5, **w, **cool, **legacy}),
+           ("h5_moe_p05", "p = 1/2, cooled down 4000 -> 4800",
+            {**arms5udecay_sqrt(size)[0][2], **cool})]
+    if size == "s1":
+        out.append(("h5_moe_p0_u025", "p = 0, direction step 0.05, cooled down 4000 -> 4800",
+                    {**dict((n, kv) for n, _, kv in arms5udecay(size))["h5_moe_udoff_u025"], **cool}))
+    return out
+
+
+def arms5kron_pfb(size: str):
+    """CKLSTM's best s1 variant at s2 / s3 (user 2026-10-21, budget raised to 7.5k GPU-h): the polar
+    forget and erase gates with the low-rank output gate (s1: +0.003 at step 4000, trend -0.005 to
+    -0.008 at 10B tokens vs CKDA). Own suite (screen5kronlr's suites hold finished runs); pairs with
+    round 5's h5_moe and with screen5kronlr's paper-gate arm of the size."""
+    paper = arms5kron_lowrank(size)[0][2]
+    return [("h5_moe_kron_lr_pfb", "KronLSTM 5:1, polar forget and erase gates, low-rank output gate",
+             {**paper, B + "linear_kronlstm_forget_angle": True, B + "linear_kronlstm_erase_angle": True})]
+
+
+# MN5 nodes that kill jobs at launch (torchrun NUMA binding: "Invalid device id"; EP agent 2026-10-21)
+BAD_NODES = {"slurm.sbatch.exclude": "as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02"}
+# the polar forget gate's init cap, |f| <= cos(pi * 0.05), as a fixed decay: -log cos(0.157)
+POLAR_OFFSET = round(-math.log(math.cos(math.pi * 0.05)), 5)
+
+
+def arms5offset(size: str = "s1"):
+    """Shorter memory horizons, without the polar angle (user 2026-10-21): the s1 checkpoints show
+    the polar forget gate never turns negative and acts as an init cap |f| <= 0.988 (p90 horizon
+    ~280 -> ~80 tokens). A fixed extra decay per step (forget_offset = -log 0.988) on
+    KronLSTM's paper gates (low-rank output gate; compare screen5kronlr's h5_moe_kron_lr /
+    _pfb) and on CKDA (round 5's h5_moe with the offset: does the reference mixer gain the same?)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    kron = arms5kron_lowrank(size)[0][2]
+    w = {B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    return [("h5_moe_kron_lr_off", f"KronLSTM paper gates + forget offset {POLAR_OFFSET}",
+             {**kron, B + "linear_kronlstm_forget_offset": POLAR_OFFSET, **BAD_NODES}),
+            ("h5_moe_off", f"CKDA + forget offset {POLAR_OFFSET}",
+             {**h5, **w, B + "linear_gate_forget_offset": POLAR_OFFSET, **BAD_NODES})]
+
+
+def arms5iat(size: str = "s1"):
+    """Internal attention over the residual streams (IAT, openreview LGFDpZioyZ; user 2026-10-22;
+    Megatron mhc_internal_attention): per token, the 4 d-wide streams attend to each other after
+    every mixer sublayer (shared d x d Q / K / V / O, learned stream positions). The mixers keep
+    width d, so all arms pair with round 5's h5_moe / h5_moe_mhc4:
+      iat4: the paper's x = (x_c, x_m), m = 3d; every sublayer on x_c (stream 0), memory starts at
+        zero, head on x_c -- the paper's appendix-B variant (temporal mixing on x_c only, worse than
+        the plain transformer on TinyStories);
+      iat4_full: the paper's low-rank temporal mixing through a latent: each mixer reads
+        down(4d -> d) of all streams and writes up(d -> 4d) (user: "latent downprojection");
+      mhc4_iat: mHC-4 (its read / write / stream mixer, mixer lr x0.25) + the internal attention.
+    Total parameters matched to the references by whole routed experts (user: cut experts, not
+    their width -- narrower experts would cost even more efficiency): per mixer layer the internal
+    attention adds 4 d^2 + 8 d (2.37M at s1) and the latent read / write 8 d^2 (4.72M); one expert
+    is 3 d w (1.18M) per MoE layer -> 144 - 2 = 142 experts (IAttn), 144 - 6 = 138 (full), both
+    exact to < 0.01M per layer. Neither divides by EP 4: EP 2 for these arms (tok/s: an EP
+    confound vs the references' EP 4). Active parameters stay higher (+2.4M / +7.1M per block):
+    the method's cost, reported with tok/s."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    hidden, *_ = R4_SIZES[size]
+    w = {B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    def iat(mode, ref):
+        extra = 4 * hidden ** 2 + 8 * hidden + (8 * hidden ** 2 if mode == "full" else 0)
+        cut = round(extra / (3 * hidden * ref[B + "moe_ffn_hidden_size"]))
+        experts = ref[B + "num_experts"] - cut
+        ep = next(e for e in (4, 2, 1) if experts % e == 0)
+        return {**ref, **w, B + "mhc_internal_attention": mode, B + "num_experts": experts,
+                B + "expert_model_parallel_size": ep, **BAD_NODES}
+
+    mhc4 = pool["h5_moe_mhc4"]
+    return [("h5_moe_iat4", "IAT compute mode: sublayers on x_c, internal attention",
+             iat("compute", mhc4)),
+            ("h5_moe_iat4_full", "IAT full: latent read / write of all 4d by the mixers",
+             iat("full", mhc4)),
+            ("h5_moe_mhc4_iat", "mHC-4 + internal attention after every mixer", iat("mhc", mhc4)),
+            # tok/s only: the reference at the IAT arms' EP 2 (300 steps, launched with them)
+            ("h5_moe_mhc4_ep2", "speed reference: mHC-4 at EP 2 (300 steps)",
+             {**mhc4, **w, B + "expert_model_parallel_size": 2, B + "exit_interval": 300,
+              "job.est_steps": 300, **BAD_NODES})]
+
+
+def arms5ssmax(size: str = "s2"):
+    """Scalable-Softmax in training (user 2026-10-22; Megatron 754aebf15): every attention layer's
+    query i scaled by s_h log n_i (n_i: its position in its document + 1, restarting per packed
+    document; s per head, init 1 / log 8192 = 0.111, so the scale is 1 at 8k and below 1 for
+    shorter contexts), on our recipe (CKDA 5:1 + mHC-4). Pairs with round 5's h5_moe_mhc4 of the
+    size (same data order / protocol, exit at 4000); then retrieval to 32k of both (ds5ssmax): does
+    training with SSMax beat eval-time log-n (s3: mHC-4 0.76 -> 0.90 kvret at 32k)?"""
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    w = {B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]}
+    return [("h5_moe_mhc4_ssmax", "CKDA 5:1 + mHC-4 + SSMax (s_h log n per head, init 1/log 8192)",
+             {**mhc4, **w, B + "attention_length_scaling": "ssmax",
+              B + "attention_length_scaling_base": 8192, **BAD_NODES})]
+
+
+def _cklstm_variants(size: str):
+    """CKLSTM parametrizations (user 2026-10-22: CKLSTM vs CKDA, "be ambitious"), all on the final
+    recipe's residual (mHC-4, mixer lr x0.25) with the low-rank output gate:
+      kron_mhc4: KronLSTM paper gates (softplus forget in (0, 1], erase in [0, 1]): the unsigned baseline;
+      ckl_sgn: signed forget f in [-1, 1] (Complex KDA's signed_sigmoid2, its shipped init), erase
+        beta in [0, 2] (started at 0.5), write c in [0, 1] (unit write);
+      ckl_sgn_w2: as ckl_sgn with the write in [0, 2] (the op's s = 2 on the write too);
+      ckl_sgn_cpl: as ckl_sgn with erase and write coupled (decouple_erase off: both s beta in [0, 2],
+        c the target fraction) -- Complex KDA's delta-rule gate structure on the Kronecker association;
+      ckl_polar_broad: signed forget through the polar angle with a broad init (f = m cos theta, m the
+        paper's softplus magnitude with its short / long memory spread, theta spread over both signs
+        from step 0; FLA ecd3df8), erase in [0, 2], unit write."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    mhc = {k: v for k, v in pool["h5_moe_mhc4"].items() if k not in pool["h5_moe"] or pool["h5_moe"][k] != v}
+    paper = {**arms5kron_lowrank(size)[0][2], **mhc}
+    ext = {B + "linear_fla_allow_neg_eigval": True, B + "linear_kronlstm_neg_eigval_init_bias": True}
+    sgn = {**paper, **ext, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_kronlstm_unit_write": True}
+    return [
+        ("kron_mhc4", "KronLSTM paper gates + mHC-4 (unsigned baseline)", paper),
+        ("ckl_sgn", "CKLSTM: f in [-1, 1], beta in [0, 2], c in [0, 1] + mHC-4", sgn),
+        ("ckl_sgn_w2", "CKLSTM: f in [-1, 1], beta in [0, 2], c in [0, 2] + mHC-4",
+         {**sgn, B + "linear_kronlstm_unit_write": False}),
+        ("ckl_sgn_cpl", "CKLSTM: f in [-1, 1], erase = write = s beta in [0, 2] (coupled, CKDA's structure) + mHC-4",
+         {**sgn, B + "linear_kronlstm_unit_write": False, B + "linear_kronlstm_decouple_erase": False}),
+        ("ckl_polar_broad", "CKLSTM: polar forget, broad angle init, beta in [0, 2], c in [0, 1] + mHC-4",
+         {**paper, **ext, B + "linear_kronlstm_unit_write": True, B + "linear_kronlstm_forget_angle": True,
+          B + "linear_kronlstm_forget_angle_init": "broad"}),
+    ]
+
+
+def arms5ckl(size: str = "s1"):
+    """CKLSTM screen A (s1, all five variants) / D (s2: the two principled signed ones, launched with
+    A): paired with round 5's h5_moe_mhc4 (CKDA + mHC-4) of the size, same data order / protocol.
+    s1 workers 8 x 4, s2 6 x 3."""
+    arms = _cklstm_variants(size)
+    if size == "s2":
+        arms = [a for a in arms if a[0] in ("ckl_sgn", "ckl_sgn_cpl")]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    return [(n, d, {**kv, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1], **BAD_NODES})
+            for n, d, kv in arms]
+
+
+def arms5ckl2(size: str = "s2"):
+    """ckl_sgn_w2 at s2 (user 2026-10-23: the decoupled write up to 2, the closest analogue of CKDA's
+    range; at s1 the fastest-closing gap). Own suite (screen5ckl_s2 has running arms); same protocol,
+    paired with round 5's h5_moe_mhc4 of the size."""
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    return [(n, d, {**kv, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1], **BAD_NODES})
+            for n, d, kv in _cklstm_variants(size) if n == "ckl_sgn_w2"]
+
+
+def arms5ckl3(size: str = "s3"):
+    """ckl_sgn + mHC-4 at s3 (user 2026-10-23: the size trend of the best CKLSTM -- step-4000 gap to
+    CKDA + mHC-4 +0.021 at s1, +0.004 at s2; best 64-fact retrieval with log-n at s2, CKDA + mHC-4
+    better on long-document loss beyond 32k). Round 5's s3 layout (4 nodes, EP 16, 4 x 2 workers),
+    paired with screen5_s3's h5_moe_mhc4."""
+    return [(n, d, {**kv, **BAD_NODES}) for n, d, kv in _cklstm_variants(size) if n == "ckl_sgn"]
+
+
+def arms5opt(size: str = "s1"):
+    """The PR's optimizers (user 2026-10-22; Megatron feat/angular-muown-simplified) against AngularMuown
+    p = 1 / p = 1/2 (screen5udcool_{size}'s cooled branches; same data order), each through the
+    stable phase and the 4000 -> 4800 WSD cooldown in one job (as screen5udadapt):
+      amsimp_c{C}: angular_muown_simplified, direction rate C / (1 + t) (shape_scaling, no internal
+        decay), its own linear cooldown over the same last 800 of 4800 steps to 0.1 x (as lr -> lr/10).
+        Calibration: our p = 1 default moves each square-matrix row by 4e-3 x 0.2 x sqrt(768) / (1 +
+        0.001 t) = 22 / (1000 + t) rad per step, so C = 22 has the same 1 / t tail (and a large first
+        step), C = 8 / 2 0.4x / 0.1x of it;
+      muown_classical: Muown with persistent direction norms (the implicit ~t^-1/2 decay), the
+        ordinary lr, spectral x 0.2 (AngularMuown's defaults).
+    s2: C = 8 and muown_classical."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
+             "job.est_steps": 4800, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1],
+             **BAD_NODES}
+    base = {**h5, **sched}
+    simp = lambda c: {**base, B + "optimizer": "angular_muown_simplified", B + "angular_muown_c": c,  # noqa: E731
+                      B + "angular_muown_cooldown_fraction": round(800 / 4800, 6),
+                      B + "angular_muown_cooldown_end_ratio": 0.1}
+    cs = {"s1": (2, 8, 22), "s2": (8,)}[size]
+    out = [(f"amsimp_c{c}", f"angular_muown_simplified, C = {c}", simp(float(c))) for c in cs]
+    out.append(("muown_classical", "classical Muown (persistent direction norms), ordinary lr",
+                {**base, B + "optimizer": "muown_classical"}))
+    return out
+
+
+def arms5r7(size: str = "s2"):
+    """The attention ratio 7:1 for the main run (user 2026-10-22: 7:1, NSA2 sparsification later on
+    top) with mHC-4: attention every 8th block (s2's 18 blocks: blocks 8 and 16, 2 trailing CKDA
+    blocks -- 2 attention layers instead of 5:1's 3), everything else as round 5's h5_moe_mhc4 of
+    the size, so it pairs with that run (loss) and its retrieval evals (ds5lc). Non-expert
+    parameters differ slightly (one attention layer less, one CKDA layer more), reported."""
+    hidden, blocks, *_ = R4_SIZES[size]
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    return [("h5_moe_mhc4_r7", "CKDA 7:1 (attention every 8th block) + mHC-4",
+             {**mhc4, "aux.pattern": hybrid_every(blocks, 8, "L"), B + "num_workers": w[0],
+              B + "dataloader_prefetch_factor": w[1], **BAD_NODES})]
+
+
+def arms5r7first(size: str = "s2"):
+    """7:1 + mHC-4 with the attention block first in each period (arXiv 2609.35378: hybrids that
+    start with full attention learn faster, mostly on multilingual data; user 2026-10-23: always
+    attention first). s2's 18 blocks: attention at blocks 1 and 10 instead of 8 and 16, otherwise
+    h5_moe_mhc4_r7 (same parameters, data order and cache), so it pairs with screen5r7_s2."""
+    hidden, blocks, *_ = R4_SIZES[size]
+    name, _, kv = arms5r7(size)[0]
+    return [(name + "_af", "CKDA 7:1 + mHC-4, attention first in each period",
+             {**kv, "aux.pattern": hybrid_every(blocks, 8, "L", attn_first=True)})]
+
+
+# one GPU per task (the tiny optimizer study: a model this small does not scale over 4 GPUs)
+ONE_GPU = {"slurm.sbatch.gres": "gpu:1", "slurm.sbatch.gpus_per_node": 1, "slurm.sbatch.cpus_per_task": 40,
+           "slurm.sbatch.exclusive": None, "slurm.srun.exclusive": False, "slurm.srun.cpus_per_task": 40,
+           "slurm.env.SLURM_CPUS_PER_TASK": "40", "slurm.env.GPUS_PER_NODE": "1",
+           "slurm.env.NUM_GPUS_PER_NODE": "1",
+           # 1-GPU jobs share nodes: a fixed rendezvous port (marenostrum.yaml: 20074) made the 2nd
+           # torchrun on a node fail at startup ("DistNetworkError: Failed to recv")
+           "slurm.env.MASTER_PORT": "$((20100 + SLURM_JOB_ID % 20000))"}
+
+
+def _opt_variants(lr: float):
+    """The optimizer variants of the long-horizon study (user 2026-10-22: all of them), as arm deltas.
+    AngularMuown direction decay: p = 1 (default), p = 1/2, p = 0 (constant; direction step 0.2 /
+    0.05), the radius equilibrium; the PR's C / (1 + t) (C = 8 / 22; its cooldown over the run's
+    last 10 % to 0.1x); muown_classical without (the paper) / with decoupled weight decay on v
+    (ours: the rotation settles at ~sqrt(2 lr lambda), lambda 0.1 / 0.01); standard Muon + weight
+    decay 0.1 (the classic equilibrium, Muon's 0.2 sqrt(max(m, n)) scale); AdamW (2e-3, 1000
+    warmup, wd 0.1)."""
+    am = {B + "optimizer": "angular_muown"}
+    simp = lambda c: {B + "optimizer": "angular_muown_simplified", B + "angular_muown_c": float(c),  # noqa: E731
+                      B + "angular_muown_cooldown_fraction": 0.1, B + "angular_muown_cooldown_end_ratio": 0.1}
+    cl = {B + "optimizer": "muown_classical"}
+    return {
+        "am_p1": am,
+        "am_p05": {**am, B + "angular_muown_u_decay_p": 0.5},
+        "am_p0_s02": {**am, B + "angular_muown_u_decay_p": 0.0},
+        "am_p0_s005": {**am, B + "angular_muown_u_decay_p": 0.0, B + "angular_muown_extra_scale_factor": 0.05},
+        "am_radius": {**am, B + "angular_muown_u_decay_schedule": "radius", B + "angular_muown_u_decay_scale": 0.0074,
+                      B + "angular_muown_u_radius_lambda": 0.083},
+        "amsimp_c8": simp(8),
+        "amsimp_c22": simp(22),
+        "muown_classical": cl,
+        "muown_cl_wd01": {**cl, B + "muown_classical_v_weight_decay": 0.1},
+        "muown_cl_wd001": {**cl, B + "muown_classical_v_weight_decay": 0.01},
+        "muon_wd": {B + "optimizer": "muon", B + "muon_extra_scale_factor": 0.2, B + "muon_momentum": 0.95,
+                    B + "muon_nesterov": True, B + "weight_decay": 0.1},
+        "adamw": {B + "optimizer": "adam", B + "lr": lr / 2, B + "min_lr": lr / 20, B + "lr_warmup_iters": 1000,
+                  B + "weight_decay": 0.1},
+    }
+
+
+def arms5tiny(gbs: int = 8, smoke: bool = False):
+    """Long-horizon optimizer study (user 2026-10-22): many optimizer steps cheaply -- a tiny 7:1 hybrid
+    (hidden 384 x 8 blocks, CKDA + NoPE / XSA / gated attention, mHC-4, coarse MoE 16 x 384 top-2 +
+    shared 384, the 262k vocabulary), 2k context with document masking, one GPU per arm, 1.6B tokens:
+    100k steps at gbs 8 x 2048 (16k tokens / step) or 25k steps at gbs 32 (equal tokens, 4x fewer
+    steps: the batch effect). WSD: stable, then a linear cooldown over the last 10 % to lr / 10.
+    lr 4e-3 as s1 (the direction step scales with sqrt(max(m, n)) itself). One data index per gbs
+    (built by the first arm / the smoke: same schedule)."""
+    lr = 4e-3
+    steps = 1_638_400 * 1000 // (gbs * 2048) // 1000 * 1000  # 1.6B tokens
+    mhc4 = dict((n, kv) for n, _, kv in arms5("s1"))["h5_moe_mhc4"]
+    tiny = {**{k: v for k, v in mhc4.items() if not k.startswith("job.")},
+            B + "hidden_size": 384, B + "num_attention_heads": 3, B + "num_query_groups": 1, B + "kv_channels": 128,
+            B + "linear_num_key_heads": 3, B + "linear_num_value_heads": 3, B + "ffn_hidden_size": 1152,
+            "aux.pattern": hybrid_every(8, 8, "L"),
+            B + "num_experts": 16, B + "moe_ffn_hidden_size": 384, B + "moe_router_topk": 2,
+            B + "moe_shared_expert_intermediate_size": 384, B + "expert_model_parallel_size": 1,
+            "aux.seq": 2048, B + "seq_length": 2048, B + "max_position_embeddings": 2048,
+            B + "micro_batch_size": gbs, B + "global_batch_size": gbs, "aux.gbs": gbs,
+            B + "train_iters": steps, B + "exit_interval": 300 if smoke else steps,
+            B + "lr": lr, B + "min_lr": lr / 10, B + "lr_warmup_iters": 0,
+            B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": steps,
+            B + "lr_wsd_decay_iters": steps // 10,
+            B + "data_cache_path": f"{RUNS5}/data_cache_flag2k_tiny_b{gbs}",
+            B + "num_workers": 4, B + "dataloader_prefetch_factor": 4,
+            B + "eval_interval": max(steps // 50, 100), B + "eval_iters": 10, B + "log_interval": 20,
+            B + "non_persistent_save_interval": 5000,
+            # no document masking (user 2026-10-23: only the main run needs it), so CUDA graphs on the
+            # attention / mixer layers and the MoE router (round 4's CG4); with masking, mHC + MoE
+            # partial graphs need micro-batch 1 and the whole step is one micro-batch here
+            B + "dataloader_inter_document_masking": False, **CG4,
+            "job.est_steps": 300 if smoke else steps, "job.est_step_time_s": 0.08,
+            "slurm.sbatch.time": "12:00:00", **BAD_NODES}
+    if smoke:
+        # the smoke builds the data index on a full node: a 1-GPU job's quarter of the host memory
+        # OOMs in the 452-prefix index build; the 1-GPU arms then only read it (mmap)
+        tiny[B + "micro_batch_size"] = gbs // 4
+    else:
+        tiny.update(ONE_GPU)
+    var = _opt_variants(lr)
+    names = {8: list(var), 32: ["am_p1", "am_p0_s02", "muown_classical", "muown_cl_wd01", "muon_wd"]}[gbs]
+    if smoke:  # one arm: it builds the gbs's data index (concurrent builds of one cache race)
+        names = ["am_p1"]
+    return [(n, f"tiny 7:1 + mHC-4, gbs {gbs}: {n}", {**tiny, **var[n]}) for n in names]
+
+
+def arms5opt2(size: str = "s1"):
+    """The rest of the optimizer variants at the screen batch (user 2026-10-22: all variants, at s1 and
+    s2 for a scaling effect), in screen5opt's protocol (stable to 4000, WSD to lr / 10 at 4800, one
+    job; paired with screen5udcool / screen5udadapt / screen5opt of the size). Only the variants not
+    yet run at that size: s1 muown_classical + v weight decay (0.1 / 0.01) and Muon + weight decay;
+    s2 also radius and p = 0 (direction step 0.2)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
+             "job.est_steps": 4800, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1],
+             **BAD_NODES}
+    var = _opt_variants(lr)
+    names = {"s1": ["muown_cl_wd01", "muown_cl_wd001", "muon_wd"],
+             "s2": ["am_radius", "am_p0_s02", "muown_cl_wd01", "muon_wd"]}[size]
+    return [(n, f"optimizer variant {n}, stable 4000 + WSD 800", {**h5, **sched, **var[n]}) for n in names]
+
+
+def arms5opt3(size: str = "s2"):
+    """muown_classical at s2 again, with compact row-state checkpoints (ANGULAR_MUOWN_COMPACT_CKPT=1):
+    its extra per-row state (||v||), expanded to weight shape for the save, host-OOM-killed both s2
+    runs at the step-500 save (screen5opt_s2 / screen5opt2_s2). Fresh (one checkpoint format per
+    run); protocol and pairing as screen5opt2."""
+    keep = ("muown_cl_wd01",)
+    base = {n: kv for n, _, kv in arms5opt2(size)}
+    cl = {**{k: v for k, v in base["muown_cl_wd01"].items() if k != B + "muown_classical_v_weight_decay"}}
+    # + 4 x 2 data workers: s2's peak host RSS is ~470 of 503 GB with 6 x 3 (AngularMuown radius,
+    # sacct); the compact relaunch still OOM-killed at 400 GB at the step-500 save. The worker count
+    # does not change the data order (the runs resume from their compact step-250 checkpoints).
+    env = {"backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1", B + "num_workers": 4, B + "dataloader_prefetch_factor": 2}
+    return [("muown_classical", "muown_classical (the paper's), compact checkpoints", {**cl, **env}),
+            ("muown_cl_wd01", "muown_classical + v weight decay 0.1, compact checkpoints",
+             {**base["muown_cl_wd01"], **env})]
+
+
+def arms5opt4(size: str = "s2"):
+    """muown_classical at s2 on 2 nodes (user 2026-10-23: the fastest layout that fits per scale): the
+    distributed optimizer shards its state over 8 GPUs, halving the host RAM of the save (1 node:
+    ~470-480 of 503 GB, the classical arms OOM-killed). 2-node runs do not pair with the 1-node ones
+    (round 5d), so the p = 1 reference runs in the same setup. Protocol as screen5opt2 (stable to
+    4000, WSD to lr / 10 at 4800); compact row-state checkpoints for all three (format only)."""
+    base = {n: kv for n, _, kv in arms5opt2(size)}["muown_cl_wd01"]
+    common = {k: v for k, v in base.items() if k not in (B + "optimizer", B + "muown_classical_v_weight_decay")}
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 6, B + "dataloader_prefetch_factor": 3,
+            "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}
+    return [("am_p1", "AngularMuown p = 1 (the reference), 2 nodes", {**common, **fast, B + "optimizer": "angular_muown"}),
+            ("muown_classical", "muown_classical (the paper's), 2 nodes", {**common, **fast, B + "optimizer": "muown_classical"}),
+            ("muown_cl_wd01", "muown_classical + v weight decay 0.1, 2 nodes",
+             {**common, **fast, B + "optimizer": "muown_classical", B + "muown_classical_v_weight_decay": 0.1})]
+
+
+def arms5udadapt(size: str = "s1"):
+    """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
+    the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
+    data order of round 5 (train_iters unchanged) -- so they pair with screen5udcool's p = 1 / 1/2 / 0
+    branches and with round 5's h5_moe (p = 1) in the stable phase:
+      radius: one shared radius, kappa = 1 / rho, rho^2 <- (1 - 2 lr lambda) rho^2 + c (lr/max_lr)^2;
+        c = 0.0074, lambda = 0.083: kappa falls as (1 + c t)^-1/2 at first and settles at
+        kappa* = 1 / sqrt(c tau) = 0.3 within ~1500-3000 steps (tau = 1 / (2 lr lambda) = 1500):
+        an equilibrium step instead of a decay that keeps going (lambda alone would only show after
+        ~10k steps);
+      hyper: log kappa learnt from the gradient / previous-momentum correlation (defaults);
+      p = 1/2 at half the direction step (0.1): the s2 cooldown left p = 1/2 only 0.008 behind p = 1,
+        with its step untuned."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
+             "job.est_steps": 4800, B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1],
+             **BAD_NODES}
+    base = {**h5, **sched}
+    if size == "s2":
+        # the s2 confirmation of the recommendation (user 2026-10-21): p = 1/2 at direction step 0.1;
+        # pairs with screen5udcool_s2's cooled p = 1 branch and round 5's s2 h5_moe
+        return [("h5_moe_p05_u05", "AngularMuown p = 1/2, direction step 0.1",
+                 {**base, B + "angular_muown_u_decay_p": 0.5, B + "angular_muown_extra_scale_factor": 0.1})]
+    return [("h5_moe_radius", "AngularMuown radius schedule (c 0.0074, lambda 0.083: kappa* 0.3)",
+             {**base, B + "angular_muown_u_decay_schedule": "radius", B + "angular_muown_u_decay_scale": 0.0074,
+              B + "angular_muown_u_radius_lambda": 0.083}),
+            ("h5_moe_hyper", "AngularMuown hypergradient schedule (hyper_lr 0.02, floor 0.02)",
+             {**base, B + "angular_muown_u_decay_schedule": "hyper"}),
+            ("h5_moe_p05_u05", "AngularMuown p = 1/2, direction step 0.1",
+             {**base, B + "angular_muown_u_decay_p": 0.5, B + "angular_muown_extra_scale_factor": 0.1})]
+
+
+RUNS5 = "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b"
+
+
+def arms5trace(size: str):
+    """MoE routing traces for the expert-offloading question (user 2026-10-22): round 5's step-4000
+    h5_moe (144 x w, top-3 + shared) and h5_moe_g2 (288 x w/2, top-6 + shared: equal active and
+    total) evaluated on validation batches with ROUTER_TRACE_OUT=1 (Megatron router_trace.py: each
+    router's top-k ids per token -> <save>/router_trace.pt), no CUDA graphs (hooks), for the
+    offline expert-cache simulation (scripts/korbi/campaign/expert_cache_sim.py)."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    out = []
+    for a in ("h5_moe", "h5_moe_g2"):
+        src = f"{RUNS5}/screen5_{size}/{a}"
+        ev = {B + "skip_train": True, B + "eval_iters": 8, B + "no_load_optim": True,
+              B + "no_load_rng": True, B + "load": f"{src}/ckpt",
+              B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
+              "backend.env.ROUTER_TRACE_OUT": "1", "job.est_steps": 1,
+              "slurm.sbatch.time": "01:00:00", **BAD_NODES}
+        out.append((a, f"{a}, step 4000: routing trace", {**pool[a], **ev}))
+    return out
+
+
+def arms5quant(size: str, bits: str | None = None):
+    """4-bit robustness (user 2026-10-21): round 5's step-4000 checkpoints evaluated twice -- full
+    precision and weight-only 4-bit (QUANT_EVAL_BITS=4, groups of 32 along the input dim, close to
+    llama.cpp's Q4_K; embeddings / output / routers / norms / residual mixers kept; Megatron
+    a33f2abd1) -- on the same validation batches, in each run's own layout. Evaluation only
+    (skip_train, model weights only): our hybrid vs the Qwen3.5-like and all-attention arms."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    arms = {"s2": ("h5_moe", "h5_moe_mhc4", "qwen35_moe", "attn_moe"),
+            "s3": ("h5_moe", "h5_moe_mhc4", "qwen35_moe")}[size]
+    out = []
+    for a in arms:
+        src = f"{RUNS5}/screen5_{size}/{a}"
+        ev = {B + "skip_train": True, B + "eval_iters": 50, B + "no_load_optim": True,
+              B + "no_load_rng": True, B + "load": f"{src}/ckpt",
+              B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling", "job.est_steps": 1,
+              "slurm.sbatch.time": "01:00:00", **BAD_NODES}
+        # one suite per precision: an array job shares one script header (env included)
+        env = {"backend.env.QUANT_EVAL_BITS": bits} if bits else {}
+        tag = f"q{bits}" if bits else "fp"
+        out.append((f"{a}_{tag}", f"{a}, step 4000, {f'{bits}-bit weights' if bits else 'full precision'}",
+                    {**pool[a], **ev, **env}))
+    return out
+
+
+def arms5quantopt(which: str, bits: str | None = None):
+    """Quantization robustness per optimizer (user 2026-10-24: do classical Muown's ever smaller
+    direction steps leave brittle weights?): the final (cooled) checkpoints of the same-setup
+    optimizer comparisons, full precision vs weight-only RTN in groups of 32 (QUANT_EVAL_BITS, as
+    arms5quant), on the same validation batches. which = "s2" (screen5opt4's 2-node trio, step 4800),
+    "b8" (opttiny2_b8, 100k steps) or "b32" (opttiny2_b32, 25k steps)."""
+    if which == "s2":
+        pool, suite = {n: kv for n, _, kv in arms5opt4("s2")}, "screen5opt4_s2"
+        arms, iters = ("am_p1", "muown_classical", "muown_cl_wd01"), 50
+    else:
+        g = int(which[1:])
+        pool, suite = {n: kv for n, _, kv in arms5tiny(g)}, f"opttiny2_b{g}_s1"
+        arms = {8: ("am_p1", "muown_classical", "muown_cl_wd001", "am_p05", "am_p0_s005", "amsimp_c8", "adamw"),
+                32: ("am_p1", "muown_classical", "muown_cl_wd01", "muon_wd", "am_p0_s02")}[g]
+        iters = 400  # 400 x gbs x 2k tokens: 6.6M (b8) / 26M (b32) tokens
+    out = []
+    for a in arms:
+        src = f"{RUNS5}/{suite}/{a}"
+        ev = {B + "skip_train": True, B + "eval_iters": iters, B + "no_load_optim": True,
+              B + "no_load_rng": True, B + "load": f"{src}/ckpt",
+              B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [], "job.est_steps": 1,
+              "slurm.sbatch.time": "01:00:00", **BAD_NODES}
+        if which == "s2" and a == "muown_cl_wd01":
+            # a scheduler retry after its final save trained on 4800 -> 7629 at lr / 10 (Megatron
+            # fixed since): load step 4800 itself, no rolling checkpoint (they are newer)
+            ev.update({B + "ckpt_step": 4800, B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling_unused"})
+        env = {"backend.env.QUANT_EVAL_BITS": bits} if bits else {}
+        tag = f"q{bits}" if bits else "fp"
+        out.append((f"{a}_{tag}", f"{a} ({suite}, final), {f'{bits}-bit weights' if bits else 'full precision'}",
+                    {**pool[a], **ev, **env}))
+    return out
+
+
+def arms5s3cool(size: str = "s3"):
+    """Cooled s3 models for the downstream / long-context / 4-bit evals (user 2026-10-21): round 5's
+    s3 runs continued from their step-4000 checkpoints with WSD linear to lr / 10 over 4000 -> 4800
+    (same data order; the checkpoints hard-linked by link_branch_ckpt.sh): our recipe's residual
+    (CKDA 5:1 + mHC-4), plain CKDA, and the Qwen3.5-like arm."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    out = []
+    for a, note in (("h5_moe_mhc4", "CKDA 5:1 + mHC-4"), ("h5_moe", "CKDA 5:1"), ("qwen35_moe", "Qwen3.5-like")):
+        lr = pool[a][B + "lr"]
+        cool = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+                B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "override_opt_param_scheduler": True,
+                B + "allow_new_param_groups_on_load": True, B + "exit_interval": 4800, "job.est_steps": 800,
+                **BAD_NODES}
+        out.append((a, f"{note}, cooled 4000 -> 4800", {**pool[a], **cool}))
+    return out
+
+
+DOWNSTREAM = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl"
+
+
+LONGCTX = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests_longctx.jsonl"
+
+
+def LONGCTX_S2():  # noqa: N802 - the s2 checkpoints of the long-context comparison
+    p5 = dict((n, kv) for n, _, kv in arms5("s2"))
+    return [("ckda", "screen5_s2", "h5_moe", p5["h5_moe"]),
+            ("ckda_mhc4", "screen5_s2", "h5_moe_mhc4", p5["h5_moe_mhc4"]),
+            ("kron_paper", "screen5kronlr_s2", "h5_moe_kron_lr", arms5kron_lowrank("s2")[0][2]),
+            ("kron_polar", "screen5kronpfb_s2", "h5_moe_kron_lr_pfb", arms5kron_pfb("s2")[0][2])]
+
+
+def arms5downstream_any(entries, tasks: str = "", requests: str | None = None):
+    """arms5downstream for any runs: entries = [(name, src suite, src arm, its training config)];
+    `requests`: another request file than DOWNSTREAM (e.g. the long-context set)."""
+    out = []
+    for name, suite, arm, kv in entries:
+        src = f"{RUNS5}/{suite}/{arm}"
+        env = {"backend.env.DOWNSTREAM_EVAL_FILE": requests or DOWNSTREAM}
+        if tasks:
+            env["backend.env.DOWNSTREAM_EVAL_TASKS"] = tasks
+        ev = {B + "skip_train": True, B + "eval_iters": 1, B + "no_load_optim": True, B + "no_load_rng": True,
+              B + "load": f"{src}/ckpt", B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
+              "job.est_steps": 1, "slurm.sbatch.time": "02:00:00", **BAD_NODES}
+        out.append((name, f"{arm} ({suite}, latest checkpoint): downstream eval", {**kv, **ev, **env}))
+    return out
+
+
+def arms5downstream(size: str, src_suite: str, arms, ckpt: str = "ckpt", tasks: str = "", extra=None):
+    """In-Megatron downstream / passkey evaluation (Megatron 907935d56) of finished checkpoints:
+    evaluation only (skip_train, model weights only), each run's own layout; the requests from
+    scripts/korbi/downstream/prepare_tasks.py; results to <run>/downstream.json."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    out = []
+    for a in arms:
+        src = f"{RUNS5}/{src_suite}/{a}"
+        # results land in the eval run's save dir (<suite>/<arm>/ckpt/downstream.json): one env per array
+        env = {"backend.env.DOWNSTREAM_EVAL_FILE": DOWNSTREAM}
+        if tasks:
+            env["backend.env.DOWNSTREAM_EVAL_TASKS"] = tasks
+        ev = {B + "skip_train": True, B + "eval_iters": 1, B + "no_load_optim": True, B + "no_load_rng": True,
+              B + "load": f"{src}/{ckpt}", B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
+              "job.est_steps": 1, "slurm.sbatch.time": "02:00:00", **BAD_NODES}
+        if extra and extra.get("bits"):
+            env["backend.env.QUANT_EVAL_BITS"] = extra["bits"]
+        out.append((a, f"{a} ({src_suite}, {ckpt}): downstream + passkey", {**pool[a], **ev, **env,
+                                                                            **((extra or {}).get("kv", {}))}))
+    return out
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1040,7 +1718,116 @@ def write5():
             ("s1", "screen5ldm", arms5ldm("s1")),
             ("s1", "speed5ab", speed5_ab("s1")),
             ("s1", "screen5ldm2", arms5ldm2("s1")),
-            ("s2", "screen5ldm2", arms5ldm2_s2())] + [
+            ("s2", "screen5ldm2", arms5ldm2_s2()),
+            ("s1", "screen5kron", arms5kron("s1")),
+            *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5kronext", arms5kron_ext(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
+            ("s1", "screen5off", arms5offset("s1")),
+            ("s1", "screen5iat", arms5iat("s1")),
+            *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
+            ("s2", "screen5ckl2", arms5ckl2("s2")),
+            ("s3", "screen5ckl3", arms5ckl3("s3")),
+            *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
+            ("s2", "screen5r7", arms5r7("s2")),
+            ("s2", "screen5r7af", arms5r7first("s2")),
+            ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
+            ("s1", "opttinysmoke32", arms5tiny(32, smoke=True)),
+            # opttiny_b{8,32}: the first launch (document masking, no graphs; cancelled 2026-10-23)
+            *[(z, "screen5opt2", arms5opt2(z)) for z in ("s1", "s2")],
+            ("s2", "screen5opt3", arms5opt3("s2")),
+            ("s2", "screen5opt4", arms5opt4("s2")),
+            *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
+            ("s2", "screen5ssmax", arms5ssmax("s2")),
+            # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
+            # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact
+            # retrieval / passkey at 64k) on the s2 mixers' step-4000 checkpoints (KronLSTM paper
+            # gates: its last, 3000), plain and with eval-time log-n
+            # the 7:1 + mHC-4 s2 arm on the long-context set (retrieval with 2 instead of 3 attention
+            # layers; compare with ds5lc_s2's ckda_mhc4)
+            *[("s2", f"ds5lcr7{tag}", arms5downstream_any(
+                [("ckda_mhc4_r7", "screen5r7_s2", "h5_moe_mhc4_r7", {**arms5r7("s2")[0][2], **extra})],
+                requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # CKLSTM vs CKDA at s3 (user 2026-10-23): ckl_sgn + mHC-4 and CKDA + mHC-4, both at their
+            # step-4000 checkpoints (uncooled, as at s2), on the long-context set, plain and log-n
+            *[("s3", f"ds5lcs3{tag}", arms5downstream_any(
+                [("ckda_mhc4", "screen5_s3", "h5_moe_mhc4",
+                  {**dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"], **extra}),
+                 ("ckl_sgn", "screen5ckl3_s3", "ckl_sgn", {**arms5ckl3("s3")[0][2], **extra})],
+                requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # ckl_sgn's s2 run finished later (NODE_FAIL resumes): its own suites
+            *[("s2", f"ds5lcckl3{tag}", arms5downstream_any(
+                [("ckl_sgn", "screen5ckl_s2", "ckl_sgn",
+                  {**dict((m, x) for m, _, x in arms5ckl("s2"))["ckl_sgn"], **extra})], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # the signed CKLSTM s2 checkpoints on the same long-context set (user 2026-10-23)
+            *[("s2", f"ds5lcckl{tag}", arms5downstream_any(
+                [(n, su, n, {**kv, **extra}) for n, su, kv in (
+                    ("ckl_sgn_cpl", "screen5ckl_s2", dict((m, x) for m, _, x in arms5ckl("s2"))["ckl_sgn_cpl"]),
+                    ("ckl_sgn_w2", "screen5ckl2_s2", arms5ckl2("s2")[0][2]))], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            *[("s2", f"ds5lc{tag}", arms5downstream_any(
+                [(n, su, a, {**kv, **extra}) for n, su, a, kv in LONGCTX_S2()], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            *[(z, "trace5", arms5trace(z)) for z in ("s1", "s2")],
+            # LDM's long-context retrieval (user 2026-10-22): does LDM generalize past the training
+            # length like mHC-4? The 2-node s2 trio (plain / mHC-4 / LDM x2.0, same setup and data
+            # order), step 4000, evaluated on 1 node; plain and with eval-time log-n beyond 8k
+            *[("s2", f"ds5ldm{tag}", arms5downstream_any(
+                [(n, "screen5ldm2_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
+                 for n, _, kv in arms5ldm2_s2()], tasks=tasks))
+              for tag, extra, tasks in (
+                  ("", {}, "kvret,passkey,lambada"),
+                  ("logn", {B + "attention_length_scaling": "logn",
+                            B + "attention_length_scaling_base": 8192}, "kvret"))],
+            ("s1", "screen5udadapt", arms5udadapt("s1")),
+            ("s2", "screen5udadapt", arms5udadapt("s2")),
+            *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
+            ("s3", "screen5s3cool", arms5s3cool("s3")),
+            ("s2", "ds5smoke", arms5downstream("s2", "screen5_s2", ["h5_moe"], ckpt="ckpt", tasks="arc_easy,passkey")),
+            ("s2", "ds5kv", arms5downstream("s2", "screen5_s2", ["h5_moe", "qwen35_moe", "attn_moe"], tasks="kvret",
+                                             extra={"tag": "kv"})),
+            # the cooled s3 models (screen5s3cool, step 4800): every task, full precision and 4-bit
+            ("s3", "ds5", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"])),
+            # KronLSTM's long-context retrieval in our setting (user 2026-10-21): the s3 step-4000
+            # checkpoints of KronLSTM (paper / polar gates, low-rank output gate) and CKDA (plain / + mHC-4)
+            ("s3", "ds5kron", arms5downstream_any(
+                [("kron_paper", "screen5kronlr_s3", "h5_moe_kron_lr", arms5kron_lowrank("s3")[0][2]),
+                 ("kron_polar", "screen5kronpfb_s3", "h5_moe_kron_lr_pfb", arms5kron_pfb("s3")[0][2]),
+                 ("ckda", "screen5_s3", "h5_moe", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe"]),
+                 ("ckda_mhc4", "screen5_s3", "h5_moe_mhc4", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"])],
+                tasks="kvret,passkey,lambada")),
+            # is the 4x-length retrieval breakdown softmax dilution? the same checkpoints (+ Qwen3.5-like)
+            # with parameter-free log-n attention scaling beyond 8k (Megatron 754aebf15), retrieval only
+            ("s3", "ds5logn", arms5downstream_any(
+                [(n, su, a, {**kv, B + "attention_length_scaling": "logn",
+                             B + "attention_length_scaling_base": 8192})
+                 for n, su, a, kv in [
+                     ("kron_paper", "screen5kronlr_s3", "h5_moe_kron_lr", arms5kron_lowrank("s3")[0][2]),
+                     ("kron_polar", "screen5kronpfb_s3", "h5_moe_kron_lr_pfb", arms5kron_pfb("s3")[0][2]),
+                     ("ckda", "screen5_s3", "h5_moe", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe"]),
+                     ("ckda_mhc4", "screen5_s3", "h5_moe_mhc4", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"]),
+                     ("qwen35", "screen5_s3", "qwen35_moe", dict((n, kv) for n, _, kv in arms5("s3"))["qwen35_moe"])]],
+                tasks="kvret")),
+            ("s3", "ds5q4", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"],
+                                            extra={"tag": "q4", "bits": "4"})),
+            *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
+            # quantization robustness per optimizer (user 2026-10-24): full / 4-bit / 3-bit
+            *[(sz, f"quantopt_{w}{'q' + b if b else 'fp'}", arms5quantopt(w, b or None))
+              for w, sz in (("s2", "s2"), ("b8", "s1"), ("b32", "s1")) for b in ("", "4", "3")],
+            *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
+            *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
+            *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
+            ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
+                                        for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:

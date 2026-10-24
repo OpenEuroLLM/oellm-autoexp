@@ -1,0 +1,41 @@
+benchmark	languages	hit_ngrams	total_ngrams	hit_pct	our_source
+BoolQ	1	138849	244547	56.7780	aps/super_glue (boolq)
+SciRIFFYesNo	1	681	1214	56.0956	-
+DeepSeekLeetCode	1	19008	40841	46.5415	-
+WinogradSchemaChallenge	1	408	988	41.2955	winograd_wsc
+RACE	1	4239	10996	38.5504	-
+SpanishBench_Phrases	1	1125	3523	31.9330	-
+MathQA	1	17485	57313	30.5079	-
+WikiAnn	35	56079	188563	29.7402	-
+NaturalQuestions	1	1092	3739	29.2057	-
+LiveCodeBench	1	71279	244436	29.1606	livecodebench/code_generation_lite
+AQuARAT	1	1896	6538	28.9997	-
+PubMedQA	1	86791	328920	26.3867	-
+AdvBench	1	216	874	24.7140	-
+AIME2024	1	301	1225	24.5714	evalchemy/AIME24
+SciQ	1	653	2802	23.3048	-
+MMLU_Redux	1	13441	59236	22.6906	-
+NorIdiom	1	12	54	22.2222	-
+SVAMP	1	696	3276	21.2454	-
+SocialIQA	1	15	71	21.1268	allenai/social_i_qa
+TriviaQA	1	7075	35271	20.0590	-
+COPA	1	10	50	20.0000	aps/super_glue (copa)
+AlpacaEval	1	2561	13855	18.4843	-
+HellaSwag	1	48119	282223	17.0500	Rowan/hellaswag
+HumanEval_Plus	1	1322	9714	13.6092	evalchemy/HumanEvalPlus
+HumanEval	1	1252	9538	13.1264	evalchemy/HumanEval, openai/human-eval
+ArcEasy	1	2659	20444	13.0063	allenai/ai2_arc (ARC-Easy)
+BasqueBench_EusProficiency	1	577	4472	12.9025	-
+ArcChallenge	1	1702	13512	12.5962	allenai/ai2_arc (ARC-Challenge)
+MMLU	1	48506	389501	12.4534	cais/mmlu
+MedMCQA	1	1504	12430	12.0998	-
+Include	18	11998	100211	11.9727	CohereForAI/include-base-44
+SpanishBench_XLSUM	1	425900	3642823	11.6915	-
+TatoebaEngNor	1	353	3040	11.6118	-
+CatalanBench_CatalanQA	1	25736	229949	11.1920	-
+MultiLoKo	1	909	8164	11.1342	-
+FrenchBench_Grammar_Vocab_Reading	1	20	185	10.8108	-
+FrenchBench_BoolQ	1	919	8702	10.5608	-
+MMLU_Pro	1	37158	354078	10.4943	-
+CatalanBench_TECA	1	1237	12070	10.2486	-
+MBPP	1	602	6049	9.9521	google-research-datasets/mbpp, evalchemy/MBPP

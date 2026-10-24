@@ -15,6 +15,8 @@ defaults:
 
 aux:
   experiment_group: campaign_3b
+  # the shared MN5 node exclusion list (one node per line), re-read before every resubmission
+  mn5_exclude_file: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt
   family: dm4
   arm: smoke
   suite: c0
@@ -70,12 +72,77 @@ job:
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
   array_group: null
   est_step_time_s: 1.0
+  # SLURM end states (replacing the speed base's "TIMEOUT -> finished", meant for short speed
+  # tests): a training run that loses its node, runs out of host memory, fails or hits the wall
+  # time is resubmitted and resumes from its rolling checkpoint -- with the shared MN5 exclusion
+  # list re-read first (the in-job watchdog / by hand append bad nodes to it). Bounded per end
+  # state; then given up. NODE_FAIL / OUT_OF_MEMORY / TIMEOUT are not end states the monitor
+  # closes by itself: without these events such a run stays "active" and is never acted on
+  # (2026-10-22/23: five s2 runs sat dead after NODE_FAIL / host OOM, see docs §12.13).
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "lost its node -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: retry_oom
+      transition: [null, OUT_OF_MEMORY]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+      action: {class_name: RestartAction, reason: "host out of memory -- resuming once", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: retry_failed
+      transition: [null, FAILED]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "failed -- resuming (transient GPFS / NCCL / node errors)", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: retry_timeout
+      transition: [null, TIMEOUT]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "hit the wall time -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node again"}
+    - name: give_up_oom
+      transition: [null, OUT_OF_MEMORY]
+      action: {class_name: CancelAction, reason: "out of host memory again"}
+    - name: give_up_timeout
+      transition: [null, TIMEOUT]
+      action: {class_name: CancelAction, reason: "hit the wall time again"}
   # the backward CUDA-graph capture (cuda_graphs.py create_bwd_graph, default "global" capture
   # mode) is invalidated now and then at startup by another thread's CUDA call
   # (cudaErrorStreamCaptureInvalidated / "Invalid stream capture status"): 2 of 4 attn_ref runs
   # under angular MuOwn on 2026-10-17. One rank dies at step 0, SLURM says COMPLETED 0:0, the
   # monitor finished the job. Transient: a fresh start passes. Bounded restart.
   log_events:
+    # checkpoint recovery (config/job/auto_restart_ckptreset.yaml, which see): a save cut off by
+    # a lost node leaves a checkpoint with short shards -> quarantine it (renamed failed_iter_N,
+    # tracker rolled back, at most 2) and resume from the last loadable one; a checkpoint written
+    # at another world size, or one that cannot be opened at all, cancels instead (a restart would
+    # loop on it, or silently start from scratch). The rolling directory is where our saves die.
+    - name: ckpt_corrupt_quarantine
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      extract_groups: {iteration: 1}
+      match_once: true
+      action:
+        class_name: QuarantineCheckpointAction
+        checkpoint_dir: ${backend.megatron.non_persistent_global_ckpt_dir}
+        iteration: "{iteration}"
+        quarantine_prefix: "failed_"
+        max_rollbacks: 2
+    - name: ckpt_corrupt_restart
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      match_once: true
+      condition: {class_name: MaxActionFiresCondition, max_fires: 5}
+      action: {class_name: RestartAction, cancel_first: true, reason: "checkpoint quarantined; resuming from the last loadable one"}
+    - name: err_ckpt_world_size_mismatch
+      pattern: "Missing key in checkpoint state_dict: rerun_state_machine_state/shard_\\d+_(\\d+)"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint written at a different world size"}
+    - name: err_ckpt_unloadable
+      pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint cannot be opened (interrupted save) -- needs a hand rollback"}
     - name: cuda_graph_capture_invalidated
       pattern: "cudaErrorStreamCaptureInvalidated|Invalid stream capture status|operation failed due to a previous error during capture"
       pattern_type: regex

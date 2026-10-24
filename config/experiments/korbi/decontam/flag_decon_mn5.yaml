@@ -1,0 +1,72 @@
+# @package _global_
+# Decontamination of the pre-tokenised "flag" training mix against every benchmark we evaluate
+# (docs/flag_post_decontamination.md). One step of scripts/flag_decontam/run_step.sh per launch,
+# on aux.nodes MareNostrum 5 nodes (the step runs once per node; `scan` splits the shards over
+# them by SLURM_NODEID). Sync first (./sync_to_marenostrum.sh decon2), then on the login node in
+# $R/autoexp_decon2:
+#
+#   scripts/korbi/mn5_autoexp_bg.sh decon_<step> scripts/run_autoexp.py \
+#       --config-name experiments/korbi/decontam/flag_decon_mn5 --yes aux.step=<step> \
+#       [aux.nodes=8 aux.time=01:30:00 'aux.args="--dry-run"']
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  step: selftest
+  args: ""
+  nodes: 1
+  time: "00:30:00"
+  hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+  # v5 (v3 matcher + benchmarks outside FLAG, the external table, and the gated sets incl. Tatoeba,
+  # 2026-10-24) -- the one written as flag-decon-v1; v1-v4 stay in flag_decon_v1 .. _v4
+  version: v5
+  work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_${aux.version}
+  refs: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v5/refs/refs_v5.jsonl.gz
+  out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v1
+  root: /gpfs/projects/ehpc533/training-data-collection/flag
+  # the NGC 26.09 training image: torch, sentencepiece, pytest
+  sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+  # MareNostrum's dev queue (acc_debug: <= 8 nodes, 1 job per user, 2 h), shared with every monitor
+  dev_queue: true
+
+backend:
+  command: bash scripts/flag_decontam/run_step.sh ${aux.step} ${aux.args}
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    WORK: ${aux.work}
+    REFS: ${aux.refs}
+    OUT: ${aux.out}
+    ROOT: ${aux.root}
+    OMP_NUM_THREADS: "8"
+
+job:
+  name: flag_decon_${aux.step}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_decon/${aux.version}/${aux.step}"
+  est_steps: 1
+  est_step_time_s: 1800
+  concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}
+  max_active: ${oc.if:${aux.dev_queue},1,null}
+  concurrency_qos: ${aux.dev_queue}
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: timeout
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: ${aux.time}
+    qos: ${oc.if:${aux.dev_queue},acc_debug,acc_ehpc}
+
+stage: ${aux.step}
+
+container:
+  image: ${aux.hybrid_env}/container/${aux.sif}

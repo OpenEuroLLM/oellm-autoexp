@@ -338,3 +338,46 @@ details in `../oellm-autoexp-hybrid-ep/docs/ep_fp8_speed.md` §6c):
   host: mHC-4 16k fits on 8 nodes, +6.4 %), MHC_FUSED_READ=1 (Triton mHC read, +5 %), MEM_TRACE_DIR.
   8-node numbers (16k): plain mbs 2 + offload 7,539 tok/s/GPU; mHC-4 mbs 2 + offload + fused 6,026.
   Details: docs/ep_fp8_speed.md 6d / 6d-2 (worktree branch feat/ep-fp8-speed).
+
+### 2026-10-21 (scaling agent) — bad MN5 node + offload stream fix
+- Node **as07r3b27** kills jobs at launch: torchrun `AssertionError("Invalid device id")` (torch NUMA binding → get_device_properties), 0 iterations. All 6 of my o10/o11 arms died on it. Exclude with `+slurm.sbatch.exclude=as07r3b27` (the `+` is needed).
+- Megatron d08f193bb (ep-fp8-speed-r5): `checkpoint_offload` uses one copy stream per direction. With one stream, the D2H offloads ran a median 130-180 ms (max 0.8 s) behind their free, leaving ~4 GB of pending blocks at the peak, and the backward's H2D fetches queued behind them. Speed + memory effect is being measured (o12); I'll report before asking for a merge.
+
+### 2026-10-21 later (scaling agent) — offload results, more bad nodes
+- Megatron (ep-fp8-speed-r5) 771c9989a + 1fd902533: opt-in `RECOMPUTE_OFFLOAD_LEAF=1` also offloads the pipeline receive buffers, including their [s,b,4,h] view (the mHC chunk input off stage 0). Peak memory per stage −1.5 / −4.5 / −3.5 / −2.5 GiB, about speed-neutral (≤1 %), gradients bitwise equal in the tests. Useful if a config is a few GiB short of fitting. The duplex streams (d08f193bb) are speed-neutral too.
+- Don't use `overlap_p2p_comm_warmup_flush` with MoonEP: it hung in cross_rank_barrier and then crashed with a launch failure.
+- On the Engram-31 candidate: MoonEP 64 SMs is best (32: −3 %, 48: −1.5 %). Angular MuOwn's optimizer step costs ~2 % vs Adam.
+- More bad nodes: as06r2b26 and as05r3b28 ("Invalid device id" at launch); one more gave "CUDA error: unknown error" mid-run. Use `+slurm.sbatch.exclude="as07r3b27,as06r2b26,as05r3b28"`.
+
+### 2026-10-21 evening (scaling agent) — MoonEP barrier trap, grouped Engram lookup
+- **MoonEP traps after 100 s in its cross-rank barrier** ("MoonEP cross_rank_barrier timeout (100s), trapping", then "CUDA error: unspecified launch failure" from the NCCL watchdog). It hit 3 of my per-micro-batch Engram-lookup runs on their first step. One EP rank is still in a blocking collective over another group (the sharded Engram row exchange over DP, across nodes) while its node peers wait in MoonEP. Fix: `$HYBRID_ENV/pylibs_moonep2` = pylibs_moonep + `container/patches/moonep-barrier-timeout.patch` (`MOONEP_BARRIER_TIMEOUT_S`, default 600 s). The old `pylibs_moonep` is untouched; switch your MoonEP PYTHONPATH to `pylibs_moonep2` when convenient.
+- Megatron (ep-fp8-speed-r5) c7499dbb2: `ENGRAM_STEP_GROUP=G` (with `ENGRAM_STEP_LOOKUP=1`) runs the step lookup in groups of G micro-batches. It fits where the whole-step lookup OOMs on stage 0, gives 5,640-5,650 tok/s/GPU on the Engram-31 candidate, and passes the multi-GPU tests. Also `MEM_BREAKDOWN=1`, an opt-in non-PyTorch memory log.
+- **Free +2.3 % for mHC with document masking** (Megatron ep-fp8-speed-r5 5c9debec1): with b = 1, the `[s, 1, n, C]` streams arrive with two different batch-dim strides (the Engram memory is transposed from [b, s]). Dynamo guards on that stride, recompiles `_mhc_write` until it hits the recompile limit (8), and runs the remaining calls uncompiled. Look for `hit config.recompile_limit (8) ... function: '_mhc_write'` in your logs. The fix gives contiguous inputs canonical strides (a view, no copy) before the compiled mHC calls. Same-time A/B on the Engram-31 candidate: 5,646 → **5,776** tok/s/GPU, memory 0.95 → 0.89. The 70 mHC unit tests pass. Worth merging into the campaign branch.
+- **−1.9 GiB of non-PyTorch memory per GPU** with `MEGATRON_LAZY_SINGLETON_GROUPS=1` (Megatron ep-fp8-speed-r5, parallel_state.create_group). Because `device_id` is bound at init, every single-rank group (TP, CP, TP×CP, ETP, both GTP-remat groups, position embedding at TP = CP = ETP = 1) eagerly allocates an NCCL communicator of ~0.38 GiB that never moves data. With the flag these groups are created unbound and then bound to the device, so a lazy init still picks the right GPU. Stage-0 non-PyTorch memory 7.93 → 6.03 GiB, speed unchanged, multi-GPU test included.
+- Angular MuOwn's optimizer step costs only ~0.4 % (230-260 ms vs Adam 54-83 ms per 46 s step); the earlier −2 % was launch noise.
+- **+2.2 % from the LM-head loss** with `LIGER_WGRAD_ADDMM=1` (Megatron ep-fp8-speed-r5, liger_fused_linear_cross_entropy.py). For each 2048-token chunk, Liger's loop computed the [262k × 2048] weight gradient in bf16, cast it to fp32 and added it into the bf16 buffer: ~0.55 s per step on the last stage. Now it is one in-place `addmm` per chunk, accumulating in fp32 with a single rounding, and at least as accurate in the unit test. Opt-in because the numerics are not bitwise identical. A/B: 5,749 → 5,876 tok/s/GPU.
+- The speed candidate with all flags (`ENGRAM_STEP_GROUP=8`, the stride fix, `MEGATRON_LAZY_SINGLETON_GROUPS=1`, `RECOMPUTE_OFFLOAD_LEAF=1`, `LIGER_WGRAD_ADDMM=1`, pylibs_moonep2) reaches 5,876 tok/s/GPU, up from 5,601 this morning.
+- **Another bad MN5 node: as07r4b02** (local GPU 1). It raised a lone "CUDA error: unspecified launch failure" in two jobs: an 8-node run at iteration 2, and the first 128-node test in the optimizer step. That looks like a code bug in whichever kernel happens to run, so map the failing rank to its node (rank // 4 = position in NODELIST) before debugging. Exclusion list now: `+slurm.sbatch.exclude="as07r3b27,as06r2b26,as05r3b28,as07r4b02"`. For >100-node jobs use QOS `acc_xehpc` (acc_ehpc caps at 100 nodes).
+- **MN5 bad-node auto-exclusion** (branch feat/ep-fp8-speed: `config/slurm/marenostrum_autoexclude.yaml` + `scripts/korbi/hybrid_speed/job_watchdog.py`). Use `/slurm: marenostrum_autoexclude` instead of `marenostrum_ehpc533`. It reads the shared list `/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt` (5 nodes so far: as07r3b27, as06r2b26, as05r3b28, as04r5b05, as07r4b02). The in-job watchdog (needs `templates/marenostrum_watchdog.sbatch`) appends nodes whose GPU probe fails, or whose own ranks show a hardware-signature CUDA error with no MoonEP trap. Don't combine it with `+slurm.sbatch.exclude`.
+
+### 2026-10-23 (campaign agent) -- decisions for the production layout, infra fixes, merge question
+- **Decided (user):**
+  - attention ratio **7:1** (NSA2 later on top);
+  - **no SSMax** in training;
+  - **mHC-4** (LDM and IAT dropped);
+  - **Engram 30 %**;
+  - **16k** pre-training context with document masking, no CP;
+  - stable-only schedule without warmup, large batch.
+- **Still open:** CKDA vs signed CKLSTM (`ckl_sgn_cpl`, same speed), and the optimizer (AngularMuown
+  variants / `angular_muown_simplified` / `muown_classical`).
+- `templates/marenostrum.sbatch` now exits with the training step's status (7461ddc): before, every
+  job was COMPLETED 0:0 even when the step failed or was OOM-killed.
+- `base_train_mn5.yaml`: bounded NODE_FAIL / FAILED / TIMEOUT / OOM retries that re-read
+  `mn5_exclude_nodes.txt`.
+- **Host RAM at s2 saves:** AngularMuown ~472 GB of 503 vs plain Muon 307 GB. `muown_classical`
+  OOMs even with `ANGULAR_MUOWN_COMPACT_CKPT=1`. Check host RAM at save time for the production
+  layout.
+- **Merge:** Megatron ep-fp8-speed-r5 and oellm/v0.19-hybrid have diverged (AngularMuown PR,
+  length scaling CP/decode, router traces, ppl eval here; MoonEP, Engram groups, lazy groups, Liger
+  addmm, per-layer mHC there). Which one becomes the production branch, and who merges? (Also sent
+  as a direct message.)

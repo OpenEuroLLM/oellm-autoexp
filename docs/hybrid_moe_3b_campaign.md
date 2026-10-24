@@ -2342,9 +2342,639 @@ will measure K 8 / 4.
   effect that fades with tokens; still under study.
 - Hybrid: **CKDA 5:1 over Qwen3.5-like GDN 3:1 and all-attention** at every size.
 
-**Running (round 5d, 2-node setup):**
-- s1: LDM x4.0; LDM x2.0 with K = 4 (half the state, ~mHC-4's payload; the paper loses 0.005);
-  LDM x2.0 at the mixer sublayers only / at the MoE sublayers only (`depth_memory_sites`, 12 sites
-  each, to find where the gain sits).
-- s2: plain vs mHC-4 x0.25 vs LDM x2.0 -- the size check for LDM.
+**Round 5d, s1 (2-node setup, final; gaps vs the same plain run as above):**
+
+| arm | gap @4000 | trend | 10B |
+|---|---:|---|---:|
+| LDM x2.0 (above) | -0.068 | flat | -0.070 |
+| LDM x4.0 | -0.062 | shrinking (-0.073 at step 1000) | -0.052 |
+| LDM x2.0, K = 4 | -0.051 | flat | -0.052 |
+| LDM x2.0, mixer sublayers only | -0.048 | slightly shrinking | -0.046 |
+| LDM x2.0, MoE sublayers only | -0.014 | flat | -0.011 |
+
+- **lr x2.0 is LDM's optimum.** x4.0 leads early and then loses its edge.
+- **K = 4 keeps 75 % of K = 8's gain**, below mHC-4 per sublayer (-0.054), at ~25 KB vs 35 KB per
+  token. So K = 8 it is, if the state is affordable.
+- **The gain sits at the mixer sublayers:** mixer-only gets 70 % of the full gain, MoE-only 20 %.
+  Together they make ~90 % (the sites are roughly additive). Per transformer layer (one site per
+  block, -0.040) lands a bit below mixer-only.
+
+**Round 5d, s2 (2-node setup, final; vs the same-setup plain run):** LDM x2.0 -0.052
+(10B -0.047), mHC-4 x0.25 -0.044 (10B -0.041). LDM still leads at s2, by 0.008 (0.014 at s1). Its
+gap shrinks with size like mHC-4's (s1 -> s2: -0.068 -> -0.052, -0.054 -> -0.044).
 - Budget: ~5.6k of 7k GPU-h used before round 5d (~+270).
+
+### 12.6 KronLSTM as the linear mixer (user 2026-10-20)
+
+KronLSTM (github.com/NX-AI/KronLSTM, arXiv 2610.26834) replaces the delta rule's vector residual
+with the scalar association v^T S k: one rank-1 write along k v^T per token. A write interferes
+only with pairs that overlap in both key and value. It has separate forget / erase / write gates.
+The chunkwise form is DeltaNet's WY/UT scheme on the Kronecker features k (x) v (Gram
+A_kk (.) A_vv), so it costs about KDA plus a value Gram.
+
+**Integration**
+- Ops and layer are vendored from 3d800c9 into our FLA fork (`fla/ops/kronlstm`,
+  `fla.layers.KronLSTM`).
+- The Megatron mixer is `experimental_attention_variant: kronlstm` (`fla_hybrid.KronLSTM`).
+- **Document resets:** packed THD batches pass `cu_seqlens`, which restarts the recurrence, the
+  sign parity and the short conv per document. Test: packed = separate through the hybrid.
+- **Extended ranges, as CKDA over KDA:**
+  - *beta in [0, 2]* is KronLSTM's own `allow_neg_eigval` (`linear_fla_allow_neg_eigval`). It sets
+    s = 2 in beta* = s beta / ||v||^2, the negative-eigenvalue half of the contraction range.
+  - *Forget gate in [-1, 1]* (`linear_fla_gate: signed_sigmoid2`) uses Complex KDA's gate and
+    standard init, run through a sign gauge. With P_t the running sign product per key dim
+    (reset per document), the unsigned kernels on (P q, P k) are exact: every use of q and k is
+    bilinear against the state, and ||P k|| = ||k|| keeps the unit-norm key. Tested against the
+    naive signed recurrence, dense and packed.
+- **Context parallelism.** FLA's KCP compresses a rank's effect on the incoming state into a K x K
+  transition, which needs a transition acting on the key axis only. KronLSTM's score
+  (gamma k)^T S_0 v contracts both axes, so the map S_0 -> S_C is KV x KV. The op therefore
+  relays the state instead:
+  - Grams, inverse and decay-scaled keys run on all ranks at once.
+  - The forward scans run in rank order, each from the previous rank's final state.
+  - The read-out runs in parallel again.
+  - The backward does the same in reverse: dh0 goes to the previous rank as its dht.
+  - A rank whose first document starts on it does not wait. Only the scans serialize (a fraction
+    of the layer).
+  - The sign parity takes FLA's CP prefix.
+  - Tests: CP2 / CP4 vs one process (cut, aligned and spanning documents), and Megatron CP=2 vs
+    CP=1.
+
+**Verified on H100 (MN5, 2026-10-20):**
+- Packed documents through the hybrid with attention: 4/4.
+- Megatron CP=2 vs CP=1 (outputs, input and parameter gradients, both gates).
+- FLA CP relay on NCCL: 16/16.
+- Signed gate and fp32 edge kernel tests: 14/14.
+- The upstream kernel suite: 141/143 locally. The 2 failures are the fp32 K128 x V256 case, which
+  exceeds a 3090 Ti's shared memory.
+
+**Speed:** ~39k tok/s/GPU in round 5d's 2-node s1 setting, as fast as CKDA.
+
+**Screen (`screen5kron_s1`, 2-node, paired with screen5ldm2's CKDA `h5_moe`).** The first launch
+died at step ~490: a transient GPFS `Permission denied` on the flag data hit all ranks at 17:05:18.
+It is resumed from step 250. Mean gap vs CKDA per step window:
+
+| arm | 200-300 | 300-400 | 400-490 |
+|---|---:|---:|---:|
+| KronLSTM (paper's gates) | +0.117 | +0.055 | +0.039 |
+| KronLSTM, f in [-1, 1] + beta in [0, 2] | +0.460 | +0.414 | +0.352 |
+
+The extended ranges start far behind; no NaNs, grad norms normal. To be checked against the gate
+statistics (CKDA's init carried over) after step 500.
+
+**Extended-gate arm, final (step 4000):**
+- Loss 2.3418 vs CKDA 2.2774 (same 2-node run), gap +0.066.
+- The gap per 500-step window falls steadily: +0.180 / +0.114 / +0.093 / +0.082 / +0.074 / +0.070
+  / +0.066.
+- Trend a + b ln t: +0.032 at 4BT, -0.007 at 10BT. It is a drifting gap, so it is extrapolated less
+  reliably (the backtest overshot such gaps by up to 0.015).
+- Speed 38.4k vs 37.8k tok/s/GPU (+1.5 %).
+- +4.0M non-expert parameters (the dense output gate).
+
+The paper's-gate arm was relaunched twice: the GPFS fault, then a CUBLAS execution failure at
+startup on as07r4b02 / as07r4b13, now excluded.
+
+### 12.7 Angular MuOwn's hidden direction decay (user 2026-10-21)
+
+Megatron's AngularMuown multiplies the direction step by kappa_t = (1 + c t)^-p, on top of the lr
+schedule, with defaults c = 1e-3 and p = 1. That gives kappa = 0.2 at step 4000 and ~1e-3 at 1M
+steps. Every MuOwn arm so far carried it; the Adam-trained parameters (row magnitudes, embeddings,
+norms, LDM / mHC mixers) never did.
+
+**The paper's rationale** (arXiv 2606.23637, github.com/fhueb/angular-muown):
+- Plain Muown's unnormalized direction rows grow as ~sqrt(t), so the same update rotates them less:
+  an implicit angular decay of ~t^-1/2.
+- AngularMuown normalizes the rows, which removes that mechanism, so it schedules the decay
+  explicitly. The paper presents the schedule as horizonless and pairs it with WSD; for cosine
+  schedules the README switches it off (p = 0).
+- The evidence goes up to 10B tokens and 0.5B dense / 1.1B MoE models.
+- Nothing on fine-tuning, on long runs, or on choosing c relative to the run length.
+
+**Our caveats:**
+- **The decay counts steps, not tokens.** The screens' 64 x 8k batch vs production's 512 x 16k
+  differs by 16x in tokens per step, so the screens' kappa doesn't transfer to production.
+- **p = 1 is unsustainable for long runs.** It essentially freezes the directions by 1M steps.
+
+**Tests (paired with round 5's h5_moe, which has p = 1):**
+- `screen5udecay`: p = 0, with a direction-step sweep via `angular_muown_extra_scale_factor`.
+  s1: 0.2 / 0.1 / 0.05. s2: 0.2 / 0.1.
+- `screen5udecaysqrt`: p = 1/2 (Muown's implicit rate; kappa ~0.03 at 1M steps), at s1 and s2.
+- Cooldown branches from step 4000, giving the visible-schedule vs hidden-decay comparison.
+
+The production value stays open until these are in.
+
+### 12.8 4-bit robustness (user 2026-10-21)
+
+Round 5's step-4000 checkpoints evaluated twice on the same 50 validation batches: full
+precision, and weight-only 4-bit (`QUANT_EVAL_BITS=4`, Megatron a33f2abd1). The 4-bit setting is
+asymmetric round-to-nearest in groups of 32 along the input dim, close to llama.cpp's Q4_K.
+Embeddings, output layer, routers, norms, residual mixers and 1-D gate vectors are kept, as
+Q4_K_M does. Suites `quanteval5{,q4}_{s2,s3}`.
+
+| size | arm | full | 4-bit | delta |
+|---|---|---:|---:|---:|
+| s2 | CKDA hybrid | 2.2004 | 2.2053 | +0.0049 |
+| s2 | CKDA + mHC-4 | 2.1603 | 2.1650 | +0.0047 |
+| s2 | Qwen3.5-like | 2.2138 | 2.2194 | +0.0056 |
+| s2 | all-attention | 2.1971 | 2.2020 | +0.0049 |
+| s3 | CKDA hybrid | 2.1651 | 2.1692 | +0.0041 |
+| s3 | CKDA + mHC-4 | 2.1273 | 2.1312 | +0.0039 |
+| s3 | Qwen3.5-like | 2.1686 | 2.1733 | +0.0047 |
+
+- **No extra sensitivity from our components.** The signed-gate recurrence and mHC lose
+  0.004-0.005; the Qwen3.5-like arm loses 0.005-0.006.
+- **The lead over Qwen3.5-like holds or grows under 4-bit:**
+  - CKDA hybrid: -0.0134 -> -0.0141 at s2, -0.0035 -> -0.0041 at s3;
+  - CKDA + mHC-4: -0.053 -> -0.054 at s2.
+- **The cost shrinks with size** (s2 -> s3).
+- **Caveats:**
+  - **Method:** plain RTN, not Q4_K's optimized scales, so absolute deltas are an upper bound.
+  - **Checkpoints:** stable-phase, not cooled.
+
+### 12.9 Downstream and long-context evaluation of the cooled s3 models (user 2026-10-21)
+
+**Models.** Round 5's s3 runs, cooled 4000 -> 4800 (WSD to lr / 10, `screen5s3cool_s3`). Cooled
+training loss (paired, same data order):
+
+| arm | train loss (4700-4800) | gap to CKDA |
+|---|---:|---:|
+| CKDA + mHC-4 | 2.0952 | -0.035 |
+| CKDA 5:1 | 2.1304 | |
+| Qwen3.5-like | 2.1325 | +0.002 |
+
+**Method.** The in-Megatron evaluator (`DOWNSTREAM_EVAL_FILE`, Megatron 907935d56; no HF conversion
+exists for the hybrids) with lm-eval-harness prompts (`scripts/korbi/downstream/prepare_tasks.py`).
+Suites `ds5_s3` (full precision) and `ds5q4_s3` (4-bit weights).
+
+**Benchmarks** (acc in %; HellaSwag and ARC-C length-normalized; LAMBADA greedy last word):
+
+| task | CKDA + mHC-4 | CKDA | Qwen3.5-like | +- |
+|---|---:|---:|---:|---:|
+| HellaSwag | **41.7** | 40.0 | 41.1 | 1.1 |
+| ARC-Easy | 54.5 | 54.7 | 54.3 | 1.0 |
+| ARC-Challenge | 25.4 | 25.1 | 25.3 | 1.3 (chance 25) |
+| PIQA | **67.0** | 65.3 | 65.1 | 1.1 |
+| Winogrande | 52.3 | 52.4 | 51.5 | 1.4 |
+| LAMBADA (NLL / token) | **36.3 (3.02)** | 36.0 (3.17) | 30.4 (3.47) | 1.1 |
+| mean (HS, ARC-E, PIQA, Wino, LAMBADA) | **50.3** | 49.7 | 48.4 | |
+
+**Long context** (10-way, chance 0.10, 50 questions per length; training length 8k). The multi-key
+retrieval places 16 facts in natural text and asks for one; the passkey task saturates at 1.00 for
+all three at every length.
+
+| multi-key retrieval | 2k | 4k | 8k | 16k | 32k |
+|---|---:|---:|---:|---:|---:|
+| CKDA + mHC-4 | 0.96 | 0.86 | 0.88 | **0.82** | **0.84** |
+| CKDA | 0.90 | 0.86 | 0.88 | 0.50 | 0.24 |
+| Qwen3.5-like | 0.76 | 0.78 | 0.76 | 0.36 | 0.26 |
+
+- **Most benchmarks cannot separate the models at this size** (490M active, 2.5B tokens).
+- **LAMBADA does: about +6 points for both NoPE hybrids** over the Qwen3.5-like arm.
+- **mHC-4 gives length generalization in retrieval.** It holds 0.84 at 4x the training length,
+  where plain CKDA and the Qwen3.5-like arm fall to ~0.25. This was not expected.
+- **4-bit weights change nothing beyond noise:** benchmarks within +-1 point, LAMBADA -0.8,
+  retrieval unchanged (0.84 at 32k).
+- **Recipe confirmed:** CKDA 5:1 + mHC-4 leads on loss, matches or beats on benchmarks, and wins
+  clearly on long-context retrieval, all holding at Q4.
+
+**Results (2026-10-21).** Paired training loss at the end of the 800-step cooldown, s1. p = 0 is
+`screen5udecay`; radius, hyper and p = 1/2 at step 0.1 are `screen5udadapt`, which run the
+schedule in one job.
+
+| decay | s1 4700-4800 | gap to p = 1 | s2 (p = 1/2, step 0.2) |
+|---|---:|---:|---:|
+| p = 1 (default) | 2.2243 | | |
+| p = 1/2, direction step 0.1 | 2.2431 | **+0.019** | |
+| radius (c 0.0074, lambda 0.083: kappa -> 0.3) | 2.2436 | +0.019 | |
+| p = 1/2, direction step 0.2 | 2.2562 | +0.032 | +0.008 |
+| p = 0, direction step 0.05 | 2.2618 | +0.037 | |
+| hyper | stopped | | |
+
+- **hyper fails.** The gradient / previous-momentum correlation stays negative (-0.08 to -0.12,
+  gradient noise), so kappa hits its floor (0.02) by step 2000 and the loss stalls.
+- **radius adds nothing over p = 1/2** at this horizon.
+- **p = 1 keeps a ~0.02 lead at s1.** The horizon is short (4000 steps), the gaps were still
+  closing at the end of the cooldown, and the gap shrinks with size (untuned p = 1/2: s1 +0.032,
+  s2 +0.008).
+- **Recommendation for the main runs:** p = 1/2 with the direction step halved
+  (`angular_muown_extra_scale_factor` 0.1): kappa ~0.03 at 1M steps instead of p = 1's ~0.001.
+- **MuOwn's speed cost at production** is ~0.4 % (EP agent, corrected from 2 %).
+
+**KronLSTM's long-context retrieval in our setting** (`ds5kron_s3`; s3, step 4000, uncooled for all
+four; 10-way, 50 per length):
+
+| multi-key retrieval | 2k | 4k | 8k | 16k | 32k | LAMBADA acc (NLL) |
+|---|---:|---:|---:|---:|---:|---:|
+| KronLSTM, paper gates | 0.80 | 0.86 | 0.86 | 0.82 | 0.24 | 31.0 (3.52) |
+| KronLSTM, polar forget + erase | **0.98** | 0.88 | **0.94** | **0.94** | 0.20 | 29.6 (3.66) |
+| CKDA | 0.80 | 0.74 | 0.80 | 0.56 | 0.24 | 30.8 (3.53) |
+| CKDA + mHC-4 | 0.96 | **0.90** | 0.88 | 0.86 | **0.76** | **32.5 (3.39)** |
+
+- **The KronLSTM paper's retrieval advantage holds up to 2x the training length:** 0.82-0.94 vs
+  plain CKDA's 0.56 at 16k.
+- **At 4x it collapses with plain CKDA (~0.2).** Only mHC-4 generalizes there.
+- **CKDA + mHC-4 matches KronLSTM (polar) within 16k** and also leads on LAMBADA and loss.
+- **CKLSTM stays off the main run.**
+- **Untested:** KronLSTM polar + mHC-4.
+
+**Is the 4x breakdown softmax dilution?** (`ds5logn_s3`.) The same s3 step-4000 checkpoints, with
+parameter-free log-n attention scaling beyond 8k: query i scaled by max(1, log n_i / log 8192),
+`attention_length_scaling: logn`, Megatron 754aebf15. Multi-key retrieval, without -> with
+scaling (the <= 8k results are identical, as they must be):
+
+| model | 16k | 32k |
+|---|---:|---:|
+| KronLSTM, paper gates | 0.82 -> 0.88 | 0.24 -> 0.48 |
+| KronLSTM, polar gates | 0.94 -> 0.94 | 0.20 -> 0.28 |
+| CKDA | 0.56 -> 0.62 | 0.24 -> 0.40 |
+| CKDA + mHC-4 | 0.86 -> 0.88 | 0.76 -> **0.90** |
+| Qwen3.5-like | -> 0.30 | -> 0.24 |
+
+- **Dilution is a large part of it** for the NoPE models.
+- **Scaling does not fully recover the plain mixers;** mHC-4 still provides most of the length
+  generalization.
+- **The RoPE arm is not helped:** its failure is positional extrapolation.
+- **Next:** learnt SSMax in training (`attention_length_scaling: ssmax`, s per head, init 1 / log
+  base).
+
+### 12.10 Internal attention over the residual streams (IAT; user 2026-10-22)
+
+"Internal Attention: Growing Token Representations Without Growing the FFN or the KV Cache"
+(openreview LGFDpZioyZ): a token x = (x_c, x_m); per token, its k chunks attend to each other
+(shared c x c Q/K/V/O, learned chunk positions, pre-norm over d + m), after each temporal mixer;
+the FFN and head see x_c only. Evidence is tiny-scale (TinyStories d = 64: transformer 1.942,
+mHC-5 1.916, IAT 1.824; the variant with temporal attention on x_c only 1.955, appendix B).
+
+Megatron `mhc_internal_attention` (8d5fd0296, a2f7be60b) plugs into the mHC stream plumbing (4 streams =
+chunks, c = d, m = 3d; PP payload / recompute as mHC-4); mixers keep width d:
+`compute` (all sublayers on x_c = stream 0, memory starts at 0, head on x_c),
+`full` (each mixer reads a latent down(4d -> d) of all streams and writes up(d -> 4d): the
+paper's low-rank temporal mixing; +8 d^2 per mixer), `mhc` (mHC-4 + the internal attention).
+
+**screen5iat_s1** (array 47749014, ~42 GPU-h; cluster tests 34/34 passed): h5_moe_iat4 / h5_moe_iat4_full / h5_moe_mhc4_iat, round-5 protocol, paired
+with h5_moe / h5_moe_mhc4. Total params matched by whole routed experts (user: not by expert
+width, which would cost even more efficiency): IAttn +2.37M per mixer layer = 2 experts -> 142;
+full +7.08M = 6 experts -> 138; EP 2 (neither divides by 4), with a 300-step EP-2 mHC-4 speed
+reference in the same launch. Active params stay higher (+2.4M / +7.1M per block), reported with
+tok/s. (A first launch, array 47748532, matched via expert width 504 / 488: cancelled after 5 min.)
+
+**Result (stopped at step ~1100-1170 on the user's decision "stay with mHC-4"; ~23 GPU-h used).**
+Paired gaps (200-step windows, flat from step 700 on; + = worse), tok/s/GPU at EP 2 vs the
+EP-2 mHC-4 speed reference (29.1k):
+
+| arm | vs h5_moe | vs h5_moe_mhc4 | tok/s/GPU |
+|---|---:|---:|---:|
+| h5_moe_iat4 (x_c only) | -0.009 | +0.046 | 26.8k (-8 %) |
+| h5_moe_iat4_full (latent read / write) | +0.029 | +0.084 | 27.0k (-7 %) |
+| h5_moe_mhc4_iat (mHC-4 + IAttn) | -0.044 | +0.010..0.015 | 24.6k (-16 %) |
+
+At matched total params (whole experts traded for the internal attention), no IAT variant beats
+mHC-4, all are slower; the paper's full-width variant is worse than the plain residual here.
+**Decision: mHC-4 stays the residual.**
+
+### 12.11 AngularMuown at s2, expert offloading, CKLSTM status (2026-10-22)
+
+**AngularMuown decay, s2 confirmation** (`screen5udadapt_s2`, p = 1/2 at direction step 0.1, one job
+through the cooldown; paired with `screen5udcool_s2`'s p = 1 branch; + = worse):
+
+| s2 arm | 4000-4200 (stable end) | 4700-4800 (cooled) |
+|---|---:|---:|
+| p = 1/2, direction step 0.2 | +0.058 | **+0.008** |
+| p = 1/2, direction step 0.1 | +0.034 | +0.023 |
+
+The s1 recommendation (step 0.1) does not hold at s2: the larger step gains more from the cooldown
+and ends ahead. The direction step's optimum moves with size; no p = 1/2 setting matches p = 1
+at this horizon yet. Next: the PR's `angular_muown_simplified` (independent C/t direction rate)
+and `muown_classical` (Megatron feat/angular-muown-simplified; our `muown` keeps its name).
+
+**Expert offloading by MoE granularity** (`trace5_s{1,2}`, Megatron router_trace.py; decode at
+batch 1, a GPU cache holding a share f of all expert bytes, 16 sequences x 2048 tokens per layer;
+`expert_cache_sim.py`):
+
+| model | LRU f = 0.05 / 0.1 / 0.2 / 0.3 / 0.5 | static pinning f = 0.1 / 0.3 / 0.5 | prev-token reuse | experts touched per 256 tokens |
+|---|---|---|---:|---:|
+| s1 144 x w top-3 | 0.25 / 0.37 / 0.54 / 0.66 / 0.83 | 0.18 / 0.41 / 0.61 | 0.17 | 0.75 |
+| s1 288 x w/2 top-6 | 0.24 / 0.37 / 0.54 / 0.66 / 0.84 | 0.17 / 0.40 / 0.61 | 0.17 | 0.76 |
+| s2 144 x w top-3 | 0.21 / 0.33 / 0.50 / 0.63 / 0.82 | 0.13 / 0.38 / 0.59 | 0.14 | 0.79 |
+| s2 288 x w/2 top-6 | 0.24 / 0.36 / 0.53 / 0.65 / 0.83 | 0.15 / 0.38 / 0.60 | 0.16 | 0.78 |
+
+- **Granularity is not an offloading tie-breaker:** equal at s1, ×2 slightly better at s2
+  (+0.02-0.03 LRU hit rate at small caches).
+- **Caching itself buys little at a small cache:** consecutive tokens share only 14-17 % of their
+  experts (7-8x random) and a 256-token window touches ~3/4 of all experts. LRU beats static
+  pinning (the balanced router flattens frequencies). A GPU cache of 30 % of the expert bytes
+  serves ~2/3 of the expert reads; the rest stream from host memory.
+
+**CKLSTM vs CKDA so far** (paired gap vs CKDA h5_moe; the true signed arms were stopped early):
+
+| | s1 | s2 | s3 |
+|---|---:|---:|---:|
+| KronLSTM paper gates, low-rank | +0.009 (4000) | +0.002 (3170) | -0.002 (4000) |
+| polar forget + erase (sign unused: effectively unsigned) | +0.003 | -0.002 | -0.003 |
+| signed f, beta in [0, 2], unit write, full-rank gate | +0.013 (2320) | +0.030 (1480) | +0.021 (2490) |
+| CKDA + mHC-4 (reference) | -0.051 | -0.040 | -0.037 |
+
+### 12.12 CKLSTM vs CKDA and the new optimizers (launched 2026-10-22; budget raised to 8k GPU-h)
+
+CKLSTM is the only alternative mixer still considered (user: more expressivity, length
+extrapolation beyond retrieval). Every arm has mHC-4 (mixer lr x0.25) and the low-rank output gate,
+round-5 protocol, paired with that size's CKDA + mHC-4 (`h5_moe_mhc4`).
+
+- **A, `screen5ckl_s1`** (47800809, ~68 GPU-h), five parametrizations:
+  - `kron_mhc4`: paper gates;
+  - `ckl_sgn`: signed forget f in [-1, 1] (Complex KDA's gate, shipped init), erase beta in [0, 2], write c in [0, 1];
+  - `ckl_sgn_w2`: as `ckl_sgn` with c in [0, 2];
+  - `ckl_sgn_cpl`: erase and write coupled, both s beta in [0, 2] (Complex KDA's delta-rule structure);
+  - `ckl_polar_broad`: polar forget with the broad angle init (FLA ecd3df8: both signs and a spread
+    of magnitudes from step 0, the paper's short / long-memory spread kept).
+- **D, `screen5ckl_s2`** (47800811, ~54 GPU-h): `ckl_sgn` and `ckl_sgn_cpl` at s2.
+- **B, synthetic state tracking** (`scripts/korbi/synthetic/state_tracking.py`, job 47801220, ~3 GPU-h):
+  - tasks: parity, Z3, S3, S5 word problems, the running state predicted at every position;
+  - models: 2 layers of one mixer (KDA, CKDA, KronLSTM, the four CKLSTM variants), 2 seeds;
+  - trained at length 64, tested to 4096.
+- **C, the long-context set** (`prepare_tasks.py longctx` -> `requests_longctx.jsonl`, job 47801219;
+  evaluator: Megatron 3faedd827 "ppl" items):
+  - 64k long-document loss per position bin (24 finepdfs-edu documents);
+  - 64-fact multi-key retrieval at 4k-64k;
+  - variable tracking (8 chains x 4 hops) at 4k-64k;
+  - 16-fact retrieval and passkey at 64k.
+  - Suites `ds5lc(logn)_s2` on the s2 checkpoints (CKDA, + mHC-4, KronLSTM paper / polar), then
+    the SSMax, LDM and new CKLSTM s2 checkpoints.
+
+**Optimizers, `screen5opt_s{1,2}`** (47800810 / 47800812, ~130 GPU-h; Megatron with the
+AngularMuown PR: `angular_muown_simplified`, `muown_classical`). Stable to step 4000, then WSD to
+4800 in one job, paired with `screen5udcool`'s p = 1 / p = 1/2 branches.
+- `amsimp_c{2,8,22}`: direction rate C / (1 + t). Our p = 1 default moves square-matrix rows by
+  22 / (1000 + t) rad per step, so C = 22 has the same 1/t tail; its own cooldown runs over the same
+  800 steps, to 0.1 of the rate.
+- `muown_classical`: AngularMuown's defaults, persistent direction norms.
+- s2: C = 8 and `muown_classical`.
+
+**LDM's long-context retrieval** (`ds5ldm(logn)_s2`; round 5d's 2-node s2 trio, same setup and data
+order, step 4000, uncooled; multi-key retrieval, 10-way, 50 per length; log-n beyond 8k in brackets):
+
+| s2 arm | 2k | 4k | 8k | 16k | 32k | LAMBADA |
+|---|---:|---:|---:|---:|---:|---:|
+| CKDA (plain) | 0.70 | 0.74 | 0.70 | 0.70 (0.76) | 0.38 (0.64) | 31.8 |
+| CKDA + mHC-4 | 0.66 | 0.64 | 0.70 | 0.60 (0.68) | **0.50 (0.72)** | 33.9 |
+| CKDA + LDM x2.0 | 0.56 | 0.54 | 0.62 | 0.38 (0.48) | 0.20 (0.38) | **34.5** |
+
+LDM has the best loss and LAMBADA but the worst retrieval at every length, and none of mHC-4's
+length generalization. **mHC-4 stays the residual.**
+
+**Decision (user 2026-10-22): no SSMax.** The q/k-norm gains give a learnable (position-free)
+temperature, and NSA2's sparse selection later bounds the number of attended keys; eval-time log-n
+stays available. `screen5ssmax_s2` stopped (it had also hit a NODE_FAIL at step ~2700).
+
+**CKLSTM, first results (2026-10-22 evening).**
+
+A / D, paired gap vs CKDA + mHC-4 (+ = worse), 200-step windows; trend a + b ln t from step 1000:
+
+| arm | s1 @3900 | s1 10B (trend) | s2 @2300 | s2 10B (trend, short fit) |
+|---|---:|---:|---:|---:|
+| kron_mhc4 (paper gates) | +0.020 | +0.013 | | |
+| ckl_sgn (f in [-1, 1], beta [0, 2], c [0, 1]) | +0.021 | +0.003 | +0.007 | -0.032 |
+| ckl_sgn_w2 (c in [0, 2]) | +0.022 | -0.001 | | |
+| ckl_sgn_cpl (coupled erase / write) | +0.018 | +0.005 | +0.011 | +0.001 |
+| ckl_polar_broad | +0.015 (flat) | +0.018 | | |
+
+- **mHC-4 helps CKDA more than KronLSTM.** Without it, KronLSTM was +0.009 at s1; with it, +0.020.
+- **The signed variants close their gap steadily.** At s2, ckl_sgn goes from +0.032 at step 900 to
+  +0.007 at 2300. Its trend projects ahead of CKDA, but it is a drifting gap: the backtest overshot
+  such gaps by up to 0.015, so it needs the full run.
+
+B, state tracking (2 layers, trained at 64; best of 2 seeds; accuracy at 64 / 256 / 1k / 4k):
+
+| task | KDA / KronLSTM (unsigned) | CKDA | CKLSTM ckl_sgn / _w2 / _cpl / polar_broad |
+|---|---|---|---|
+| parity | 1.00 / 0.69 / 0.55 / 0.51 (both) | 1.00 / 1.00 / 0.80 / 0.58 | 4k: 0.54 / 0.91 / 0.57 / **0.96** |
+| Z3 | 1k: 0.45 | 1.00 / **0.96** / 0.51 / 0.37 | 256: 0.76-0.87 |
+| S3 | 0.42 / 0.39 at 64 (fail) | 1.00 / 1.00 / **0.98** / **0.69** | 1k: 0.48-0.63, 4k: 0.35-0.39 |
+| S5 | all fail (2 layers) | | |
+
+- **Signed gates are required:** unsigned KDA / KronLSTM fail parity beyond 64 and S3 even in distribution.
+- **CKLSTM generalizes parity furthest** (polar_broad 0.96 at 64x, write-[0, 2] 0.91).
+- **CKDA generalizes Z3 and S3 best.**
+
+C, the long-context set on the s2 checkpoints (step 4000, KronLSTM paper at 3000; uncooled; in
+brackets with eval-time log-n). Long-document NLL by position on 24 x 64k finepdfs-edu
+documents (trained at 8k):
+
+| model | 4-8k | 8-16k | 16-32k | 32-64k |
+|---|---:|---:|---:|---:|
+| CKDA | 2.535 | 2.554 | 2.355 | 2.367 (2.316) |
+| CKDA + mHC-4 | **2.488** | **2.509** | **2.314** | **2.353 (2.277)** |
+| KronLSTM paper | 2.597 | 2.647 | 2.689 | 3.038 (2.817) |
+| KronLSTM polar | 2.532 | 2.571 | 2.487 | 2.669 (2.550) |
+
+- **CKDA extrapolates the LM loss cleanly to 8x the training length; KronLSTM (paper / polar)
+  degrades past 16k.** The bins are the same documents, so compare models within a column.
+- **64-fact retrieval** (4k / 8k / 16k / 32k / 64k):
+  - CKDA 0.72 / 0.72 / 0.66 / 0.36 / 0.24 (log-n: 0.48 / 0.34 at 32k / 64k);
+  - CKDA + mHC-4 0.78 / 0.64 / 0.44 / 0.36 / 0.12 (log-n: **0.66 / 0.36**);
+  - KronLSTM paper 0.66 / 0.74 / 0.48 / 0.04 / 0.12.
+- **Variable tracking** is near chance for every s2 model: uninformative at this size.
+- **Passkey** at 64k is 1.00 for all.
+- The signed CKLSTM s2 checkpoints get the same evals when D finishes.
+
+### 12.13 Monitor gap: node failures were never acted on (2026-10-23)
+
+Overnight (2026-10-22/23) five s2 runs died and sat dead until checked by hand:
+- `ckl_sgn`, the 7:1 arm, `amsimp_c8` and p = 0: NODE_FAIL;
+- both `muown_classical` arms: host OOM at the step-500 save. Their extra per-row ||v|| state,
+  expanded to weight shape for the save, needs `ANGULAR_MUOWN_COMPACT_CKPT=1`.
+
+**Cause.** The training base inherited the speed-test base's state events (`speed_base_mn5.yaml`:
+"TIMEOUT -> finished", right for short speed tests). The monitor closes only COMPLETED / FAILED /
+CANCELLED on its own, so NODE_FAIL / OUT_OF_MEMORY / TIMEOUT left a run "active" and never acted on,
+and FAILED was closed without a retry.
+
+**Fix.** `base_train_mn5.yaml` now has its own `job.state_events`, as `config/job/array_task.yaml`:
+- bounded retries that resume from the rolling checkpoint: NODE_FAIL x3, FAILED x2, TIMEOUT x2,
+  OUT_OF_MEMORY x1;
+- each re-reads the shared MN5 exclusion list (`mn5_exclude_nodes.txt`) before resubmitting;
+- then gives up.
+
+It applies to launches from this commit on; monitors already running keep their plan-time config.
+
+**Second gap (found on the retry, 2026-10-23).** The MN5 sbatch template ran `srun ...` followed by
+`echo` lines, so every job ended COMPLETED 0:0, even when its training step FAILED or was OOM-killed
+(sacct: step OUT_OF_MEMORY 0:125, job COMPLETED 0:0). The monitor closed those as finished, so the
+FAILED / OUT_OF_MEMORY retries could never fire. `templates/marenostrum.sbatch` now exits with the
+step's status.
+
+**muown_classical at s2 still does not fit.** Peak host RSS at the step-500 save was 479 GB with
+compact checkpoints and 4 x 2 workers (AngularMuown at s2: 472 GB, plain Muon: 307 GB; 503 GB nodes).
+A node lost mid-save also left `iter_0000500` incomplete, so the retry could not load
+(`auto_restart_ckptreset` handles that rollback).
+
+### 12.14 Optimizer study and CKLSTM s2 results so far (2026-10-23)
+
+**Screen protocol** (stable to 4000, WSD to lr / 10 at 4800; cooled loss 4700-4800, paired gap vs
+p = 1; + = worse):
+
+| s1 | gap | s2 | gap |
+|---|---:|---|---:|
+| p = 1 (default) | 0 | p = 1 | 0 |
+| C/t, C = 22 | +0.005 | Muon + WD 0.1 | +0.006 |
+| muown_classical + v WD 0.01 | +0.010 | p = 1/2 (step 0.2) | +0.008 |
+| Muon + WD 0.1 | +0.012 | radius | +0.013 |
+| muown_classical | +0.013 | p = 1/2, step 0.1 | +0.023 |
+| p = 1/2, step 0.1 / + v WD 0.1 / radius | +0.019 | p = 0 (step 0.2) | +0.082 |
+| C/t, C = 8 | +0.028 | | |
+| p = 1/2 (step 0.2) | +0.032 | | |
+| p = 0 (step 0.25) | +0.037 | | |
+| C/t, C = 2 | +0.196 | | |
+
+s2 muown_classical (+/- v WD) does not fit a 1-node host at the save (~470-480 of 503 GB): it reruns
+on 2 nodes with its own 2-node p = 1 reference (`screen5opt4_s2`).
+
+**Long horizon** (`opttiny2`: hidden 384 x 8 blocks, 7:1 + mHC-4, 16 x 384 top-2 MoE, 2k context,
+no masking, 1 GPU per arm, 1.6B tokens, WSD with the last 10 % as cooldown; gap vs p = 1):
+
+| gbs 8 x 2k, 100k steps | @20 % | @50 % | @90 % (stable end) | final (cooled) |
+|---|---:|---:|---:|---:|
+| muown_classical | -0.011 | -0.028 | -0.043 | **-0.075** |
+| muown_classical + v WD 0.01 | +0.019 | +0.033 | +0.038 | -0.064 |
+| p = 1/2 | +0.063 | +0.045 | +0.021 | -0.057 |
+| p = 0, step 0.05 | +0.090 | +0.126 | +0.151 | -0.032 |
+| C/t, C = 8 | +0.047 | +0.075 | +0.080 | +0.085 |
+| AdamW (2e-3, 1000 warmup) | +0.30 | +0.65 | +0.32 | +0.094 |
+
+- gbs 32 x 2k, 25k steps (same tokens): p = 1 best, Muon + WD +0.039, p = 0 (step 0.2) +0.124.
+- 7 arms died at startup (co-located 1-GPU torchruns on one MASTER_PORT) and are rerunning with a
+  per-job port: gbs 8 radius / C = 22 / p = 0 step 0.2 / v WD 0.1 / Muon + WD; gbs 32 the two
+  classical arms.
+- **Reading: the horizon effect shows.** p = 1 wins every 4800-step screen; at 100k steps the
+  variants whose rotation does not vanish overtake it, and the paper's muown_classical (horizon-free
+  ~t^-1/2 annealing per row) leads.
+- Caveats: one seed, a tiny model; gbs 8 is a very noisy regime (its loss is ~0.4 above gbs 32 at
+  equal tokens).
+
+**Angular time does not collapse the curves.** Fitting L = E + A tau^-alpha in tau = the
+cumulative per-row rotation (sum of kappa, or C / (1 + t)) instead of steps:
+- the exponents still range 0.24-0.84 over the kappa schedules;
+- the C/t fits degenerate (tau ~ C ln t);
+- p = 1 and radius reach the same tau(4000) = 35 rad but differ by 0.019 cooled;
+- backtests are no better (radius ~0).
+
+The row magnitudes (Adam, constant lr) learn in step time, so rotation is not a sufficient
+statistic. Paired step comparisons plus long-horizon runs stay the tools.
+
+**CKLSTM vs CKDA + mHC-4 at s2** (all + mHC-4; paired gap; trend a + b ln t from step 1000):
+
+| arm | @1000 | @2000 | @3000 | @4000 | -> 4B / 10B |
+|---|---:|---:|---:|---:|---|
+| ckl_sgn | +0.027 | +0.009 | +0.005 | +0.004 | -0.004 / -0.014 |
+| ckl_sgn_cpl | +0.016 | +0.012 | +0.009 | +0.007 | +0.003 / -0.002 |
+| ckl_sgn_w2 | +0.045 | +0.022 | +0.017 | +0.014 | +0.004 / -0.008 |
+
+- The step-4000 gap halves from s1 to s2.
+- 64-fact retrieval at 4k / 8k / 16k / 32k / 64k (log-n beyond 8k in brackets):
+  - CKDA + mHC-4: 0.78 / 0.64 / 0.44 / 0.36 (0.66) / 0.12 (0.36);
+  - ckl_sgn_cpl: 0.78 / 0.84 / 0.78 / 0.60 (0.74) / 0.10 (0.22);
+  - ckl_sgn_w2: 0.44 / 0.46 / 0.30 / 0.18 / 0.10.
+- Long-document loss at 32-64k: CKDA + mHC-4 2.353 (2.277); cpl 2.445 (2.340); w2 2.398 (2.334).
+- ckl_sgn's long-context eval follows (ds5lcckl3); the s3 confirmation waits for it (user).
+- ckl_sgn: 0.80 / 0.84 / 0.68 (0.76) / 0.56 (0.74) / 0.24 (0.42); long-document loss 2.495 (2.317).
+  CKDA keeps the better long-document loss, so the s3 run `screen5ckl3_s3` (ckl_sgn + mHC-4) finishes
+  the comparison (user).
+
+**7:1 + mHC-4 at s2, long context** (ds5lcr7, ds5lcr7logn; same eval set as above; log-n in brackets):
+
+| s2 model | NLL 16-32k | NLL 32-64k | kvret64 4k / 8k / 16k / 32k / 64k | kvret16 @64k | passkey 64k |
+|---|---:|---:|---|---:|---:|
+| 5:1 + mHC-4 | 2.314 (2.289) | 2.353 (2.277) | 0.78 / 0.64 / 0.44 / 0.36 / 0.12 (0.56 / 0.66 / 0.36 beyond 8k) | 0.36 (0.68) | 1.0 |
+| 7:1 + mHC-4 | 2.293 (2.281) | 2.281 (2.253) | 0.80 / 0.76 / 0.72 / 0.64 / 0.62 (0.70 / 0.66 / 0.68) | 0.78 (0.90) | 1.0 |
+
+- 7:1 is better at every length and on every long-context metric. Without log-n it holds
+  0.62 retrieval at 64k, where 5:1 falls to 0.12. Its 32-64k loss is 0.07 lower.
+- This is the opposite of "more attention layers = better retrieval". One plausible reason: with fewer
+  attention layers, each one carries the retrieval alone and sharpens more. One seed, 50 questions per bin
+  (standard error ~0.07), so the 4-16k differences are within noise; the 32-64k ones are not.
+- It supports the 7:1 choice; log-n at eval adds a little on top (0.68 at 64k).
+
+**Why log-trend extrapolation fails for the optimizers** (2026-10-23). Every stable-phase gap to p=1 at s1
+and s2 grows over steps 1000-4000. Fitting a + b ln t then puts every arm further behind with more tokens,
+e.g. muown_classical s1 +0.055 at 4000 -> +0.09 at 10B tokens. The tiny runs show this shape is
+non-monotone, because p=1's direction decay acts as a hidden annealing early on and a freeze later.
+Classical vs p=1, gbs 8: +0.001 / +0.088 / +0.117 / +0.071 / +0.012 / -0.006 / -0.041 at
+2k / 4k / 5k / 10k / 15k / 20k / 90k steps. The peak is at ~5k steps and p=1 is overtaken at ~18k.
+At gbs 32 the gap stays at +0.005-0.008 up to 15k steps. The screens end at 4800 steps, i.e.
+before the peak, so their trends say nothing about the production horizon (~10^5 steps).
+The 2-node s2 classical run vs its own am_p1 is at -0.003 at 2000 steps (s1 at the same step: +0.038).
+
+**Update 18:10, 2026-10-23.**
+- Tiny, gbs 32, 25k steps, classical Muown vs p=1: +0.005 / +0.008 / +0.005 / +0.000 / -0.002 at
+  5k / 10k / 15k / 20k / 22.5k steps (stable), and -0.025 after the cooldown. The crossover sits at
+  ~20k steps, as at gbs 8 (~18k): it is set by step count, not by tokens.
+  - cl_wd01 +0.021, muon_wd +0.039, p0_s02 +0.124 (cooled).
+- s2, 2-node, vs its own am_p1 (step 4050 of 4800):
+  - classical: -0.018 / -0.003 / +0.006 / +0.011 at 1k / 2k / 3k / 4k;
+  - cl_wd01: -0.017 / +0.007 / +0.024 / +0.038.
+  - Same shape as s1 (classical +0.055 at 4k), but 5x smaller.
+- amsimp_c8 at s2: +0.032 at 4000, +0.011 cooled.
+- Tiny gbs 8 reruns at ~50k steps: amsimp_c22 -0.008 (crossed at ~25k); radius +0.16, cl_wd01 +0.25,
+  muon_wd +0.29, p0_s02 +0.67 (stable).
+- CKLSTM s3 (ckl_sgn + mHC-4 vs CKDA + mHC-4, paired): +0.128 / +0.017 / +0.009 / +0.005 / +0.0038
+  / +0.0037 at 500 / 1000 / 1500 / 2000 / 3000 / 3500. Trend -0.0035 at 4B, -0.010 at 10B tokens
+  (s2: -0.004 / -0.014). The gap shrinks at the same rate as at s2, not faster.
+
+**Does classical Muown grow out of bounds?** Measured in the tiny gbs-8 checkpoints (90k and 100k steps,
+the cooldown in between; init row norm 0.02 sqrt(384) = 0.39). Muown has no weight decay on v or g (paper).
+- ||v|| median: 20-24 (max 83). That is ~50x the init, exactly sqrt(0.39^2 + (0.063)^2 t). The rotation
+  per step falls from ~0.16 to ~3e-3 rad. ||v|| is optimizer state only (W = g v / ||v||), so it never
+  overflows. The risk is the endless annealing: by the same law ~1.4e-3 rad/step at ~5e5 steps.
+- g (Adam, no weight decay): medians 0.4-2.7, max 19. It grows 1-4 % from 90k to 100k, and p=1's g is
+  the same (medians 0.4-2.5, max 18.6). The magnitudes are not specific to classical Muown.
+- s2 cooled (step 4800): classical +0.0037, cl_wd01 +0.0045 vs p=1 (s1: +0.013 / +0.023).
+
+**CKLSTM vs CKDA at s3, long context** (ds5lcs3, ds5lcs3logn; both + mHC-4, step 4000; log-n in brackets):
+
+| s3 | NLL 16-32k | NLL 32-64k | kvret64 4k / 8k / 16k / 32k / 64k | kvret16 @64k | passkey 64k |
+|---|---:|---:|---|---:|---:|
+| CKDA | 2.276 (2.260) | 2.284 (2.244) | 0.88 / 0.90 / 0.56 (0.70) / 0.50 (0.64) / 0.30 (0.60) | 0.60 (0.90) | 1.0 |
+| ckl_sgn | 2.432 (2.336) | 2.705 (2.430) | 0.86 / 0.60 / 0.36 (0.42) / 0.22 (0.40) / 0.04 (0.14) | 0.14 (0.32) | 1.0 |
+
+- s3 widens the long-context gap that s2 showed. The 32-64k loss gap goes from +0.14 (s2) to +0.42
+  (+0.19 with log-n). CKLSTM's s2 retrieval lead at 8-32k becomes a deficit from 8k on.
+- Pre-training loss: +0.0037 at 4000 at both s2 and s3. The trend crosses zero at ~4B tokens (-0.010 at 10B).
+- Recommendation: CKDA as the mixer.
+
+**Quantization robustness per optimizer** (quantopt_*; final cooled checkpoints; validation loss on
+the same batches: full precision, weight-only RTN 4- and 3-bit in groups of 32, as §12.8):
+
+| set | arm | full | 4-bit (delta) | 3-bit (delta) |
+|---|---|---:|---:|---:|
+| s2, step 4800 | am_p1 | 2.0766 | 2.0818 (+0.0051) | 2.1022 (+0.0256) |
+| | muown_classical | 2.0799 | 2.0853 (+0.0054) | 2.1054 (+0.0256) |
+| | muown_cl_wd01 | 2.0789 | 2.0837 (+0.0048) | 2.1021 (+0.0231) |
+| tiny gbs 32, 25k | am_p1 | 2.7497 | 2.7738 (+0.024) | 2.8724 (+0.123) |
+| | muown_classical | 2.7238 | **2.7441** (+0.020) | 2.8232 (+0.099) |
+| | muown_cl_wd01 | 2.7641 | 2.7771 (+0.013) | 2.8315 (+0.067) |
+| | muon_wd | 2.7830 | 2.8024 (+0.019) | 2.8913 (+0.108) |
+| | am_p0_s02 | 2.8637 | 2.8732 (+0.010) | 2.9090 (+0.045) |
+| tiny gbs 8, 100k | am_p1 | 3.2662 | 3.3641 (+0.098) | 3.7349 (+0.469) |
+| | muown_classical | 3.1882 | **3.2357** (+0.048) | 3.4458 (+0.258) |
+| | muown_cl_wd001 | 3.1945 | 3.3055 (+0.111) | 3.5304 (+0.336) |
+| | am_p05 | 3.2041 | 3.2737 (+0.070) | 3.4803 (+0.276) |
+| | am_p0_s005 | 3.2210 | 3.2632 (+0.042) | 3.3874 (+0.166) |
+| | amsimp_c8 | 3.3523 | 3.4232 (+0.071) | 3.6996 (+0.347) |
+| | adamw | 3.3512 | 3.3698 (+0.019) | 3.4823 (+0.131) |
+
+- s2: all three lose the same amount (+0.005 at 4-bit). The optimizer does not matter at this scale
+  and horizon.
+- Tiny, long horizon: the annealing-vs-quantization link shows. p=1, the strongest direction decay,
+  loses most (2x classical at gbs 8). No direction decay (p=0, AdamW) loses least.
+- Classical Muown loses less than p=1 everywhere it differs, and is the best model after 4-bit in
+  both tiny sets (and within 0.004 at s2). No sign that its shrinking steps make brittle weights.
+- The tiny model's 4-bit cost (+0.02-0.10) is far above s2's (+0.005): small matrices quantize badly.
+
+**Attention first (screen5r7af_s2 vs screen5r7_s2, paired, 7:1 + mHC-4):** -0.0025 / +0.0001 /
++0.0011 / +0.0009 at 1000 / 2000 / 3000 / 4000. Neutral within noise (trend +0.003 / +0.006 at
+4B / 10B). The paper's gain (multilingual distillation) does not show in our pre-training loss. The
+layout is kept by decision (user 2026-10-23).
+
+**Decisions (user, 2026-10-24).** Mixer CKDA (CKLSTM dropped after s3). Optimizer classical Muown,
+no weight decay on v or g, plain 1/sqrt(t) direction rate (no warm-start offset). Optional for later
+stages: the v_norm reset, not built yet.
