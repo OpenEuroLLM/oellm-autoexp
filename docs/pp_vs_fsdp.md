@@ -241,6 +241,43 @@ Two MoonEP bugs under Megatron-FSDP (Megatron moonep.py):
   --tokens 32768 --groups 16 --key-dim 8 --value-dim 128 --running-covariance-dtype float32
   --edges 97`.
 
+### Shared-expert overlap, muown_classical on FSDP (2026-10-24, e7 / e9b, same setup, mbs 4)
+
+| arm | tok/s/GPU | TFLOP/s | mem |
+|---|---:|---:|---:|
+| e_db_ovl: mHC-4 + `moe_shared_expert_overlap` (Adam) | 7,605 | 129.4 | 0.83 |
+| e_db_plain_ovl: PreNorm + overlap (Adam) | 8,865 | 150.9 | 0.65 |
+| **e_db_mc: mHC-4 + overlap, muown_classical** | **7,646** | **130.1** | **0.79** |
+
+- **Muon / AngularMuown / MuownClassical on Megatron-FSDP** (Megatron `fsdp_row_exchange.py`):
+  Megatron-FSDP's optimizer shards are row-aligned (uneven `Shard(0)`), so every per-row state
+  stays on its rank; Newton-Schulz runs on one owner rank per matrix (the rank holding most of
+  its rows), rows moved by `all_to_all` in rounds in the optimizer's parameter order. One FSDP
+  DistributedOptimizer wraps a composite inner optimizer (muown for the matrices, Adam for the
+  rest). The production optimizer costs nothing over Adam. 4-GPU equivalence test (uneven / empty
+  shards, weights + every row state over 4 steps) passes. FSDP checkpoints: the SwiGLU / GDN
+  state split hard-coded Adam's keys (fixed: any parameter-shaped state split like the weight,
+  `[rows, 1]` row states by rows); save / exact-resume check pending.
+
+### LDM under FSDP: where the time goes (1-node profiles, LDM K 8 vs mHC-4, mbs 2)
+
+| | LDM | mHC-4 |
+|---|---:|---:|
+| step | 7.5 s | 3.5 s |
+| offload memcpy (D2H + H2D of the checkpoints) | 3.86 s | 0.67 s |
+| GPU idle | 15 % | 1.6 % |
+| SegmentEnter / Exit copies + fold math | ~1.7 s | - |
+| the LDM state kernels (CuTe) | 0.42 s | - |
+
+The LDM math is small. Its cost is `depth_memory_segments` carrying the state (M: G K D bf16
+= 8 hidden-sizes per token, plus P) inside the streams: every per-layer checkpoint is ~10.5
+hidden-sizes wide (2 for mHC's x / r per sublayer), so the recompute offload moves ~5x mHC-4's
+bytes over PCIe (and host-OOMs at mbs 4). Fewer chunks help (4 layers per chunk: 4,956 tok/s/GPU,
++16 %), but the fix is structural: per-sublayer checkpoints of (x, r) only, and in the backward a
+closed-form unwind of the state (u_e = (vbar - M_e^T kbar) / (1 - kappa . kbar),
+M_{e-1} = M_e - kappa u^T; P by a rank-1 downdate with snapshots every few layers), so no state
+is checkpointed, copied or offloaded.
+
 ## 5. Next
 
 1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
