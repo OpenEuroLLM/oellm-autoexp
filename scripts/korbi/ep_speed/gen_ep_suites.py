@@ -1798,7 +1798,8 @@ def ckpt_offload():
     smoke_eng = (*e_base, dbuf, sovl, mc_fix, eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
                  {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
                   B + "micro_batch_size": 2, B + "train_iters": 8,
-                  "backend.env.MEGATRON_DEBUG_OPT_STATE": "1"})
+                  "backend.env.MEGATRON_DEBUG_OPT_STATE": "1",
+                  "backend.env.MEGATRON_DEBUG_OPT_STATE_STEPS": "5"})
     arm("g_eng_save", "Engram smoke, save at step 4", *smoke_eng,
         {B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 4,
          "aux.array_tag": "_g_eng_save",

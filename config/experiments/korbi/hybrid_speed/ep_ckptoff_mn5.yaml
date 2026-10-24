@@ -10831,6 +10831,7 @@ sweep:
           aux.nodes: 1
           slurm.sbatch.nodes: 1
           backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
+          backend.env.MEGATRON_DEBUG_OPT_STATE_STEPS: '5'
           backend.megatron.save: ${job.base_output_dir}/ckpt
           backend.megatron.save_interval: 4
           backend.env.MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/optstate_g_eng_save
@@ -10938,6 +10939,7 @@ sweep:
           aux.nodes: 1
           slurm.sbatch.nodes: 1
           backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
+          backend.env.MEGATRON_DEBUG_OPT_STATE_STEPS: '5'
           backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g27_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 4
           backend.env.MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/optstate_g_eng_resume
@@ -11045,6 +11047,7 @@ sweep:
           aux.nodes: 2
           slurm.sbatch.nodes: 2
           backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
+          backend.env.MEGATRON_DEBUG_OPT_STATE_STEPS: '5'
           backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g27_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 4
           backend.env.MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/optstate_g_eng_reshard2n
