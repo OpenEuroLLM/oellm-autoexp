@@ -10501,6 +10501,7 @@ sweep:
           backend.megatron.min_lr: 0.00025
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.activation_func_clamp_value: 10.0
           backend.megatron.engram_ngram_orders: [2, 3]
           backend.megatron.engram_num_heads: 8
           backend.megatron.engram_embed_dim: 64
@@ -10603,6 +10604,7 @@ sweep:
           backend.megatron.min_lr: 0.00025
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.activation_func_clamp_value: 10.0
           backend.megatron.engram_ngram_orders: [2, 3]
           backend.megatron.engram_num_heads: 8
           backend.megatron.engram_embed_dim: 64

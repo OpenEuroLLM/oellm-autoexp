@@ -1769,7 +1769,9 @@ def ckpt_offload():
                 B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16",
                 "backend.env.ENGRAM_STEP_LOOKUP": "1", "backend.env.ENGRAM_STEP_GROUP": str(group),
                 "backend.env.ENGRAM_SPARSE_GRAD": "1"}
-    mc_fix = dict(mc, **{B + "residual_mixer_lr_mult": 0.25})
+    # production settings: the mixer lr multiplier, the SwiGLU clamp (DeepSeek-V4.1, user
+    # 2026-10-24: adopt; MoonEP honours it from Megatron d68800c21)
+    mc_fix = dict(mc, **{B + "residual_mixer_lr_mult": 0.25, B + "activation_func_clamp_value": 10.0})
     arm("g_eng_smoke", "smoke: Engram (dp tables) under FSDP + MoonEP, mHC-4, muown_classical, 1 node",
         *e_base, dbuf, sovl, mc_fix,
         eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
