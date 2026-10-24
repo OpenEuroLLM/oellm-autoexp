@@ -1816,6 +1816,9 @@ def ckpt_offload():
                      B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g36_ckptoff/dense/ckpt",
                      B + "ckpt_step": 4, "aux.array_tag": "_g_eng_reshard2n",
                      "backend.env.MEGATRON_DEBUG_OPT_STATE_FILE": "${job.base_output_dir}/optstate_g_eng_reshard2n"})
+    arm("g_eng_fresh2n", "Engram smoke on 2 nodes from scratch (the reshard arm's control)",
+        *smoke_eng, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 16,
+                     "aux.array_tag": "_g_eng_fresh2n"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
               B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
               # a checkpoint at step 6: fsdp_dtensor with 40B Engram + Muown's row states (host
