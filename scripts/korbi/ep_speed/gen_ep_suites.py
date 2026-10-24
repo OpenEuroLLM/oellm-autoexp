@@ -981,7 +981,7 @@ def shared_overlap():
            B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
            B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8,
            "aux.gbs": 2048, B + "train_iters": 10,
-           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep",
+           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/cache/triton_ep",
            "aux.array_tag": "_moonmemfla_q35"}
     arm("s_hyb_ref", "hybrid plain, 2 x 8k, MoonEP, GC (reference)", base, hyb, moon)
     arm("s_hyb_shov", "hybrid plain, 2 x 8k, MoonEP, GC + shared-expert overlap", base, hyb, moon, ovl)
@@ -1581,7 +1581,7 @@ def ckpt_offload():
         {B + "moe_token_dispatcher_type": "alltoall", "aux.array_tag": "_f_fsdp_a2a"})
     arm("f_fsdp_plain_trace", "7:1 PreNorm, Megatron-FSDP + EP4, MoonEP, memory trace (iteration 1)",
         *f_base, resa, fsdp, PLAIN,
-        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain",
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_plain",
          # the OOM is in the first step = iteration 0 of the trace hook (1 never came); every rank
          # (the OOM hits varying ranks, rank 0 survived): each dumps its own _oom snapshot
          "backend.env.MEM_TRACE_ITER": "0",
@@ -1590,7 +1590,7 @@ def ckpt_offload():
     arm("f_fsdp_plain_a2a_trace", "... all-to-all dispatcher (fits), memory trace (iteration 2)",
         *f_base, resa, fsdp, PLAIN,
         {B + "moe_token_dispatcher_type": "alltoall",
-         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain_a2a",
+         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_plain_a2a",
          "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
          "aux.array_tag": "_f_fsdp_a2a_trace"})
     # 1-node versions of the f3 diagnostics (start sooner): a leak of FSDP's unsharded gradient
@@ -1599,13 +1599,13 @@ def ckpt_offload():
              "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 8}  # > 5 warmup steps
     arm("f_smoke_trace", "smoke + memory trace: Megatron-FSDP + EP4, MoonEP, 8 blocks", *f_base, resa,
         fsdp, PLAIN, smoke,
-        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke",
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_smoke",
          "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
          "aux.array_tag": "_f_smoke_trace"})
     arm("f_smoke_a2a_trace", "smoke + memory trace: Megatron-FSDP + EP4, all-to-all dispatcher",
         *f_base, resa, fsdp, PLAIN, smoke,
         {B + "moe_token_dispatcher_type": "alltoall",
-         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke_a2a",
+         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_smoke_a2a",
          "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
          "aux.array_tag": "_f_smoke_a2a_trace"})
     # c: PP vs FSDP at the 128-node batch regimes (user 2026-10-23), emulated on 8 nodes: what sets
@@ -1759,7 +1759,7 @@ def ckpt_offload():
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
-        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_mhc4_hep",
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_mhc4_hep",
          "backend.env.MEM_TRACE_ITER": "0",
          "backend.env.MEM_TRACE_RANKS": ",".join(str(r) for r in range(32)),
          "aux.array_tag": "_c_z3_mhc4_hep_trace"})

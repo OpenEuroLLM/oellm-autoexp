@@ -247,7 +247,7 @@ sweep:
           aux.topk: 8
           aux.gbs: 2048
           backend.megatron.train_iters: 10
-          backend.env.TRITON_CACHE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep
+          backend.env.TRITON_CACHE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/cache/triton_ep
         # Qwen3.5-like, 4k mbs 4, MoonEP, GC + shared-expert overlap
         - aux.arm: s_q35_shov
           aux.pattern: GEGEGE*EGEGE|GE*EGEGEGE*E|GEGEGE*EGEGE|GE*EGE|GEGE*EGEGEGE|*EGEGEGE*EGE|GEGE*EGEGEGE|*E
@@ -297,5 +297,5 @@ sweep:
           aux.topk: 8
           aux.gbs: 2048
           backend.megatron.train_iters: 10
-          backend.env.TRITON_CACHE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep
+          backend.env.TRITON_CACHE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/cache/triton_ep
           backend.megatron.moe_shared_expert_overlap: true

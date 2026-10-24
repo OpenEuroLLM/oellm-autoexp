@@ -6446,7 +6446,7 @@ sweep:
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
           backend.megatron.ckpt_format: fsdp_dtensor
-          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain
+          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_plain
           backend.env.MEM_TRACE_ITER: '0'
           backend.env.MEM_TRACE_RANKS: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
         # ... all-to-all dispatcher (fits), memory trace (iteration 2)
@@ -6525,7 +6525,7 @@ sweep:
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
           backend.megatron.ckpt_format: fsdp_dtensor
-          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_plain_a2a
+          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_plain_a2a
           backend.env.MEM_TRACE_ITER: '2'
           backend.env.MEM_TRACE_RANKS: '0'
         # smoke + memory trace: Megatron-FSDP + EP4, MoonEP, 8 blocks
@@ -6606,7 +6606,7 @@ sweep:
           backend.megatron.ckpt_format: fsdp_dtensor
           aux.nodes: 1
           slurm.sbatch.nodes: 1
-          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke
+          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_smoke
           backend.env.MEM_TRACE_ITER: '2'
           backend.env.MEM_TRACE_RANKS: '0'
         # smoke + memory trace: Megatron-FSDP + EP4, all-to-all dispatcher
@@ -6687,7 +6687,7 @@ sweep:
           backend.megatron.ckpt_format: fsdp_dtensor
           aux.nodes: 1
           slurm.sbatch.nodes: 1
-          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_smoke_a2a
+          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_smoke_a2a
           backend.env.MEM_TRACE_ITER: '2'
           backend.env.MEM_TRACE_RANKS: '0'
         # plain, PP4 x VPP2, mbs 2, gbs 512 (m 32 = gbs 8192 at 128 nodes)
@@ -10591,7 +10591,7 @@ sweep:
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
           backend.megatron.ckpt_format: fsdp_dtensor
-          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/memtrace/fsdp_mhc4_hep
+          backend.env.MEM_TRACE_DIR: /gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_mhc4_hep
           backend.env.MEM_TRACE_ITER: '0'
           backend.env.MEM_TRACE_RANKS: 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
         # smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts
