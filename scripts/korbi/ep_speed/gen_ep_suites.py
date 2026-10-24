@@ -1731,6 +1731,13 @@ def ckpt_offload():
     arm("e_db_mc_ckpt", "e_db_mc, 12 steps, checkpoint at step 6 and 12", *e_base, dbuf, sovl, mc,
         {B + "train_iters": 12, B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 6,
          "aux.array_tag": "_e_db_mc_ckpt"})
+    # e10: LDM is PCIe bound (1-node profile: 3.9 s of offload memcpy per 7.5 s step vs 0.7 s for
+    # mHC-4: every checkpoint carries the 8.5-slot state) -> fewer checkpoints, no offload
+    for rn in (4, 8):
+        arm(f"e_db_ldm8_rn{rn}_nooff", f"LDM K 8, FSDP + MoonEP, double buffer, mbs 2, {rn} layers per "
+            "chunk, no checkpoint offload", *e_base, dbuf, ldm, sovl,
+            {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
+             "backend.env.RECOMPUTE_OFFLOAD": "0", "aux.array_tag": f"_e_db_ldm8_rn{rn}_nooff"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
