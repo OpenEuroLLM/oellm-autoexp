@@ -53,7 +53,10 @@ HF_DATASETS = [  # (repo id, config or None) -- the external table's benchmarks 
     ("ltg/noridiom", None), ("Helsinki-NLP/tatoeba_mt", "eng-nor"), ("Helsinki-NLP/tatoeba", None),
 ]
 # script-based datasets the current `datasets` refuses: Hugging Face's auto-converted parquet branch
-PARQUET_FALLBACK = ["allenai/math_qa", "tatsu-lab/alpaca_eval"]
+PARQUET_FALLBACK = [("allenai/math_qa", None), ("csebuetnlp/xlsum", "spanish"), ("PlanTL-GOB-ES/wnli-es", None),
+                    ("GEM/OrangeSum", None), ("moussaKam/OrangeSum", None), ("asi/wikitext_fr", None)]
+# single data files of a dataset repo
+HF_FILES = [("tatsu-lab/alpaca_eval", "alpaca_eval.json")]
 # lm-eval groups whose subtasks are fetched one by one (one script-based or gated subtask fails a whole group)
 LM_EVAL_GROUPS = ["spanish_bench", "catalan_bench", "french_bench", "basque_bench"]
 # files outside the Hub: DeepSeek-Coder's LeetCode contest benchmark
@@ -113,14 +116,27 @@ def main():
                 print(f"FAIL lm-eval {g}/{t}: {type(e).__name__}: {str(e)[:160]}", flush=True)
 
     from datasets import get_dataset_config_names, load_dataset
-    for repo in PARQUET_FALLBACK:
+    for repo, cfg in PARQUET_FALLBACK:
         try:
-            load_dataset(repo, revision="refs/convert/parquet")
+            load_dataset(repo, cfg, revision="refs/convert/parquet") if cfg else \
+                load_dataset(repo, revision="refs/convert/parquet")
             report["hf_ok"].append(f"{repo}@parquet")
             print(f"ok   hf {repo}@parquet", flush=True)
         except Exception as e:
             report["hf_failed"][f"{repo}@parquet"] = f"{type(e).__name__}: {str(e)[:200]}"
             print(f"FAIL hf {repo}@parquet: {type(e).__name__}: {str(e)[:160]}", flush=True)
+    from huggingface_hub import hf_hub_download
+    import shutil
+    for repo, fn in HF_FILES:
+        try:
+            p = hf_hub_download(repo, fn, repo_type="dataset")
+            os.makedirs(os.path.join(os.environ["HF_HOME"], "files"), exist_ok=True)
+            shutil.copy(p, os.path.join(os.environ["HF_HOME"], "files", repo.replace("/", "__") + "__" + fn))
+            report["hf_ok"].append(f"{repo}/{fn}")
+            print(f"ok   hf file {repo}/{fn}", flush=True)
+        except Exception as e:
+            report["hf_failed"][f"{repo}/{fn}"] = f"{type(e).__name__}: {str(e)[:200]}"
+            print(f"FAIL hf file {repo}/{fn}: {type(e).__name__}: {str(e)[:160]}", flush=True)
     import urllib.request
     fdir = os.path.join(os.environ["HF_HOME"], "files")
     os.makedirs(fdir, exist_ok=True)
