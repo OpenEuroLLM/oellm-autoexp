@@ -1,7 +1,7 @@
 # @package _global_
 # Qwen3-0.6B-Base with the bd3lm method preset (D-055): BD3-LM: block size 4 with the clipped noise schedule t ~ U[0.45, 0.95] (BD3-LM's best setting for block 4).
 # 2B tokens = 3815 iterations of 256 sequences x L = 2048 on 1 node(s), TP 1, learning rate
-# 3e-5 (ABLATIONS.md: the tier 0 LR for 0.6B and 1.7B, half of it for 4B and 8B; placeholder until the tier 0 decision).
+# 1e-4 (ABLATIONS.md: the tier 0 LR for 0.6B and 1.7B, half of it for 4B and 8B; the tier 1 LR and the tier 2 LR of the tier 0 rule, D-065 and D-066).
 # The job trains, reading the data from GPFS (D-061), and evaluates the last checkpoint.
 # Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_0.6B_bd3lm --dry-run
 # Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_0.6B_bd3lm --submit-and-exit
@@ -17,7 +17,7 @@ defaults:
   - _self_
 
 job:
-  name: "bd3-q3_0.6B-B4-sh0-cm0-welbo-t0.45_0.95-dm1-scnone-lr3e-5-T2B"
+  name: "bd3-q3_0.6B-B4-sh0-cm0-welbo-t0.45_0.95-dm1-scnone-lr1e-4-T2B"
   base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/runs/${job.name}"
   log_path: ${.base_output_dir}/slurm-%j.log
   log_path_current: ${.base_output_dir}/current.log
@@ -37,7 +37,7 @@ backend:
     EVAL_PARALLEL: "1"
   megatron:
     train_iters: 3815
-    lr: 3.0e-05
+    lr: 1.0e-04
     lr_warmup_iters: 50  # max(50, 1 percent of train_iters)
     data_cache_path: ${job.base_output_dir}/data_cache
     aux:
