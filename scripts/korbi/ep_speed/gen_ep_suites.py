@@ -1743,6 +1743,14 @@ def ckpt_offload():
     arm("e_db_mc_resume", "e_db_mc_ckpt resumed from its step 6", *e_base, dbuf, sovl, mc,
         {B + "train_iters": 12, B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/e9c_ckptoff/"
          "e_db_mc_ckpt/ckpt", B + "ckpt_step": 6, "aux.array_tag": "_e_db_mc_resume"})
+    # e11: depth_memory_unwind (no state in the checkpoints: each layer's recompute reads the unwound
+    # state, the update recovered in closed form; torch state math, one layer per chunk)
+    unw = {**ldm, B + "depth_memory_impl": "torch", B + "depth_memory_segments": False,
+           B + "depth_memory_unwind": True, B + "recompute_num_layers": 1}
+    for mbsz in (2, 4):
+        arm(f"e_db_ldm8_unw_m{mbsz}", f"LDM K 8 unwind, FSDP + MoonEP, double buffer, mbs {mbsz}",
+            *e_base, dbuf, sovl, unw, {B + "micro_batch_size": mbsz,
+                                       "aux.array_tag": f"_e_db_ldm8_unw_m{mbsz}"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
@@ -1764,6 +1772,8 @@ def ckpt_offload():
         ldm, sprof, {"aux.array_tag": "_p_s_ldm8"})
     arm("p_s_mhc4", "profile smoke: mHC-4, FSDP + MoonEP, double buffer, 1 node", *e_base, dbuf,
         sprof, {"aux.array_tag": "_p_s_mhc4"})
+    arm("p_s_ldm8_unw", "profile smoke: LDM K 8 unwind, FSDP + MoonEP, double buffer, 1 node",
+        *e_base, dbuf, unw, sprof, {"aux.array_tag": "_p_s_ldm8_unw"})
     # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
     # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
     # double buffering, to locate the kernel
