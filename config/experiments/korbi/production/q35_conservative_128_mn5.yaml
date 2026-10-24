@@ -1,0 +1,19 @@
+# @package _global_
+# The conservative run at 128 nodes on cns144 / acc_xehpc (3-day jobs): takes over from
+# q35_conservative_32_mn5.yaml (same output directory: loads that run's latest checkpoint,
+# resharded from 128 to 512 GPUs). When this job runs, flip_q35_32_to_128.sh stops the 32-node run.
+defaults:
+  - q35_conservative_mn5
+  - _self_
+
+aux:
+  nodes: 128
+
+job:
+  name: q35c_128n
+  est_step_time_s: 7.0
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
