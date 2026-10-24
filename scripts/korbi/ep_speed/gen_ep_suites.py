@@ -1831,6 +1831,18 @@ def ckpt_offload():
         {"aux.pattern": af24, B + "num_experts": 216, "aux.array_tag": "_g8_e216_h"})
     arm("g8_e216_h_eng", "8 nodes: 216 experts, 24 blocks, Engram 40B", *g8, eng_half,
         {B + "num_experts": 216, "aux.array_tag": "_g8_e216_h_eng"})
+    # the 8-node proxy of the 32-node full model (user: scale depth, not experts): a quarter of the
+    # depth (12 blocks), all 216 experts, EP4 -- per GPU the experts, the gathered / reduced bytes
+    # per layer and the static memory (~6.4 GB) are those of g32_full; Engram at a quarter (10B
+    # over 32 GPUs = the per-GPU share of 40B over 128)
+    af12 = vpp_pattern("*LLLLLLL" + "*LLL", (12,))  # 7:1 attention first, cut at 12 blocks
+    eng_q = dict(eng_fsdp(af12, 19480384 // 4 // 64 * 64, 4),
+                 **{"aux.pattern": with_engram(af12, (1, 6))})
+    gq = (*e_base, dbuf, sovl, mc_fix, {"aux.gbs": 1024, B + "num_experts": 216})
+    arm("g8q", "8-node proxy of g32_full: 216 experts, 12 blocks, no Engram", *gq,
+        {"aux.pattern": af12, "aux.array_tag": "_g8q"})
+    arm("g8q_eng", "8-node proxy of g32_full: 216 experts, 12 blocks, Engram 10B", *gq, eng_q,
+        {"aux.array_tag": "_g8q_eng"})
     # p_g32: profile of the 32-node full model (steps 4-5, ranks 0 and 64), no checkpoint
     arm("p_g32", "profile: g32_full (32 nodes, 216 experts + 40B Engram), steps 4-5", *e_base, dbuf,
         sovl, mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
