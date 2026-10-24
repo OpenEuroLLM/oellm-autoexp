@@ -1,0 +1,35 @@
+# @package _global_
+# The "ambitious" production run, first segment: 32 nodes on ehpc533 / acc_ehpc (3-day jobs,
+# restarted by the monitor until the 128-node version takes over -- user 2026-10-24).
+#   ~50B total / ~2.7B active (216 routed experts, top 5) + 40B Engram, mHC-4, 7:1 attention
+#   first, muown_classical lr 8.5e-4 constant, gbs 4096 x 16k, Megatron-FSDP + MoonEP.
+# Shares experiment group / suite / arm (= checkpoints, data cache) with
+# hybrid_ambitious_128_mn5.yaml: the 128-node job resumes from this run's checkpoints
+# (fsdp_dtensor reshards: FSDP shards, Engram table rows and Muown row states are DTensors).
+#
+#   scripts/korbi/mn5_autoexp_bg.sh ambitious32 scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_ambitious_32_mn5 --yes
+defaults:
+  - hybrid_main_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e216_eng40
+  nodes: 32
+
+backend:
+  env:
+    # Engram step lookup: groups of the 8 micro-batches per step (mbs 4 x 128 GPUs x 8 = 4096)
+    ENGRAM_STEP_GROUP: "8"
+  megatron:
+    num_experts: 216
+
+job:
+  name: ambitious_32n
+  # measured: 91 s per step at 32 nodes (g32_full / p_g32, 5,760 tok/s/GPU)
+  est_step_time_s: 91.0
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_ehpc

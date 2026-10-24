@@ -1,0 +1,29 @@
+# @package _global_
+# The "ambitious" production run at 128 nodes on cns144 / acc_xehpc (3-day jobs): takes over from
+# hybrid_ambitious_32_mn5.yaml (same experiment group / suite / arm: it loads that run's latest
+# checkpoint, resharded to 512 GPUs). When this job starts, the 32-node run is stopped
+# (scripts/korbi/production/flip_32_to_128.sh).
+defaults:
+  - hybrid_main_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e216_eng40
+  nodes: 128
+
+backend:
+  env:
+    # Engram step lookup: the 2 micro-batches per step (mbs 4 x 512 GPUs x 2 = 4096)
+    ENGRAM_STEP_GROUP: "2"
+  megatron:
+    num_experts: 216
+
+job:
+  name: ambitious_128n
+  # estimate: ~1/4 of the 32-node step if the scale costs no more (to be measured)
+  est_step_time_s: 25.0
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
