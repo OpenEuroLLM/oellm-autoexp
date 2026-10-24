@@ -1515,6 +1515,24 @@ def arms5fsdpeq(size: str = "s1"):
             ("fsdp", "muown_classical, Megatron-FSDP ZeRO-3, 2 nodes", {**run, **fsdp})]
 
 
+def arms5fsdpeq4(size: str = "s1"):
+    """screen5fsdpeq's paths diverged after step 1 (identical step-1 loss and grad norm, 0.1-0.3
+    apart from step 10 on): both again for 2 steps, logging every step, weights-only checkpoints
+    after steps 1 and 2 (no optimizer state), to diff the parameters one optimizer step apart.
+    Same schedule (train_iters 300, so the finished data indices apply)."""
+    caches = {"distopt": "screen5fsdpeq_s1/distopt", "fsdp": "screen5fsdpeq2_s1/fsdp"}
+    out = []
+    for n, d, kv in arms5fsdpeq(size):
+        kv = {**kv, B + "exit_interval": 2, B + "save_interval": 1, B + "non_persistent_save_interval": None,
+              B + "no_save_optim": True, B + "log_interval": 1,
+              B + "data_cache_path": f"/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/{caches[n]}/data_cache",
+              "job.est_steps": 2}
+        if n == "distopt":
+            kv[B + "overlap_param_gather"] = False
+        out.append((n, d + ": 2 steps, weights saved after each", kv))
+    return out
+
+
 def arms5opt3(size: str = "s2"):
     """muown_classical at s2 again, with compact row-state checkpoints (ANGULAR_MUOWN_COMPACT_CKPT=1):
     its extra per-row state (||v||), expanded to weight shape for the save, host-OOM-killed both s2
@@ -1821,6 +1839,7 @@ def write5():
             ("s1", "screen5fsdpeq", arms5fsdpeq("s1")),
             ("s1", "screen5embhead2", arms5embhead2("s1")),
             ("s1", "screen5embhead3", arms5embhead3("s1")),
+            ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # distopt again without overlap_param_gather (the same assert), on its finished index
             ("s1", "screen5fsdpeq3", [(n, d, {**kv, B + "overlap_param_gather": False,
                                               B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"
