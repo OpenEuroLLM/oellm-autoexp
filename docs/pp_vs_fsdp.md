@@ -301,6 +301,19 @@ whole model, dense + MoE patterns).
 - M in bf16 (tried): forward reads within 7e-3, but the unwound gradients are off by up to 100 %
   (the subtraction loses the state): M stays fp32 in this mode.
 
+### Full model at 32 nodes (2026-10-24, g22: 216 experts + 40B Engram, mHC-4, muown_classical, gbs 4096 x 16k, mbs 4)
+
+| arm | tok/s/GPU | TFLOP/s | mem |
+|---|---:|---:|---:|
+| g32_full (clamp 10, unfused: ~6 extra passes over the expert activations) | 5,760 | 98 | 0.83 |
+| **g32_fc: weighted clamped SwiGLU fused (Megatron aac5976c2)** | **6,035** | **103.0** | 0.83 |
+
+- Steps 3-8 (after warm-up): 6,110 / 6,106 / 6,062 / 5,975 / 5,973 / 6,007 tok/s/GPU. Still
+  exposed: FSDP AllGather + fp32 ReduceScatter, ~19 % of the step (staged / leaf-aligned HSDP next).
+- Resume (fsdp_dtensor): the optimizer's step counters and param-group values were dropped on load
+  (DCP writes non-tensor values into the preprocessed copy, under str keys for the
+  ChainedOptimizer's int keys); fixed in Megatron 780202c8a.
+
 ## 5. Next
 
 1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
