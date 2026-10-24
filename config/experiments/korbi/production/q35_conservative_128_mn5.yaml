@@ -11,7 +11,7 @@ aux:
 
 job:
   name: q35c_128n
-  est_step_time_s: 7.0
+  est_step_time_s: 5.5                # ~16.8M tokens / (512 GPUs x ~6,100 tok/s)
 
 slurm:
   sbatch:
