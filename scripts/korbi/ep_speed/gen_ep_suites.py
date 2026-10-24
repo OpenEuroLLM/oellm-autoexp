@@ -1804,6 +1804,12 @@ def ckpt_offload():
     arm("g_eng_resume", "Engram smoke, resumed from g_eng_save's step 4", *smoke_eng,
         {B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt", B + "ckpt_step": 4,
          "aux.array_tag": "_g_eng_resume"})
+    # resharding (the 32 -> 128-node flip): g_eng_save's 1-node (4 GPU) step-4 checkpoint loaded
+    # on 2 nodes (8 GPUs: FSDP shards, Engram table rows, Muown row states all re-cut)
+    arm("g_eng_reshard2n", "Engram smoke on 2 nodes, resumed from the 1-node g_eng_save step 4",
+        *smoke_eng, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 32,
+                     B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt",
+                     B + "ckpt_step": 4, "aux.array_tag": "_g_eng_reshard2n"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
               B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
               # a checkpoint at step 6: fsdp_dtensor with 40B Engram + Muown's row states (host
