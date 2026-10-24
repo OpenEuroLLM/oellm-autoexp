@@ -1888,6 +1888,18 @@ def ckpt_offload():
          # the first attempt: NCCL's first-step buffers OOMed (ncclCuMemAlloc in an all-reduce)
          "backend.env.EMPTY_CACHE_FIRST_STEPS": "2",
          "backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
+    # g32_rn1 (second attempt): step 1 ran (mem 0.49 with expandable segments), step 2 OOMed in a
+    # cuDNN attention launch (err 2) on one rank: ~8 GB more reserved than at 2 layers per chunk.
+    # Smaller cross-entropy chunks (2048 x 262k logits + fp32 grad ~ 3 GB) and the last chunk of
+    # every sequence offloaded too
+    arm("g32_rn1m", "g32_rn1 with CE chunk 1024 and the last checkpoint chunk offloaded",
+        *e_base, dbuf, sovl, mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8),
+        full32, {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
+                 B + "recompute_num_layers": 1, B + "liger_fused_linear_cross_entropy_chunk_size": 1024,
+                 "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+                 "backend.env.EMPTY_CACHE_FIRST_STEPS": "2",
+                 "backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                 "aux.array_tag": "_g32_rn1m"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})
