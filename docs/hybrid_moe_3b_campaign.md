@@ -2940,3 +2940,32 @@ the cooldown in between; init row norm 0.02 sqrt(384) = 0.39). Muown has no weig
   (+0.19 with log-n). CKLSTM's s2 retrieval lead at 8-32k becomes a deficit from 8k on.
 - Pre-training loss: +0.0037 at 4000 at both s2 and s3. The trend crosses zero at ~4B tokens (-0.010 at 10B).
 - Recommendation: CKDA as the mixer.
+
+**Quantization robustness per optimizer** (quantopt_*; final cooled checkpoints; validation loss on
+the same batches: full precision, weight-only RTN 4- and 3-bit in groups of 32, as §12.8):
+
+| set | arm | full | 4-bit (delta) | 3-bit (delta) |
+|---|---|---:|---:|---:|
+| s2, step 4800 | am_p1 | 2.0766 | 2.0818 (+0.0051) | 2.1022 (+0.0256) |
+| | muown_classical | 2.0799 | 2.0853 (+0.0054) | 2.1054 (+0.0256) |
+| | muown_cl_wd01 | 2.0789 | 2.0837 (+0.0048) | 2.1021 (+0.0231) |
+| tiny gbs 32, 25k | am_p1 | 2.7497 | 2.7738 (+0.024) | 2.8724 (+0.123) |
+| | muown_classical | 2.7238 | **2.7441** (+0.020) | 2.8232 (+0.099) |
+| | muown_cl_wd01 | 2.7641 | 2.7771 (+0.013) | 2.8315 (+0.067) |
+| | muon_wd | 2.7830 | 2.8024 (+0.019) | 2.8913 (+0.108) |
+| | am_p0_s02 | 2.8637 | 2.8732 (+0.010) | 2.9090 (+0.045) |
+| tiny gbs 8, 100k | am_p1 | 3.2662 | 3.3641 (+0.098) | 3.7349 (+0.469) |
+| | muown_classical | 3.1882 | **3.2357** (+0.048) | 3.4458 (+0.258) |
+| | muown_cl_wd001 | 3.1945 | 3.3055 (+0.111) | 3.5304 (+0.336) |
+| | am_p05 | 3.2041 | 3.2737 (+0.070) | 3.4803 (+0.276) |
+| | am_p0_s005 | 3.2210 | 3.2632 (+0.042) | 3.3874 (+0.166) |
+| | amsimp_c8 | 3.3523 | 3.4232 (+0.071) | 3.6996 (+0.347) |
+| | adamw | 3.3512 | 3.3698 (+0.019) | 3.4823 (+0.131) |
+
+- s2: all three lose the same amount (+0.005 at 4-bit). The optimizer does not matter at this scale
+  and horizon.
+- Tiny, long horizon: the annealing-vs-quantization link shows. p=1, the strongest direction decay,
+  loses most (2x classical at gbs 8). No direction decay (p=0, AdamW) loses least.
+- Classical Muown loses less than p=1 everywhere it differs, and is the best model after 4-bit in
+  both tiny sets (and within 0.004 at s2). No sign that its shrinking steps make brittle weights.
+- The tiny model's 4-bit cost (+0.02-0.10) is far above s2's (+0.005): small matrices quantize badly.
