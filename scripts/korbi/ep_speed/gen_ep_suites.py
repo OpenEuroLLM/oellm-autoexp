@@ -1831,6 +1831,12 @@ def ckpt_offload():
         {"aux.pattern": af24, B + "num_experts": 216, "aux.array_tag": "_g8_e216_h"})
     arm("g8_e216_h_eng", "8 nodes: 216 experts, 24 blocks, Engram 40B", *g8, eng_half,
         {B + "num_experts": 216, "aux.array_tag": "_g8_e216_h_eng"})
+    # p_g32: profile of the 32-node full model (steps 4-5, ranks 0 and 64), no checkpoint
+    arm("p_g32", "profile: g32_full (32 nodes, 216 experts + 40B Engram), steps 4-5", *e_base, dbuf,
+        sovl, mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
+        {B + "train_iters": 6, B + "save": None, B + "save_interval": None, B + "profile": True,
+         B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 64],
+         B + "profile_step_start": 4, B + "profile_step_end": 5, "aux.array_tag": "_p_g32"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
