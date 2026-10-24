@@ -1,0 +1,69 @@
+# @package _global_
+# Checkpoint handover test for the conservative run (user 2026-10-24: the 128-node run takes over
+# the 32-node run's checkpoint). The same change at small scale, both layouts of
+# q35_conservative_fsdp_speed_mn5.yaml: save at step 20 on 8 nodes, resume on 16 nodes (DP x 2,
+# expert DP x 2) and, as the reference, on 8 nodes; compare the losses of steps 21-30.
+# torch_dist (PP) reshards the distributed optimizer (dp_reshardable) and drops the per-rank
+# rerun / RNG state on a layout change; fsdp_dtensor needs Megatron's same_layout gate (else the
+# new ranks ask for missing per-rank keys).
+#
+#   phase 1:  aux.phase=save   (save_pp, save_fsdp: 8 nodes, exit at step 20 with a checkpoint)
+#   phase 2:  aux.phase=resume (cont_* on 8 nodes, grow_* on 16 nodes: load step 20, no saves)
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35rs scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_reshard_mn5 --yes aux.phase=save
+defaults:
+  - q35_conservative_fsdp_speed_mn5
+  - _self_
+
+aux:
+  suite: rs
+  phase: save
+  fmt: pp
+  only: []
+  ckpt_root: ${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/ckpt_${aux.fmt}
+
+backend:
+  megatron:
+    train_iters: 40
+    lr_warmup_iters: 10
+    log_interval: 1
+    save: ${oc.if:${oc.eval:'"${aux.phase}" == "save"'},${aux.ckpt_root},null}
+    load: ${aux.ckpt_root}
+    save_interval: 1000
+    exit_interval: ${oc.if:${oc.eval:'"${aux.phase}" == "save"'},20,null}
+    non_persistent_ckpt_type: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+
+slurm:
+  sbatch:
+    time: "00:45:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'(len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}) and \"\\${aux.arm}\".startswith(\"save\") == (\"\\${aux.phase}\" == \"save\")'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: save_pp
+          aux.fmt: pp
+        - aux.arm: save_fsdp
+          aux.fmt: fsdp
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 4
+        - aux.arm: cont_pp
+          aux.fmt: pp
+        - aux.arm: grow_pp
+          aux.fmt: pp
+          aux.nodes: 16
+        - aux.arm: cont_fsdp
+          aux.fmt: fsdp
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 4
+        - aux.arm: grow_fsdp
+          aux.fmt: fsdp
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 4
+          aux.nodes: 16
