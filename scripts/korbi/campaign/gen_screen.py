@@ -1842,6 +1842,12 @@ def write5():
             ("s1", "screen5embhead2", arms5embhead2("s1")),
             ("s1", "screen5embhead3", arms5embhead3("s1")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
+            # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
+            # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
+            # matched nothing), 300 steps on its finished index; distopt reference = screen5fsdpeq3
+            ("s1", "screen5fsdpeq5", [(n, d + " (Megatron cc802f3c0)", {**kv, B + "data_cache_path":
+                                       "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq2_s1/fsdp/data_cache"})
+                                      for n, d, kv in arms5fsdpeq("s1") if n == "fsdp"]),
             # distopt again without overlap_param_gather (the same assert), on its finished index
             ("s1", "screen5fsdpeq3", [(n, d, {**kv, B + "overlap_param_gather": False,
                                               B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"

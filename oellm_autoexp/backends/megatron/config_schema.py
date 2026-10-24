@@ -1763,6 +1763,15 @@ class MegatronConfig(ConfigInterface):
     # recompute (one workspace per stage holds one segment's tapes).
     depth_memory_segments: bool = False
 
+    # LDM "torch" with full activation recompute, one layer per chunk, no pipeline
+    # parallelism: nothing of the state is checkpointed. The forward updates (M, P) in place
+    # without a tape; a layer's recompute (in the backward, the state then at that layer's
+    # edge) reads from the current state and recovers the edge's update in closed form (kappa
+    # = P_e kbar, u = (vbar - M_e' kbar) / (1 - kappa . kbar)); the backward unwinds M, P to
+    # the previous edge. The checkpoints carry only the [x, r] streams
+    # (depth_memory_state.UnwindingDepthMemoryWorkspace).
+    depth_memory_unwind: bool = False
+
     # LDM "cute": the window E of deferred writes (the paper: 4).
     depth_memory_window: int = 4
 
