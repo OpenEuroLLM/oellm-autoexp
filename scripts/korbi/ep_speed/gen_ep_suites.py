@@ -1871,6 +1871,13 @@ def ckpt_offload():
         {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
          # (a per-collective "allgather:ring;..." list breaks the generated shell exports at ';')
          "slurm.env.NCCL_ALGO": "Ring", "aux.array_tag": "_g32_ring"})
+    # g8q_eng_m8 OOMed by ~1 GB (54.1 GiB allocated): one layer per recompute chunk halves the
+    # recompute working set
+    arm("g8q_eng_m8_rn1", "8-node proxy + Engram 10B, mbs 8, 1 layer per recompute chunk", *gq,
+        eng_q, {B + "micro_batch_size": 8, B + "recompute_num_layers": 1,
+                "backend.env.ENGRAM_STEP_GROUP": "4", "aux.array_tag": "_g8q_eng_m8_rn1"})
+    arm("g8q_eng_rn1", "8-node proxy + Engram 10B, mbs 4, 1 layer per recompute chunk (ref)", *gq,
+        eng_q, {B + "recompute_num_layers": 1, "aux.array_tag": "_g8q_eng_rn1"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})
