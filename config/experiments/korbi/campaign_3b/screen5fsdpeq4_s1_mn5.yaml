@@ -124,6 +124,7 @@ sweep:
           backend.megatron.log_interval: 1
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq_s1/distopt/data_cache
           backend.megatron.overlap_param_gather: false
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
         # muown_classical, Megatron-FSDP ZeRO-3, 2 nodes: 2 steps, weights saved after each
         - aux.arm: fsdp
           backend.megatron.num_attention_heads: 6

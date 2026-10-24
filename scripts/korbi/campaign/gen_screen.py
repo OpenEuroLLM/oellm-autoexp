@@ -1529,6 +1529,8 @@ def arms5fsdpeq4(size: str = "s1"):
               "job.est_steps": 2}
         if n == "distopt":
             kv[B + "overlap_param_gather"] = False
+        # one array job shares its sbatch env; 8 for both (TP 1: distopt has no need for 1)
+        kv["backend.env.CUDA_DEVICE_MAX_CONNECTIONS"] = "8"
         out.append((n, d + ": 2 steps, weights saved after each", kv))
     return out
 
