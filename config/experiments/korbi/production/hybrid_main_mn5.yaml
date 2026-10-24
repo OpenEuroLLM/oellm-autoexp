@@ -18,7 +18,8 @@
 # speed_base_mn5).
 defaults:
   - ../hybrid_speed/speed_base_mn5
-  - /backend/megatron: [data_flag_mn5]
+  # flag-decon-v1 (user 2026-10-24): the flag mix without the documents holding a benchmark item
+  - /backend/megatron: [data_flag_decon_v1_mn5]
   - _self_
 
 aux:
@@ -95,6 +96,8 @@ backend:
     activation_func_clamp_value: 10.0
     moe_shared_expert_intermediate_size: 768
     moe_router_topk: ${aux.topk}
+    # router in fp32, as every campaign run (user 2026-10-24)
+    moe_router_dtype: fp32
     moe_router_score_function: sigmoid
     moe_router_enable_expert_bias: true
     moe_router_bias_update_rate: 0.001
@@ -146,6 +149,9 @@ backend:
     # law at 3B active), constant (stable-only), no warmup; mixer x0.25, Engram x5, embedding /
     # head at the shared lr (Sinkhorn x0.18 if screen5ds41 favours it)
     optimizer: muown_classical
+    # head-wise Q / K / V orthogonalization (user 2026-10-24: adopt; screen5ds41 -0.005 at the
+    # same speed; works on Megatron-FSDP: the owner splits the gathered matrix per head)
+    muon_qkv_headwise: true
     lr: 8.5e-4
     min_lr: 8.5e-4
     residual_mixer_lr_mult: 0.25
@@ -159,7 +165,7 @@ backend:
     # 4 x 2 was data-bound; check tok/s against the speed runs at this layout
     num_workers: 8
     dataloader_prefetch_factor: 4
-    data_cache_path: ${job.base_output_dir}/data_cache
+    data_cache_path: ${job.base_output_dir}/data_cache_flag_decon_v1
     # ---- logging / eval ----
     log_interval: 10
     eval_interval: 2000
@@ -186,21 +192,80 @@ job:
   # gbs 4096 x 16k at 128 nodes: 67M tokens / (512 GPUs x ~7.5k tok/s) ~ 17.5 s per step
   est_step_time_s: 17.5
   est_startup_min: 15.0
-  # TODO: the full production event set (config/job/auto_restart.yaml, as the 32B runs) once
-  # merged with these; for now: resume on wall time, stop on divergence
+  # Monitor events (user 2026-10-24): those of campaign_3b/base_train_mn5.yaml with bounds for a
+  # ~180k-step run over many 3-day jobs. MaxActionFiresCondition counts over the whole run (no
+  # window), so the wall-time rollover restarts without a bound and node / transient failures with
+  # generous ones; every failed node goes to the shared exclusion list.
   state_events:
     - name: timeout
       transition: ["RUNNING", "TIMEOUT"]
-      action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint"}
+      action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint", exclude_file: "${slurm.exclude_file}"}
     - name: timeout_completing
       transition: ["COMPLETING", "TIMEOUT"]
-      action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint"}
+      action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint", exclude_file: "${slurm.exclude_file}"}
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 20}
+      action: {class_name: RestartAction, reason: "lost its node -- resuming", exclude_file: "${slurm.exclude_file}"}
+    - name: retry_oom
+      transition: [null, OUT_OF_MEMORY]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "host out of memory -- resuming", exclude_file: "${slurm.exclude_file}"}
+    - name: retry_failed
+      transition: [null, FAILED]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 20}
+      action: {class_name: RestartAction, reason: "failed -- resuming (transient GPFS / NCCL / node errors)", exclude_file: "${slurm.exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node again (20 restarts used)"}
+    - name: give_up_oom
+      transition: [null, OUT_OF_MEMORY]
+      action: {class_name: CancelAction, reason: "out of host memory again"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed again (20 restarts used)"}
   log_events:
     - name: nonfinite_grad_norm
       pattern: "grad norm: (nan|inf)"
       pattern_type: regex
       match_once: true
       action: {class_name: CancelAction, reason: "non-finite grad norm -- the run diverged"}
+    - name: exploding_grad_norm
+      pattern: "grad norm: [0-9]{5,}\\."
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "grad norm >= 1e4 -- the run diverged"}
+    # checkpoint recovery: a save cut off by a lost node leaves short shards -> quarantine that
+    # rolling checkpoint (renamed failed_iter_N, tracker rolled back, at most 2) and resume from
+    # the last loadable one. fsdp_dtensor writes through torch DCP's FileSystemWriter: the same
+    # iter_N/__R_S.distcp shard names as torch_dist.
+    - name: ckpt_corrupt_quarantine
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      extract_groups: {iteration: 1}
+      match_once: true
+      action:
+        class_name: QuarantineCheckpointAction
+        checkpoint_dir: ${backend.megatron.non_persistent_global_ckpt_dir}
+        iteration: "{iteration}"
+        quarantine_prefix: "failed_"
+        max_rollbacks: 2
+    - name: ckpt_corrupt_restart
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      match_once: true
+      condition: {class_name: MaxActionFiresCondition, max_fires: 5}
+      action: {class_name: RestartAction, cancel_first: true, reason: "checkpoint quarantined; resuming from the last loadable one"}
+    - name: err_ckpt_world_size_mismatch
+      pattern: "Missing key in checkpoint state_dict: rerun_state_machine_state/shard_\\d+_(\\d+)"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint written at a different world size"}
+    - name: err_ckpt_unloadable
+      pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint cannot be opened (interrupted save) -- needs a hand rollback"}
     - name: finished_training
       pattern: "[after training is done]"
       pattern_type: substring
