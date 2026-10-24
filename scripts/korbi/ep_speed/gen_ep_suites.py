@@ -1857,6 +1857,14 @@ def ckpt_offload():
         eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
         {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
          "slurm.sbatch.switches": "2@01:00:00", "aux.array_tag": "_g32_sw2"})
+    # the expert-DP groups have one GPU per node: NCCL may pick PAT for all-gather / reduce-scatter
+    # there (log-step exchanges with distant peers, across the leaf uplinks); rings cross
+    # switches only at the leaf boundaries
+    arm("g32_ring", "g32_full with ring all-gather / reduce-scatter (no save)", *e_base, dbuf, sovl,
+        mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
+        {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
+         "backend.env.NCCL_ALGO": "allgather:ring;reducescatter:ring", "slurm.env.NCCL_ALGO":
+         "allgather:ring;reducescatter:ring", "aux.array_tag": "_g32_ring"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})
