@@ -1936,6 +1936,14 @@ class MegatronConfig(ConfigInterface):
     # rare tokens). The untied output layer is not affected.
     embedding_wd_mult: float = 1.0
 
+    # Learning-rate multiplier of the word-embedding matrix (max and min lr). Conflicts with
+    # --decoupled-lr.
+    embedding_lr_mult: float = 1.0
+
+    # Learning-rate multiplier of the untied output layer (max and min lr). No effect with
+    # tied embeddings. Conflicts with --decoupled-lr.
+    output_layer_lr_mult: float = 1.0
+
     # When the loaded optimizer checkpoint has no param_group matching a current group (a
     # multiplier enabled mid-run creates a new group), load the new group from the
     # structurally equivalent saved group and keep the current overrides instead of raising.
