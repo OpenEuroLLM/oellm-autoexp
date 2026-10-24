@@ -1644,6 +1644,15 @@ def ckpt_offload():
     for res, rd in (("plain", PLAIN), ("mhc4", {})):
         arm(f"c_pp4_{res}_hep_g512", f"{res}, PP4 x VPP2, HybridEP, mbs 2, gbs 512", *f_base, resa,
             e112, rd, pp4, HEP, {"aux.array_tag": f"_c_pp4_{res}_hep"})
+    # c6: MoonEP under FSDP (Megatron moonep.py: the expert main grads from FSDP's get_main_grad;
+    # before, MoonEP kept private fp32 grads the optimizer never saw -- c1 / c3's MoonEP ZeRO-3
+    # numbers did not train the experts). MoonEP needs fp32 main grads: fp32 gradient comm.
+    fp32g = {B + "megatron_fsdp_main_grads_dtype": "fp32", B + "megatron_fsdp_grad_comm_dtype": "fp32"}
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        for mbsz in (2, 4):
+            arm(f"c_z3_{res}_moon_m{mbsz}", f"{res}, FSDP ZeRO-3, MoonEP, mbs {mbsz}, fp32 grad comm",
+                *f_base, resa, e112, rd, fsdp, fp32g,
+                {B + "micro_batch_size": mbsz, "aux.array_tag": f"_c_z3_{res}_moon_m{mbsz}"})
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
