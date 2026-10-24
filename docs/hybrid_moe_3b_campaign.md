@@ -3021,3 +3021,26 @@ emerge at size):
   no PP, and an fp32 M.
 - **Caveat (user):** small scale and noisy evals. Long-context behaviour may change at size.
   Revisit LDM only if a paired 7:1 run at s2 is affordable and its retrieval holds up there.
+
+**muown_classical on Megatron-FSDP vs the distributed optimizer** (screen5fsdpeq*; s1 final recipe,
+2 nodes, EP4, gbs 64 × 8k, constant lr, same seed and data; 2 runs per path):
+- **First FSDP version:** wrong. FSDP's DTensor parameters lost the routing and lr tags, so mHC φ went
+  to Muown (row norms 210–520× too large after one step) and the residual-mixer lr ×0.25 was dropped.
+  Found with a step-1/2 weight diff; fixed in Megatron cc802f3c0 (EP agent).
+- **Fixed version** (mean loss difference, FSDP pair minus distopt pair; within-pair |diff|):
+
+| steps | FSDP − distopt | within distopt | within FSDP |
+|---|---:|---:|---:|
+| 1–50 | +0.044 | 0.020 | 0.014 |
+| 50–100 | +0.009 | 0.012 | 0.004 |
+| 100–200 | −0.017 | 0.015 | 0.076 |
+| 200–300 | −0.009 | 0.015 | 0.125 |
+
+  Step 2 agrees: 12.5864 vs 12.5869 / 12.5868. A transient +0.04 offset over steps 10–50 is seen in both
+  FSDP runs, then nothing systematic. In the fast loss drop (steps 150–300) the two FSDP runs scatter
+  much more than the two distopt runs (e.g. 4.160 vs 3.927 at step 200), i.e. they shift in time; by
+  step 300 the four runs are 3.43 / 3.43 / 3.43 / 3.39.
+- **Step-1 weight diffs** are at the distopt-vs-distopt noise floor, mHC φ included (~9 %, from Adam's
+  sign-like first step on a near-zero init). distopt checkpoints store bf16 model weights and FSDP fp32,
+  which explains the norm-gain step ratio of 0.69.
+- **Verdict:** FSDP is cleared for production. No systematic loss difference past the first ~70 steps.
