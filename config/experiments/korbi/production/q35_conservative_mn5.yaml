@@ -180,34 +180,65 @@ job:
   array_group: null
   est_step_time_s: 22.0               # ~16.8M tokens / (128 GPUs x ~6,000 tok/s)
   est_startup_min: 15.0
-  # restarts / divergence handling: copied from korbi/campaign_3b/base_train_mn5.yaml
+  # restarts / divergence handling: from korbi/campaign_3b/base_train_mn5.yaml, with the bounds of a
+  # long run: MaxActionFiresCondition counts over the whole run (all 3-day segments), so the wall
+  # time resumes unbounded (every segment ends in TIMEOUT) and the failure retries generous
   state_events:
     - name: retry_node_fail
       transition: [null, NODE_FAIL]
-      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      condition: {class_name: MaxActionFiresCondition, max_fires: 20}
       action: {class_name: RestartAction, reason: "lost its node -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
     - name: retry_oom
       transition: [null, OUT_OF_MEMORY]
-      condition: {class_name: MaxActionFiresCondition, max_fires: 1}
-      action: {class_name: RestartAction, reason: "host out of memory -- resuming once", exclude_file: "${aux.mn5_exclude_file}"}
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "host out of memory -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
     - name: retry_failed
       transition: [null, FAILED]
-      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      condition: {class_name: MaxActionFiresCondition, max_fires: 10}
       action: {class_name: RestartAction, reason: "failed -- resuming (transient GPFS / NCCL / node errors)", exclude_file: "${aux.mn5_exclude_file}"}
     - name: retry_timeout
       transition: [null, TIMEOUT]
-      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
       action: {class_name: RestartAction, reason: "hit the wall time -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
     - name: give_up_node_fail
       transition: [null, NODE_FAIL]
-      action: {class_name: CancelAction, reason: "lost its node again"}
+      action: {class_name: CancelAction, reason: "lost its node 20 times"}
     - name: give_up_oom
       transition: [null, OUT_OF_MEMORY]
       action: {class_name: CancelAction, reason: "out of host memory again"}
-    - name: give_up_timeout
-      transition: [null, TIMEOUT]
-      action: {class_name: CancelAction, reason: "hit the wall time again"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed 10 times"}
   log_events:
+    # checkpoint recovery (as campaign_3b/base_train_mn5.yaml): a save cut off by a lost node leaves
+    # short shards -> quarantine that checkpoint (failed_iter_N, tracker rolled back, at most 2) and
+    # resume from the last loadable one; a world-size mismatch or an unopenable checkpoint cancels
+    - name: ckpt_corrupt_quarantine
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      extract_groups: {iteration: 1}
+      match_once: true
+      action:
+        class_name: QuarantineCheckpointAction
+        checkpoint_dir: ${backend.megatron.non_persistent_global_ckpt_dir}
+        iteration: "{iteration}"
+        quarantine_prefix: "failed_"
+        max_rollbacks: 2
+    - name: ckpt_corrupt_restart
+      pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+      pattern_type: regex
+      match_once: true
+      condition: {class_name: MaxActionFiresCondition, max_fires: 5}
+      action: {class_name: RestartAction, cancel_first: true, reason: "checkpoint quarantined; resuming from the last loadable one"}
+    - name: err_ckpt_world_size_mismatch
+      pattern: "Missing key in checkpoint state_dict: rerun_state_machine_state/shard_\\d+_(\\d+)"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint written at a different world size"}
+    - name: err_ckpt_unloadable
+      pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "checkpoint cannot be opened (interrupted save) -- needs a hand rollback"}
     - name: nonfinite_grad_norm
       pattern: "grad norm: (nan|inf)"
       pattern_type: regex
