@@ -26,6 +26,8 @@ backend:
     # rolling checkpoints every 50 steps (~1.2 h at 87 s / step, user 2026-10-25): bounds what a
     # crash or the flip loses should the SIGUSR2 save not happen
     non_persistent_save_interval: 50
+    # persistent (kept) checkpoints every 1000 steps (user 2026-10-25)
+    save_interval: 1000
 
 job:
   name: ambitious_32n
