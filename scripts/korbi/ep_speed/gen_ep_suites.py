@@ -1721,6 +1721,134 @@ def ckpt_offload():
         arm(f"e_db_ldm8_rn{rn}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs 2, {rn} layers per chunk",
             *e_base, dbuf, ldm, sovl, {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
                                        "aux.array_tag": f"_e_db_ldm8_rn{rn}"})
+    # e9: the production optimizer on Megatron-FSDP (muown_classical, row-sharded Newton-Schulz
+    # on owner ranks): speed vs e_db_ovl (Adam), and a checkpoint save (fsdp_dtensor, compact
+    # [rows, 1] row states) for the resume check
+    mc = {B + "optimizer": "muown_classical", B + "lr": 0.0025, B + "min_lr": 0.00025,
+          "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}
+    arm("e_db_mc", "mHC-4, FSDP + MoonEP, double buffer, shared-expert overlap, muown_classical",
+        *e_base, dbuf, sovl, mc, {"aux.array_tag": "_e_db_mc"})
+    arm("e_db_mc_ckpt", "e_db_mc, 12 steps, checkpoint at step 6 and 12", *e_base, dbuf, sovl, mc,
+        {B + "train_iters": 12, B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 6,
+         "aux.array_tag": "_e_db_mc_ckpt"})
+    # e10: LDM is PCIe bound (1-node profile: 3.9 s of offload memcpy per 7.5 s step vs 0.7 s for
+    # mHC-4: every checkpoint carries the 8.5-slot state) -> fewer checkpoints, no offload
+    for rn in (4, 8):
+        arm(f"e_db_ldm8_rn{rn}_nooff", f"LDM K 8, FSDP + MoonEP, double buffer, mbs 2, {rn} layers per "
+            "chunk, no checkpoint offload", *e_base, dbuf, ldm, sovl,
+            {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
+             "backend.env.RECOMPUTE_OFFLOAD": "0", "aux.array_tag": f"_e_db_ldm8_rn{rn}_nooff"})
+    # the resume check: e_db_mc_ckpt's step-6 checkpoint (suite e9c), trained to step 12 again --
+    # the losses of steps 7-12 must match e_db_mc_ckpt's
+    arm("e_db_mc_resume", "e_db_mc_ckpt resumed from its step 6", *e_base, dbuf, sovl, mc,
+        {B + "train_iters": 12, B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/e9c_ckptoff/"
+         "dense/ckpt", B + "ckpt_step": 6, "aux.array_tag": "_e_db_mc_resume"})
+    # e11: depth_memory_unwind (no state in the checkpoints: each layer's recompute reads the unwound
+    # state, the update recovered in closed form; torch state math, one layer per chunk)
+    unw = {**ldm, B + "depth_memory_impl": "torch", B + "depth_memory_segments": False,
+           B + "depth_memory_unwind": True, B + "recompute_num_layers": 1}
+    # e11 (torch state math): 3,155 / 3,259 tok/s/GPU at mbs 2 / 4, mem 0.71 / 0.99; e11f the same
+    # arms with the fused Triton passes (the default on CUDA): 5,350 / 5,665; e11g the v2 kernels
+    for mbsz in (2, 4):
+        arm(f"e_db_ldm8_unw_m{mbsz}", f"LDM K 8 unwind, FSDP + MoonEP, double buffer, mbs {mbsz}",
+            *e_base, dbuf, sovl, unw, {B + "micro_batch_size": mbsz,
+                                       "aux.array_tag": f"_e_db_ldm8_unw_m{mbsz}"})
+    # e12 (user 2026-10-24): the 32-node full model -- ~50B-A2.7B (216 experts, top 5; 0.23B per
+    # expert slot over 48 MoE layers + ~2B dense) + 20B Engram (2 layers before blocks 1 and 24,
+    # 9.77M rows x 16 tables x 64), attention first 7:1, mHC-4, muown_classical, FSDP + MoonEP,
+    # double buffer, shared-expert overlap; first a 1-node Engram-under-FSDP smoke
+    tmap = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy"
+
+    def eng_fsdp(pattern, rows, group):
+        return {"aux.pattern": with_engram(pattern, (1, 24) if len(pattern) > 60 else (1, 4)),
+                B + "engram_ngram_orders": [2, 3], B + "engram_num_heads": 8,
+                B + "engram_embed_dim": 64, B + "engram_table_size": rows,
+                B + "engram_table_parallel": "dp", B + "engram_token_map": tmap,
+                B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
+                B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0,
+                B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16",
+                "backend.env.ENGRAM_STEP_LOOKUP": "1", "backend.env.ENGRAM_STEP_GROUP": str(group),
+                "backend.env.ENGRAM_SPARSE_GRAD": "1"}
+    # production settings: the mixer lr multiplier, the SwiGLU clamp (DeepSeek-V4.1, user
+    # 2026-10-24: adopt; MoonEP honours it from Megatron d68800c21)
+    mc_fix = dict(mc, **{B + "residual_mixer_lr_mult": 0.25, B + "activation_func_clamp_value": 10.0})
+    arm("g_eng_smoke", "smoke: Engram (dp tables) under FSDP + MoonEP, mHC-4, muown_classical, 1 node",
+        *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
+        {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+         B + "micro_batch_size": 2, B + "train_iters": 8, "backend.env.MEM_BREAKDOWN": "1",
+         "aux.array_tag": "_g_eng_smoke"})
+    # g_eng_smoke: "CUDA error: misaligned address" in the first step (reported in the mHC read):
+    # blocking launches, and without the step lookup / sparse table gradients
+    blk = {"backend.env.CUDA_LAUNCH_BLOCKING": "1"}
+    arm("g_eng_smoke_blk", "g_eng_smoke, blocking launches", *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2), blk,
+        {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+         B + "micro_batch_size": 2, B + "train_iters": 8, "aux.array_tag": "_g_eng_smoke_blk"})
+    arm("g_eng_smoke_plain", "g_eng_smoke, blocking, no step lookup / sparse grads", *e_base, dbuf,
+        sovl, mc_fix, eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2), blk,
+        {"backend.env.ENGRAM_STEP_LOOKUP": "0", "backend.env.ENGRAM_SPARSE_GRAD": "0",
+         B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+         B + "micro_batch_size": 2, B + "train_iters": 8, "aux.array_tag": "_g_eng_smoke_plain"})
+    # user 2026-10-24: gbs 4096 x 16k (8 micro-batches per GPU at 32 nodes, mbs 4); Engram 40B
+    # (heavily multilingual: more table parameters; ~0.94 GB per GPU at 128 GPUs)
+    # g32_full: the step-6 save failed (KeyError in the Engram optimizer): the tables are hidden
+    # from Megatron-FSDP and were missing from the fsdp_dtensor checkpoint. Save / resume check
+    # on 1 node (save at 4, resume to 8; steps 5-8 must match)
+    smoke_eng = (*e_base, dbuf, sovl, mc_fix, eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
+                 {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+                  B + "micro_batch_size": 2, B + "train_iters": 8})
+    arm("g_eng_save", "Engram smoke, save at step 4", *smoke_eng,
+        {B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 4,
+         "aux.array_tag": "_g_eng_save"})
+    arm("g_eng_resume", "Engram smoke, resumed from g_eng_save's step 4", *smoke_eng,
+        {B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt", B + "ckpt_step": 4,
+         "aux.array_tag": "_g_eng_resume"})
+    full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
+              B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
+              # a checkpoint at step 6: fsdp_dtensor with 40B Engram + Muown's row states (host
+              # RAM and the time of a save at the production size)
+              B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 6,
+              "slurm.env.WATCHDOG_STARTUP_S": "1800", "backend.env.MEM_BREAKDOWN": "1"}
+    arm("g32_full", "32 nodes: 50B-A2.7B (216 experts) + 40B Engram, mHC-4, muown_classical, mbs 4, "
+        "gbs 4096", *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
+        {"aux.array_tag": "_g32_full"})
+    # e13: g32_full ran 5,770 tok/s/GPU (91 s / step at gbs 4096) vs ~7,600 on 8 nodes (112
+    # experts, no Engram): attribution on 8 nodes -- the per-GPU expert traffic per layer is the
+    # same as at 32 nodes, so 216 experts at half the depth (24 blocks; the static memory fits)
+    # reproduce the 32-node ratio of FSDP traffic to compute
+    af48 = vpp_pattern("*LLLLLLL" * 6, (48,))
+    af24 = vpp_pattern("*LLLLLLL" * 3, (24,))
+    eng_full = eng_fsdp(af48, 19480384, 4)
+    eng_half = dict(eng_fsdp(af24, 19480384, 4), **{"aux.pattern": with_engram(af24, (1, 12))})
+    g8 = (*e_base, dbuf, sovl, mc_fix, {"aux.gbs": 512})
+    arm("g8_e112", "8 nodes: 112 experts, 48 blocks, no Engram (production settings)", *g8,
+        {"aux.pattern": af48, "aux.array_tag": "_g8_e112"})
+    arm("g8_e112_eng", "8 nodes: 112 experts, 48 blocks, Engram 40B", *g8, eng_full,
+        {"aux.array_tag": "_g8_e112_eng"})
+    arm("g8_e216_h", "8 nodes: 216 experts, 24 blocks, no Engram", *g8,
+        {"aux.pattern": af24, B + "num_experts": 216, "aux.array_tag": "_g8_e216_h"})
+    arm("g8_e216_h_eng", "8 nodes: 216 experts, 24 blocks, Engram 40B", *g8, eng_half,
+        {B + "num_experts": 216, "aux.array_tag": "_g8_e216_h_eng"})
+    # the 8-node proxy of the 32-node full model (user: scale depth, not experts): a quarter of the
+    # depth (12 blocks), all 216 experts, EP4 -- per GPU the experts, the gathered / reduced bytes
+    # per layer and the static memory (~6.4 GB) are those of g32_full; Engram at a quarter (10B
+    # over 32 GPUs = the per-GPU share of 40B over 128)
+    af12 = vpp_pattern("*LLLLLLL" + "*LLL", (12,))  # 7:1 attention first, cut at 12 blocks
+    eng_q = dict(eng_fsdp(af12, 19480384 // 4 // 64 * 64, 4),
+                 **{"aux.pattern": with_engram(af12, (1, 6))})
+    gq = (*e_base, dbuf, sovl, mc_fix, {"aux.gbs": 1024, B + "num_experts": 216})
+    arm("g8q", "8-node proxy of g32_full: 216 experts, 12 blocks, no Engram", *gq,
+        {"aux.pattern": af12, "aux.array_tag": "_g8q"})
+    arm("g8q_eng", "8-node proxy of g32_full: 216 experts, 12 blocks, Engram 10B", *gq, eng_q,
+        {"aux.array_tag": "_g8q_eng"})
+    # p_g32: profile of the 32-node full model (steps 4-5, ranks 0 and 64), no checkpoint
+    arm("p_g32", "profile: g32_full (32 nodes, 216 experts + 40B Engram), steps 4-5", *e_base, dbuf,
+        sovl, mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
+        {B + "train_iters": 6, B + "save": None, B + "save_interval": None, B + "profile": True,
+         B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 64],
+         B + "profile_step_start": 4, B + "profile_step_end": 5, "aux.array_tag": "_p_g32"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
@@ -1742,6 +1870,8 @@ def ckpt_offload():
         ldm, sprof, {"aux.array_tag": "_p_s_ldm8"})
     arm("p_s_mhc4", "profile smoke: mHC-4, FSDP + MoonEP, double buffer, 1 node", *e_base, dbuf,
         sprof, {"aux.array_tag": "_p_s_mhc4"})
+    arm("p_s_ldm8_unw", "profile smoke: LDM K 8 unwind, FSDP + MoonEP, double buffer, 1 node",
+        *e_base, dbuf, unw, sprof, {"aux.array_tag": "_p_s_ldm8_unw"})
     # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
     # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
     # double buffering, to locate the kernel
