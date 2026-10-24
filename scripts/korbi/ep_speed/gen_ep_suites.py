@@ -1849,6 +1849,17 @@ def ckpt_offload():
         {B + "train_iters": 6, B + "save": None, B + "save_interval": None, B + "profile": True,
          B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 64],
          B + "profile_step_start": 4, B + "profile_step_end": 5, "aux.array_tag": "_p_g32"})
+    # p_g32 (32 nodes): DP collectives exposed 19 % (all-gather 11.3, fp32 reduce-scatter 11.0;
+    # ~20 GB/s per GPU, near one NDR200 NIC), vs the one-leaf-switch 8-node proxy at 130 TFLOP/s:
+    # the 32 nodes spread over ~8 leaf switches (16 nodes each, oversubscribed uplinks). Locality:
+    # at most 2 leaf switches; bytes per token: mbs 8 (half the gathers / reduce-scatters per token)
+    arm("g32_sw2", "g32_full on at most 2 leaf switches (no save)", *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
+        {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
+         "slurm.sbatch.switches": "2@01:00:00", "aux.array_tag": "_g32_sw2"})
+    arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
+        {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
+         "aux.array_tag": "_g8q_eng_m8"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
