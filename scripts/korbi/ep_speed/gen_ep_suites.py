@@ -1863,8 +1863,8 @@ def ckpt_offload():
     arm("g32_ring", "g32_full with ring all-gather / reduce-scatter (no save)", *e_base, dbuf, sovl,
         mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
         {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
-         "backend.env.NCCL_ALGO": "allgather:ring;reducescatter:ring", "slurm.env.NCCL_ALGO":
-         "allgather:ring;reducescatter:ring", "aux.array_tag": "_g32_ring"})
+         # (a per-collective "allgather:ring;..." list breaks the generated shell exports at ';')
+         "slurm.env.NCCL_ALGO": "Ring", "aux.array_tag": "_g32_ring"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})
