@@ -186,7 +186,7 @@ backend:
     distributed_timeout_minutes: 45
     # SIGUSR2 -> save a checkpoint and exit (the 32 -> 128-node flip, flip_32_to_128.sh)
     exit_signal_handler: true
-    exit_signal: 12
+    exit_signal: SIGUSR2
 
 job:
   name: ${aux.suite}_${aux.arm}
