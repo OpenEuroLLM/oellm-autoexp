@@ -1715,6 +1715,12 @@ def ckpt_offload():
         dbuf, sovl, {"aux.array_tag": "_e_db_ovl"})
     arm("e_db_plain_ovl", "PreNorm, FSDP + MoonEP, double buffer, mbs 4, shared-expert overlap",
         *e_base, dbuf, PLAIN, sovl, {"aux.array_tag": "_e_db_plain_ovl"})
+    # e8: LDM's segment boundaries (SegmentEnter / Exit, ~1.3 s of a 6.9 s 1-node step: the carried
+    # state copied in and out of the streams at every recompute chunk) -> fewer chunks
+    for rn in (2, 4):
+        arm(f"e_db_ldm8_rn{rn}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs 2, {rn} layers per chunk",
+            *e_base, dbuf, ldm, sovl, {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
+                                       "aux.array_tag": f"_e_db_ldm8_rn{rn}"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
