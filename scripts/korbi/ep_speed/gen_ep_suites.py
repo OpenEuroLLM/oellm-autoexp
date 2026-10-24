@@ -1698,6 +1698,15 @@ def ckpt_offload():
         {B + "micro_batch_size": 8, "aux.array_tag": "_e_db_m8"})
     arm("e_db_plain", "PreNorm, FSDP + MoonEP, double buffer, mbs 4", *e_base, dbuf, PLAIN,
         {"aux.array_tag": "_e_db_plain"})
+    # e4: e_db_m8 OOMed in NCCL's first-step buffer allocation after the forward-backward (12.5 GiB
+    # allocated, 51-55 GiB cached): release the cache before the optimizer step, or expandable
+    # segments against the fragmentation
+    m8 = {B + "micro_batch_size": 8}
+    arm("e_db_m8_ec", "mHC-4, FSDP + MoonEP, double buffer, mbs 8, empty cache after fwd-bwd",
+        *e_base, dbuf, m8, {B + "empty_unused_memory_level": 1, "aux.array_tag": "_e_db_m8_ec"})
+    arm("e_db_m8_exp", "mHC-4, FSDP + MoonEP, double buffer, mbs 8, expandable segments",
+        *e_base, dbuf, m8, {"backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                             "aux.array_tag": "_e_db_m8_exp"})
     # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
     # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
     # double buffering, to locate the kernel
