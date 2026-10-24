@@ -1653,6 +1653,24 @@ def ckpt_offload():
             arm(f"c_z3_{res}_moon_m{mbsz}", f"{res}, FSDP ZeRO-3, MoonEP, mbs {mbsz}, fp32 grad comm",
                 *f_base, resa, e112, rd, fsdp, fp32g,
                 {B + "micro_batch_size": mbsz, "aux.array_tag": f"_c_z3_{res}_moon_m{mbsz}"})
+    # d (goal 2026-10-24: mHC-4 / LDM at ~7,500 tok/s/GPU on 8 nodes): FSDP + HybridEP mHC-4 mbs 4
+    # profiled after the routing imbalance sets in (steps 10-11), a 60-step run (does the step time
+    # recover as the expert bias rebalances?), and MoonEP under FSDP on 2 nodes (the smallest
+    # setup that shards the experts: EDP 2) with synchronous CUDA launches (the illegal access in
+    # step 2), a 16-block 32-expert model
+    arm("p_z3_mhc4_hep_m4", "profile: mHC-4, FSDP ZeRO-3, HybridEP, mbs 4 (steps 10-11)", *f_base,
+        resa, e112, fsdp, HEP,
+        {B + "micro_batch_size": 4, B + "profile": True, B + "use_pytorch_profiler": True,
+         B + "profile_ranks": [0], B + "profile_step_start": 10, B + "profile_step_end": 11,
+         B + "train_iters": 12, "aux.array_tag": "_p_z3_mhc4_hep_m4"})
+    arm("d_z3_mhc4_hep_m4_long", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 4, 60 steps", *f_base, resa, e112,
+        fsdp, HEP, {B + "micro_batch_size": 4, B + "train_iters": 60, "slurm.sbatch.time": "01:00:00",
+                    "aux.array_tag": "_d_z3_mhc4_hep_m4_long"})
+    arm("d_moon_fsdp_2n", "MoonEP + FSDP debug: 2 nodes, 16 blocks, 32 experts, CUDA_LAUNCH_BLOCKING",
+        *f_base, resa, fsdp, fp32g,
+        {"aux.pattern": vpp_pattern("LLLLLLL*" * 2, (16,)), B + "num_experts": 32, "aux.nodes": 2,
+         "slurm.sbatch.nodes": 2, "aux.gbs": 32, B + "train_iters": 8,
+         "backend.env.CUDA_LAUNCH_BLOCKING": "1", "aux.array_tag": "_d_moon_fsdp_2n"})
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
