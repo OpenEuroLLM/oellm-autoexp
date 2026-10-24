@@ -191,6 +191,10 @@ backend:
 job:
   name: ${aux.suite}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
+  # per job name: the 32- and 128-node configs share base_output_dir (one checkpoint directory),
+  # but not the rendered script a RestartAction resubmits, nor the monitors' current log / config
+  log_path_current: ${job.base_output_dir}/current_${job.name}.log
+  config_path_current: ${job.base_output_dir}/current_${job.name}.yaml
   array_group: null
   # gbs 4096 x 16k at 128 nodes: 67M tokens / (512 GPUs x ~7.5k tok/s) ~ 17.5 s per step
   est_step_time_s: 17.5
@@ -275,6 +279,7 @@ job:
       action: {class_name: FinishAction, reason: "Training finished"}
 
 slurm:
+  script_path: ${job.base_output_dir}/${job.name}.sbatch
   sbatch:
     nodes: ${aux.nodes}
     # account ehpc533 (user 2026-10-23: cns144's priority too low; QOS acc_xehpc for >100 nodes)
