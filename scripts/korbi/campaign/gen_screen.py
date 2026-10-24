@@ -1480,6 +1480,20 @@ def arms5embhead2(size: str = "s1"):
     return out
 
 
+def arms5embhead3(size: str = "s1"):
+    """All four screen5embhead arms again, without overlap_param_gather (2026-10-24): every arm,
+    "shared" included, asserted at step 1 in the distributed optimizer's overlapped param gather
+    (`param_gather_handle is None`, from an mHC read hook): the untied head + mHC-4 combination on
+    this path, not the embedding multipliers (screen5embhead2's diagnosis was wrong; cancelled).
+    Communication only (identical math); each arm on its crashed run's finished data index."""
+    out = []
+    for n, d, kv in arms5embhead(size):
+        cache = f"/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5embhead_{size}/{n}/data_cache"
+        out.append((n, d + " (no overlapped param gather)",
+                    {**kv, B + "overlap_param_gather": False, B + "data_cache_path": cache}))
+    return out
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1806,6 +1820,12 @@ def write5():
             ("s1", "screen5embhead", arms5embhead("s1")),
             ("s1", "screen5fsdpeq", arms5fsdpeq("s1")),
             ("s1", "screen5embhead2", arms5embhead2("s1")),
+            ("s1", "screen5embhead3", arms5embhead3("s1")),
+            # distopt again without overlap_param_gather (the same assert), on its finished index
+            ("s1", "screen5fsdpeq3", [(n, d, {**kv, B + "overlap_param_gather": False,
+                                              B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"
+                                              "campaign_3b/screen5fsdpeq_s1/distopt/data_cache"})
+                                     for n, d, kv in arms5fsdpeq("s1") if n == "distopt"]),
             # the fsdp arm alone after its CUDA_DEVICE_MAX_CONNECTIONS assert (distopt kept running)
             ("s1", "screen5fsdpeq2", [a for a in arms5fsdpeq("s1") if a[0] == "fsdp"]),
             *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
