@@ -1790,12 +1790,14 @@ def ckpt_offload():
         {"backend.env.ENGRAM_STEP_LOOKUP": "0", "backend.env.ENGRAM_SPARSE_GRAD": "0",
          B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
          B + "micro_batch_size": 2, B + "train_iters": 8, "aux.array_tag": "_g_eng_smoke_plain"})
-    full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 2048,
-              B + "train_iters": 20, "slurm.sbatch.time": "01:00:00",
+    # user 2026-10-24: gbs 4096 x 16k (8 micro-batches per GPU at 32 nodes, mbs 4); Engram 40B
+    # (heavily multilingual: more table parameters; ~0.94 GB per GPU at 128 GPUs)
+    full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
+              B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
               "slurm.env.WATCHDOG_STARTUP_S": "1800", "backend.env.MEM_BREAKDOWN": "1"}
-    arm("g32_full", "32 nodes: 50B-A2.7B (216 experts) + 20B Engram, mHC-4, muown_classical, mbs 4, "
-        "gbs 2048", *e_base, dbuf, sovl, mc_fix,
-        eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 9765568, 4), full32,
+    arm("g32_full", "32 nodes: 50B-A2.7B (216 experts) + 40B Engram, mHC-4, muown_classical, mbs 4, "
+        "gbs 4096", *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
         {"aux.array_tag": "_g32_full"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,

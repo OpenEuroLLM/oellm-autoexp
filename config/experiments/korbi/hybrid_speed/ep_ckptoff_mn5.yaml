@@ -10727,7 +10727,7 @@ sweep:
           backend.env.CUDA_LAUNCH_BLOCKING: '1'
           aux.nodes: 1
           slurm.sbatch.nodes: 1
-        # 32 nodes: 50B-A2.7B (216 experts) + 20B Engram, mHC-4, muown_classical, mbs 4, gbs 2048
+        # 32 nodes: 50B-A2.7B (216 experts) + 40B Engram, mHC-4, muown_classical, mbs 4, gbs 4096
         - aux.arm: g32_full
           aux.pattern: '*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE'
           backend.megatron.pipeline_model_parallel_size: 1
@@ -10775,8 +10775,8 @@ sweep:
           backend.megatron.linear_num_value_heads: 16
           aux.topk: 5
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
-          aux.gbs: 2048
-          backend.megatron.train_iters: 20
+          aux.gbs: 4096
+          backend.megatron.train_iters: 12
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.mhc_routed_topk: 0
@@ -10816,7 +10816,7 @@ sweep:
           backend.megatron.engram_ngram_orders: [2, 3]
           backend.megatron.engram_num_heads: 8
           backend.megatron.engram_embed_dim: 64
-          backend.megatron.engram_table_size: 9765568
+          backend.megatron.engram_table_size: 19480384
           backend.megatron.engram_table_parallel: dp
           backend.megatron.engram_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
           backend.megatron.engram_gate_signed_sqrt: true
@@ -10826,7 +10826,7 @@ sweep:
           backend.megatron.engram_table_rowwise_v: true
           backend.megatron.engram_table_momentum_dtype: bf16
           backend.env.ENGRAM_STEP_LOOKUP: '1'
-          backend.env.ENGRAM_STEP_GROUP: '4'
+          backend.env.ENGRAM_STEP_GROUP: '8'
           backend.env.ENGRAM_SPARSE_GRAD: '1'
           aux.nodes: 32
           slurm.sbatch.nodes: 32
