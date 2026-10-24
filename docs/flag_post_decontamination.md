@@ -395,7 +395,14 @@ its longest verbatim run of a benchmark item covers >= 70 % of the item, or is >
 >= 20 tokens. Lowering the rule catches truncated / end-modified copies; a change in the middle still
 splits the run, so modified items stay; short items (20-28 tokens) need (nearly) full copies at any
 rule. `flag-decon-v1` = v5 at 0.7: **1.47M documents, 18.0B tokens (0.133 % of 13.5T) dropped**.
-Written to flag-decon-v1.new, verified, then swapped in for the first (v4 @ 0.9, never used) tree.
+Written to flag-decon-v1.new (job 47950366, 1 node, ~50 min: 441 shards rewritten, 11 symlinked),
+verified (job 47953404: `verify.py tree` split over 8 nodes x 56 processes, 3:04 min -- 441/441
+shards, every kept document checked token-identical on 200 random documents per shard, counts add
+up, 0 errors), then swapped in for the first tree (v4 @ 0.9, never used, deleted). Datamix
+`$R/data/flag_decon_v1_datamix_mn5.txt` regenerated: 452/452 shards complete (sizes = info.json),
+weights identical to `flag_datamix_mn5.txt`; no broken symlinks; `flag/` untouched. Training config:
+`config/backend/megatron/data_flag_decon_v1_mn5.yaml`. Total decontamination cost: ~250 GPU-h on
+ehpc533 (v1-v5, mostly the 8-node scans, ~30 GPU-h each).
 
 ## 5. Caveats
 
