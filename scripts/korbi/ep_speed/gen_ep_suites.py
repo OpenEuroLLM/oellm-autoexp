@@ -1778,6 +1778,18 @@ def ckpt_offload():
         {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
          B + "micro_batch_size": 2, B + "train_iters": 8, "backend.env.MEM_BREAKDOWN": "1",
          "aux.array_tag": "_g_eng_smoke"})
+    # g_eng_smoke: "CUDA error: misaligned address" in the first step (reported in the mHC read):
+    # blocking launches, and without the step lookup / sparse table gradients
+    blk = {"backend.env.CUDA_LAUNCH_BLOCKING": "1"}
+    arm("g_eng_smoke_blk", "g_eng_smoke, blocking launches", *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2), blk,
+        {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+         B + "micro_batch_size": 2, B + "train_iters": 4, "aux.array_tag": "_g_eng_smoke_blk"})
+    arm("g_eng_smoke_plain", "g_eng_smoke, blocking, no step lookup / sparse grads", *e_base, dbuf,
+        sovl, mc_fix, eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2), blk,
+        {"backend.env.ENGRAM_STEP_LOOKUP": "0", "backend.env.ENGRAM_SPARSE_GRAD": "0",
+         B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+         B + "micro_batch_size": 2, B + "train_iters": 4, "aux.array_tag": "_g_eng_smoke_plain"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 2048,
               B + "train_iters": 20, "slurm.sbatch.time": "01:00:00",
               "slurm.env.WATCHDOG_STARTUP_S": "1800", "backend.env.MEM_BREAKDOWN": "1"}
