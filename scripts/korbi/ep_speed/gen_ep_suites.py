@@ -1707,6 +1707,11 @@ def ckpt_offload():
     arm("e_db_m8_exp", "mHC-4, FSDP + MoonEP, double buffer, mbs 8, expandable segments",
         *e_base, dbuf, m8, {"backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                              "aux.array_tag": "_e_db_m8_exp"})
+    # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
+    arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
+        dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+               B + "profile_step_start": 10, B + "profile_step_end": 11,
+               "aux.array_tag": "_p_e_db"})
     # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
     # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
     # double buffering, to locate the kernel
