@@ -1637,6 +1637,13 @@ def ckpt_offload():
         for ep_name, epd in (("hep", HEP), ("a2a", a2a)):
             arm(f"c_z3_{res}_{ep_name}_m2", f"{res}, FSDP ZeRO-3, {ep_name} dispatcher, mbs 2, gbs 512",
                 *f_base, resa, e112, rd, fsdp, epd, {"aux.array_tag": f"_c_z3_{res}_{ep_name}"})
+    # c5: with the recompute-input release (random.py) mHC-4 fits under FSDP (peak 21.8 GiB at
+    # mbs 2): FSDP vs PP at the same EP backend (HybridEP), PreNorm and mHC-4
+    arm("c_z3_mhc4_hep_m4", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 4, gbs 512", *f_base, resa, e112, fsdp,
+        HEP, {B + "micro_batch_size": 4, "aux.array_tag": "_c_z3_mhc4_hep_m4"})
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        arm(f"c_pp4_{res}_hep_g512", f"{res}, PP4 x VPP2, HybridEP, mbs 2, gbs 512", *f_base, resa,
+            e112, rd, pp4, HEP, {"aux.array_tag": f"_c_pp4_{res}_hep"})
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
