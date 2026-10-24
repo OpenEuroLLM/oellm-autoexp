@@ -2987,3 +2987,21 @@ stages: the v_norm reset, not built yet.
 - Global batch: 64M tokens (4096 × 16k), ~195k–235k steps for 12.5–15T tokens.
 - Main lr: 8.5e-4, from our own lr ∝ N^-0.417 law (s3 = 1.8e-3), scaled to 3B active.
 - Open: Sinkhorn-balanced embedding / head update and head-wise Q / K / V (screen5ds41_s1).
+
+**LDM vs mHC-4 on the long-context set** (ds5lcldm(logn)_s2; round 5d's 2-node s2 trio, 5:1, step 4000,
+uncooled; log-n in brackets; user 2026-10-24: small scale, noisy, so long-context behaviour may still
+emerge at size):
+
+| s2 (2-node) | NLL 4-8k | NLL 16-32k | NLL 32-64k | kvret64 4k / 8k / 16k / 32k / 64k | kvret16 @64k |
+|---|---:|---:|---:|---|---:|
+| plain | 2.533 | 2.390 (2.352) | 2.492 (2.372) | 0.78 / 0.66 / 0.66 / 0.30 / 0.12 (0.74 / 0.46 / 0.22) | 0.22 (0.34) |
+| mHC-4 | 2.484 | 2.304 (2.284) | 2.333 (2.271) | 0.82 / 0.80 / 0.72 / 0.76 / 0.34 (0.74 / 0.80 / 0.76) | 0.44 (0.66) |
+| LDM x2.0 | **2.473** | **2.300 (2.281)** | **2.307 (2.261)** | 0.60 / 0.56 / 0.30 / 0.24 / 0.18 (0.32 / 0.34 / 0.30) | 0.30 (0.40) |
+
+- **Long-document loss: LDM is best at every length** and generalizes past 16k as well as mHC-4.
+  At 32-64k it is 0.026 lower, 0.010 lower with log-n. The loss advantage carries to long context.
+- **Retrieval: LDM stays clearly worse from 8k on.** At 32k: 0.24 vs 0.76, (0.34) vs (0.80).
+  With 50 questions per length (SE ~0.07), the 16-32k gaps are far outside noise; the 4-8k ones are
+  borderline. LDM's state helps prediction, but not exact recall of a specific key among many.
+- Open: does this hold at 7:1 (where mHC-4's retrieval jumped)? Only if LDM's at-scale speed is fixed
+  (EP: 4,275 vs 7,537 tok/s/GPU under FSDP).
