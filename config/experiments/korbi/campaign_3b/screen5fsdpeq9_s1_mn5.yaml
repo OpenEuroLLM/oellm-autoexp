@@ -51,8 +51,8 @@ sweep:
   groups:
     - type: list
       configs:
-        # muown_classical, distributed optimizer (the campaign's path), 2 nodes (fp32 grad reduce)
-        - aux.arm: distopt
+        # muown_classical, Megatron-FSDP ZeRO-3, 2 nodes (repeat)
+        - aux.arm: fsdp
           backend.megatron.num_attention_heads: 6
           backend.megatron.num_query_groups: 2
           backend.megatron.kv_channels: 128
@@ -118,6 +118,10 @@ sweep:
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           slurm.sbatch.nodes: 2
-          backend.megatron.overlap_param_gather: false
-          backend.megatron.grad_reduce_in_fp32: true
-          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq_s1/distopt/data_cache
+          backend.megatron.use_megatron_fsdp: true
+          backend.megatron.data_parallel_sharding_strategy: optim_grads_params
+          backend.megatron.overlap_param_gather: true
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.ckpt_format: fsdp_dtensor
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq2_s1/fsdp/data_cache

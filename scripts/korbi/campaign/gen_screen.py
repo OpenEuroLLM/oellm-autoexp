@@ -1868,14 +1868,11 @@ def write5():
             # the 2-step distopt arm repeated: the step-1 noise floor of the weight diff (mHC phi
             # differs ~9 % fsdp vs distopt on the fixed code: noise from near-zero Adam steps?)
             ("s1", "screen5fsdpeq8", [a for a in arms5fsdpeq4("s1") if a[0] == "distopt"]),
-            # the clean comparison: distopt with fp32 gradient reduction (as Megatron-FSDP) vs the
-            # fsdp 300-step run (screen5fsdpeq5), same data index; the step-1 weight diffs are at the
-            # distopt-vs-distopt noise floor
-            ("s1", "screen5fsdpeq9", [(n, d + " (fp32 grad reduce)", {**kv, B + "overlap_param_gather": False,
-                                       B + "grad_reduce_in_fp32": True,
-                                       B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"
-                                       "campaign_3b/screen5fsdpeq_s1/distopt/data_cache"})
-                                      for n, d, kv in arms5fsdpeq("s1") if n == "distopt"]),
+            # the fsdp 300-step run repeated (both paths already reduce gradients in fp32, so the
+            # remaining +0.033 is chance or systematic: an fsdp-vs-fsdp noise floor decides)
+            ("s1", "screen5fsdpeq9", [(n, d + " (repeat)", {**kv, B + "data_cache_path":
+                                       "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq2_s1/fsdp/data_cache"})
+                                      for n, d, kv in arms5fsdpeq("s1") if n == "fsdp"]),
             # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
             # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
             # matched nothing), 300 steps on its finished index; distopt reference = screen5fsdpeq3
