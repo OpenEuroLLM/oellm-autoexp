@@ -1551,6 +1551,40 @@ def arms5quant(size: str, bits: str | None = None):
     return out
 
 
+def arms5quantopt(which: str, bits: str | None = None):
+    """Quantization robustness per optimizer (user 2026-10-24: do classical Muown's ever smaller
+    direction steps leave brittle weights?): the final (cooled) checkpoints of the same-setup
+    optimizer comparisons, full precision vs weight-only RTN in groups of 32 (QUANT_EVAL_BITS, as
+    arms5quant), on the same validation batches. which = "s2" (screen5opt4's 2-node trio, step 4800),
+    "b8" (opttiny2_b8, 100k steps) or "b32" (opttiny2_b32, 25k steps)."""
+    if which == "s2":
+        pool, suite = {n: kv for n, _, kv in arms5opt4("s2")}, "screen5opt4_s2"
+        arms, iters = ("am_p1", "muown_classical", "muown_cl_wd01"), 50
+    else:
+        g = int(which[1:])
+        pool, suite = {n: kv for n, _, kv in arms5tiny(g)}, f"opttiny2_b{g}_s1"
+        arms = {8: ("am_p1", "muown_classical", "muown_cl_wd001", "am_p05", "am_p0_s005", "amsimp_c8", "adamw"),
+                32: ("am_p1", "muown_classical", "muown_cl_wd01", "muon_wd", "am_p0_s02")}[g]
+        iters = 400  # 400 x gbs x 2k tokens: 6.6M (b8) / 26M (b32) tokens
+    out = []
+    for a in arms:
+        src = f"{RUNS5}/{suite}/{a}"
+        ev = {B + "skip_train": True, B + "eval_iters": iters, B + "no_load_optim": True,
+              B + "no_load_rng": True, B + "load": f"{src}/ckpt",
+              B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [], "job.est_steps": 1,
+              "slurm.sbatch.time": "01:00:00", **BAD_NODES}
+        if which == "s2" and a == "muown_cl_wd01":
+            # a scheduler retry after its final save trained on 4800 -> 7629 at lr / 10 (Megatron
+            # fixed since): load step 4800 itself, no rolling checkpoint (they are newer)
+            ev.update({B + "ckpt_step": 4800, B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling_unused"})
+        env = {"backend.env.QUANT_EVAL_BITS": bits} if bits else {}
+        tag = f"q{bits}" if bits else "fp"
+        out.append((f"{a}_{tag}", f"{a} ({suite}, final), {f'{bits}-bit weights' if bits else 'full precision'}",
+                    {**pool[a], **ev, **env}))
+    return out
+
+
 def arms5s3cool(size: str = "s3"):
     """Cooled s3 models for the downstream / long-context / 4-bit evals (user 2026-10-21): round 5's
     s3 runs continued from their step-4000 checkpoints with WSD linear to lr / 10 over 4000 -> 4800
@@ -1786,6 +1820,9 @@ def write5():
             ("s3", "ds5q4", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"],
                                             extra={"tag": "q4", "bits": "4"})),
             *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
+            # quantization robustness per optimizer (user 2026-10-24): full / 4-bit / 3-bit
+            *[(sz, f"quantopt_{w}{'q' + b if b else 'fp'}", arms5quantopt(w, b or None))
+              for w, sz in (("s2", "s2"), ("b8", "s1"), ("b32", "s1")) for b in ("", "4", "3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
