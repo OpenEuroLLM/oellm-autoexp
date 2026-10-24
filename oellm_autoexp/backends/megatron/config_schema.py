@@ -363,6 +363,7 @@ class MegatronConfig(ConfigInterface):
             "complex_kda",
             "triadic",
             "power",
+            "kronlstm",
         ]
         | None
     ) = None
@@ -528,6 +529,67 @@ class MegatronConfig(ConfigInterface):
     # triadic mixer apply it here; the FLA layers (kda, signed_kda, complex_kda) need the
     # ComplexKDA fork's xsa option.
     linear_xsa: bool = False
+
+    # KronLSTM (variant "kronlstm", fla.layers.kronlstm via megatron/core/ssm/fla_hybrid.py):
+    # learn the write (target) gate c; the forget gate is linear_fla_gate ("softplus" is
+    # KronLSTM's own, the signed gates give f in [-1, 1] through the sign gauge), beta in [0,
+    # 2] is linear_fla_allow_neg_eigval.
+    linear_kronlstm_target_gate: bool = True
+
+    # KronLSTM: beta gates the erase only and the target gate alone the write (the paper's
+    # default); needs linear_kronlstm_target_gate.
+    linear_kronlstm_decouple_erase: bool = True
+
+    # KronLSTM: L2-normalise v per head (the paper's default).
+    linear_kronlstm_normalize_v: bool = True
+
+    # KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase gate at init (-ln 3)
+    # so s * beta starts at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0,
+    # 2] stays reachable.
+    linear_kronlstm_neg_eigval_init_bias: bool = False
+
+    # KronLSTM's output gate: "linear" (the paper's dense hidden x value_dim projection) or
+    # "lowrank" (complex_kda's hidden -> head_dim -> value_dim, its parameter count).
+    linear_kronlstm_output_gate: str = "linear"
+
+    # KronLSTM polar forget gate f = m cos(theta): magnitude m the softplus gate
+    # (linear_fla_gate softplus), angle theta = pi sigmoid(.) per key dimension, starting near
+    # 0 (f in [-m, m]).
+    linear_kronlstm_forget_angle: bool = False
+
+    # KronLSTM polar forget gate's initial angle: "narrow" (theta 0.157 on every channel: the
+    # softplus gate's start) or "broad" (the angle bias drawn per channel over [logit 0.05,
+    # logit 0.95]: cos(theta) in (-0.988, 0.988), both signs and a spread of magnitudes from
+    # step 0).
+    linear_kronlstm_forget_angle_init: str = "narrow"
+
+    # KronLSTM polar erase gate: kept eigenvalue 1 - beta = r cos(phi) per head (beta in [0,
+    # 2], the write kept in [0, 1]), starting at the s = 1 beta.
+    linear_kronlstm_erase_angle: bool = False
+
+    # KronLSTM write gate c = 2 sigmoid(.) - 1 in [-1, 1] (mean 0.5 at init).
+    linear_kronlstm_signed_write: bool = False
+
+    # Length-dependent attention temperature: query i scaled by f(n_i), n_i its keys (position
+    # in its document + 1). "logn": max(1, log n / log base), parameter-free (evaluation
+    # beyond the training length); "ssmax": s_h log n with a learnt s per head (Scalable-
+    # Softmax, init 1 / log base). Self-attention layers only (in the hybrid: the `*` layers).
+    # Positions follow context parallelism's sharding and continue from the KV cache at
+    # inference (static, flash decode and dynamic batching); not yet for inference under
+    # context parallelism.
+    attention_length_scaling: str = "none"
+
+    # The length where the scaling is 1 (the training sequence length).
+    attention_length_scaling_base: int = 8192
+
+    # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
+    # is the polar forget gate's init cap without its angle.
+    linear_kronlstm_forget_offset: float = 0.0
+
+    # KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by
+    # construction. The op's s scales the write cap as well as the erase, so without this the
+    # write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).
+    linear_kronlstm_unit_write: bool = False
 
     # Power retention (variant "power", megatron/core/ssm/power_retention.py): the even degree
     # of the (q . k)^deg similarity; the state per head is binom(d+deg-1, deg) x (d+1). The
@@ -697,6 +759,10 @@ class MegatronConfig(ConfigInterface):
     # Lower bound on the decay gate's pre-activation, for complex_kda. Clamps how fast a
     # channel may forget within one step.
     linear_gate_lower_bound: float = -5.0
+
+    # complex_kda: a fixed extra decay per step on every channel (log|alpha| - offset, clamped
+    # at linear_gate_lower_bound): shorter memory horizons.
+    linear_gate_forget_offset: float = 0.0
 
     # Shape of the output gate, for complex_kda. ``"lowrank"`` factorises it through a
     # bottleneck; ``"linear"`` is a single projection. This changes the parameter count, so it
@@ -1606,6 +1672,26 @@ class MegatronConfig(ConfigInterface):
     # streams. Not with mhc_routed_reversible.
     mhc_routed_free: bool = False
 
+    # Internal attention over the mHC streams (Internal Attention Transformer, ICLR 2027
+    # submission "Internal Attention: Growing Token Representations Without Growing the FFN or
+    # the KV Cache"; internal_attention.py): after every mixer sublayer, the token's n streams
+    # of width h attend to each other (bidirectional, per token: no KV cache) with shared h x
+    # h Q / K / V / O maps and a learned position vector per stream, as a pre-norm residual
+    # over all n * h. 'compute': the paper's x = (x_c, x_m) with every sublayer (mixer and MLP
+    # / MoE) reading and writing stream 0 only -- the compute part x_c, d = hidden_size -- the
+    # memory streams starting at zero and the head reading stream 0 (the paper's appendix-B
+    # variant: temporal mixing on x_c only). 'full': the paper's low-rank temporal mixing --
+    # each mixer sublayer reads all n * h dims through a latent down-projection n h -> h and
+    # writes through an up-projection h -> n h (8 h^2 parameters per mixer; the mixer keeps
+    # width h), MLP / MoE on x_c as in 'compute'. 'mhc': dense mHC (read / write / stream
+    # mixer) with the internal attention after each mixer sublayer's write. 'none' disables.
+    # Requires mhc (dense: no routed residual, no mhc_lerp, no mhc_per_layer).
+    mhc_internal_attention: str = "none"
+
+    # Heads of the internal attention (over the h-wide stream tokens); 0 =
+    # num_attention_heads.
+    mhc_internal_attention_heads: int = 0
+
     # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
     # residual accumulation with learned softmax attention over depth. Bounds hidden-state
     # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
@@ -1909,6 +1995,22 @@ class MegatronConfig(ConfigInterface):
     # adam.
     muon_scalar_optimizer: Literal["adam", "lion"] = "adam"
 
+    # muown_classical: decoupled weight decay on the unnormalized direction vectors v (not in
+    # the Muown paper): the rotation rate settles at about sqrt(2 lr lambda) instead of
+    # annealing as t^-1/2.
+    muown_classical_v_weight_decay: float = 0.0
+
+    # Independent angular C/(1 + updates since warmup), before matrix scaling, with extra
+    # factor fixed to 1. Required for angular_muown_simplified; fixed batch only.
+    angular_muown_c: float | None = None
+
+    # Final fraction of the LR horizon for linear angular cooldown. Zero continues inverse-
+    # time decay. Default: 0.2, used only with --angular-muown-c.
+    angular_muown_cooldown_fraction: float = 0.2
+
+    # Final angular rate / rate at cooldown start, in C/t mode. Default: 0.05.
+    angular_muown_cooldown_end_ratio: float = 0.05
+
     # Momentum coefficient for the U-gradient buffer in AngularMuown
     angular_muown_momentum: float = 0.95
 
@@ -1924,15 +2026,14 @@ class MegatronConfig(ConfigInterface):
     # Whether to split fused QKV parameters for AngularMuown orthogonalization
     angular_muown_split_qkv: bool = True
 
-    # Shape-dependent scale for the AngularMuown U direction. spectral (default, with
-    # --angular-muown-extra-scale-factor 0.2) matches the Muon recipe convention so Adam-tuned
-    # learning rates transfer; shape_scaling (with extra scale factor 1.0) reproduces the
-    # original AngularMuown ratio scaling.
-    angular_muown_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] = "spectral"
+    # Shape-dependent scaling. Defaults to shape_scaling for angular_muown_simplified and
+    # spectral for angular_muown and muown. The C/t variant always uses extra factor 1.
+    angular_muown_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] | None = None
 
-    # Additional scale factor for the AngularMuown U direction. The default 0.2 pairs with
-    # spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
-    angular_muown_extra_scale_factor: float = 0.2
+    # Extra factor for angular_muown and muown_classical; angular_muown_simplified fixes 1.
+    # The default 0.2 pairs with spectral scaling to give the standard Muon 0.2 * sqrt(max(m,
+    # n)).
+    angular_muown_extra_scale_factor: float | None = None
 
     # FP32 matmul precision for the AngularMuown Newton-Schulz iteration
     angular_muown_fp32_matmul_prec: Literal["low", "medium", "high"] = "medium"
@@ -1945,11 +2046,14 @@ class MegatronConfig(ConfigInterface):
     angular_muown_num_ns_steps: int = 5
 
     # How to perform NS calculation for tensor parallel weights. Blockwise mode is not
-    # supported for AngularMuown.
+    # supported for AngularMuown or Muown.
     angular_muown_tp_mode: Literal["duplicated", "distributed"] = "duplicated"
 
-    # Internal decay schedule for the AngularMuown directional step multiplier
-    angular_muown_u_decay_schedule: Literal["poly", "cosine"] = "poly"
+    # Internal decay schedule for the AngularMuown directional step multiplier: poly, cosine,
+    # or the adaptive radius (one shared radius state, growing with the steps and shrinking
+    # with --angular-muown-u-radius-lambda) or hyper (log multiplier learnt from the gradient
+    # / previous-momentum correlation)
+    angular_muown_u_decay_schedule: Literal["poly", "cosine", "radius", "hyper"] = "poly"
 
     # Scale for the poly U-decay schedule. Set --angular-muown-u-decay-p 0 to disable decay.
     angular_muown_u_decay_scale: float = 0.001
@@ -1966,6 +2070,15 @@ class MegatronConfig(ConfigInterface):
 
     # Floor of the cosine U-decay schedule
     angular_muown_u_decay_min_multiplier: float = 0.0
+
+    # radius schedule: shrink rate of the shared radius (a weight decay on it)
+    angular_muown_u_radius_lambda: float = 0.0
+
+    # hyper schedule: step on log kappa per unit gradient / momentum correlation
+    angular_muown_u_hyper_lr: float = 0.02
+
+    # hyper schedule: floor on the direction multiplier
+    angular_muown_u_hyper_min_multiplier: float = 0.02
 
     # Disable the batched AngularMuown step and update one parameter at a time
     angular_muown_batched_step: bool = True
@@ -2169,6 +2282,8 @@ class MegatronConfig(ConfigInterface):
         "adaptive_muon",
         "angular_muown",
         "muown",
+        "angular_muown_simplified",
+        "muown_classical",
     ] = "adam"
 
     # Multiplier on the base lr for the Muown row-magnitude (l-infinity sign) update.
