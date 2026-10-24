@@ -69,6 +69,7 @@ job:
 
 slurm:
   sbatch:
+    account: ehpc533                   # cns144 (the main run) has no acc_ehpc
     qos: acc_ehpc
     time: "01:20:00"                   # ~22 min data index build + ~7 min of steps (job 47864547); acc_debug allows 2 h
 
