@@ -10831,6 +10831,8 @@ sweep:
           aux.nodes: 32
           slurm.sbatch.nodes: 32
           slurm.sbatch.time: 01:00:00
+          backend.megatron.save: ${job.base_output_dir}/ckpt
+          backend.megatron.save_interval: 6
           slurm.env.WATCHDOG_STARTUP_S: '1800'
         # profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)
         - aux.arm: p_e_db

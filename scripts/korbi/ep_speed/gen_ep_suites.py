@@ -1794,6 +1794,9 @@ def ckpt_offload():
     # (heavily multilingual: more table parameters; ~0.94 GB per GPU at 128 GPUs)
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
               B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
+              # a checkpoint at step 6: fsdp_dtensor with 40B Engram + Muown's row states (host
+              # RAM and the time of a save at the production size)
+              B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 6,
               "slurm.env.WATCHDOG_STARTUP_S": "1800", "backend.env.MEM_BREAKDOWN": "1"}
     arm("g32_full", "32 nodes: 50B-A2.7B (216 experts) + 40B Engram, mHC-4, muown_classical, mbs 4, "
         "gbs 4096", *e_base, dbuf, sovl, mc_fix,
