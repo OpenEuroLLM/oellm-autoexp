@@ -215,6 +215,32 @@ Two MoonEP bugs under Megatron-FSDP (Megatron moonep.py):
   churn of gathered parameters). Next (e2): double buffering with mbs 8, PreNorm, and LDM K 8
   (mbs 2 / 4), which OOMed without it.
 
+### Double buffering at other settings (2026-10-24, e2-e6, same setup)
+
+| arm | tok/s/GPU | TFLOP/s | mem | note |
+|---|---:|---:|---:|---|
+| e_db_plain: PreNorm, mbs 4 | **8,739** | 148.7 | 0.62 | +5 % over 8,319 without double buffering |
+| e_db_m8: mHC-4, mbs 8 | - | | | OOM in NCCL's first-step buffers (12.5 GiB allocated, 51-55 GiB cached) |
+| e_db_m8_ec: + `empty_unused_memory_level 1` | 5,944 | 101.1 | | trains, but releasing the cache costs ~9 s per step |
+| e_db_m8_exp: + expandable segments | - | | | OOM |
+| e_db_ldm8_m2: LDM K 8, mbs 2 | 4,275 | 72.7 | 0.97 | after the boundary fix below |
+| e_db_ldm8_m4: LDM K 8, mbs 4 | - | | | host OOM (404 GB RSS: the offloaded checkpoints) |
+
+- **mbs 4 is the setting at 8 nodes:** at a fixed gbs, mbs 8 only halves the micro-batch count
+  and does not fit without releasing the cache every step.
+- **LDM under Megatron-FSDP crashed with an illegal memory access** at the first step (in the
+  compiled site addresses). Cause: Megatron-FSDP gathers a non-unit module's *direct* parameters
+  only when the module is *called*. `DepthMemoryStreamBoundary.expand` (the embedding write) is
+  a plain method, and its fused step reads the address weights of its child modules directly, so
+  they were never gathered. Fix (Megatron): `expand` goes through `__call__`, and the boundary is
+  an FSDP unit (recursive gather). A 1-node smoke then trains (loss 12.88 -> 10.31 in 8 steps).
+  The same gotcha explains e_fg (fine-grained gathers: per-submodule hooks, while fused mHC
+  reads its mixer's weights directly).
+- **LDM runs its CuTe state kernels on default schedules:** the sm90 table holds D 64 shapes only
+  (the model runs D 128, float32 covariance, N 32,768 at mbs 2). Tuning: `python -m cute_ldm.tune
+  --tokens 32768 --groups 16 --key-dim 8 --value-dim 128 --running-covariance-dtype float32
+  --edges 97`.
+
 ## 5. Next
 
 1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
