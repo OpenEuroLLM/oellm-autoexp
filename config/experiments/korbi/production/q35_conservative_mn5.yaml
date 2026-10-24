@@ -197,6 +197,10 @@ backend:
 job:
   name: ${aux.suite}_${aux.family}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
+  # the 32- and 128-node jobs share base_output_dir (checkpoints): their monitors' current log /
+  # config are per job name, as is the sbatch script below (a restart resubmits that file)
+  log_path_current: ${job.base_output_dir}/current_${job.name}.log
+  config_path_current: ${job.base_output_dir}/current_${job.name}.yaml
   array_group: null
   est_step_time_s: 21.0               # ~16.8M tokens / (128 GPUs x ~6,300 tok/s)
   est_startup_min: 15.0
@@ -271,6 +275,7 @@ job:
       action: {class_name: CancelAction, reason: "grad norm >= 1e4 -- the run diverged"}
 
 slurm:
+  script_path: ${job.base_output_dir}/${job.name}.sbatch
   env:
     NCCL_MIN_NCHANNELS: "4"
     NCCL_NCHANNELS_PER_PEER: "4"
