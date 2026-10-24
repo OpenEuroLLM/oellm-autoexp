@@ -112,9 +112,12 @@ def ep_slice():
 
 # MoonEP needs NVLink multicast (NVSwitch) for its plan broadcast; MN5's 4-GPU H100 boards have
 # none: the image's MoonEP + container/patches/moonep-no-multicast.patch (unicast stores) in
-# $HYBRID_ENV/pylibs_moonep, first on PYTHONPATH (an array of its own: the env is in the srun line)
+# $HYBRID_ENV/pylibs_moonep, first on PYTHONPATH (an array of its own: the env is in the srun line).
+# pylibs_moonep2 (2026-10-21): + container/patches/moonep-barrier-timeout.patch (cross-rank
+# barrier timeout MOONEP_BARRIER_TIMEOUT_S, default 600 s; 100 s trapped the per-micro-batch
+# Engram lookup runs on their first step)
 MOON = {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "moonep",
-        "backend.env.PYTHONPATH": "${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:"
+        "backend.env.PYTHONPATH": "${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:"
         "flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}",
         "aux.array_tag": "_moon"}
 FP8B_E = dict(FP8B, **{B + "fp8_experts_only": True})
@@ -978,7 +981,7 @@ def shared_overlap():
            B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
            B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8,
            "aux.gbs": 2048, B + "train_iters": 10,
-           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep",
+           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/cache/triton_ep",
            "aux.array_tag": "_moonmemfla_q35"}
     arm("s_hyb_ref", "hybrid plain, 2 x 8k, MoonEP, GC (reference)", base, hyb, moon)
     arm("s_hyb_shov", "hybrid plain, 2 x 8k, MoonEP, GC + shared-expert overlap", base, hyb, moon, ovl)
@@ -1327,6 +1330,456 @@ def ckpt_offload():
         off, ctx16, mbs2, fused, ldm)
     arm("o_ldm4_16k_mbs2", "LDM K 4 (CuTe, segments), 16k mbs 2, host checkpoints", base, hyb, moon,
         off, ctx16, mbs2, fused, ldm, {B + "depth_memory_key_dim": 4})
+    # K 8 at mbs 2 OOMs (11-slot boundary tensors, 1.4 GB each at 32k tokens): mbs 1
+    arm("o_ldm8_16k_mbs1", "LDM K 8 (CuTe, segments), 16k mbs 1, gbs 512, host checkpoints", base,
+        hyb, moon, off, ctx16, gbs512, fused, ldm)
+    # half the checkpoints (the 11-slot offload is the bound): 4 layers per recompute chunk
+    arm("o_ldm8_16k_mbs1_r4", "LDM K 8, 16k mbs 1, 4 layers per recompute chunk, offload last", base,
+        hyb, moon, off, ctx16, gbs512, fused, ldm,
+        {B + "recompute_num_layers": 4, "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+         "aux.array_tag": "_ldmlast"})
+    # LDM K 8 at mbs 1 = 2,852 tok/s/GPU (mHC-4 5,921): where the time goes
+    arm("p_ldm8_16k_mbs1", "profile: LDM K 8, 16k mbs 1, host checkpoints (last too)", base, hyb,
+        moon, off, ctx16, fused, ldm, prof, {"backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+                                              B + "train_iters": 8, B + "profile_step_start": 6,
+                                              B + "profile_step_end": 7})
+    # o9 (user 2026-10-20: Engram goes in, 20-30 % of the inactive parameters): the campaign's
+    # sizing rule (gen_screen.engram_arm) at the production MoE -- the freed experts' parameters
+    # in two Engram layers (before blocks 1 and 24 of 48), orders (2, 3) x 8 heads, dim 64, the
+    # reference gate / conv pre-norm / per-layer hashes, the lean table optimizer, step lookup
+    per_expert = 3 * 2048 * 768
+
+    def engram(experts):
+        rows = (160 - experts) * per_expert * 48 // (2 * 16 * 64)
+        return {"aux.pattern": with_engram(pat, (1, 24)), B + "num_experts": experts,
+                B + "engram_ngram_orders": [2, 3], B + "engram_num_heads": 8,
+                B + "engram_embed_dim": 64, B + "engram_table_size": rows,
+                B + "engram_table_parallel": "dp",
+                B + "engram_token_map": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy",
+                B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
+                B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0,
+                B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16",
+                "backend.env.ENGRAM_STEP_LOOKUP": "1", "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+                "aux.array_tag": "_moonofffused_eng"}
+    arm("o_mhc4_16k_mbs2_eng0", "mHC-4, 16k mbs 2, offload, fused read (reference, 160 experts)",
+        base, hyb, moon, off, ctx16, mbs2, fused, {"backend.env.ENGRAM_STEP_LOOKUP": "1",
+                                                     "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+                                                     "aux.array_tag": "_moonofffused_eng"})
+    arm("o_mhc4_16k_mbs2_eng21", "mHC-4 + Engram 21 % (128 experts + 7.2B table params)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(128))
+    arm("o_mhc4_16k_mbs2_eng31", "mHC-4 + Engram 31 % (112 experts + 10.9B table params)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112))
+    # the step lookup holds the rows (+ grads) of all 32 micro-batches for the whole step: OOM on
+    # stage 0 (39.7 GiB before the forward-backward vs ~33.6 without Engram) -- per micro-batch
+    mb = {"backend.env.ENGRAM_STEP_LOOKUP": "0"}
+    arm("o_mhc4_16k_mbs2_eng21_mb", "mHC-4 + Engram 21 %, per-micro-batch lookup", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(128), mb)
+    arm("o_mhc4_16k_mbs2_eng31_mb", "mHC-4 + Engram 31 %, per-micro-batch lookup", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(112), mb)
+    # o10: per-stage memory use -- offload the last chunks only where many micro-batches are in
+    # flight (stages 0, 1), and skip the recompute of the last chunks on the later stages
+    stage = lambda tag, last, skip: {"backend.env.RECOMPUTE_OFFLOAD_LAST": last,  # noqa: E731
+                                     "backend.env.RECOMPUTE_SKIP_CHUNKS": skip,
+                                     "aux.array_tag": "_moonofffused_eng_" + tag}
+    arm("o_eng31_last01", "Engram 31 % production candidate, offload last on stages 0, 1 only",
+        base, hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01", "0,1", ""))
+    arm("o_eng31_last01_skip0012", "... + no recompute of the last 0/0/1/2 chunks per stage", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01s0012", "0,1", "0,0,1,2"))
+    arm("o_eng31_last01_skip0124", "... + no recompute of the last 0/1/2/4 chunks per stage", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01s0124", "0,1", "0,1,2,4"))
+    # o11: MoonEP's SM budget with the hybrid (tuned to 64 on Qwen3), and an NCCL network check
+    for sms in (32, 48):
+        arm(f"o_eng31_sm{sms}", f"Engram 31 % candidate, MoonEP {sms} SMs", base, hyb, moon, off,
+            ctx16, mbs2, fused, engram(112), mb, stage(f"sm{sms}", "0,1", ""),
+            {B + "moe_flex_dispatcher_num_sms": sms})
+    # the campaign's optimizer: angular MuOwn (all speed numbers above are Adam); its step cost
+    arm("o_eng31_muown", "Engram 31 % candidate with angular MuOwn (4e-3, mixer lr x0.25)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("muown", "0,1", ""),
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+         B + "residual_mixer_lr_mult": 0.25})
+    # o12: checkpoint_offload with one copy stream per direction (Megatron "one side stream per
+    # direction"): the single stream ran the D2H offloads 130-180 ms (median) behind their free
+    dup = {"aux.array_tag": "_moonofffused_eng_duplex"}
+    arm("o_eng31_duplex", "Engram 31 % per-mb lookup, duplex offload streams (vs o_mhc4_16k_mbs2_eng31_mb)",
+        base, hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, dup)
+    arm("o_eng31_duplex_last01", "... + offload last on stages 0, 1 only (vs o_eng31_last01)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, dup,
+        {"backend.env.RECOMPUTE_OFFLOAD_LAST": "0,1", "aux.array_tag": "_moonofffused_eng_duplex01"})
+    # ... + the pipeline receive buffers (leaf chunk inputs, held by the schedule for .grad) too
+    arm("o_eng31_duplex_leaf", "... + RECOMPUTE_OFFLOAD_LEAF (receive buffers to the host)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb,
+        {"backend.env.RECOMPUTE_OFFLOAD_LEAF": "1", "aux.array_tag": "_moonofffused_eng_dupleaf"})
+    # o13: overlap the pipeline p2p in the warm-up and flush phases too (the 512 MB 4-stream
+    # messages are exposed there: profile 6d-3)
+    arm("o_eng31_dupleaf_wf", "... + overlap_p2p_comm_warmup_flush", base, hyb, moon, off, ctx16,
+        mbs2, fused, engram(112), mb,
+        {"backend.env.RECOMPUTE_OFFLOAD_LEAF": "1", B + "overlap_p2p_comm_warmup_flush": True,
+         "aux.array_tag": "_moonofffused_eng_dupleafwf"})
+    # o15: the Engram step lookup in groups of G micro-batches (ENGRAM_STEP_GROUP; the whole-step
+    # lookup OOMs on stage 0), MEM_BREAKDOWN=1 (non-PyTorch memory: MoonEP buffer / pools, NCCL)
+    memb = {"backend.env.MEM_BREAKDOWN": "1"}
+    arm("o_eng31_mbref", "Engram 31 % per-micro-batch lookup (reference of o15)", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(112), mb, memb, {"aux.array_tag": "_moonofffused_eng_mbref"})
+    for g in (4, 8):
+        arm(f"o_eng31_grp{g}", f"Engram 31 %, step lookup in groups of {g} micro-batches", base,
+            hyb, moon, off, ctx16, mbs2, fused, engram(112), memb,
+            {"backend.env.ENGRAM_STEP_GROUP": str(g), "aux.array_tag": f"_moonofffused_eng_grp{g}"})
+    arm("o_eng31_grp8_leaf", "... groups of 8 + RECOMPUTE_OFFLOAD_LEAF", base, hyb, moon, off,
+        ctx16, mbs2, fused, engram(112), memb,
+        {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.RECOMPUTE_OFFLOAD_LEAF": "1",
+         "aux.array_tag": "_moonofffused_eng_grp8leaf"})
+    # o15t: where angular MuOwn's ~2 % go (layer-wise distributed: grads all-reduced instead of
+    # reduce-scattered, NS on 1/DP of the matrices, the params broadcast): step timers, A/B
+    # (the timers go to logger.info: logging_level 20; MEM_BREAKDOWN: per-group NCCL memory)
+    timers = {B + "timing_log_level": 1, B + "train_iters": 12, B + "logging_level": 20,
+              "backend.env.MEM_BREAKDOWN": "1"}
+    arm("o_eng31_t_adam", "Engram 31 % candidate, Adam, step timers", base, hyb, moon, off, ctx16,
+        mbs2, fused, engram(112), mb, timers, {"aux.array_tag": "_moonofffused_eng_tadam"})
+    arm("o_eng31_t_muown", "Engram 31 % candidate, angular MuOwn, step timers", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(112), mb, timers,
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+         B + "residual_mixer_lr_mult": 0.25, "aux.array_tag": "_moonofffused_eng_tmuown"})
+    # o19: no eager NCCL communicators for the single-rank groups (~0.38 GiB each, 6-7 of them)
+    arm("o_eng31_grp8_mb", "Engram 31 %, groups of 8, MEM_BREAKDOWN (reference of o19)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), memb,
+        {"backend.env.ENGRAM_STEP_GROUP": "8", "aux.array_tag": "_moonofffused_eng_grp8mb"})
+    arm("o_eng31_grp8_lazy", "... + MEGATRON_LAZY_SINGLETON_GROUPS", base, hyb, moon, off, ctx16,
+        mbs2, fused, engram(112), memb,
+        {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1",
+         "aux.array_tag": "_moonofffused_eng_grp8lazy"})
+    # o20: the freed memory (lazy singleton groups, receive-buffer offload) for less recompute
+    # on the later stages (OOM in o10b without them)
+    cand = {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1",
+            "backend.env.RECOMPUTE_OFFLOAD_LEAF": "1"}
+    for tag, skip in (("base", ""), ("s0001", "0,0,0,1"), ("s0012", "0,0,1,2")):
+        arm(f"o_cand_{tag}", f"candidate (groups of 8, lazy groups, leaf offload), skip {skip or '-'}",
+            base, hyb, moon, off, ctx16, mbs2, fused, engram(112), memb, cand,
+            {"backend.env.RECOMPUTE_SKIP_CHUNKS": skip, "aux.array_tag": f"_moonofffused_cand_{tag}"})
+    # o21: the LM-head weight gradient by one in-place GEMM per chunk (LIGER_WGRAD_ADDMM)
+    arm("o_cand_addmm", "candidate + LIGER_WGRAD_ADDMM", base, hyb, moon, off, ctx16, mbs2, fused,
+        engram(112), memb, cand, {"backend.env.LIGER_WGRAD_ADDMM": "1",
+                                  "aux.array_tag": "_moonofffused_cand_addmm"})
+    # o22: Engram table gradients for the touched rows only (ENGRAM_SPARSE_GRAD: 10 -> 6 B per
+    # table parameter), and the tables at 2x (21.8B) on top of it
+    addmm = {"backend.env.LIGER_WGRAD_ADDMM": "1"}
+    sparse = {"backend.env.ENGRAM_SPARSE_GRAD": "1"}
+    eng = engram(112)
+    eng2x = dict(eng, **{B + "engram_table_size": 2 * eng[B + "engram_table_size"]})
+    arm("o_cand2", "candidate + LIGER_WGRAD_ADDMM (reference of o22)", base, hyb, moon, off, ctx16,
+        mbs2, fused, eng, memb, cand, addmm, {"aux.array_tag": "_moonofffused_cand2"})
+    arm("o_cand2_sparse", "... + ENGRAM_SPARSE_GRAD", base, hyb, moon, off, ctx16, mbs2, fused, eng,
+        memb, cand, addmm, sparse, {"aux.array_tag": "_moonofffused_cand2_sparse"})
+    arm("o_cand2_sparse_t2x", "... + ENGRAM_SPARSE_GRAD, tables 2x (21.8B)", base, hyb, moon, off,
+        ctx16, mbs2, fused, eng2x, memb, cand, addmm, sparse,
+        {"aux.array_tag": "_moonofffused_cand2_sparse_t2x"})
+    # o23: VPP layout 1,8,8,8 | 12,5,5,1 puts the Engram layers (before blocks 1 and 24) on
+    # stages 1 and 3 instead of 0 and 3: stage 1 has the most room (no embedding); 13 / 13 / 13
+    # / 9 blocks + head per stage as before. Today's tables (layout cost), then 36B and 40B.
+    pat_a = vpp_pattern("LLLLL*" * 8, (1, 8, 8, 8, 12, 5, 5, 1))
+    lay_a = {"aux.pattern": with_engram(pat_a, (1, 24))}
+    for tag, total in (("t1x", None), ("36b", 36.0), ("40b", 40.0)):
+        size = eng[B + "engram_table_size"]
+        if total is not None:
+            size = int(size * total / 10.9) // 64 * 64
+        arm(f"o_layA_{tag}", f"layout 1,8,8,8|12,5,5,1, sparse table grads, tables {total or 10.9}B",
+            base, hyb, moon, off, ctx16, mbs2, fused, eng, memb, cand, addmm, sparse, lay_a,
+            {B + "engram_table_size": size, "aux.array_tag": f"_moonofffused_laya_{tag}"})
+    # o24: the group exchanges planned at the step start and issued one group ahead (async)
+    agroups = {"backend.env.ENGRAM_ASYNC_GROUPS": "1"}
+    arm("o_cand3", "candidate + addmm + sparse table grads (reference of o24)", base, hyb, moon, off,
+        ctx16, mbs2, fused, eng, memb, cand, addmm, sparse, {"aux.array_tag": "_moonofffused_cand3"})
+    arm("o_cand3_async", "... + ENGRAM_ASYNC_GROUPS", base, hyb, moon, off, ctx16, mbs2, fused, eng,
+        memb, cand, addmm, sparse, agroups, {"aux.array_tag": "_moonofffused_cand3_async"})
+    arm("p_cand3_async", "profile: ... + ENGRAM_ASYNC_GROUPS", base, hyb, moon, off, ctx16, mbs2,
+        fused, eng, cand, addmm, sparse, agroups,
+        {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
+         B + "profile_step_start": 5, B + "profile_step_end": 6, B + "train_iters": 7,
+         "aux.gbs": 128, "aux.array_tag": "_moonofffused_cand3_async_prof"})
+    # s128 (user 2026-10-22): where the candidate stands at the production scale, 128 nodes, gbs
+    # 2048 (DP 128 at PP4: 8 micro-batches per pipeline per step, a quarter of the 8-node gbs 512
+    # runs' 32), angular MuOwn, 40B Engram
+    # tables (0.94 GB per GPU on the Engram stages at 128 GPUs per stage); 8-node reference with
+    # the same config at 21.8B tables (table size costs no throughput, o22; 40B does not fit there)
+    muown = {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+             B + "residual_mixer_lr_mult": 0.25}
+    eng40 = dict(eng, **{B + "engram_table_size": int(eng[B + "engram_table_size"] * 40 / 10.9)
+                         // 64 * 64})
+    big = {"aux.nodes": 128, "slurm.sbatch.nodes": 128, "aux.gbs": 2048, B + "train_iters": 10,
+           # 128-node test: init ~2.7 min, compile / warm-up ~5 min (steps 1-2), 13.6 s / step at
+           # gbs 2048 (~50 s at 8192): 9 min for 10 steps; a short limit backfills sooner
+           "slurm.sbatch.time": "00:30:00", "slurm.env.WATCHDOG_STARTUP_S": "1500",
+           "slurm.sbatch.qos": "acc_xehpc"}  # acc_ehpc caps jobs at 100 nodes
+    arm("s128_cand40", "128 nodes, gbs 2048, angular MuOwn, candidate, Engram 40B", base, hyb,
+        moon, off, ctx16, mbs2, fused, eng40, memb, cand, addmm, sparse, muown, big,
+        {"aux.array_tag": "_moonofffused_s128"})
+    arm("s8_cand22", "8-node reference of s128: gbs 512, angular MuOwn, candidate, Engram 21.8B",
+        base, hyb, moon, off, ctx16, mbs2, fused, eng2x, memb, cand, addmm, sparse, muown,
+        {B + "train_iters": 10, "aux.array_tag": "_moonofffused_s8"})
+    # s128 round 2 (user 2026-10-22: account cns144, 5000 GPU-h, "close to 5800 tok/s/GPU
+    # again"; larger mbs and gbs allowed, up to 8192 = 134M tokens / step): 128 nodes, DP 128
+    # (user 2026-10-23 evening: back to ehpc533 -- cns144's priority is too low; >100 nodes need
+    # QOS acc_xehpc on either account)
+    cns = {"slurm.sbatch.account": "ehpc533", "slurm.sbatch.qos": "acc_xehpc"}
+    def big2(gbs, mbs=2, iters=10):
+        return dict(big, **cns, **{"aux.gbs": gbs, B + "micro_batch_size": mbs,
+                                   B + "train_iters": iters})
+    s128 = (base, hyb, moon, off, ctx16, mbs2, fused, eng40, memb, cand, addmm, sparse, muown)
+    arm("s128_g8192", "128 nodes, gbs 8192 (32 micro-batches / pipeline, as 8 nodes at 512)",
+        *s128, big2(8192, 2, 8), {"aux.array_tag": "_s128_g8192"})
+    arm("s128_g8192_m4", "128 nodes, gbs 8192, mbs 4 (16 / pipeline)", *s128, big2(8192, 4, 8),
+        {"aux.array_tag": "_s128_g8192m4"})
+    arm("s128_g4096_m4", "128 nodes, gbs 4096, mbs 4 (8 / pipeline: the mbs effect at 2048's count)",
+        *s128, big2(4096, 4), {"aux.array_tag": "_s128_g4096m4"})
+    arm("s128_bf16red", "128 nodes, gbs 2048, gradient reduction in bf16 (half the DP traffic)",
+        *s128, big2(2048), {B + "grad_reduce_in_bf16": True, "aux.array_tag": "_s128_bf16red"})
+    # VPP4: 16 chunks (4,3,...,3,2): 13 / 12 / 12 / 11 + head per stage; Engram before blocks 1
+    # and 24 stays on stages 0 and 3 (chunks 0 and 7)
+    pat_v4 = vpp_pattern("LLLLL*" * 8, (4,) + (3,) * 14 + (2,))
+    arm("s128_vpp4", "128 nodes, gbs 2048, PP4 x VPP4 (bubble 3/32 instead of 3/16)", *s128,
+        big2(2048), {"aux.pattern": with_engram(pat_v4, (1, 24)), "aux.array_tag": "_s128_vpp4"})
+    arm("s128_skip1", "128 nodes, gbs 2048, no recompute of the last chunk on every stage", *s128,
+        big2(2048), {"backend.env.RECOMPUTE_SKIP_CHUNKS": "1,1,1,1", "aux.array_tag": "_s128_skip1"})
+    arm("p_s128", "profile: 128 nodes, gbs 2048 (ranks 0 / 511, steps 5-6)", *s128, big2(2048, 2, 7),
+        {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 511],
+         B + "profile_step_start": 5, B + "profile_step_end": 6, "aux.array_tag": "_s128_prof"})
+    # f: EP + FSDP instead of PP (user 2026-10-23). Megatron-FSDP (ZeRO-3: params, grads and
+    # optimizer states sharded over DP; units = TransformerLayer / MoETransformerLayer) with EP4,
+    # no pipeline, Adam (MuOwn has no FSDP path yet), no Engram (FSDP would re-shard the tables);
+    # the decided 7:1 attention ratio. A/B against PP4 x VPP2 at the same flags.
+    resa = {"slurm.sbatch.account": "ehpc533", "slurm.sbatch.qos": "acc_ehpc"}  # (was cns144)
+    pat71 = "LLLLLLL*" * 6
+    f_base = (base, hyb, moon, off, ctx16, mbs2, fused, memb, addmm,
+              {"backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1"})
+    fsdp = {B + "use_megatron_fsdp": True, B + "data_parallel_sharding_strategy": "optim_grads_params",
+            B + "overlap_param_gather": True, B + "overlap_grad_reduce": True,
+            B + "pipeline_model_parallel_size": 1, B + "overlap_p2p_comm": False,
+            B + "ckpt_format": "fsdp_dtensor",  # asserted by Megatron-FSDP
+            "aux.pattern": vpp_pattern(pat71, (48,))}
+    arm("f_pp4_ref", "7:1 hybrid (160 experts, no Engram), PP4 x VPP2, Adam (reference of f)",
+        *f_base, resa, {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3)),
+                        "aux.array_tag": "_f_pp4"})
+    arm("f_fsdp_m2", "7:1 hybrid, Megatron-FSDP (ZeRO-3) + EP4, no PP, mbs 2, Adam", *f_base, resa,
+        fsdp, {"aux.array_tag": "_f_fsdp_m2"})
+    arm("f_fsdp_m4", "7:1 hybrid, Megatron-FSDP + EP4, no PP, mbs 4, Adam", *f_base, resa, fsdp,
+        {B + "micro_batch_size": 4, "aux.array_tag": "_f_fsdp_m4"})
+    # (user 2026-10-23) if FSDP is fast and mHC-4 costs nothing over PreNorm there, LDM (better,
+    # but too slow under PP: its state crossed the stages) is back on the table: PreNorm in both
+    # layouts, LDM under FSDP
+    arm("f_pp4_plain", "7:1 hybrid PreNorm (no mHC), PP4 x VPP2, Adam", *f_base, resa, PLAIN,
+        {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3)), "aux.array_tag": "_f_pp4_plain"})
+    arm("f_fsdp_plain_m2", "7:1 hybrid PreNorm, Megatron-FSDP + EP4, mbs 2, Adam", *f_base, resa,
+        fsdp, PLAIN, {"aux.array_tag": "_f_fsdp_plain"})
+    arm("f_fsdp_ldm8_m2", "7:1 hybrid LDM K 8 (CuTe, segments), Megatron-FSDP + EP4, mbs 2", *f_base,
+        resa, fsdp, ldm, {"aux.array_tag": "_f_fsdp_ldm8_m2"})
+    arm("f_fsdp_ldm8_m1", "... mbs 1 (gbs 512)", *f_base, resa, fsdp, ldm,
+        {B + "micro_batch_size": 1, "aux.array_tag": "_f_fsdp_ldm8_m1"})
+    # f2: every 8-node FSDP arm OOMed in the first backward (inside MoonEP's backward, 54.5 GiB
+    # allocated at mbs 4): Megatron's all-to-all dispatcher (TE grouped GEMM) instead of MoonEP,
+    # and the MoonEP arm with an allocator trace of iteration 1 (the OOM snapshot)
+    arm("f_fsdp_plain_a2a", "7:1 PreNorm, Megatron-FSDP + EP4, all-to-all dispatcher (no MoonEP)",
+        *f_base, resa, fsdp, PLAIN,
+        {B + "moe_token_dispatcher_type": "alltoall", "aux.array_tag": "_f_fsdp_a2a"})
+    arm("f_fsdp_plain_trace", "7:1 PreNorm, Megatron-FSDP + EP4, MoonEP, memory trace (iteration 1)",
+        *f_base, resa, fsdp, PLAIN,
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_plain",
+         # the OOM is in the first step = iteration 0 of the trace hook (1 never came); every rank
+         # (the OOM hits varying ranks, rank 0 survived): each dumps its own _oom snapshot
+         "backend.env.MEM_TRACE_ITER": "0",
+         "backend.env.MEM_TRACE_RANKS": ",".join(str(r) for r in range(32)),
+         "aux.array_tag": "_f_fsdp_trace"})
+    arm("f_fsdp_plain_a2a_trace", "... all-to-all dispatcher (fits), memory trace (iteration 2)",
+        *f_base, resa, fsdp, PLAIN,
+        {B + "moe_token_dispatcher_type": "alltoall",
+         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_plain_a2a",
+         "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_fsdp_a2a_trace"})
+    # 1-node versions of the f3 diagnostics (start sooner): a leak of FSDP's unsharded gradient
+    # buffers shows at 8 blocks too, just smaller (memory trace of iteration 2)
+    smoke = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+             "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 8}  # > 5 warmup steps
+    arm("f_smoke_trace", "smoke + memory trace: Megatron-FSDP + EP4, MoonEP, 8 blocks", *f_base, resa,
+        fsdp, PLAIN, smoke,
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_smoke",
+         "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_smoke_trace"})
+    arm("f_smoke_a2a_trace", "smoke + memory trace: Megatron-FSDP + EP4, all-to-all dispatcher",
+        *f_base, resa, fsdp, PLAIN, smoke,
+        {B + "moe_token_dispatcher_type": "alltoall",
+         "backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_smoke_a2a",
+         "backend.env.MEM_TRACE_ITER": "2", "backend.env.MEM_TRACE_RANKS": "0",
+         "aux.array_tag": "_f_smoke_a2a_trace"})
+    # c: PP vs FSDP at the 128-node batch regimes (user 2026-10-23), emulated on 8 nodes: what sets
+    # both is per GPU -- PP's micro-batches per pipeline (gbs 512 / 256 here = 8192 / 4096 at 128
+    # nodes, m = 32 / 16) and the tokens per GPU per step for FSDP. 112 experts (ZeRO-1 keeps the
+    # full parameters + gradients: Psi (b + b_g) ~ 34 GB with bf16 gradients), 7:1, Adam, no
+    # Engram; PreNorm and mHC-4. docs/pp_vs_fsdp.md.
+    e112 = {B + "num_experts": 112}
+    bf16g = {B + "megatron_fsdp_main_grads_dtype": "bf16", B + "megatron_fsdp_grad_comm_dtype": "bf16"}
+    pp4 = {"aux.pattern": vpp_pattern(pat71, (7, 7, 7, 6, 6, 6, 6, 3))}
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        arm(f"c_pp4_{res}_g512", f"{res}, PP4 x VPP2, mbs 2, gbs 512 (m 32 = gbs 8192 at 128 nodes)",
+            *f_base, resa, e112, rd, pp4, {"aux.array_tag": f"_c_pp4_{res}_g512"})
+        arm(f"c_pp4_{res}_g256", f"{res}, PP4 x VPP2, mbs 2, gbs 256 (m 16 = gbs 4096 at 128 nodes)",
+            *f_base, resa, e112, rd, pp4, {"aux.gbs": 256, "aux.array_tag": f"_c_pp4_{res}_g256"})
+        arm(f"c_z3_{res}_m4", f"{res}, FSDP ZeRO-3, mbs 4, gbs 512", *f_base, resa, e112, rd, fsdp,
+            {B + "micro_batch_size": 4, "aux.array_tag": f"_c_z3_{res}_m4"})
+        arm(f"c_z2_{res}_m2", f"{res}, FSDP ZeRO-2 (optim_grads, bf16 grads), mbs 2, gbs 512", *f_base,
+            resa, e112, rd, fsdp, bf16g,
+            {B + "data_parallel_sharding_strategy": "optim_grads", "aux.array_tag": f"_c_z2_{res}_m2"})
+        arm(f"c_z1_{res}_m2", f"{res}, FSDP ZeRO-1 (optim, bf16 grads), mbs 2, gbs 512", *f_base, resa,
+            e112, rd, fsdp, bf16g,
+            {B + "data_parallel_sharding_strategy": "optim", "aux.array_tag": f"_c_z1_{res}_m2"})
+    # c2: which EP backend works under FSDP (MoonEP OOMs there, the all-to-all fits): HybridEP
+    # (flex, TE grouped experts) and the all-to-all, ZeRO-3, mbs 2, 112 experts, PreNorm / mHC-4;
+    # vs c1's PP4 at gbs 512
+    a2a = {B + "moe_token_dispatcher_type": "alltoall"}
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        for ep_name, epd in (("hep", HEP), ("a2a", a2a)):
+            arm(f"c_z3_{res}_{ep_name}_m2", f"{res}, FSDP ZeRO-3, {ep_name} dispatcher, mbs 2, gbs 512",
+                *f_base, resa, e112, rd, fsdp, epd, {"aux.array_tag": f"_c_z3_{res}_{ep_name}"})
+    # c5: with the recompute-input release (random.py) mHC-4 fits under FSDP (peak 21.8 GiB at
+    # mbs 2): FSDP vs PP at the same EP backend (HybridEP), PreNorm and mHC-4
+    arm("c_z3_mhc4_hep_m4", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 4, gbs 512", *f_base, resa, e112, fsdp,
+        HEP, {B + "micro_batch_size": 4, "aux.array_tag": "_c_z3_mhc4_hep_m4"})
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        arm(f"c_pp4_{res}_hep_g512", f"{res}, PP4 x VPP2, HybridEP, mbs 2, gbs 512", *f_base, resa,
+            e112, rd, pp4, HEP, {"aux.array_tag": f"_c_pp4_{res}_hep"})
+    # c6: MoonEP under FSDP (Megatron moonep.py: the expert main grads from FSDP's get_main_grad;
+    # before, MoonEP kept private fp32 grads the optimizer never saw -- c1 / c3's MoonEP ZeRO-3
+    # numbers did not train the experts). MoonEP needs fp32 main grads: fp32 gradient comm.
+    fp32g = {B + "megatron_fsdp_main_grads_dtype": "fp32", B + "megatron_fsdp_grad_comm_dtype": "fp32"}
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        for mbsz in (2, 4):
+            arm(f"c_z3_{res}_moon_m{mbsz}", f"{res}, FSDP ZeRO-3, MoonEP, mbs {mbsz}, fp32 grad comm",
+                *f_base, resa, e112, rd, fsdp, fp32g,
+                {B + "micro_batch_size": mbsz, "aux.array_tag": f"_c_z3_{res}_moon_m{mbsz}"})
+    # d (goal 2026-10-24: mHC-4 / LDM at ~7,500 tok/s/GPU on 8 nodes): FSDP + HybridEP mHC-4 mbs 4
+    # profiled after the routing imbalance sets in (steps 10-11), a 60-step run (does the step time
+    # recover as the expert bias rebalances?), and MoonEP under FSDP on 2 nodes (the smallest
+    # setup that shards the experts: EDP 2) with synchronous CUDA launches (the illegal access in
+    # step 2), a 16-block 32-expert model
+    arm("p_z3_mhc4_hep_m4", "profile: mHC-4, FSDP ZeRO-3, HybridEP, mbs 4 (steps 10-11)", *f_base,
+        resa, e112, fsdp, HEP,
+        {B + "micro_batch_size": 4, B + "profile": True, B + "use_pytorch_profiler": True,
+         B + "profile_ranks": [0], B + "profile_step_start": 10, B + "profile_step_end": 11,
+         B + "train_iters": 12, "aux.array_tag": "_p_z3_mhc4_hep_m4"})
+    arm("d_z3_mhc4_hep_m4_long", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 4, 60 steps", *f_base, resa, e112,
+        fsdp, HEP, {B + "micro_batch_size": 4, B + "train_iters": 60, "slurm.sbatch.time": "01:00:00",
+                    "aux.array_tag": "_d_z3_mhc4_hep_m4_long"})
+    arm("d_moon_fsdp_2n", "MoonEP + FSDP debug: 2 nodes, 16 blocks, 32 experts, CUDA_LAUNCH_BLOCKING",
+        *f_base, resa, fsdp, fp32g,
+        {"aux.pattern": vpp_pattern("LLLLLLL*" * 2, (16,)), B + "num_experts": 32, "aux.nodes": 2,
+         "slurm.sbatch.nodes": 2, "aux.gbs": 32, B + "train_iters": 8,
+         "backend.env.CUDA_LAUNCH_BLOCKING": "1", "aux.array_tag": "_d_moon_fsdp_2n"})
+    # c8: MoonEP + FSDP works (c7: mHC-4 mbs 4 7,320, PreNorm mbs 4 8,319): mbs 8 and LDM
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        arm(f"c_z3_{res}_moon_m8", f"{res}, FSDP ZeRO-3, MoonEP, mbs 8, fp32 grad comm", *f_base, resa,
+            e112, rd, fsdp, fp32g, {B + "micro_batch_size": 8, "aux.array_tag": f"_c_z3_{res}_moon_m8"})
+    for mbsz in (2, 4):
+        arm(f"c_z3_ldm8_moon_m{mbsz}", f"LDM K 8 (CuTe, segments), FSDP ZeRO-3, MoonEP, mbs {mbsz}",
+            *f_base, resa, e112, fsdp, fp32g, ldm,
+            {B + "micro_batch_size": mbsz, "aux.array_tag": f"_c_z3_ldm8_moon_m{mbsz}"})
+    # e: FSDP overheads (profile p_z3_mhc4_hep_m4: all-gather 9.0 s, offload D2H + H2D 8.4 s, RS
+    # 3.5 s per 40 s step; the offload copies share each GPU's PCIe link with the NIC traffic of
+    # the gathers): fewer checkpoints, fine-grained gathers, double buffering, no offload
+    e_base = (*f_base, resa, e112, fsdp, fp32g, {B + "micro_batch_size": 4})
+    arm("e_rn4", "mHC-4, FSDP + MoonEP, mbs 4, 4 layers per recompute chunk", *e_base,
+        {B + "recompute_num_layers": 4, "aux.array_tag": "_e_rn4"})
+    arm("e_fg", "mHC-4, FSDP + MoonEP, mbs 4, fine-grained parameter gathers", *e_base,
+        {B + "megatron_fsdp_enable_fine_grained_param_gather": True, "aux.array_tag": "_e_fg"})
+    arm("e_db", "mHC-4, FSDP + MoonEP, mbs 4, FSDP double buffering", *e_base,
+        {B + "fsdp_double_buffer": True, "aux.array_tag": "_e_db"})
+    arm("e_nooff_m2", "mHC-4, FSDP + MoonEP, mbs 2, no checkpoint offload", *e_base,
+        {B + "micro_batch_size": 2, "backend.env.RECOMPUTE_OFFLOAD": "0", "aux.array_tag": "_e_nooff_m2"})
+    # e2: FSDP double buffering = mHC-4 7,537 (e1): with it, mbs 8 and LDM (OOM without), and
+    # PreNorm as the reference
+    dbuf = {B + "fsdp_double_buffer": True}
+    arm("e_db_m8", "mHC-4, FSDP + MoonEP, double buffer, mbs 8", *e_base, dbuf,
+        {B + "micro_batch_size": 8, "aux.array_tag": "_e_db_m8"})
+    arm("e_db_plain", "PreNorm, FSDP + MoonEP, double buffer, mbs 4", *e_base, dbuf, PLAIN,
+        {"aux.array_tag": "_e_db_plain"})
+    # e4: e_db_m8 OOMed in NCCL's first-step buffer allocation after the forward-backward (12.5 GiB
+    # allocated, 51-55 GiB cached): release the cache before the optimizer step, or expandable
+    # segments against the fragmentation
+    m8 = {B + "micro_batch_size": 8}
+    arm("e_db_m8_ec", "mHC-4, FSDP + MoonEP, double buffer, mbs 8, empty cache after fwd-bwd",
+        *e_base, dbuf, m8, {B + "empty_unused_memory_level": 1, "aux.array_tag": "_e_db_m8_ec"})
+    arm("e_db_m8_exp", "mHC-4, FSDP + MoonEP, double buffer, mbs 8, expandable segments",
+        *e_base, dbuf, m8, {"backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                             "aux.array_tag": "_e_db_m8_exp"})
+    # e7: p_e_db shows MoonEP's dispatch / combine fully exposed (11 % of the step: one
+    # micro-batch in flight under FSDP, and EP overlap needs no full recompute); the shared expert
+    # (768) on its own stream under them (+6.5 % under PP, s1)
+    sovl = {B + "moe_shared_expert_overlap": True}
+    arm("e_db_ovl", "mHC-4, FSDP + MoonEP, double buffer, mbs 4, shared-expert overlap", *e_base,
+        dbuf, sovl, {"aux.array_tag": "_e_db_ovl"})
+    arm("e_db_plain_ovl", "PreNorm, FSDP + MoonEP, double buffer, mbs 4, shared-expert overlap",
+        *e_base, dbuf, PLAIN, sovl, {"aux.array_tag": "_e_db_plain_ovl"})
+    # e8: LDM's segment boundaries (SegmentEnter / Exit, ~1.3 s of a 6.9 s 1-node step: the carried
+    # state copied in and out of the streams at every recompute chunk) -> fewer chunks
+    for rn in (2, 4):
+        arm(f"e_db_ldm8_rn{rn}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs 2, {rn} layers per chunk",
+            *e_base, dbuf, ldm, sovl, {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
+                                       "aux.array_tag": f"_e_db_ldm8_rn{rn}"})
+    # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
+    arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
+        dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+               B + "profile_step_start": 10, B + "profile_step_end": 11,
+               "aux.array_tag": "_p_e_db"})
+    arm("p_e_db_ldm8", "profile: LDM K 8, FSDP + MoonEP, double buffer, mbs 2 (steps 10-11)",
+        *e_base, dbuf, ldm, {B + "micro_batch_size": 2, B + "profile": True,
+                             B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+                             B + "profile_step_start": 10, B + "profile_step_end": 11,
+                             "aux.array_tag": "_p_e_db_ldm8"})
+    # p_e_db_ldm8 OOMs under the profiler (mem 0.97): LDM vs mHC-4 per-layer cost on 1-node
+    # smokes instead (8 blocks, 32 experts, mbs 2, steps 5-6)
+    sprof = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+             "slurm.sbatch.nodes": 1, "aux.gbs": 32,
+             B + "train_iters": 7, B + "micro_batch_size": 2, B + "profile": True,
+             B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+             B + "profile_step_start": 5, B + "profile_step_end": 6}
+    arm("p_s_ldm8", "profile smoke: LDM K 8, FSDP + MoonEP, double buffer, 1 node", *e_base, dbuf,
+        ldm, sprof, {"aux.array_tag": "_p_s_ldm8"})
+    arm("p_s_mhc4", "profile smoke: mHC-4, FSDP + MoonEP, double buffer, 1 node", *e_base, dbuf,
+        sprof, {"aux.array_tag": "_p_s_mhc4"})
+    # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
+    # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
+    # double buffering, to locate the kernel
+    smoke = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+             "slurm.sbatch.nodes": 1, "slurm.sbatch.qos": "acc_debug", "aux.gbs": 16,
+             B + "train_iters": 8, B + "micro_batch_size": 2,
+             "backend.env.CUDA_LAUNCH_BLOCKING": "1"}
+    arm("e_ldm_smoke_db", "smoke: LDM K 8, FSDP + MoonEP, double buffer, 1 node, blocking", *e_base,
+        ldm, dbuf, smoke, {"aux.array_tag": "_e_ldm_smoke_db"})
+    arm("e_ldm_smoke", "smoke: LDM K 8, FSDP + MoonEP, 1 node, blocking", *e_base, ldm, smoke,
+        {"aux.array_tag": "_e_ldm_smoke"})
+    for mbsz in (2, 4):
+        arm(f"e_db_ldm8_m{mbsz}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs {mbsz}", *e_base, dbuf,
+            ldm, {B + "micro_batch_size": mbsz, "aux.array_tag": f"_e_db_ldm8_m{mbsz}"})
+    # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
+    arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
+        *f_base, resa, e112, fsdp, HEP,
+        {"backend.env.MEM_TRACE_DIR": "/gpfs/scratch/ehpc533/hybrid_nucleus/memtrace/fsdp_mhc4_hep",
+         "backend.env.MEM_TRACE_ITER": "0",
+         "backend.env.MEM_TRACE_RANKS": ",".join(str(r) for r in range(32)),
+         "aux.array_tag": "_c_z3_mhc4_hep_trace"})
+    # one-node smoke of the FSDP path (8 blocks, 32 experts): integration errors before the A/B
+    arm("f_smoke1n", "smoke: Megatron-FSDP + EP4, 1 node, 8 blocks, 32 experts", *f_base, resa, fsdp,
+        {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+         "slurm.sbatch.nodes": 1, "aux.gbs": 16, B + "train_iters": 8,
+         "aux.array_tag": "_f_smoke"})
+    # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
+    # what is left in mHC after the stride fix
+    prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
+              B + "profile_step_start": 5, B + "profile_step_end": 6, B + "train_iters": 7,
+              "aux.gbs": 128}
+    arm("p_cand", "profile: candidate (Engram 31 %, groups of 8, lazy groups, leaf offload)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), cand, prof_c,
+        {"aux.array_tag": "_moonofffused_cand_prof"})
+    arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
+        moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
+        {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
+         B + "train_iters": 3})
     return arms
 
 

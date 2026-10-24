@@ -1,0 +1,207 @@
+# @package _global_
+# PRELIMINARY production config of the hybrid main run on MareNostrum 5 (2026-10-22).
+#
+# The speed stack measured in docs/ep_fp8_speed.md (§6d-5..6d-7) -- the 128-node arm s128_cand40
+# of scripts/korbi/ep_speed/gen_ep_suites.py, 5,813 tok/s/GPU on its 8-node reference -- plus
+# the training machinery of campaign_3b/base_train_mn5.yaml (rolling checkpoints, resume, wandb,
+# divergence guards) and the production checklist (memory: production-settings-checklist).
+# Items marked TODO are the campaign's to decide (schedule, U decay, token budget, data
+# workers); the rest is the measured speed configuration.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh main scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_main_mn5 --dry-run
+#
+# Scheduling: account ehpc533, QOS acc_xehpc (up to 512 nodes, 3-day wall time, 3 running jobs
+# per user; acc_ehpc caps jobs at 100 nodes). A 3-day job resumes from the latest rolling checkpoint (load = save), the
+# monitor restarts it on TIMEOUT. Bad-GPU nodes: slurm/marenostrum_autoexclude.yaml (via
+# speed_base_mn5).
+defaults:
+  - ../hybrid_speed/speed_base_mn5
+  - /backend/megatron: [data_flag_mn5]
+  - _self_
+
+aux:
+  experiment_group: production
+  suite: main
+  family: hybrid
+  arm: mhc4_eng40
+  nodes: 128
+  ep: 4
+  # TODO(user / campaign): 2048 = 8 micro-batches per pipeline at DP 128 (19 % bubble at PP4 x
+  # VPP2); 8192 matches the 8-node speed runs' 32 (5 %); or more virtual stages / less PP
+  gbs: 2048
+  seq: 16384
+  topk: 5
+  expert_ffn: 768
+  # TODO(campaign): the token budget. 600k GPU-h at ~5.8k tok/s/GPU is ~12.5T tokens.
+  tokens: 12e12
+  wandb_project: hybrid_main
+  # 48 blocks (CKDA 5 : attention 1), PP4 x VPP2 7/7/7/6 | 6/6/6/3, Engram (N) before blocks 1
+  # and 24 (stages 0 and 3)
+  pattern: "LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E"
+
+backend:
+  env:
+    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    FLA_TENSOR_CACHE_SIZE: "64"
+    MHC_FUSED_READ: "1"
+    # recompute-chunk inputs, the last chunks and the pipeline receive buffers in pinned host RAM
+    RECOMPUTE_OFFLOAD: "1"
+    RECOMPUTE_OFFLOAD_LAST: "1"
+    RECOMPUTE_OFFLOAD_LEAF: "1"
+    # Engram: step lookup in groups of 8 micro-batches, touched-row table gradients
+    ENGRAM_STEP_LOOKUP: "1"
+    ENGRAM_STEP_GROUP: "8"
+    ENGRAM_SPARSE_GRAD: "1"
+    LIGER_WGRAD_ADDMM: "1"
+    MEGATRON_LAZY_SINGLETON_GROUPS: "1"
+    # one checkpoint format for the whole run (host RAM at saves)
+    ANGULAR_MUOWN_COMPACT_CKPT: "1"
+    WANDB_MODE: offline
+    WANDB_RUN_GROUP: ${aux.suite}
+  megatron:
+    # ---- model (the campaign's 3B-active hybrid; recipe keys as in the speed suites) ----
+    hidden_size: 2048
+    ffn_hidden_size: 6144
+    kv_channels: 128
+    num_attention_heads: 16
+    num_query_groups: 2
+    position_embedding_type: none
+    attention_output_gate: true
+    exclusive_self_attention: true
+    untie_embeddings_and_output_weights: true
+    padded_vocab_size: 262144
+    seq_length: ${aux.seq}
+    max_position_embeddings: ${aux.seq}
+    experimental_attention_variant: complex_kda
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 16
+    linear_num_value_heads: 16
+    linear_beta_max: 2.0
+    linear_drop_qkv_silu: true
+    linear_gate_activation: signed_sigmoid2
+    linear_gate_init_style: shipped
+    linear_output_gate: lowrank
+    mhc: true
+    mhc_expansion_rate: 4
+    mhc_routed_topk: 0
+    mhc_routed_reversible: false
+    num_experts: 112
+    moe_ffn_hidden_size: ${aux.expert_ffn}
+    moe_shared_expert_intermediate_size: 768
+    moe_router_topk: ${aux.topk}
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 0.001
+    moe_router_fusion: true
+    moe_aux_loss_coeff: 0.0001
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: moonep
+    moe_flex_dispatcher_num_sms: 64
+    # Engram: 2 layers x 20B table parameters (40B), sharded over each stage's 128 GPUs
+    engram_ngram_orders: [2, 3]
+    engram_num_heads: 8
+    engram_embed_dim: 64
+    engram_table_size: 19480384
+    engram_table_parallel: dp
+    engram_token_map: ${aux.hybrid_env}/data/engram_token_map_256k.npy
+    engram_gate_signed_sqrt: true
+    engram_conv_prenorm: true
+    engram_hash_per_layer: true
+    engram_lr_mult: 5.0
+    engram_table_rowwise_v: true
+    engram_table_momentum_dtype: bf16
+    # ---- parallelism / speed ----
+    pipeline_model_parallel_size: 4
+    expert_model_parallel_size: ${aux.ep}
+    tensor_model_parallel_size: 1
+    overlap_p2p_comm: true
+    micro_batch_size: 2
+    global_batch_size: ${aux.gbs}
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 2
+    liger_fused_linear_cross_entropy_chunk_size: 2048
+    manual_gc: true
+    manual_gc_interval: 10
+    mmap_bin_files: false
+    # ---- optimizer / schedule ----
+    optimizer: angular_muown
+    lr: 4.0e-3
+    residual_mixer_lr_mult: 0.25
+    # TODO(campaign): schedule and minimum LR; angular MuOwn's U decay (default 1/(1+0.001 t) on
+    # the direction LR; pending the screen5udecay results) -- set it explicitly here.
+    min_lr: 4.0e-4
+    lr_warmup_iters: 2000
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: "${oc.eval:'int(0.1 * ${backend.megatron.train_iters})'}"
+    train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
+    # ---- data (data_flag_mn5: the flag mix, OELLM 256k tokenizer, BOS per document, document
+    # masking) ----
+    eod_mask_loss: false
+    # TODO(campaign): data workers vs host RAM -- 16 x 8 left no headroom at saves on s2 (host OOM),
+    # 4 x 2 was data-bound; check tok/s against the speed runs at this layout
+    num_workers: 8
+    dataloader_prefetch_factor: 4
+    data_cache_path: ${job.base_output_dir}/data_cache
+    # ---- logging / eval ----
+    log_interval: 10
+    eval_interval: 2000
+    eval_iters: 10
+    arch_metrics_interval: 500
+    wandb_project: ${aux.wandb_project}
+    wandb_entity: openeurollm-project
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    # ---- checkpoints: rolling (latest only) every 1000 steps (~4 h at ~14 s / step), a
+    # persistent one every 15000 (~2.4 days: about one per 3-day job); load = save resumes ----
+    save: ${job.base_output_dir}/ckpt
+    load: ${job.base_output_dir}/ckpt
+    save_interval: 15000
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    non_persistent_save_interval: 1000
+    distributed_timeout_minutes: 45
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
+  array_group: null
+  # gbs 2048 at 128 nodes = DP 128 x 16 samples: 8 micro-batches per pipeline per step (a
+  # quarter of the 8-node speed runs' per-GPU work, bubble 3/16 at VPP2): ~12-15 s per step
+  est_step_time_s: 14.0
+  est_startup_min: 15.0
+  # TODO: the full production event set (config/job/auto_restart.yaml, as the 32B runs) once
+  # merged with these; for now: resume on wall time, stop on divergence
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint"}
+    - name: timeout_completing
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint"}
+  log_events:
+    - name: nonfinite_grad_norm
+      pattern: "grad norm: (nan|inf)"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "non-finite grad norm -- the run diverged"}
+    - name: finished_training
+      pattern: "[after training is done]"
+      pattern_type: substring
+      action: {class_name: FinishAction, reason: "Training finished"}
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    # account ehpc533 (user 2026-10-23: cns144's priority too low; QOS acc_xehpc for >100 nodes)
+    account: ehpc533
+    qos: acc_xehpc
+    time: "3-00:00:00"
+  env:
+    # startup at 128 nodes (dataset index of the flag blend, compile)
+    WATCHDOG_STARTUP_S: "3600"

@@ -4,4 +4,4 @@
 P=$1; SNAP=$2; C=$3
 until ssh -o ConnectTimeout=25 marenostrum_new 'squeue -u $USER -h -o "%j" && echo OK' 2>/dev/null \
     | awk -v p="^$P" '/OK/{ok=1} $0 ~ p {n++} END{exit !(ok && n==0)}'; do sleep 120; done
-ssh marenostrum_new "cd /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/hybrid_speed && python3 /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_$SNAP/scripts/korbi/ep_speed/collect.py $C --from 3" 2>&1 | grep "^|"
+ssh marenostrum_new "cd ${HYBRID_OUTPUT_DIR:-/gpfs/scratch/ehpc533/hybrid_nucleus}/hybrid_speed && python3 /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_$SNAP/scripts/korbi/ep_speed/collect.py $C --from 3" 2>&1 | grep "^|"

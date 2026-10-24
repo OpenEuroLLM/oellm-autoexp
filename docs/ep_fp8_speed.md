@@ -571,6 +571,241 @@ fused sublayer: 1.57 / 3.03 ms. State per token: CuTe M bf16 [G, K, D] + packed 
 (E = 4) read the next window's tapes, so windows must align with chunk / stage boundaries or that
 data must be carried across them.
 
+### 6d-4. Engram at production scale, LDM at scale (2026-10-21)
+
+**Engram** (campaign sizing rule: the freed expert parameters in 2 Engram layers before blocks
+1 and 24 of 48; orders (2, 3) x 8 heads, dim 64, reference gate / conv pre-norm / per-layer
+hashes, lean table optimizer), mHC-4, 16k mbs 2, offload incl. the last chunks
+(RECOMPUTE_OFFLOAD_LAST=1), 8 nodes:
+
+| arm | tok/s/GPU | vs ref | mem |
+|---|---:|---:|---:|
+| 160 experts, no Engram (offload last) | 5,929 | | 0.81 |
+| (same, last chunks on the GPU) | 6,070 | | 0.83 |
+| Engram 21 % (128 experts + 7.25B table) | 5,571 | -6.0 % | 0.88 |
+| **Engram 31 % (112 experts + 10.9B table)** | **5,601** | **-5.5 %** | 0.88 |
+
+The per-step lookup (ENGRAM_STEP_LOOKUP=1) OOMs on stage 0 (it holds all 32 micro-batches' rows
++ grads for the step: 39.7 GiB before the forward-backward vs ~33.6 without Engram); the
+per-micro-batch lookup fits. Merge regression fixed: the step lookup passed [1, docs + 1]
+cu_seqlens to the 1-D document_positions. Model: ~27.5B + 10.9B Engram = ~38.4B total, ~2.2B
+active non-embedding.
+
+**LDM at scale** (depth_memory_segments: the state [x, r, M, P] in the streams across recompute
+chunks and stages, the CuTe window fold at segment boundaries; tests: segments = one sequence
+with and without full recompute, torch + CuTe): K 8 at 16k mbs 1 = **2,852 tok/s/GPU** (mHC-4
+5,921), mbs 2 OOM, recompute 4 layers / chunk OOM. Profile: the 11-slot checkpoints' PCIe
+offload (~5.2 s of copies per profiled step) and the stalls it causes (EP peers spinning in
+MoonEP's inter-rank sync), not the LDM kernels (0.87 s). Next step if wanted: unwind M in the
+backward instead of checkpointing it (~5 instead of 11 widths per chunk).
+
+### 6d-5. The optimization list on the Engram-31 candidate (2026-10-21)
+
+Candidate: mHC-4 (fused read), Engram 31 % (112 experts), per-micro-batch lookup, 16k mbs 2,
+offload incl. last chunks, Adam, 8 nodes; reference **5,601** tok/s/GPU (o9e). Runs of one
+launch are A/B-comparable; across launches tok/s moves by ~1-2 % here (o12 vs o12s: same arm,
+5,535 vs 5,601).
+
+| arm | tok/s/GPU | mem | result |
+|---|---:|---:|---|
+| offload last only on stages 0, 1 (o10b) | 5,585 | 0.84 | no gain: the later stages' last chunks are not in the way |
+| + no recompute of the last 0/0/1/2 or 0/1/2/4 chunks per stage | OOM | | stage 3 (OOM message: 57.2 GiB PyTorch + ~6 GiB non-PyTorch) has no room |
+| MoonEP 32 / 48 SMs (o11b; default 64) | 5,425 / 5,514 | | **keep 64** |
+| angular MuOwn instead of Adam (o11b) | 5,467 | 0.82 | optimizer step **-2.1 %** (~1 s / step) |
+| duplex offload streams (o12) | 5,535-5,601 | 0.88 | neutral: the D2H lag stays (median 177 ms): PCIe bandwidth, not stream order |
+| overlap_p2p_comm_warmup_flush (o13) | hang | | MoonEP cross_rank_barrier timeout, then launch failure: not usable with MoonEP |
+
+Memory traces (MEM_TRACE_DIR, iteration 2, ranks 0/8/16/24) of the candidate: peaks 48.5 /
+38.7 / 38.2 / 44.4 GiB allocated; non-PyTorch memory (CUDA context + kernels, NCCL communicators, MoonEP buffers; from the OOM messages) is ~7.9 GiB on stage 0, ~6.0 GiB on stage 3. On the middle stages ~10 x 512 MB are
+pipeline receive buffers (one per micro-batch in flight) and ~9 x 512 MB chunk outputs whose
+offload copy has not finished yet (the block frees only when the D2H copy is done). The receive
+buffers were not offloaded: they are leaves the schedule keeps for their .grad, and off the
+first stage the chunk input is their [s, b, 4, h] view. RECOMPUTE_OFFLOAD_LEAF=1 (Megatron
+771c9989a + 1fd902533) moves the leaf's / view base's .data to the host and back before the
+recompute (same gradients bitwise, unit tests). Trace o14s3 (vs the candidate): peaks
+**47.0 / 34.2 / 34.7 / 41.9 GiB** (from 48.5 / 38.7 / 38.2 / 44.4: -1.5 / -4.5 / -3.5 / -2.5);
+the receive buffers are gone from the live set. Speed: 5,528 (traced; duplex traced 5,601, so
+<= ~1 %: ~10 % more D2H traffic on the middle stages, where PCIe is the bound); o14b's 5,111 was
+a slow node set (51 s / step from the first step). A memory knob, opt-in, not a speed win.
+Stage 0 remains the limit (47.0 + ~8 GiB non-PyTorch, ~8 GiB headroom): the per-step Engram
+lookup still does not fit (it needs > 8 GiB there) -- that needs layers moved off stage 0.
+
+**Grouped Engram step lookup** (ENGRAM_STEP_GROUP=G with ENGRAM_STEP_LOOKUP=1, Megatron
+c7499dbb2): the step's micro-batches in groups of G, each group's rows exchanged at its first
+forward and its row gradients sent to their owners after its last backward (multi-GPU tests:
+pipelined, recomputed order). Fits where the whole-step lookup OOMs; o16 (one launch): **groups
+of 8 5,662 vs per-micro-batch 5,608 tok/s/GPU (+1.0 %)**; o15: groups of 4 / 8 5,648 / 5,639,
++ leaf offload 5,607.
+
+**Non-PyTorch memory** (MEM_BREAKDOWN=1, o16, stage 0 / others): CUDA context 0.52, default
+process group 0.33, **model-parallel NCCL communicators 3.52 / 3.11** (eager init: device_id is
+bound), MoonEP buffer 0.94 + NVLink pools 0.74, rest ~1.9 / 1.5 (lazy communicators, kernel
+images) = 7.93 / 7.5 GiB.
+
+**MoonEP barrier trap**: 3 per-micro-batch-lookup runs died on their first step with "MoonEP
+cross_rank_barrier timeout (100s), trapping" -> "unspecified launch failure": one EP rank is in
+the Engram row exchange (a blocking collective over DP, across nodes) while its node peers wait
+in MoonEP. `$HYBRID_ENV/pylibs_moonep2` = + container/patches/moonep-barrier-timeout.patch
+(MOONEP_BARRIER_TIMEOUT_S, default 600 s); the o16 per-micro-batch arm ran through with it.
+
+**Recompile limit in the mHC write**: with document masking b = 1, and the [s, 1, n, C] streams
+arrive with two strides at the batch dim (the Engram memory is transposed from [b, s]); Dynamo
+guards on it, recompiles `_mhc_write` up to its limit (8) and runs the rest eager. Megatron
+5c9debec1 gives contiguous inputs their canonical strides (a view) before the compiled calls:
+one graph. A/B o17 (same time, groups of 8): **5,646 -> 5,776 tok/s/GPU (+2.3 %)**, memory 0.95 ->
+0.89, no recompile-limit warnings.
+
+**Angular MuOwn's cost** (o18, timers via logging_level 20): optimizer 230-260 ms vs Adam's
+54-83 ms per step (+~0.18 s of 46 s, 0.4 %); tok/s 5,689 vs 5,727 (-0.7 %). The -2.1 % of o11b
+was launch noise: nothing to optimize there.
+
+**Single-rank NCCL groups** (MEM_BREAKDOWN per group): each costs ~0.38 GiB under the bound
+device (eager init), the real groups 0.03-0.19. At TP = CP = ETP = 1: TP, CP, TP x CP, ETP, both
+GTP-remat groups, position embedding (stage 0). MEGATRON_LAZY_SINGLETON_GROUPS=1 (Megatron
+parallel_state.create_group; multi-GPU test) creates them unbound, then binds the device for a
+lazy init: o19 model-parallel communicators 3.52 -> 0.86 GiB, non-PyTorch **7.93 -> 6.03 GiB**
+(stage 0; 7.5 -> 5.6 elsewhere: a few are lazily created at a first collective), stage 0 in
+use 62.4 -> 58.9 GiB; 5,778 vs 5,740 tok/s/GPU (no cost).
+
+**Candidate now**: mHC-4 + Engram 31 %, groups-of-8 step lookup, canonical strides, lazy
+singleton groups: **~5,780 tok/s/GPU** (from 5,601 this morning, +3.2 %).
+
+**Less recompute with the freed memory** (o20): the candidate + leaf offload runs at 5,743 with
+stage 0 / 1 / 2 / 3 at 57.4 / 44.4 / 44.4 / 52.9 GiB in use; skipping the recompute of even one
+chunk (2 layers) on stage 3 OOMs, 0/0/1/2 too. A chunk's activations at 16k x mbs 2 times the
+micro-batches in flight are far more than the ~3-4 GiB freed: per-stage recompute is out at
+this shape.
+
+**Profile of the candidate** (p_cand, gbs 128 = 8 micro-batches, ranks 0 / 31, kernel_summary.py):
+rank 0 GPU time ~9.4 s / step: pipeline SendRecv 3.4 s (mostly waiting: the bubble is 3/16 at
+gbs 128, 3/64 at 512), offload D2H 1.25 s (side stream), mHC kernels ~0.62 s (write 223 ms at
+~1.4 TB/s, near the roof; read 123, proj 102, dstreams 86, write backward 86), small copies
+~0.2 s spread over MoonEP dispatch, AccumulateGrad, reshape clones, router casts
+(scratchpad copy_sites.py: kernels -> launching CPU op chain). Left in mHC: the write fused with
+the next sublayer's projection (one stream read, ~100 ms = ~1 %). Rank 31: the Liger LM-head
+loop's weight gradient (mm -> .float() -> add into the bf16 buffer per 2048-token chunk) costs
+~0.55 s / step (142 ms copies + 412 ms fp32 adds) -> LIGER_WGRAD_ADDMM=1 (one in-place GEMM per
+chunk; test: as accurate as the default vs an fp32 reference). o21 (one launch): **5,749 ->
+5,876 tok/s/GPU (+2.2 %)**, loss at step 15 7.752 vs 7.744.
+
+**Candidate after the second pass** (mHC-4 + Engram 31 %, ENGRAM_STEP_GROUP=8, canonical mHC
+strides, MEGATRON_LAZY_SINGLETON_GROUPS=1, RECOMPUTE_OFFLOAD_LEAF=1, LIGER_WGRAD_ADDMM=1, MoonEP
+pylibs_moonep2): **5,876 tok/s/GPU, 100.7 TFLOP/s** (5,601 at the start of 2026-10-21: +4.9 %).
+
+### 6d-6. Larger Engram tables (2026-10-22)
+
+Memory per table parameter (engram_table_parallel "dp", lean optimizer): fp32 row 4 B, dense fp32
+gradient buffer 4 B, bf16 momentum 2 B (+ one fp32 second moment per row): 10 B. The tables are
+sharded over their stage's 8 GPUs (tp_dp_cp: the node's 4 EP ranks x the stage's 2 nodes);
+the two layers (before blocks 1 and 24) sit on stage 0 and stage 3 (VPP2 layout 7/7/7/6 |
+6/6/6/3), so stages 1 and 2 hold none.
+
+**Sparse table gradients** (ENGRAM_SPARSE_GRAD=1, Megatron engram_sharded.SparseRowGrad): the
+lookups' backwards append (row, gradient) pairs, coalesced into sorted unique rows; TableAdam
+scatters each chunk's rows into a zero chunk, so the update is the exact dense one (rows without
+a gradient still move by their momentum); the norm reads the coalesced values, the chained clip
+scales them through EngramTableOptimizer.clip_sparse_grads. 10 -> 6 B per table parameter.
+Tests: buffer = dense buffer, TableAdam over it = TableAdam over the dense buffer (4 steps, one
+without gradients), both step-lookup tests in both modes (4 GPUs).
+
+| o22 (one launch) | tok/s/GPU | stage 0 / 3 in use (GiB) | loss @15 |
+|---|---:|---:|---:|
+| candidate + LIGER_WGRAD_ADDMM (dense gradients) | 5,782 | 57.43 / 52.79 | 7.748 |
+| + ENGRAM_SPARSE_GRAD | 5,802 | 55.28 / 50.72 | 7.731 |
+| + tables 2x (21.8B) | 5,858 | 59.25 / 54.67 | 7.727 |
+
+Table size costs no throughput (compute and lookup traffic scale with tokens). Ceiling with the
+tables on their own stages (3 GiB margin): ~12.6B on stage 0 + ~19B on stage 3 = **~32B**.
+40B needs the tables spread over the pipeline axis too (each GPU 1/32 of both: 40B x 6 B / 32 =
+7.5 GB on every GPU), which needs the row exchange at points where all stages are in step
+(step start / end) -- next.
+
+**Moving the tables by the VPP layout instead** (o23, layout 1,8,8,8 | 12,5,5,1: the layer before
+block 1 on stage 1, 13 / 13 / 13 / 9 blocks + head per stage as before): **4,582 tok/s/GPU
+(-21 %)** at today's tables; 36B fits (stage 1 / 3 at 60.7 / 61.8 GiB), 40B OOMs on stage 3. The
+interleaved schedule needs the virtual chunks balanced, not the stage totals: a micro-batch runs
+through all 8 chunks in order, so the 12-block chunk sets the pace. With balanced chunks
+block 1 is always on stage 0. Not usable.
+
+### 6d-7. Toward 128 nodes (2026-10-22)
+
+At 128 nodes (PP4: 128 GPUs per stage) the per-stage table sharding gives a 20B table 0.94 GB per
+GPU: table memory is a non-issue at production scale, so the cross-stage sharding is not built;
+the work goes into the exchange.
+
+**Async group exchanges** (ENGRAM_ASYNC_GROUPS=1, Megatron engram_sharded.GroupExchange): every
+group's rows hashed at the step start, the per-owner counts of all groups in one all-to-all (one
+host sync instead of one per group), each group's row exchange as async all-to-alls (owners
+gather on a side stream), issued one group ahead; the gradient flush on the side stream, joined
+in prepare_grads. Tests: the group test in all sparse x async combinations (4 GPUs). o24 (8
+nodes, one launch): 5,847 -> **5,760 tok/s/GPU (-1.5 %)**, memory 0.81 -> 0.91 -- at 8 nodes the
+synchronous exchanges were not on the critical path, and the side stream's allocator pool plus
+two groups in flight cost memory. Opt-in, off; to be judged at 128 nodes (128 ranks per
+exchange, straggler coupling). (NCCL's all-to-all runs as SendRecv kernels: the profile does not
+separate it from the pipeline p2p.)
+
+**Two-level exchange** (planned): the stage's shard group = EP group (the node's 4 GPUs, NVLink) x
+expert-data-parallel group (the rail across the stage's nodes), both existing Megatron groups:
+dedup the node's requests over NVLink, then exchange rail to rail across nodes (124 -> 31 cross-
+node peers per GPU at 128 nodes). NCCL's PXN already routes through the rail NIC, so the gain is
+the dedup; built if the 128-node run shows the exchange matters.
+
+**128-node test** (s128): candidate, angular MuOwn, gbs 2048, Engram 40B, 10 steps, QOS
+acc_xehpc (acc_ehpc caps jobs at 100 nodes). CORRECTION: at PP4 the data-parallel size is
+GPUs / 4 = 128 at 128 nodes, so gbs 2048 is 16 samples = **8 micro-batches per pipeline** (bubble
+3/16 at VPP2), not the 32 of gbs 512 on 8 nodes (DP 8, bubble 3/64); 32 per pipeline at 128
+nodes is gbs 8192. The 8-node reference of the same config at gbs 512 (32 micro-batches):
+**5,813 tok/s/GPU**; the like-for-like 8-node point for gbs 2048 at 128 nodes is gbs 128.
+
+**s128 result** (2026-10-22, job 47792257, 9 min; the first attempt died on the bad GPU of
+as07r4b02): **4,803 tok/s/GPU, 82.3 TFLOP/s, 13.6 s / step** (steady from step 3), loss 12.9 ->
+9.45 in 10 steps, **41 GiB in use on every stage** (non-PyTorch 5.8-5.9 GiB; 40B Engram tables at
+0.94 GB per GPU). vs 8 nodes at gbs 512 (5,813): -17 %, of which the bubble (3/16 vs 3/64 at
+VPP2: 1.047 / 1.1875 -> ~5,130 expected) is ~-12 % and scale (gradient sync over 128 replicas,
+Engram exchanges over 128 ranks per stage) ~-6 %. The ~20 GiB of free memory per GPU at this
+scale (fewer micro-batches in flight than at gbs 512 on 8 nodes, smaller shards) is what makes
+less recompute, fewer pipeline stages or more virtual stages possible there.
+
+**Bad-node auto-exclusion** (config/slurm/marenostrum_autoexclude.yaml, after the JUPITER one;
+the speed suites use it): a shared list on the cluster (mn5_exclude_nodes.txt in $HYBRID_ENV),
+read by oc.exclude_nodes and re-read at render; written by the in-job watchdog, where each node
+records itself when its GPU probe at the start fails or when the job log shows a hardware-
+signature CUDA error on its own ranks only (rank // 4 = node: torchrun --node-rank
+$SLURM_NODEID) with no MoonEP barrier trap. Checked on this week's failure logs: the 128-node
+attempt and o16 -> as07r4b02, o14b -> as04r5b05; the MoonEP-trap runs (o13, o15) and an OOM ->
+nothing. Seeded with the 5 bad nodes found 2026-10-21/22.
+
+Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
+(torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
+unknown error" mid-run; exclude with +slurm.sbatch.exclude.
+
+### 6d-8. 128 nodes, round 2 (2026-10-23)
+
+Candidate (mHC-4 + Engram 40B, angular MuOwn lr 4e-3, 5 warmup steps), 128 nodes, PP4 x VPP2,
+mbs 2 unless noted (suite s128r2; queued on cns144, started once moved to ehpc533):
+
+| arm | micro-batches / pipeline | tok/s/GPU | TFLOP/s | result |
+|---|---:|---:|---:|---|
+| gbs 2048 (round 1) | 8 | 4,803 | 82.3 | |
+| **gbs 8192** | 32 | **5,013** | 86.0 | +4.4 %; **diverged**: loss 12.9 -> 9.2 (step 6) -> 12.9, grad norm 0.8 -> 33 |
+| gbs 2048, **VPP4** | 8 | **3,147** | 54.0 | **-35 %**: twice the 4-wide stage transfers |
+| gbs 4096 / 8192, mbs 4 | 8 / 16 | OOM | | |
+| gbs 2048, no recompute of the last chunk per stage | 8 | OOM | | |
+| gbs 2048, grad_reduce_in_bf16 | 8 | fail | | "MoonEP experts need fp32 main grads" |
+| profile, gbs 2048 (ranks 0 / 511) | 8 | 4,011 (profiler) | | SendRecv 3.55 s (36 %), D2H 1.24 s, MoonEP inter-rank sync 0.53 s |
+
+- **The bubble is not the whole story at scale.** gbs 8192 should gain ~13 % over 2048 from the
+  bubble alone (1.1875 / 1.047); it gains 4.4 %. Against 8 nodes at the same 32 micro-batches per
+  pipeline (5,813) 128 nodes are **-14 %**. The per-step gradient sync cannot be it (4x smaller
+  per token at 8192 than at 2048, yet the gap grew): a per-micro-batch cost that grows with the
+  ranks -- the Engram group exchanges (over 128 ranks per stage, a host sync per group;
+  ENGRAM_ASYNC_GROUPS removes those syncs) or MoonEP's inter-rank synchronisation.
+- **VPP4 confirms the width cost of PP** (docs/pp_vs_fsdp.md): 16 instead of 8 crossings of the
+  [s, b, 4, h] streams per micro-batch.
+- **The divergence at gbs 8192** is with the speed tests' lr 4e-3 and a 5-step warmup -- not a
+  verdict on large batches, but a warning for "large batch without warmup" at this learning rate;
+  the critical-batch test should include the learning rate.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real

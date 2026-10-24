@@ -354,4 +354,4 @@ sweep:
           aux.array_tag: _moonmem
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}

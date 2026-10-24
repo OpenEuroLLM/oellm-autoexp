@@ -1,0 +1,50 @@
+From a09ac4558d64fed98d3d45876f7b6b25f24e1f82 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Korbinian=20P=C3=B6ppel?= <korbip@korbip.de>
+Date: Wed, 21 Oct 2026 18:21:04 +0200
+Subject: [PATCH] Barrier spin-wait timeout from MOONEP_BARRIER_TIMEOUT_S
+ (default 600 s instead of a fixed 100 s)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ moonep/_common.py | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/moonep/_common.py b/moonep/_common.py
+index 13333dd..b776809 100644
+--- a/moonep/_common.py
++++ b/moonep/_common.py
+@@ -16,6 +16,8 @@ Note: cp.async.bulk is a single-thread instruction; callers must wrap the
+ inline asm in ``if cute.arch.lane_idx() == 0:``.
+ """
+ 
++import os
++
+ import cutlass
+ from cutlass import Int32, Int64, Uint32
+ from cutlass._mlir.dialects import llvm
+@@ -34,7 +36,12 @@ GRID_SYNC_TAG = 0x80000000
+ WARP_SYNC_TAG = 0x80000000
+ 
+ # spin-wait timeout. Fail-fast on timeout to avoid further polluting the barrier state.
+-BARRIER_TIMEOUT_CYCLES = 100 * 2_000_000_000
++# MOONEP_BARRIER_TIMEOUT_S (default 600, like a 10-minute NCCL timeout): a peer can be held up
++# legitimately by work outside MoonEP -- e.g. a blocking collective over another group (a
++# sharded Engram lookup over data-parallel ranks on other nodes) on the first step, when the
++# nodes still compile kernels at different speeds. 100 s trapped such runs.
++BARRIER_TIMEOUT_S = int(os.environ.get("MOONEP_BARRIER_TIMEOUT_S", "600"))
++BARRIER_TIMEOUT_CYCLES = BARRIER_TIMEOUT_S * 2_000_000_000
+ 
+ 
+ @dsl_user_op
+@@ -334,7 +341,7 @@ def cross_rank_barrier(
+                 done = cur == target
+                 if (clock64() - start) >= Int64(BARRIER_TIMEOUT_CYCLES):
+                     cute.printf(
+-                        "MoonEP cross_rank_barrier timeout (100s), trapping: "
++                        "MoonEP cross_rank_barrier timeout (MOONEP_BARRIER_TIMEOUT_S), trapping: "
+                         "rank=%d barrier_off=%d phase=%d sign=%d signal=%d target=%d\n",
+                         rank, barrier_off, phase, sign, cur, target,
+                     )
+-- 
+2.43.0
+
