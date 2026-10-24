@@ -1799,20 +1799,21 @@ def ckpt_offload():
                  {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
                   B + "micro_batch_size": 2, B + "train_iters": 8,
                   "backend.env.MEGATRON_DEBUG_OPT_STATE": "1",
-                  "backend.env.MEGATRON_DEBUG_OPT_STATE_STEPS": "5,6"})
+                  "backend.env.MEGATRON_DEBUG_OPT_STATE_STEPS": "5,6",
+                  "backend.env.MEGATRON_DEBUG_BATCH_HASH": "1"})
     arm("g_eng_save", "Engram smoke, save at step 4", *smoke_eng,
         {B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 4,
          "aux.array_tag": "_g_eng_save",
          "backend.env.MEGATRON_DEBUG_OPT_STATE_FILE": "${job.base_output_dir}/optstate_g_eng_save"})
     arm("g_eng_resume", "Engram smoke, resumed from g_eng_save's step 4", *smoke_eng,
-        {B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g34_ckptoff/dense/ckpt", B + "ckpt_step": 4,
+        {B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g36_ckptoff/dense/ckpt", B + "ckpt_step": 4,
          "aux.array_tag": "_g_eng_resume",
          "backend.env.MEGATRON_DEBUG_OPT_STATE_FILE": "${job.base_output_dir}/optstate_g_eng_resume"})
     # resharding (the 32 -> 128-node flip): g_eng_save's 1-node (4 GPU) step-4 checkpoint loaded
     # on 2 nodes (8 GPUs: FSDP shards, Engram table rows, Muown row states all re-cut)
     arm("g_eng_reshard2n", "Engram smoke on 2 nodes, resumed from the 1-node g_eng_save step 4",
         *smoke_eng, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 16,
-                     B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g34_ckptoff/dense/ckpt",
+                     B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g36_ckptoff/dense/ckpt",
                      B + "ckpt_step": 4, "aux.array_tag": "_g_eng_reshard2n",
                      "backend.env.MEGATRON_DEBUG_OPT_STATE_FILE": "${job.base_output_dir}/optstate_g_eng_reshard2n"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
