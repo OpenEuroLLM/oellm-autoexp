@@ -1679,6 +1679,18 @@ def ckpt_offload():
         arm(f"c_z3_ldm8_moon_m{mbsz}", f"LDM K 8 (CuTe, segments), FSDP ZeRO-3, MoonEP, mbs {mbsz}",
             *f_base, resa, e112, fsdp, fp32g, ldm,
             {B + "micro_batch_size": mbsz, "aux.array_tag": f"_c_z3_ldm8_moon_m{mbsz}"})
+    # e: FSDP overheads (profile p_z3_mhc4_hep_m4: all-gather 9.0 s, offload D2H + H2D 8.4 s, RS
+    # 3.5 s per 40 s step; the offload copies share each GPU's PCIe link with the NIC traffic of
+    # the gathers): fewer checkpoints, fine-grained gathers, double buffering, no offload
+    e_base = (*f_base, resa, e112, fsdp, fp32g, {B + "micro_batch_size": 4})
+    arm("e_rn4", "mHC-4, FSDP + MoonEP, mbs 4, 4 layers per recompute chunk", *e_base,
+        {B + "recompute_num_layers": 4, "aux.array_tag": "_e_rn4"})
+    arm("e_fg", "mHC-4, FSDP + MoonEP, mbs 4, fine-grained parameter gathers", *e_base,
+        {B + "megatron_fsdp_enable_fine_grained_param_gather": True, "aux.array_tag": "_e_fg"})
+    arm("e_db", "mHC-4, FSDP + MoonEP, mbs 4, FSDP double buffering", *e_base,
+        {B + "fsdp_double_buffer": True, "aux.array_tag": "_e_db"})
+    arm("e_nooff_m2", "mHC-4, FSDP + MoonEP, mbs 2, no checkpoint offload", *e_base,
+        {B + "micro_batch_size": 2, "backend.env.RECOMPUTE_OFFLOAD": "0", "aux.array_tag": "_e_nooff_m2"})
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
