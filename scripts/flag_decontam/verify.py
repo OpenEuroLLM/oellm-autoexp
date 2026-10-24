@@ -71,25 +71,35 @@ def roundtrip(args):
                       "positional_mismatch_frac": diff / max(tok, 1)}))
 
 
-def tree(args):
+def _tree_one(job):
+    """Check one rewritten shard; returns a status line (raises on a mismatch)."""
+    r, out, root, docs = job
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "submodules", "Megatron-LM"))
     from megatron.core.datasets.indexed_dataset import IndexedDataset
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(abs(hash(r)) % (1 << 32))
+    new_p = r.removesuffix(".removed.npz")
+    old_p = os.path.join(root, os.path.relpath(new_p, out))
+    old, new = IndexedDataset(old_p), IndexedDataset(new_p)
+    dropped = np.unique(np.load(r)["doc"])
+    n_old, n_new = len(old.document_indices) - 1, len(new.document_indices) - 1
+    assert n_new == n_old - len(dropped), (r, n_old, n_new, len(dropped))
+    kept = np.setdiff1d(np.arange(n_old), dropped)
+    for i in rng.choice(n_new, size=min(docs, n_new), replace=False):
+        a, b = new.get(int(new.document_indices[i])), old.get(int(old.document_indices[kept[i]]))
+        assert np.array_equal(a, b), (r, i)
+    return f"ok {os.path.relpath(new_p, out)}: {n_old} -> {n_new} docs"
+
+
+def tree(args):
+    """Every rewritten shard of --out; split over nodes (--part / --nparts, from SLURM) and --procs."""
+    from multiprocessing import Pool
     removed = sorted(glob.glob(os.path.join(args.out, "**", "*.removed.npz"), recursive=True))
-    print(f"{len(removed)} rewritten shards", flush=True)
-    for r in removed:
-        new_p = r.removesuffix(".removed.npz")
-        old_p = os.path.join(args.root, os.path.relpath(new_p, args.out))
-        old, new = IndexedDataset(old_p), IndexedDataset(new_p)
-        dropped = np.unique(np.load(r)["doc"])
-        n_old, n_new = len(old.document_indices) - 1, len(new.document_indices) - 1
-        assert n_new == n_old - len(dropped), (r, n_old, n_new, len(dropped))
-        kept = np.setdiff1d(np.arange(n_old), dropped)
-        for i in rng.choice(n_new, size=min(args.docs, n_new), replace=False):
-            a, b = new.get(int(new.document_indices[i])), old.get(int(old.document_indices[kept[i]]))
-            assert np.array_equal(a, b), (r, i)
-        print(f"ok {os.path.relpath(new_p, args.out)}: {n_old} -> {n_new} docs", flush=True)
-    print("tree ok")
+    mine = removed[args.part::args.nparts]
+    print(f"{len(removed)} rewritten shards, part {args.part}/{args.nparts}: {len(mine)}", flush=True)
+    with Pool(args.procs) as pool:
+        for line in pool.imap_unordered(_tree_one, [(r, args.out, args.root, args.docs) for r in mine]):
+            print(line, flush=True)
+    print(f"tree ok (part {args.part}/{args.nparts}, {len(mine)} shards)")
 
 
 _ESC = re.compile(r"\\u([0-9a-fA-F]{4})|\\([nrt\"\\/])")
@@ -195,6 +205,8 @@ def main():
     ap.add_argument("--hits-dir", default="hits")
     ap.add_argument("--fixes", default="recheck_fixes.npz", help="recheck.py's corrections, applied if present")
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
+    ap.add_argument("--part", type=int, default=int(os.environ.get("SLURM_NODEID", 0)))
+    ap.add_argument("--nparts", type=int, default=int(os.environ.get("SLURM_NNODES", 1)))
     args = ap.parse_args()
     {"roundtrip": roundtrip, "tree": tree, "audit": audit}[args.cmd](args)
 

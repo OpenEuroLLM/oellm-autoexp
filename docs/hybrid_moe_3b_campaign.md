@@ -2978,3 +2978,69 @@ layout is kept by decision (user 2026-10-23).
 **Decisions (user, 2026-10-24).** Mixer CKDA (CKLSTM dropped after s3). Optimizer classical Muown,
 no weight decay on v or g, plain 1/sqrt(t) direction rate (no warm-start offset). Optional for later
 stages: the v_norm reset, not built yet.
+
+**Decisions (user, 2026-10-24, later):**
+- Untied embedding / LM head. Decoupled embedding / head lrs converged to the shared lr within
+  ~1B tokens at s1 (screen5embhead3, stopped at step 450): shared lr.
+- SwiGLU clamping at 10, as gpt-oss / DeepSeek-V4.1. Now honoured by the fused SwiGLU kernels and MoonEP.
+- Engram lr ×5, as the Engram paper / DeepSeek-V4.1 (already set).
+- Global batch: 64M tokens (4096 × 16k), ~195k–235k steps for 12.5–15T tokens.
+- Main lr: 8.5e-4, from our own lr ∝ N^-0.417 law (s3 = 1.8e-3), scaled to 3B active.
+- Open: Sinkhorn-balanced embedding / head update and head-wise Q / K / V (screen5ds41_s1).
+
+**LDM vs mHC-4 on the long-context set** (ds5lcldm(logn)_s2; round 5d's 2-node s2 trio, 5:1, step 4000,
+uncooled; log-n in brackets; user 2026-10-24: small scale, noisy, so long-context behaviour may still
+emerge at size):
+
+| s2 (2-node) | NLL 4-8k | NLL 16-32k | NLL 32-64k | kvret64 4k / 8k / 16k / 32k / 64k | kvret16 @64k |
+|---|---:|---:|---:|---|---:|
+| plain | 2.533 | 2.390 (2.352) | 2.492 (2.372) | 0.78 / 0.66 / 0.66 / 0.30 / 0.12 (0.74 / 0.46 / 0.22) | 0.22 (0.34) |
+| mHC-4 | 2.484 | 2.304 (2.284) | 2.333 (2.271) | 0.82 / 0.80 / 0.72 / 0.76 / 0.34 (0.74 / 0.80 / 0.76) | 0.44 (0.66) |
+| LDM x2.0 | **2.473** | **2.300 (2.281)** | **2.307 (2.261)** | 0.60 / 0.56 / 0.30 / 0.24 / 0.18 (0.32 / 0.34 / 0.30) | 0.30 (0.40) |
+
+- **Long-document loss: LDM is best at every length** and generalizes past 16k as well as mHC-4.
+  At 32-64k it is 0.026 lower, 0.010 lower with log-n. The loss advantage carries to long context.
+- **Retrieval: LDM stays clearly worse from 8k on.** At 32k: 0.24 vs 0.76, (0.34) vs (0.80).
+  With 50 questions per length (SE ~0.07), the 16-32k gaps are far outside noise; the 4-8k ones are
+  borderline. LDM's state helps prediction, but not exact recall of a specific key among many.
+- Open: does this hold at 7:1 (where mHC-4's retrieval jumped)? LDM's at-scale speed is now 81 % of
+  mHC-4's (EP's unwind, see the decision below).
+
+**Decision (user, 2026-10-24): the residual is mHC-4, final.** The evidence:
+- **Loss:** LDM (CuTe kernels, K = 8, a site before each sublayer, its own Adam lr ×2.0, the best of
+  ×0.25 / 0.5 / 1 / 2 / 4) beats mHC-4 (mixer lr ×0.25): by 0.014 at s1 step 4000 (−0.068 vs −0.054
+  vs plain) and by 0.008 at s2 (−0.052 vs −0.044). Its long-document loss is also best at every length
+  up to 64k (32–64k: 2.307 vs 2.333).
+- **Retrieval:** LDM is clearly worst from 8k on, on both eval sets. Multi-key at 32k: 0.20 vs 0.50.
+  64-fact retrieval at 32k: 0.24 vs 0.76, with log-n 0.34 vs 0.80. mHC-4 generalizes in length; LDM
+  does not.
+- **Speed at scale:** under Megatron-FSDP + MoonEP at 8 nodes, LDM K 8 runs at 6,142 tok/s/GPU
+  (mbs 4) vs mHC-4's 7,605 in the same setup (81 %; EP agent, Megatron ≥ 2971ff0ee). The state is
+  rebuilt in the backward (`depth_memory_unwind`, exact to fp32 round-off), no longer checkpointed.
+  Before the unwind it was 4,275 (−43 %). The unwind needs full recompute with one layer per chunk,
+  no PP, and an fp32 M.
+- **Caveat (user):** small scale and noisy evals. Long-context behaviour may change at size.
+  Revisit LDM only if a paired 7:1 run at s2 is affordable and its retrieval holds up there.
+
+**muown_classical on Megatron-FSDP vs the distributed optimizer** (screen5fsdpeq*; s1 final recipe,
+2 nodes, EP4, gbs 64 × 8k, constant lr, same seed and data; 2 runs per path):
+- **First FSDP version:** wrong. FSDP's DTensor parameters lost the routing and lr tags, so mHC φ went
+  to Muown (row norms 210–520× too large after one step) and the residual-mixer lr ×0.25 was dropped.
+  Found with a step-1/2 weight diff; fixed in Megatron cc802f3c0 (EP agent).
+- **Fixed version** (mean loss difference, FSDP pair minus distopt pair; within-pair |diff|):
+
+| steps | FSDP − distopt | within distopt | within FSDP |
+|---|---:|---:|---:|
+| 1–50 | +0.044 | 0.020 | 0.014 |
+| 50–100 | +0.009 | 0.012 | 0.004 |
+| 100–200 | −0.017 | 0.015 | 0.076 |
+| 200–300 | −0.009 | 0.015 | 0.125 |
+
+  Step 2 agrees: 12.5864 vs 12.5869 / 12.5868. A transient +0.04 offset over steps 10–50 is seen in both
+  FSDP runs, then nothing systematic. In the fast loss drop (steps 150–300) the two FSDP runs scatter
+  much more than the two distopt runs (e.g. 4.160 vs 3.927 at step 200), i.e. they shift in time; by
+  step 300 the four runs are 3.43 / 3.43 / 3.43 / 3.39.
+- **Step-1 weight diffs** are at the distopt-vs-distopt noise floor, mHC φ included (~9 %, from Adam's
+  sign-like first step on a near-zero init). distopt checkpoints store bf16 model weights and FSDP fp32,
+  which explains the norm-gain step ratio of 0.69.
+- **Verdict:** FSDP is cleared for production. No systematic loss difference past the first ~70 steps.

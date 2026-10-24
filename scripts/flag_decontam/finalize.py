@@ -1,6 +1,6 @@
 """Decide which documents to drop and write the decontaminated tree (docs/flag_post_decontamination.md).
 
-    python scripts/flag_decontam/finalize.py --work $WORK --out $OUT [--frac 0.9] [--abs-run 200]
+    python scripts/flag_decontam/finalize.py --work $WORK --out $OUT [--frac 0.7] [--abs-run 200]
     python scripts/flag_decontam/finalize.py --work $WORK --dry-run --frac 0.7,0.8,0.9,1.0
 
 A (sequence, segment) pair from scan.py is contamination when its longest verbatim run (in
@@ -317,7 +317,7 @@ def main():
     ap.add_argument("--work", required=True)
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
     ap.add_argument("--out", default="/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1")
-    ap.add_argument("--frac", type=lambda s: [float(x) for x in s.split(",")], default=[0.9],
+    ap.add_argument("--frac", type=lambda s: [float(x) for x in s.split(",")], default=[0.7],   # user 2026-10-24
                     help="longest run / segment tokens (comma list with --dry-run)")
     ap.add_argument("--abs-run", type=int, default=200, help="a run this long flags whatever the segment length")
     ap.add_argument("--min-run", type=int, default=20)

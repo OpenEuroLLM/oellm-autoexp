@@ -1465,6 +1465,54 @@ def arms5embhead(size: str = "s1"):
     return [(n, d, {**base, **kv}) for n, d, kv in arms]
 
 
+def arms5embhead2(size: str = "s1"):
+    """screen5embhead's two embedding-multiplier arms again (2026-10-24): with the embedding in its
+    own parameter group (lr mult / no weight decay) the distributed optimizer's overlapped param
+    gather asserted at step 1 (`param_gather_handle is None`, a bucket gathered twice). Same arms
+    without overlap_param_gather (communication only: identical math, so they still pair with
+    screen5embhead's shared / head02), each on its crashed run's finished data index."""
+    out = []
+    for n, d, kv in arms5embhead(size):
+        if "emb5" in n:
+            cache = f"/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5embhead_{size}/{n}/data_cache"
+            out.append((n, d + " (no overlapped param gather)",
+                        {**kv, B + "overlap_param_gather": False, B + "data_cache_path": cache}))
+    return out
+
+
+def arms5embhead3(size: str = "s1"):
+    """All four screen5embhead arms again, without overlap_param_gather (2026-10-24): every arm,
+    "shared" included, asserted at step 1 in the distributed optimizer's overlapped param gather
+    (`param_gather_handle is None`, from an mHC read hook): the untied head + mHC-4 combination on
+    this path, not the embedding multipliers (screen5embhead2's diagnosis was wrong; cancelled).
+    Communication only (identical math); each arm on its crashed run's finished data index."""
+    out = []
+    for n, d, kv in arms5embhead(size):
+        cache = f"/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5embhead_{size}/{n}/data_cache"
+        out.append((n, d + " (no overlapped param gather)",
+                    {**kv, B + "overlap_param_gather": False, B + "data_cache_path": cache}))
+    return out
+
+
+def arms5ds41(size: str = "s1"):
+    """DeepSeek-V4.1 optimizer tweaks (user 2026-10-24) on the final recipe at s1 (screen5embhead's
+    "shared" arm: CKDA + mHC-4, attention first, untied, classical Muown, no overlapped param
+    gather), all with SwiGLU clamping at 10 (adopted): reference; the Sinkhorn-balanced momentum
+    for the word embedding and the head instead of Adam (embedding_head_optimizer); head-wise
+    Q / K / V orthogonalization (muon_qkv_headwise). gbs 64 x 8k, 3000 steps (1.6B tokens): stable
+    2400 + WSD linear to lr / 10 over 600. Each arm builds its own data index."""
+    base = dict((n, kv) for n, _, kv in arms5embhead(size))["shared"]
+    lr = base[B + "lr"]
+    steps = 3000
+    run = {**base, B + "global_batch_size": 64, "aux.gbs": 64, B + "train_iters": steps,
+           B + "exit_interval": steps, B + "lr_decay_iters": steps, B + "lr_wsd_decay_iters": steps // 5,
+           B + "min_lr": lr / 10, "job.est_steps": steps, B + "overlap_param_gather": False,
+           B + "activation_func_clamp_value": 10.0}
+    return [("ref", "final recipe + SwiGLU clamp 10", run),
+            ("sinkhorn", "+ Sinkhorn-balanced embedding / head update", {**run, B + "embedding_head_optimizer": "sinkhorn"}),
+            ("headwise", "+ head-wise Q / K / V orthogonalization", {**run, B + "muon_qkv_headwise": True})]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1480,8 +1528,30 @@ def arms5fsdpeq(size: str = "s1"):
     run.pop(B + "lr_decay_iters", None)
     fsdp = {B + "use_megatron_fsdp": True, B + "data_parallel_sharding_strategy": "optim_grads_params",
             B + "overlap_param_gather": True, B + "overlap_grad_reduce": True, B + "ckpt_format": "fsdp_dtensor"}
+    # Megatron-FSDP asserts CUDA_DEVICE_MAX_CONNECTIONS > 1 (our base: 1); 8 as the EP speed runs
+    fsdp["backend.env.CUDA_DEVICE_MAX_CONNECTIONS"] = "8"
     return [("distopt", "muown_classical, distributed optimizer (the campaign's path), 2 nodes", run),
             ("fsdp", "muown_classical, Megatron-FSDP ZeRO-3, 2 nodes", {**run, **fsdp})]
+
+
+def arms5fsdpeq4(size: str = "s1"):
+    """screen5fsdpeq's paths diverged after step 1 (identical step-1 loss and grad norm, 0.1-0.3
+    apart from step 10 on): both again for 2 steps, logging every step, weights-only checkpoints
+    after steps 1 and 2 (no optimizer state), to diff the parameters one optimizer step apart.
+    Same schedule (train_iters 300, so the finished data indices apply)."""
+    caches = {"distopt": "screen5fsdpeq_s1/distopt", "fsdp": "screen5fsdpeq2_s1/fsdp"}
+    out = []
+    for n, d, kv in arms5fsdpeq(size):
+        kv = {**kv, B + "exit_interval": 2, B + "save_interval": 1, B + "non_persistent_save_interval": None,
+              B + "no_save_optim": True, B + "log_interval": 1,
+              B + "data_cache_path": f"/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/{caches[n]}/data_cache",
+              "job.est_steps": 2}
+        if n == "distopt":
+            kv[B + "overlap_param_gather"] = False
+        # one array job shares its sbatch env; 8 for both (TP 1: distopt has no need for 1)
+        kv["backend.env.CUDA_DEVICE_MAX_CONNECTIONS"] = "8"
+        out.append((n, d + ": 2 steps, weights saved after each", kv))
+    return out
 
 
 def arms5opt3(size: str = "s2"):
@@ -1788,6 +1858,40 @@ def write5():
             ("s2", "screen5opt4", arms5opt4("s2")),
             ("s1", "screen5embhead", arms5embhead("s1")),
             ("s1", "screen5fsdpeq", arms5fsdpeq("s1")),
+            ("s1", "screen5embhead2", arms5embhead2("s1")),
+            ("s1", "screen5embhead3", arms5embhead3("s1")),
+            ("s1", "screen5ds41", arms5ds41("s1")),
+            ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
+            # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
+            # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
+            ("s1", "screen5fsdpeq7", [a for a in arms5fsdpeq4("s1") if a[0] == "fsdp"]),
+            # the 2-step distopt arm repeated: the step-1 noise floor of the weight diff (mHC phi
+            # differs ~9 % fsdp vs distopt on the fixed code: noise from near-zero Adam steps?)
+            ("s1", "screen5fsdpeq8", [a for a in arms5fsdpeq4("s1") if a[0] == "distopt"]),
+            # the fsdp 300-step run repeated (both paths already reduce gradients in fp32, so the
+            # remaining +0.033 is chance or systematic: an fsdp-vs-fsdp noise floor decides)
+            ("s1", "screen5fsdpeq9", [(n, d + " (repeat)", {**kv, B + "data_cache_path":
+                                       "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq2_s1/fsdp/data_cache"})
+                                      for n, d, kv in arms5fsdpeq("s1") if n == "fsdp"]),
+            # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
+            # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
+            # matched nothing), 300 steps on its finished index; distopt reference = screen5fsdpeq3
+            # noise floor of the equivalence: the distopt arm once more (same config and data as
+            # screen5fsdpeq3; only GPU nondeterminism differs)
+            ("s1", "screen5fsdpeq6", [(n, d + " (repeat: noise floor)", {**kv, B + "overlap_param_gather": False,
+                                       B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"
+                                       "campaign_3b/screen5fsdpeq_s1/distopt/data_cache"})
+                                      for n, d, kv in arms5fsdpeq("s1") if n == "distopt"]),
+            ("s1", "screen5fsdpeq5", [(n, d + " (Megatron cc802f3c0)", {**kv, B + "data_cache_path":
+                                       "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq2_s1/fsdp/data_cache"})
+                                      for n, d, kv in arms5fsdpeq("s1") if n == "fsdp"]),
+            # distopt again without overlap_param_gather (the same assert), on its finished index
+            ("s1", "screen5fsdpeq3", [(n, d, {**kv, B + "overlap_param_gather": False,
+                                              B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"
+                                              "campaign_3b/screen5fsdpeq_s1/distopt/data_cache"})
+                                     for n, d, kv in arms5fsdpeq("s1") if n == "distopt"]),
+            # the fsdp arm alone after its CUDA_DEVICE_MAX_CONNECTIONS assert (distopt kept running)
+            ("s1", "screen5fsdpeq2", [a for a in arms5fsdpeq("s1") if a[0] == "fsdp"]),
             *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
@@ -1838,6 +1942,14 @@ def write5():
                   ("", {}, "kvret,passkey,lambada"),
                   ("logn", {B + "attention_length_scaling": "logn",
                             B + "attention_length_scaling_base": 8192}, "kvret"))],
+            # the harder long-context set (64k long-document loss by position, 64-fact retrieval,
+            # variable tracking, passkey) on the same 2-node s2 trio (user 2026-10-24: recheck LDM
+            # vs mHC-4; small scale, noisy), plain and with eval-time log-n
+            *[("s2", f"ds5lcldm{tag}", arms5downstream_any(
+                [(n, "screen5ldm2_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
+                 for n, _, kv in arms5ldm2_s2()], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             ("s2", "screen5udadapt", arms5udadapt("s2")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],

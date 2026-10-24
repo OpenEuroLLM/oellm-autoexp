@@ -1,0 +1,233 @@
+# @package _global_
+# Conservative run: Qwen3.5-35B-A3B backbone on MareNostrum 5, 32 nodes.
+# AdamW 1e-3, 2k warmup steps, dsbias router (DeepSeek-V3 bias balancing),
+# BF16, 8k sequences with inter-document masking, ~16M tokens per step (GBS 2048 x 8192).
+#
+# Built from the feat/hybrid-v0.19 stack:
+#   - model + MoonEP + memory settings: the q35_moon arm of korbi/hybrid_speed/ep_ladder_mn5.yaml
+#   - router and data loading: the x_35 arm of korbi/hybrid_speed/ep_a3b50_mn5.yaml;
+#   - data: backend/megatron/data_flag_decon_v1_mn5.yaml (user 2026-10-24: the decontaminated flag mix
+#     flag-decon-v1 for all major runs; 452 shards, 8k, document masking, BOS). run_1 (job 47951871)
+#     started on data_flag_mn5 before the switch: a resume of it must keep that data (its snapshot does);
+#     a new run uses flag-decon-v1;
+# Needs $HYBRID_ENV/data -> /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data (the flag list).
+#
+# REVIEW: values marked "# REVIEW" are proposals to agree on before launching.
+#
+# The "conservative" Qwen3.5-like baseline, compared against our "ambitious" hybrid
+# (hybrid_main_mn5.yaml). Copied verbatim from a colleague's config/experiments/irene/
+# (commit ac21fba9 of their checkout; their run_1, job 47889054, died at its first save: the MoonEP
+# experts' checkpoint replica ids, fixed in Megatron). Changed here: the defaults path, the account.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35c scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_mn5 --dry-run
+#
+
+defaults:
+  - ../hybrid_speed/speed_base_mn5
+  - /backend/megatron: [data_flag_decon_v1_mn5]
+  - _self_
+
+aux:
+  experiment_group: q35_conservative
+  family: q35
+  suite: run_1
+  # 32 nodes: the stability check (user 2026-10-24). 128 nodes when the queue allows (cns144 has
+  # more GPU hours; > 100 nodes need acc_xehpc): DP 128 x MBS 2 = 8 micro-batches per pipeline at
+  # GBS 2048 (32 at 32 nodes), the ambitious run's layout (hybrid_main_mn5); speed:
+  # q35_conservative_speed128_mn5.yaml. Overrides:
+  #   aux.nodes=128 aux.arm=main128 slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc
+  #   job.est_step_time_s=7.0
+  nodes: 32
+  arm: main
+  gbs: 2048                       # 2048 x 8192 = 16.8M tokens per step
+  seq: 8192
+  ep: 4
+  topk: 8
+  expert_ffn: 512
+  # Qwen3.5: 40 blocks, GDN (L) 3 : 1 gated attention (*), every block MoE (E); PP4 x VPP2 chunks,
+  # the last chunk light because of the 262k LM head (same layout as #438 and q35_moon).
+  # Block 1 is attention instead of GDN (review 2026-10-23: "Multilinguality in Hybrid Attention
+  # LLMs", arXiv 2609.35378): 11 attention + 29 GDN blocks.
+  pattern: "*ELELE*ELELE|LE*ELELELE*E|LELELE*ELELE|LE*ELE|LELE*ELELELE|*ELELELE*ELE|LELE*ELELELE|*E"
+  mn5_exclude_file: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt
+  wandb_project: q35_conservative_mn5
+
+backend:
+  env:
+    WANDB_MODE: offline
+    WANDB_RUN_GROUP: ${aux.suite}
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    # MoonEP with the no-multicast patch first on the path
+    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+  megatron:
+    # ---- model: Qwen3.5-35B-A3B, as q35_moon ----
+    hidden_size: 2048
+    ffn_hidden_size: 6144               # unused (every block is MoE)
+    num_attention_heads: 16
+    num_query_groups: 2
+    kv_channels: 256
+    attention_output_gate: true
+    qk_layernorm: true
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    layernorm_zero_centered_gamma: true
+    untie_embeddings_and_output_weights: true
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 16
+    linear_num_value_heads: 32
+    num_experts: 256
+    moe_ffn_hidden_size: 512
+    moe_router_topk: 8
+    moe_shared_expert_intermediate_size: 512
+    moe_shared_expert_gate: true
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+
+    # ---- router: dsbias (agreed); Qwen3.5 itself uses softmax + global aux loss ----
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+
+    # ---- expert parallelism: MoonEP (best with real routing) ----
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: moonep
+    moe_flex_dispatcher_num_sms: 64
+    expert_model_parallel_size: ${aux.ep}
+
+    # ---- parallelism / memory ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 4
+    overlap_p2p_comm: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    cuda_graph_impl: none
+    cuda_graph_modules: []
+    # RoPE + document masking (packed sequences): the fused Triton QK-norm + RoPE kernel of
+    # speed_base_mn5 does not support it ("fused_qk_norm_rope needs: no packed sequences with RoPE",
+    # job 47868782). As the 8k document-masked Qwen3 arms (ep_docmask3_mn5).
+    fused_qk_norm_rope: false
+
+    # ---- batch / sequence ----
+    seq_length: ${aux.seq}
+    max_position_embeddings: ${aux.seq}
+    micro_batch_size: 2
+    global_batch_size: ${aux.gbs}
+
+    # ---- optimizer / schedule (agreed: AdamW 1e-3, 2k warmup) ----
+    optimizer: adam
+    lr: 1.0e-3
+    min_lr: 0.0
+    lr_warmup_iters: 2000
+    lr_decay_style: constant
+    weight_decay: 0.1
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    clip_grad: 1.0
+    init_method_std: 0.02
+    # REVIEW: 807,700 x 16.8M = 13.6T tokens = the flag mix by size, the most this run could ever be
+    # continued to (with a constant LR it only sizes the data index; changing it later reshuffles
+    # the data order after a resume)
+    train_iters: 807700
+
+    # ---- data loading at scale (x_35 / data_flag_decon_v1_mn5) ----
+    manual_gc: true
+    manual_gc_interval: 10             # raise it if the step times oscillate (GC overhead)
+    mmap_bin_files: false
+    data_cache_path: ${job.base_output_dir}/data_cache
+    # one rank builds the index of the 452-shard blend while the others wait: ~22 min at 20 steps
+    # (job 47864547), longer for 13.6T (more epochs of the most-weighted files)
+    distributed_timeout_minutes: 60
+
+    # ---- evaluation / logging ----
+    eval_interval: 1000                 # every ~16.8B tokens
+    eval_iters: 10                      # 10 x 2048 x 8192 = 168M tokens per eval (as the 32B runs)
+    log_interval: 1
+    log_throughput: true
+    arch_metrics_interval: 100          # (base_train_mn5)
+    moe_per_layer_logging: true         # per-layer router / load metrics (router health)
+    moe_expert_viability_metrics: true  # routed-expert viability (needs moe_per_layer_logging);
+                                        # works with MoonEP (8-node test viab, job 47884825)
+    tensorboard_dir: ${job.base_output_dir}/tb
+    wandb_project: ${aux.wandb_project}
+    wandb_entity: openeurollm-project
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+
+    # ---- checkpoints (as base_train_mn5): rolling + persistent; load = save -> restarts resume ----
+    save: ${job.base_output_dir}/ckpt
+    load: ${job.base_output_dir}/ckpt
+    save_interval: 5000                 # persistent, every ~84B tokens (~0.5 TB each)
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    non_persistent_save_interval: 250   # rolling, ~every 1.5 h; only the latest kept
+    exit_signal_handler: true
+    exit_duration_in_mins: 4290         # 3 days = 4320 min: stop and save ~30 min before the limit
+
+job:
+  name: ${aux.suite}_${aux.family}_${aux.arm}
+  base_output_dir: "${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
+  array_group: null
+  est_step_time_s: 22.0               # ~16.8M tokens / (128 GPUs x ~6,000 tok/s)
+  est_startup_min: 15.0
+  # restarts / divergence handling: copied from korbi/campaign_3b/base_train_mn5.yaml
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "lost its node -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: retry_oom
+      transition: [null, OUT_OF_MEMORY]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+      action: {class_name: RestartAction, reason: "host out of memory -- resuming once", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: retry_failed
+      transition: [null, FAILED]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "failed -- resuming (transient GPFS / NCCL / node errors)", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: retry_timeout
+      transition: [null, TIMEOUT]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "hit the wall time -- resuming", exclude_file: "${aux.mn5_exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node again"}
+    - name: give_up_oom
+      transition: [null, OUT_OF_MEMORY]
+      action: {class_name: CancelAction, reason: "out of host memory again"}
+    - name: give_up_timeout
+      transition: [null, TIMEOUT]
+      action: {class_name: CancelAction, reason: "hit the wall time again"}
+  log_events:
+    - name: nonfinite_grad_norm
+      pattern: "grad norm: (nan|inf)"
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "non-finite grad norm -- the run diverged"}
+    - name: exploding_grad_norm
+      pattern: "grad norm: [0-9]{5,}\\."
+      pattern_type: regex
+      match_once: true
+      action: {class_name: CancelAction, reason: "grad norm >= 1e4 -- the run diverged"}
+
+slurm:
+  env:
+    NCCL_MIN_NCHANNELS: "4"
+    NCCL_NCHANNELS_PER_PEER: "4"
+  sbatch:
+    nodes: ${aux.nodes}
+    # ours: ehpc533 (the colleague's run: cns144 / acc_resa); <= 100 nodes fit acc_ehpc, more
+    # need acc_xehpc (128 nodes: cns144, see aux.nodes)
+    account: ehpc533
+    qos: acc_ehpc
+    time: "3-00:00:00"

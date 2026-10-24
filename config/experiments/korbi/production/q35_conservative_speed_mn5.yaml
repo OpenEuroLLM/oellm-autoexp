@@ -1,0 +1,121 @@
+# @package _global_
+# 8-node throughput / sanity tests for the conservative weekend run (q35_conservative_mn5.yaml):
+# exactly its settings (Qwen3.5-35B-A3B, 8k + document masking, dsbias, MoonEP, flag data), except:
+#   - 8 nodes and GBS 512: with DP 8 and MBS 2 each pipeline gets the same 32 microbatches as the
+#     32-node run at GBS 2048, so the pipeline bubble and tok/s/GPU are representative;
+#   - one small data file (except mbs2_flag), 20 iterations, no evaluation, no automatic restarts;
+#   - warmup 10 instead of 2000 steps, to see the loss and the router bias move (no effect on speed).
+# Arms (aux.only selects; default: mbs2 and mbs1):
+#   mbs2      MBS 2 (the production proposal)
+#   mbs1      MBS 1 (fallback if MBS 2 does not fit at 8k, or if it is faster)
+#   mbs4      MBS 4 + moe_expert_viability_metrics (compare with viab)
+#   viab       MBS 2 + moe_expert_viability_metrics
+#   rec_block4 MBS 2 + block recompute of 4 layers per chunk (less recompute)
+#   rec_block3 MBS 2 + block recompute of 3 layers per chunk
+#   mbs2_flag MBS 2 on the production flag data (checks the 452-shard pipeline; ~22 min index build)
+#   mbs2_ckpt MBS 2 + one rolling checkpoint at step 10, to time a save (~0.5 TB written)
+#
+#   python scripts/run_autoexp.py --config-name experiments/korbi/production/q35_conservative_speed_mn5 --dry-run
+#   ... "aux.only=[mbs2_ckpt]"   for the checkpoint test
+
+defaults:
+  - q35_conservative_mn5
+  - _self_
+
+aux:
+  suite: t8
+  arm: mbs2
+  nodes: 8
+  gbs: 512
+  only: [mbs2, mbs1]
+  wandb_project: q35_conservative_speed_mn5
+
+backend:
+  megatron:
+    train_iters: 20
+    lr_warmup_iters: 10
+    eval_interval: 1000000
+    # throughput arms: one small file (as the 8k document-masking speed arms, ep_docmask_mn5)
+    # instead of the 452-shard flag blend, whose index build alone takes ~22 min (job 47864547);
+    # no validation split, so no evaluation. The mbs2_flag arm keeps the production data.
+    data_args_path: null
+    data_path: [/gpfs/projects/ehpc533/preprocessed/openeurollm-tokenized-256k/nemotron-cc/nemotron-mha-10p-sample]
+    split: "100,0,0"
+    eval_iters: 0
+    # shared by the test arms (they run one after the other in acc_debug)
+    data_cache_path: ${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/data_cache
+    arch_metrics_interval: 5
+    # no checkpoints (the mbs2_ckpt arm sets its own)
+    save: null
+    load: null
+    save_interval: null
+    non_persistent_ckpt_type: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    exit_duration_in_mins: null
+
+job:
+  est_step_time_s: 22.0
+  est_startup_min: 15.0
+  # short tests: a timeout finishes the job (as speed_base_mn5), no restarts
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: timeout
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+  log_events: []
+
+slurm:
+  sbatch:
+    account: ehpc533                   # cns144 (the main run) has no acc_ehpc
+    qos: acc_ehpc
+    time: "01:20:00"                   # ~22 min data index build + ~7 min of steps (job 47864547); acc_debug allows 2 h
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: mbs2
+          backend.megatron.micro_batch_size: 2
+        - aux.arm: mbs1
+          backend.megatron.micro_batch_size: 1
+        # MBS 4: twice the tokens per microbatch, half the microbatches (16 per pipeline, as the
+        # 32-node run would have at GBS 2048); compare with viab (same pattern and metrics)
+        - aux.arm: mbs4
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.moe_expert_viability_metrics: true
+        # routed-expert viability diagnostics (needs moe_per_layer_logging, set);
+        # checks that it works with MoonEP and what it costs vs mbs2
+        - aux.arm: viab
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.moe_expert_viability_metrics: true
+        # less recompute: only the first N layers of each chunk are recomputed, the rest keep their
+        # activations (most chunks have 6 layers). MBS 2 used ~0.58 of the GPU with full recompute.
+        - aux.arm: rec_block4
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.recompute_method: block
+          backend.megatron.recompute_num_layers: 4
+        - aux.arm: rec_block3
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.recompute_method: block
+          backend.megatron.recompute_num_layers: 3
+        # the production data (flag blend, validation split): checks the data pipeline; ~22 min index build
+        - aux.arm: mbs2_flag
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_datamix_mn5.txt
+          backend.megatron.data_path: null
+          backend.megatron.split: "998,2,0"
+          # > 0: with split 998,2,0 and the cyclic loader an empty validation set fails at startup
+          # ("no sample to consume: 0", job 47864547); runs once, after step 20
+          backend.megatron.eval_iters: 1
+          backend.megatron.data_cache_path: ${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/data_cache_flag
+        - aux.arm: mbs2_ckpt
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.non_persistent_ckpt_type: global
+          backend.megatron.non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+          backend.megatron.non_persistent_save_interval: 10

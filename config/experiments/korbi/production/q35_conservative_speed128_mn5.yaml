@@ -1,0 +1,81 @@
+# @package _global_
+# 8-node A/B of the conservative run's speed at its 128-node layout (q35_conservative_mn5.yaml):
+# GBS 128 at DP 8 x MBS 2 = 8 micro-batches per pipeline, as GBS 2048 at DP 128 (bubble 3/16 at
+# PP4 x VPP2; the colleague's 8-node tests had 32, 3/64). Ran at 5.93k tok/s/GPU on 32 nodes
+# (job 47889054); goal > 6k at 128 nodes. Arms add the ambitious run's measured speed stack
+# (docs/ep_fp8_speed.md §6d-5) step by step; all in one launch (tok/s drifts across launch times).
+#
+# Every arm keeps the expert metrics (per-layer router logging + viability: user 2026-10-24,
+# ~5 % in the colleague's t8 tests).
+#   ref          the production config
+#   stack        ref + LIGER_WGRAD_ADDMM (+2.2 % on the 262k LM head), lazy singleton NCCL
+#                groups (-1.9 GiB), FLA_TENSOR_CACHE_SIZE=64, pylibs_moonep2 (barrier timeout)
+#   stack_off    stack + RECOMPUTE_OFFLOAD (+ LEAF / LAST): memory, not speed (-1.4 % at 8k there)
+#   stack_mbs1   stack, MBS 1: 16 micro-batches per pipeline (half the bubble, smaller GEMMs)
+#   stack_gbs256 stack, GBS 256 = 16 micro-batches: the bubble's cost (a GBS 4096 option at 128)
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35s128 scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_speed128_mn5 --yes
+defaults:
+  - q35_conservative_speed_mn5
+  - _self_
+
+aux:
+  suite: s128
+  arm: ref
+  gbs: 128
+  only: []
+  moonep_lib: pylibs_moonep
+  stack: "0"
+  offload: "0"
+  fla_cache: "4"
+
+backend:
+  env:
+    PYTHONPATH: "${aux.hybrid_env}/${aux.moonep_lib}:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+    LIGER_WGRAD_ADDMM: ${aux.stack}
+    MEGATRON_LAZY_SINGLETON_GROUPS: ${aux.stack}
+    FLA_TENSOR_CACHE_SIZE: ${aux.fla_cache}
+    RECOMPUTE_OFFLOAD: ${aux.offload}
+    RECOMPUTE_OFFLOAD_LEAF: ${aux.offload}
+    RECOMPUTE_OFFLOAD_LAST: ${aux.offload}
+  megatron:
+    train_iters: 60
+    lr_warmup_iters: 10
+    # concurrent arms: one data cache each (a shared one races, memory: shared-data-cache-race)
+    data_cache_path: ${job.base_output_dir}/data_cache
+
+job:
+  est_step_time_s: 7.0
+
+slurm:
+  sbatch:
+    time: "00:50:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ref
+        - aux.arm: stack
+          aux.stack: "1"
+          aux.fla_cache: "64"
+          aux.moonep_lib: pylibs_moonep2
+        - aux.arm: stack_off
+          aux.stack: "1"
+          aux.fla_cache: "64"
+          aux.moonep_lib: pylibs_moonep2
+          aux.offload: "1"
+        - aux.arm: stack_mbs1
+          aux.stack: "1"
+          aux.fla_cache: "64"
+          aux.moonep_lib: pylibs_moonep2
+          backend.megatron.micro_batch_size: 1
+        - aux.arm: stack_gbs256
+          aux.stack: "1"
+          aux.fla_cache: "64"
+          aux.moonep_lib: pylibs_moonep2
+          aux.gbs: 256
