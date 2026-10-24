@@ -91,6 +91,9 @@ backend:
     mhc_routed_reversible: false
     num_experts: 112
     moe_ffn_hidden_size: ${aux.expert_ffn}
+    # SwiGLU clamp (DeepSeek-V4.1 / gpt-oss, user 2026-10-24: adopt): honoured by the shared
+    # experts' fused SwiGLU and MoonEP's experts (Megatron 370efd2cb)
+    activation_func_clamp_value: 10.0
     moe_shared_expert_intermediate_size: 768
     moe_router_topk: ${aux.topk}
     moe_router_score_function: sigmoid
