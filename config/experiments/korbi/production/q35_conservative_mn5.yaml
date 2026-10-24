@@ -14,7 +14,7 @@
 # The "conservative" Qwen3.5-like baseline, compared against our "ambitious" hybrid
 # (hybrid_main_mn5.yaml). Copied verbatim from a colleague's config/experiments/irene/
 # (commit ac21fba9 of their checkout; their run_1, job 47889054, died at its first save: the MoonEP
-# experts' checkpoint replica ids, fixed in Megatron). Changed here: the defaults path, account / QOS, 128 nodes.
+# experts' checkpoint replica ids, fixed in Megatron). Changed here: the defaults path, the account.
 #
 #   scripts/korbi/mn5_autoexp_bg.sh q35c scripts/run_autoexp.py \
 #       --config-name experiments/korbi/production/q35_conservative_mn5 --dry-run
@@ -29,10 +29,14 @@ aux:
   experiment_group: q35_conservative
   family: q35
   suite: run_1
-  # 128 nodes (user 2026-10-24; the colleague's run: 32): DP 128 x MBS 2 = 8 micro-batches per
-  # pipeline at GBS 2048, the ambitious run's layout (hybrid_main_mn5); 32 nodes had 32
-  nodes: 128
-  arm: main128
+  # 32 nodes: the stability check (user 2026-10-24). 128 nodes when the queue allows (cns144 has
+  # more GPU hours; > 100 nodes need acc_xehpc): DP 128 x MBS 2 = 8 micro-batches per pipeline at
+  # GBS 2048 (32 at 32 nodes), the ambitious run's layout (hybrid_main_mn5); speed:
+  # q35_conservative_speed128_mn5.yaml. Overrides:
+  #   aux.nodes=128 aux.arm=main128 slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc
+  #   job.est_step_time_s=7.0
+  nodes: 32
+  arm: main
   gbs: 2048                       # 2048 x 8192 = 16.8M tokens per step
   seq: 8192
   ep: 4
@@ -172,7 +176,7 @@ job:
   name: ${aux.suite}_${aux.family}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
   array_group: null
-  est_step_time_s: 7.0                # 32 nodes: 22 s (~16.8M tokens / (128 GPUs x ~6,000 tok/s)); / 4 + bubble
+  est_step_time_s: 22.0               # ~16.8M tokens / (128 GPUs x ~6,000 tok/s)
   est_startup_min: 15.0
   # restarts / divergence handling: copied from korbi/campaign_3b/base_train_mn5.yaml
   state_events:
@@ -219,8 +223,8 @@ slurm:
     NCCL_NCHANNELS_PER_PEER: "4"
   sbatch:
     nodes: ${aux.nodes}
-    # cns144 (more GPU hours to burn, user 2026-10-24); > 100 nodes need acc_xehpc (acc_resa /
-    # acc_ehpc cap jobs at 100 nodes)
-    account: cns144
-    qos: acc_xehpc
+    # ours: ehpc533 (the colleague's run: cns144 / acc_resa); <= 100 nodes fit acc_ehpc, more
+    # need acc_xehpc (128 nodes: cns144, see aux.nodes)
+    account: ehpc533
+    qos: acc_ehpc
     time: "3-00:00:00"
