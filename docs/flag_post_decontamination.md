@@ -44,108 +44,122 @@ is, the result goes to a new folder **`/gpfs/projects/ehpc533/training-data-coll
   "Permission denied (publickey)"), so the copy needs the user's MN5 key on JUPITER (or agent
   forwarding of it).
 
-## 2. Method
+## 2. Method (final: v5 references, v3 matcher, 70 % rule)
 
-1. **References** (`scripts/flag_decontam/extract_refs.py`, JUPITER, inside the vLLM eval image):
-   every string field of every row of every cached eval dataset (nested lists / dicts flattened)
-   that looks like text or code (>= 4 words with letters, 25 .. 100k chars), deduplicated by
-   exact text -> `refs.jsonl.gz`, one **segment** per line (`src`, `split`, `file`, `text`), plus
-   `refs.jsonl.gz.manifest.tsv` (every file, its split, included or not, rows, errors).
-   Splits: test / validation / dev / devtest / unknown included; `train` excluded when the source
-   has other splits (few-shot pools and training sets are legitimate data), included when train
-   is the only split (GPQA, multiblimp, ...). `cache-*.arrow` (`.map()` outputs) skipped.
-2. **Table** (`build_table.py build`): segments tokenised with SentencePiece, canonicalised;
-   distinct n-grams with n = 13 (n = 8 for segments of 8..19 canonical tokens; shorter ones are
-   unmatchable and only counted). N-grams in more than 10 distinct segments are prompt / template
-   text and dropped. Output: sorted int64 hashes + CSR hash -> segments.
-3. **Background pruning** (`scan.py --mode count` + `build_table.py --prune`): count every table
-   n-gram over the first 2^28 tokens of each shard of the ordinary sources (all but agenttrove,
-   dolmino, swallow-math, finemath, openwebmath, megamath, nemotron-pretraining-specialized,
-   nemotron-mind, mixture-vitae, finephrase, whose benchmark copies must not make a benchmark's
-   n-grams look common); n-grams seen more than 50 times are common phrases and dropped.
-4. **Scan** (`scan.py --mode scan`, all GPUs of all nodes): per unit of whole sequences
-   (2^28 tokens) read the tokens, canonicalise on the GPU, hash the 8- and 13-gram windows that
-   stay inside one document, `searchsorted` against the table; keep every (document, segment) pair
-   with >= 3 distinct matched n-grams -> `$WORK/hits/<shard>/<first seq>.npz`. Resumable.
-5. **Finalize** (`finalize.py`): a pair is contamination when the document contains
-   >= max(3, ceil(0.5 * n_grams(segment))) of the segment's n-grams; a document with any such
-   pair is dropped. Segments that would drop > 20000 documents mix-wide are reported
-   (`generic_segments.tsv`) and not applied. Writes the tree (below) and the report.
-6. **Verify** (`verify.py`): `roundtrip` (decode -> re-encode -> same canonical stream: the
-   premise of token matching), `tree` (Megatron's `IndexedDataset` opens every rewritten shard,
-   kept documents are token-identical, counts add up), `audit` (recall against a plain lower-cased
-   word-13-gram text matcher on 5000 agenttrove documents, math / code / QA benchmarks).
+The history of how this was arrived at (v1 n-gram coverage -> v2 longest runs -> v3 word-level
+stream -> v4 / v5 more benchmarks) is in section 4; this section describes what produced
+`flag-decon-v1`.
 
-Output tree `flag-decon-v1/` mirrors `flag/` for the 452 shards of `datamix.txt`:
-`<prefix>.bin` -> symlink to the original; `<prefix>.idx` new (or a symlink when nothing is
-dropped); `<shard>.info.json` with the new idx size / md5 / counts and a `decontamination` entry;
-`<prefix>.removed.npz` (doc, seq, seg, matched, n_grams of every flagged pair); `datamix.txt`
-(unchanged weights); `_report/` (report.json, sources.tsv, benchmarks.tsv, top_segments.tsv,
-generic_segments.tsv).
+1. **References** (`extract_refs.py`, JUPITER, inside the vLLM eval image). Every string field of
+   every row of every eval dataset (nested lists / dicts flattened; lists of >= 8 one-word strings
+   joined: WikiAnn-style token lists) that looks like text or code (>= 4 words with letters,
+   25 .. 100k chars), deduplicated by exact text -> one **segment** per line. Sources: the FLAG
+   suite's HF cache, the data bundled in the Evalchemy / human-eval image, and `hf_extra`
+   (`fetch_extra.py`: oellm-eval groups outside FLAG, the external table's benchmarks, the gated
+   sets). Splits: test / validation / dev / devtest / unknown; `train` only when it is a source's
+   only split. `--append-to` extends a refs file keeping segment ids; `--attribute` writes every
+   (source, split, file, row, field) of each segment plus an items file (segments by field, short
+   fields: answers, labels, options).
+2. **Table** (`build_table.py`). Segments tokenised with the training SentencePiece model and mapped
+   to the **word-level canonical stream** (`common.build_lut(words=True)`: each piece lower-cased,
+   non-alphanumerics removed, pieces without letters / digits dropped). Segments need >= 20 canonical
+   tokens and >= 80 characters. Per segment n = the smallest of 13 / 24 / 40 whose n-grams span >= 30
+   characters (byte-fallback scripts get long n-grams). The JSON-escaped form of each segment
+   (`\n`, `\"`; and `\uXXXX` only for texts with <= 3 non-ASCII characters) is hashed under the same
+   segment id. N-grams in > 10 distinct segments (templates) are dropped.
+3. **Background pruning** (`scan.py --mode count`, `build_table.py --prune`): n-grams seen > 50 times
+   in the first 2^28 tokens of each of the 419 ordinary shards (105.5B tokens; the suspect math /
+   synthetic sources excluded) are common phrases and dropped. Prune once per build.
+4. **Scan** (`scan.py --mode scan`, 8 nodes x 4 GPUs, ~1 h): per unit of whole sequences (2^28
+   tokens) canonicalise on the GPU, hash the 13 / 24 / 40-gram windows inside one document, look
+   them up (`searchsorted`), map each matching window to its segments and compute per (sequence,
+   segment) the **longest run** of consecutive matching windows (gaps <= n // 2 bridged; a changed
+   word splits the run). Stored: pairs with runs >= 20 tokens, plus the distinct table n-grams each
+   unit contains. Token ids outside the vocabulary (`<pad>` = 262144, literal text) are dropped and
+   reported.
+5. **Finalize** (`finalize.py --frac 0.7`): a document is dropped when one of its sequences has a
+   segment whose longest run covers >= 70 % of the segment's canonical tokens, or is >= 200 tokens
+   long, and is >= 20 tokens. Segments that would drop > 20,000 documents are held back as generic
+   (one AlpacaEval prompt). Reports: per source, per benchmark (one / all attributions), by field
+   role, top segments.
+6. **Verify** (`verify.py`): `tree` (Megatron's `IndexedDataset` opens every rewritten shard, kept
+   documents token-identical, counts add up), `roundtrip` (decode -> re-encode -> same canonical
+   stream), `audit` (recall against a JSON-unescaping word-level text matcher on 100k documents of
+   agenttrove and megamath); `ngram_report.py` (per-benchmark n-gram hit rates, comparable to
+   n-gram-overlap tables); `inspect_hits.py` (samples of matches: segment next to the document text).
 
-Training on it: `scripts/korbi/flag_datamix_mn5.py --root .../flag-decon-v1 --out
-$HYBRID_ENV/data/flag_decon_v1_datamix_mn5.txt --require-complete`, and a data config pointing
-`data_args_path` there (step 9).
+Output tree `flag-decon-v1/` mirrors `flag/` for the 452 shards of `datamix.txt`: `<prefix>.bin` ->
+symlink to the original; `<prefix>.idx` new (or a symlink when nothing is dropped); `<shard>.info.json`
+with the new idx size / md5 / counts and a `decontamination` entry; `<prefix>.removed.npz` (doc, seq,
+seg, run, windows, runs, n_tokens of every flagged pair); `datamix.txt` (unchanged weights); `_report/`.
+Training: `config/backend/megatron/data_flag_decon_v1_mn5.yaml` with
+`$HYBRID_ENV/data/flag_decon_v1_datamix_mn5.txt` (`scripts/korbi/flag_datamix_mn5.py --root
+.../flag-decon-v1 --out ... --require-complete`).
 
 ## 3. Scripts and how to run them
 
-All in `scripts/flag_decontam/` (committed; edited locally only, synced with
-`./sync_to_marenostrum.sh decon` to `$R/autoexp_decon`, never written on the cluster).
-Every MN5 step goes through autoexp: `config/experiments/korbi/decontam/flag_decon_mn5.yaml`
-runs `scripts/flag_decontam/run_step.sh <step>` once per node in the training image
-(`MegatronTraining-hybrid-ep_x86_64_202610161948.sif`: torch, sentencepiece, pytest).
+All in `scripts/flag_decontam/` (committed; edited locally only, synced to MN5 snapshots with
+`./sync_to_marenostrum.sh <name>`, never written on the cluster). Every MN5 step goes through
+autoexp: `config/experiments/korbi/decontam/flag_decon_mn5.yaml` (`aux.version`, `aux.work`,
+`aux.refs`, `aux.out`) runs `scripts/flag_decontam/run_step.sh <step>` once per node in the training
+image (`MegatronTraining-hybrid-ep_x86_64_202610161948.sif`).
 
 | file | what |
 |---|---|
-| `extract_refs.py` | JUPITER: benchmark text -> refs.jsonl.gz + manifest |
-| `common.py` | canonical lookup table, n-gram hash, Megatron .idx read / write / filter |
+| `fetch_extra.py` | JUPITER: download benchmarks outside the FLAG cache (lm-eval tasks, Hub ids, parquet branches, files) |
+| `extract_refs.py` | JUPITER: benchmark text -> refs (+ manifest); `--append-to`; `--attribute` (all sources, fields, items) |
+| `common.py` | word-level lookup table, n-gram hash, longest runs, Megatron .idx read / write / filter |
 | `build_table.py` | reference table (build) and background pruning (--prune) |
-| `scan.py` | GPU scan: --mode count / scan, one worker per GPU, parts by SLURM_NODEID |
-| `finalize.py` | thresholds, drop decisions, new tree, report (--dry-run: report only) |
-| `verify.py` | roundtrip / tree / audit checks |
+| `scan.py` | GPU scan: --mode count / scan, one worker per GPU, parts by SLURM_NODEID, resumable |
+| `recheck.py` | recompute candidate pairs against corrected n-gram sets without a rescan (v2 fix; overlay file) |
+| `finalize.py` | drop decisions, tree, reports (--dry-run: several --frac values, reports only) |
+| `ngram_report.py` | per-benchmark n-gram hit rates (--by-config) |
+| `inspect_hits.py` | sample matches: benchmark segment vs. the document around its longest run |
+| `verify.py` | tree / roundtrip / audit checks |
 | `run_step.sh` | the step dispatcher used by the autoexp config |
-| `test_flag_decontam.py` | synthetic end-to-end test (chunking, doc boundaries, whitespace twins, thresholds, idx rewrite, Megatron reads it) |
+| `test_flag_decontam.py` | synthetic end-to-end test (runs without pytest; `CUDA_VISIBLE_DEVICES= python ...` locally) |
 
-Local test: `CUDA_VISIBLE_DEVICES= python -m pytest scripts/flag_decontam/test_flag_decontam.py`
-(4 passed, 2026-10-22; the local GPU is unusable until the driver reboot, so the CPU/GPU hash
-agreement is checked by the `selftest` step on MN5).
-
-Steps (R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019, WORK=/gpfs/scratch/ehpc533/users/korbip/flag_decon_v1):
+Steps (R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019, D=/e/scratch/e-sta-openeurollm/$USER/flag-decon on JUPITER):
 
 ```bash
-# 0. JUPITER: extract the references (the script copied next to its output; same md5 as committed)
-ssh jupiter
-D=/e/scratch/e-sta-openeurollm/$USER/flag-decon; mkdir -p $D; cd $D   # extract_refs.py copied here
-apptainer exec --cleanenv -B /e /e/project1/e-sta-openeurollm/container/oellm-eval-vllm.sif \
-    python extract_refs.py --hf-home /e/scratch/e-sta-openeurollm/$USER/flag-evals/hf_home --out refs.jsonl.gz
-# 1. JUPITER -> MN5. Directly (needs the MN5 key on JUPITER, or `ssh -A jupiter` with it loaded in
-#    the local agent):
-rsync -av --progress $D/refs.jsonl.gz* eit847786@transfer1.bsc.es:/gpfs/scratch/ehpc533/users/korbip/flag_decon_v1/refs/
-#    or, as done on 2026-10-22 (132 MB: 14 s each way), relayed through the workstation:
-scp jupiter:$D/refs.jsonl.gz jupiter:$D/refs.jsonl.gz.manifest.tsv ./refs/ && \
-    rsync -a ./refs/ marenostrum_new:/gpfs/scratch/ehpc533/users/korbip/flag_decon_v1/refs/
-#    sha256 on both sides: refs.jsonl.gz fdeceb5b868d9ffb..., manifest aa9b1aee69c77a31...
-# 2. local: sync the code snapshot
-./sync_to_marenostrum.sh decon
-# 3..8. MN5 login node, in $R/autoexp_decon (one step per launch, each waits for the previous)
-run() { scripts/korbi/mn5_autoexp_bg.sh decon_$1 scripts/run_autoexp.py \
+# JUPITER login node (internet), in $D with fetch_extra.py, extract_refs.py and oellm-eval's
+# custom_lm_eval_tasks copied there; S = the vLLM eval image, H1 = the FLAG suite's HF cache
+S=/e/project1/e-sta-openeurollm/container/oellm-eval-vllm.sif; H1=/e/scratch/e-sta-openeurollm/$USER/flag-evals/hf_home
+apptainer exec --cleanenv -B /e --env HF_HOME=$D/hf_extra --env HF_TOKEN_PATH=$HOME/.cache/huggingface/token \
+    $S python fetch_extra.py --oellm-tasks $D/custom_lm_eval_tasks
+apptainer exec --cleanenv -B /e $S python extract_refs.py --hf-home $H1 --out refs.jsonl.gz      # first time
+apptainer exec --cleanenv -B /e $S python extract_refs.py --hf-home $H1 --hf-home $D/hf_extra \
+    --append-to refs_v4.jsonl.gz --out refs_v5.jsonl.gz                                          # extensions
+apptainer exec --cleanenv -B /e $S python extract_refs.py --hf-home $H1 --hf-home $D/hf_extra \
+    --attribute refs_v5.jsonl.gz --out refs_v5.attrib.jsonl.gz
+# JUPITER -> MN5 (relayed through the workstation; check sha256 on both sides)
+scp jupiter:$D/refs_v5* ./refs_v5/ && rsync -a ./refs_v5/ marenostrum_new:/gpfs/scratch/ehpc533/users/korbip/flag_decon_v5/refs/
+# local: code snapshot
+./sync_to_marenostrum.sh decon10
+# MN5 login node, in $R/autoexp_decon10 (one step per launch, each after the previous finished)
+run() { scripts/korbi/mn5_autoexp_bg.sh decon5_$1 scripts/run_autoexp.py \
           --config-name experiments/korbi/decontam/flag_decon_mn5 --yes aux.step=$1 "${@:2}"; }
 run selftest
-run build                        # tokenise + table (CPU, one node)
-run roundtrip
+run build aux.time=00:45:00
 run count aux.nodes=2 aux.time=01:00:00
 run prune
-run scan  aux.nodes=8 aux.time=02:00:00      # rerun to resume if it hits the wall time
-run finalize 'aux.args="--dry-run"'          # report in $WORK/_report: check before writing
-run finalize
-run verify
+run scan aux.nodes=8 aux.time=02:00:00          # rerun to resume if it hits the wall time
+run ngrams aux.time=00:45:00
+run finalize 'aux.args="--dry-run --frac 0.7,0.8,0.9,1.0"'      # $WORK/_report/frac_*/: check first
+run finalize 'aux.args="--frac 0.7"' aux.out=/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1.new aux.time=02:00:00
+run verify aux.out=/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1.new aux.time=02:00:00
+run audit aux.time=01:30:00
+# swap in (login node), then the datamix file
+T=/gpfs/projects/ehpc533/training-data-collection; mv $T/flag-decon-v1 $T/flag-decon-v1.old && mv $T/flag-decon-v1.new $T/flag-decon-v1
+python3 scripts/korbi/flag_datamix_mn5.py --root $T/flag-decon-v1 --out $R/data/flag_decon_v1_datamix_mn5.txt --require-complete
+# inspection, any time (login node, ~30 s): samples of matches
+singularity exec --cleanenv -B /gpfs ../container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif \
+    python scripts/flag_decontam/inspect_hits.py --shard <shard key substring> --n 10 [--min-cov 0.7] [--bench gsm8k]
 ```
 
-## 4. Results
+## 4. Results and history
 
-(filled in as the steps run)
-
-All jobs: account ehpc533, QOS acc_debug, snapshot `$R/autoexp_decon`. GPU-h = nodes x 4 x elapsed.
+v1 (n-gram coverage) -> v2 (longest runs) -> v3 (word-level stream) -> v4 / v5 (more benchmarks). All jobs: account ehpc533, QOS acc_debug, snapshot `$R/autoexp_decon`. GPU-h = nodes x 4 x elapsed.
 
 | step | job | nodes x elapsed | GPU-h | result |
 |---|---|---|---|---|
@@ -157,7 +171,6 @@ All jobs: account ehpc533, QOS acc_debug, snapshot `$R/autoexp_decon`. GPU-h = n
 | count (1st) | 47820821 | 2 x 0:02:24 | 0.3 | crashed: CUDA index assert on token id 262144 (`<pad>`, an added token outside the SentencePiece vocab: literal "<pad>" text) -> such ids are dropped and reported |
 | count | 47821047 | 2 x 0:03:32 | 0.5 | 105.5B sample tokens (first 2^28 of each of 419 ordinary shards) in ~80 s per GPU (~165M tok/s/GPU); `<pad>` in 12 shards, 1-79 per 268M tokens |
 | prune | (prune) | 1 x ~0:01 | 0.1 | n-grams seen > 50 times dropped: 51,995 (0.08 %); 64.45M kept. Histogram of sample counts: > 0: 936k, > 10: 148k, > 100: 32k, > 10000: 388. Matchable segments (>= 3 n-grams): 2,183,686 -> 2,182,710 (976 lost to pruning) |
-
 | scan | 47821245 | 8 x 0:42:44 | 22.8 | 13.55T tokens, ~175M tok/s/GPU; 50,718 unit files, 311M (sequence, segment) pairs with >= 3 n-grams (7.46 GB); mixture-vitae shards 3+4: 55 % of them |
 | finalize dry run (1st) | 47823965 | 1 x 0:47 | 3.1 | cancelled: per-pair Python loops over 310M pairs -> vectorised |
 | finalize dry run | 47825946 | 1 x ~0:20 | 1.3 | --frac 0.2 / 0.5 / 0.8: 9.28M / 3.95M / 1.48M docs, 96.3B / 44.1B / 16.2B tokens (0.71 / 0.33 / 0.12 %); 45 / 8 / 2 generic segments held back |
