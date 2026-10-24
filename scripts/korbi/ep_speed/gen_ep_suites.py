@@ -1707,6 +1707,14 @@ def ckpt_offload():
     arm("e_db_m8_exp", "mHC-4, FSDP + MoonEP, double buffer, mbs 8, expandable segments",
         *e_base, dbuf, m8, {"backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                              "aux.array_tag": "_e_db_m8_exp"})
+    # e7: p_e_db shows MoonEP's dispatch / combine fully exposed (11 % of the step: one
+    # micro-batch in flight under FSDP, and EP overlap needs no full recompute); the shared expert
+    # (768) on its own stream under them (+6.5 % under PP, s1)
+    sovl = {B + "moe_shared_expert_overlap": True}
+    arm("e_db_ovl", "mHC-4, FSDP + MoonEP, double buffer, mbs 4, shared-expert overlap", *e_base,
+        dbuf, sovl, {"aux.array_tag": "_e_db_ovl"})
+    arm("e_db_plain_ovl", "PreNorm, FSDP + MoonEP, double buffer, mbs 4, shared-expert overlap",
+        *e_base, dbuf, PLAIN, sovl, {"aux.array_tag": "_e_db_plain_ovl"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
