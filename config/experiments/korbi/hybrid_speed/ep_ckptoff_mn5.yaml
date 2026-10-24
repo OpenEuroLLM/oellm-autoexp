@@ -10833,6 +10833,7 @@ sweep:
           backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
           backend.megatron.save: ${job.base_output_dir}/ckpt
           backend.megatron.save_interval: 4
+          backend.env.MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/optstate_g_eng_save
         # Engram smoke, resumed from g_eng_save's step 4
         - aux.arm: g_eng_resume
           aux.pattern: '*ENLELELEN*ELELELE'
@@ -10937,8 +10938,9 @@ sweep:
           aux.nodes: 1
           slurm.sbatch.nodes: 1
           backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
-          backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt
+          backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g25_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 4
+          backend.env.MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/optstate_g_eng_resume
         # Engram smoke on 2 nodes, resumed from the 1-node g_eng_save step 4
         - aux.arm: g_eng_reshard2n
           aux.pattern: '*ENLELELEN*ELELELE'
@@ -11043,8 +11045,9 @@ sweep:
           aux.nodes: 2
           slurm.sbatch.nodes: 2
           backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
-          backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt
+          backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g25_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 4
+          backend.env.MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/optstate_g_eng_reshard2n
         # 32 nodes: 50B-A2.7B (216 experts) + 40B Engram, mHC-4, muown_classical, mbs 4, gbs 4096
         - aux.arm: g32_full
           aux.pattern: '*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE'
