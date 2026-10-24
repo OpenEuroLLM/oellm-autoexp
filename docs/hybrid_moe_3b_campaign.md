@@ -3003,8 +3003,8 @@ emerge at size):
 - **Retrieval: LDM stays clearly worse from 8k on.** At 32k: 0.24 vs 0.76, (0.34) vs (0.80).
   With 50 questions per length (SE ~0.07), the 16-32k gaps are far outside noise; the 4-8k ones are
   borderline. LDM's state helps prediction, but not exact recall of a specific key among many.
-- Open: does this hold at 7:1 (where mHC-4's retrieval jumped)? Only if LDM's at-scale speed is fixed
-  (EP: 4,275 vs 7,537 tok/s/GPU under FSDP).
+- Open: does this hold at 7:1 (where mHC-4's retrieval jumped)? LDM's at-scale speed is now 81 % of
+  mHC-4's (EP's unwind, see the decision below).
 
 **Decision (user, 2026-10-24): the residual is mHC-4, final.** The evidence:
 - **Loss:** LDM (CuTe kernels, K = 8, a site before each sublayer, its own Adam lr ×2.0, the best of
@@ -3014,8 +3014,10 @@ emerge at size):
 - **Retrieval:** LDM is clearly worst from 8k on, on both eval sets. Multi-key at 32k: 0.20 vs 0.50.
   64-fact retrieval at 32k: 0.24 vs 0.76, with log-n 0.34 vs 0.80. mHC-4 generalizes in length; LDM
   does not.
-- **Speed at scale:** under Megatron-FSDP at 8 nodes LDM runs at 4,275 tok/s/GPU vs mHC-4's 7,537
-  (−43 %). Its state, ~35 KB per token vs mHC-4's 16 KB, is carried through the checkpoints and the
-  recompute offload. The fix (rebuild the state in the backward) is not built.
+- **Speed at scale:** under Megatron-FSDP + MoonEP at 8 nodes, LDM K 8 runs at 6,142 tok/s/GPU
+  (mbs 4) vs mHC-4's 7,605 in the same setup (81 %; EP agent, Megatron ≥ 2971ff0ee). The state is
+  rebuilt in the backward (`depth_memory_unwind`, exact to fp32 round-off), no longer checkpointed.
+  Before the unwind it was 4,275 (−43 %). The unwind needs full recompute with one layer per chunk,
+  no PP, and an fp32 M.
 - **Caveat (user):** small scale and noisy evals. Long-context behaviour may change at size.
-  Revisit LDM only if its speed is fixed and a paired 7:1 run is affordable.
+  Revisit LDM only if a paired 7:1 run at s2 is affordable and its retrieval holds up there.
