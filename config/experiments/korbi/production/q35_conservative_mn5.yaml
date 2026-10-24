@@ -184,10 +184,12 @@ backend:
     # ---- checkpoints (as base_train_mn5): rolling + persistent; load = save -> restarts resume ----
     save: ${job.base_output_dir}/ckpt
     load: ${job.base_output_dir}/ckpt
-    save_interval: 5000                 # persistent, every ~84B tokens (~0.5 TB each)
+    # user 2026-10-25: persistent every 1000 steps (~16.8B tokens; ~390 GB each in fsdp_dtensor:
+    # ~1.6 TB / day at 32 nodes, ~6 TB / day at 128 -- prune / archive old ones), rolling every 100
+    save_interval: 1000
     non_persistent_ckpt_type: global
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
-    non_persistent_save_interval: 250   # rolling, ~every 1.5 h; only the latest kept
+    non_persistent_save_interval: 100   # rolling (only the latest kept): ~35 min at 32 nodes, ~9 at 128
     exit_signal_handler: true
     # SIGUSR2 (by name: the argument is a signal.Signals enum, "12" fails to parse): save and exit cleanly -- the 32 -> 128-node flip
     # (scripts/korbi/production/flip_q35_32_to_128.sh) stops the 32-node job this way
