@@ -2978,3 +2978,12 @@ layout is kept by decision (user 2026-10-23).
 **Decisions (user, 2026-10-24).** Mixer CKDA (CKLSTM dropped after s3). Optimizer classical Muown,
 no weight decay on v or g, plain 1/sqrt(t) direction rate (no warm-start offset). Optional for later
 stages: the v_norm reset, not built yet.
+
+**Decisions (user, 2026-10-24, later):**
+- Untied embedding / LM head. Decoupled embedding / head lrs converged to the shared lr within
+  ~1B tokens at s1 (screen5embhead3, stopped at step 450): shared lr.
+- SwiGLU clamping at 10, as gpt-oss / DeepSeek-V4.1. Now honoured by the fused SwiGLU kernels and MoonEP.
+- Engram lr ×5, as the Engram paper / DeepSeek-V4.1 (already set).
+- Global batch: 64M tokens (4096 × 16k), ~195k–235k steps for 12.5–15T tokens.
+- Main lr: 8.5e-4, from our own lr ∝ N^-0.417 law (s3 = 1.8e-3), scaled to 3B active.
+- Open: Sinkhorn-balanced embedding / head update and head-wise Q / K / V (screen5ds41_s1).
