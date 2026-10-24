@@ -278,6 +278,29 @@ closed-form unwind of the state (u_e = (vbar - M_e^T kbar) / (1 - kappa . kbar),
 M_{e-1} = M_e - kappa u^T; P by a rank-1 downdate with snapshots every few layers), so no state
 is checkpointed, copied or offloaded.
 
+### LDM depth_memory_unwind (2026-10-24, e11 / e11f / e11g: 8 nodes, FSDP + MoonEP, double buffer)
+
+No state in the checkpoints: the forward updates (M, P) in place; each layer's recompute (one
+layer = one LDM edge) recovers its update in closed form from the post-update state
+(kappa = P_e kbar, c = 1 - kappa . kbar = lambda / (lambda + kbar' P_{e-1} kbar),
+u = (vbar - M_e' kbar) / c, P_{e-1} = lambda (P_e + kappa kappa' / c)) and the backward unwinds.
+Exact algebra; fp32 round-off over 97 edges ~1e-4 relative (tests: the taped oracle, workspace and
+whole model, dense + MoE patterns).
+
+| LDM K 8 | mbs 2 | mbs 4 | mem (mbs 2 / 4) |
+|---|---:|---:|---:|
+| segmented CuTe (state in the streams, offloaded), best: 4 layers per chunk | 4,956 | host OOM | 0.95 |
+| unwind, torch state math | 3,155 | 3,259 | 0.71 / 0.99 |
+| unwind, fused Triton v1 | 5,350 | 5,665 | 0.67 / 0.91 |
+| **unwind, fused Triton v2** | **5,808** | **6,142** | 0.67 / 0.90 |
+| (mHC-4, same setup) | | 7,605 | 0.83 |
+
+- 1-node smoke (8 blocks): 4.26 s / step vs mHC-4 3.56 (segmented CuTe: 6.9). The offload copies are
+  gone (memcpy-only 14 % -> 3 %, idle 15 % -> 1.5 %); what is left of LDM is the fp32 M passes
+  (2.1 GB at mbs 2 per micro-batch, ~1 read / write per forward edge, M + dM per backward edge).
+- M in bf16 (tried): forward reads within 7e-3, but the unwound gradients are off by up to 100 %
+  (the subtraction loses the state): M stays fp32 in this mode.
+
 ## 5. Next
 
 1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
