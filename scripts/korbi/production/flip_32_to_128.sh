@@ -4,8 +4,8 @@
 #   setsid nohup scripts/korbi/production/flip_32_to_128.sh > $R/monitor_logs/flip_32_to_128.log 2>&1 &
 # Waits until the 128-node job (ambitious_128n) runs, then stops the 32-node run: first its monitor
 # (no restart), then the job itself with SIGUSR2 -- Megatron's exit signal handler
-# (exit_signal_handler, exit_signal 12) saves a checkpoint and exits; the 128-node job is still in
-# its startup (> 10 min) and loads the newest complete checkpoint (the tracker is written last).
+# (exit_signal_handler, exit_signal SIGUSR2) saves a checkpoint and exits; the 128-node job waits
+# for that (WAIT_FOR_JOB_NAME=ambitious_32n in its sbatch) before it loads the newest checkpoint.
 # A job that has not exited after 30 minutes is cancelled; queued 32-node restarts are cancelled.
 set -u
 log() { echo "$(date '+%F %T') $*"; }
