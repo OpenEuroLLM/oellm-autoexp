@@ -2969,3 +2969,12 @@ the same batches: full precision, weight-only RTN 4- and 3-bit in groups of 32, 
 - Classical Muown loses less than p=1 everywhere it differs, and is the best model after 4-bit in
   both tiny sets (and within 0.004 at s2). No sign that its shrinking steps make brittle weights.
 - The tiny model's 4-bit cost (+0.02-0.10) is far above s2's (+0.005): small matrices quantize badly.
+
+**Attention first (screen5r7af_s2 vs screen5r7_s2, paired, 7:1 + mHC-4):** -0.0025 / +0.0001 /
++0.0011 / +0.0009 at 1000 / 2000 / 3000 / 4000. Neutral within noise (trend +0.003 / +0.006 at
+4B / 10B). The paper's gain (multilingual distillation) does not show in our pre-training loss. The
+layout is kept by decision (user 2026-10-23).
+
+**Decisions (user, 2026-10-24).** Mixer CKDA (CKLSTM dropped after s3). Optimizer classical Muown,
+no weight decay on v or g, plain 1/sqrt(t) direction rate (no warm-start offset). Optional for later
+stages: the v_norm reset, not built yet.
