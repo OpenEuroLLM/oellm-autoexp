@@ -1792,6 +1792,18 @@ def ckpt_offload():
          B + "micro_batch_size": 2, B + "train_iters": 8, "aux.array_tag": "_g_eng_smoke_plain"})
     # user 2026-10-24: gbs 4096 x 16k (8 micro-batches per GPU at 32 nodes, mbs 4); Engram 40B
     # (heavily multilingual: more table parameters; ~0.94 GB per GPU at 128 GPUs)
+    # g32_full: the step-6 save failed (KeyError in the Engram optimizer): the tables are hidden
+    # from Megatron-FSDP and were missing from the fsdp_dtensor checkpoint. Save / resume check
+    # on 1 node (save at 4, resume to 8; steps 5-8 must match)
+    smoke_eng = (*e_base, dbuf, sovl, mc_fix, eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
+                 {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+                  B + "micro_batch_size": 2, B + "train_iters": 8})
+    arm("g_eng_save", "Engram smoke, save at step 4", *smoke_eng,
+        {B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 4,
+         "aux.array_tag": "_g_eng_save"})
+    arm("g_eng_resume", "Engram smoke, resumed from g_eng_save's step 4", *smoke_eng,
+        {B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt", B + "ckpt_step": 4,
+         "aux.array_tag": "_g_eng_resume"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
               B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
               # a checkpoint at step 6: fsdp_dtensor with 40B Engram + Muown's row states (host
