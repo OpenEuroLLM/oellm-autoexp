@@ -1753,6 +1753,36 @@ def ckpt_offload():
         arm(f"e_db_ldm8_unw_m{mbsz}", f"LDM K 8 unwind, FSDP + MoonEP, double buffer, mbs {mbsz}",
             *e_base, dbuf, sovl, unw, {B + "micro_batch_size": mbsz,
                                        "aux.array_tag": f"_e_db_ldm8_unw_m{mbsz}"})
+    # e12 (user 2026-10-24): the 32-node full model -- ~50B-A2.7B (216 experts, top 5; 0.23B per
+    # expert slot over 48 MoE layers + ~2B dense) + 20B Engram (2 layers before blocks 1 and 24,
+    # 9.77M rows x 16 tables x 64), attention first 7:1, mHC-4, muown_classical, FSDP + MoonEP,
+    # double buffer, shared-expert overlap; first a 1-node Engram-under-FSDP smoke
+    tmap = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy"
+
+    def eng_fsdp(pattern, rows, group):
+        return {"aux.pattern": with_engram(pattern, (1, 24) if len(pattern) > 60 else (1, 4)),
+                B + "engram_ngram_orders": [2, 3], B + "engram_num_heads": 8,
+                B + "engram_embed_dim": 64, B + "engram_table_size": rows,
+                B + "engram_table_parallel": "dp", B + "engram_token_map": tmap,
+                B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
+                B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0,
+                B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16",
+                "backend.env.ENGRAM_STEP_LOOKUP": "1", "backend.env.ENGRAM_STEP_GROUP": str(group),
+                "backend.env.ENGRAM_SPARSE_GRAD": "1"}
+    mc_fix = dict(mc, **{B + "residual_mixer_lr_mult": 0.25})
+    arm("g_eng_smoke", "smoke: Engram (dp tables) under FSDP + MoonEP, mHC-4, muown_classical, 1 node",
+        *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
+        {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
+         B + "micro_batch_size": 2, B + "train_iters": 8, "backend.env.MEM_BREAKDOWN": "1",
+         "aux.array_tag": "_g_eng_smoke"})
+    full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 2048,
+              B + "train_iters": 20, "slurm.sbatch.time": "01:00:00",
+              "slurm.env.WATCHDOG_STARTUP_S": "1800", "backend.env.MEM_BREAKDOWN": "1"}
+    arm("g32_full", "32 nodes: 50B-A2.7B (216 experts) + 20B Engram, mHC-4, muown_classical, mbs 4, "
+        "gbs 2048", *e_base, dbuf, sovl, mc_fix,
+        eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 9765568, 4), full32,
+        {"aux.array_tag": "_g32_full"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
