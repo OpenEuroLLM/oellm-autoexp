@@ -1691,6 +1691,16 @@ def ckpt_offload():
         {B + "fsdp_double_buffer": True, "aux.array_tag": "_e_db"})
     arm("e_nooff_m2", "mHC-4, FSDP + MoonEP, mbs 2, no checkpoint offload", *e_base,
         {B + "micro_batch_size": 2, "backend.env.RECOMPUTE_OFFLOAD": "0", "aux.array_tag": "_e_nooff_m2"})
+    # e2: FSDP double buffering = mHC-4 7,537 (e1): with it, mbs 8 and LDM (OOM without), and
+    # PreNorm as the reference
+    dbuf = {B + "fsdp_double_buffer": True}
+    arm("e_db_m8", "mHC-4, FSDP + MoonEP, double buffer, mbs 8", *e_base, dbuf,
+        {B + "micro_batch_size": 8, "aux.array_tag": "_e_db_m8"})
+    arm("e_db_plain", "PreNorm, FSDP + MoonEP, double buffer, mbs 4", *e_base, dbuf, PLAIN,
+        {"aux.array_tag": "_e_db_plain"})
+    for mbsz in (2, 4):
+        arm(f"e_db_ldm8_m{mbsz}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs {mbsz}", *e_base, dbuf,
+            ldm, {B + "micro_batch_size": mbsz, "aux.array_tag": f"_e_db_ldm8_m{mbsz}"})
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
