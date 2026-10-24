@@ -313,8 +313,11 @@ class MegatronConfig(ConfigInterface):
     # Only used when gated_linear_unit is True
     glu_linear_offset: float = 0.0
 
-    # Clamp the output of the linear_fc1 in the activation function. Only used when
-    # activation_func is quick_gelu.
+    # Clamp the output of the linear_fc1 in the activation function: quick_gelu (GeGLU) and
+    # SwiGLU (gpt-oss / DeepSeek-V4.1: the gate half capped at the value, the linear half to
+    # +-value; the gradient is zero where a clamp is active). SwiGLU: the unfused path and the
+    # fused bias_swiglu / weighted_swiglu kernels; the Triton SwiGLU falls back to the fused
+    # kernel, TE's fused ScaledSwiGLU op raises.
     activation_func_clamp_value: float | None = None
 
     # True is rotate pairs of even and odd dimensions (RoFormer style), False is rotate pairs
@@ -1978,6 +1981,20 @@ class MegatronConfig(ConfigInterface):
 
     # Whether to split QKV parameters for Muon optimizer
     muon_split_qkv: bool = True
+
+    # Optimizer of the word embedding and prediction head under a Muon-family optimizer
+    # (sinkhorn: DeepSeek-V4.1 Sinkhorn-balanced momentum).
+    embedding_head_optimizer: Literal["adam", "sinkhorn"] = "adam"
+
+    sinkhorn_momentum: float = 0.95
+
+    sinkhorn_iters: int = 11
+
+    sinkhorn_lr_ratio: float = 0.18
+
+    # Orthogonalize Q / K / V (and the output gate) per attention head, and the linear mixers'
+    # q / k / v projections per head (Muon family).
+    muon_qkv_headwise: bool = False
 
     # Whether to use Nesterov-style momentum in the internal SGD
     muon_nesterov: bool = False

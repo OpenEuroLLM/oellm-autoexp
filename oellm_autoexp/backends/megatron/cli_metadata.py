@@ -37,7 +37,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "activation_func_clamp_value": MegatronArgMetadata(
         arg_type=float,
         default=None,
-        help="Clamp the output of the linear_fc1 in the activation function. Only used when activation_func is quick_gelu.",
+        help="Clamp the output of the linear_fc1 in the activation function: quick_gelu (GeGLU) and SwiGLU (gpt-oss / DeepSeek-V4.1: the gate half capped at the value, the linear half to +-value; the gradient is zero where a clamp is active). SwiGLU: the unfused path and the fused bias_swiglu / weighted_swiglu kernels; the Triton SwiGLU falls back to the fused kernel, TE's fused ScaledSwiGLU op raises.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1731,6 +1731,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         default=None,
         help="Path to a file containing parameter-to-parameter-group mapping. Provide a JSON file that specifies which parameters belong to which parameter group for global coordination.",
         choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "embedding_head_optimizer": MegatronArgMetadata(
+        arg_type=str,
+        default="adam",
+        help="Optimizer of the word embedding and prediction head under a Muon-family optimizer (sinkhorn: DeepSeek-V4.1 Sinkhorn-balanced momentum).",
+        choices=("adam", "sinkhorn"),
         nargs=None,
         element_type=None,
     ),
@@ -5574,6 +5582,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "muon_qkv_headwise": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Orthogonalize Q / K / V (and the output gate) per attention head, and the linear mixers' q / k / v projections per head (Muon family).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "muon_scalar_optimizer": MegatronArgMetadata(
         arg_type=str,
         default="adam",
@@ -7321,6 +7337,15 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         choices=None,
         nargs=None,
         element_type=None,
+    ),
+    "sinkhorn_iters": MegatronArgMetadata(
+        arg_type=int, default=11, help=None, choices=None, nargs=None, element_type=None
+    ),
+    "sinkhorn_lr_ratio": MegatronArgMetadata(
+        arg_type=float, default=0.18, help=None, choices=None, nargs=None, element_type=None
+    ),
+    "sinkhorn_momentum": MegatronArgMetadata(
+        arg_type=float, default=0.95, help=None, choices=None, nargs=None, element_type=None
     ),
     "skip_train": MegatronArgMetadata(
         arg_type=bool,
@@ -9831,6 +9856,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "embedding_head_optimizer": MegatronActionSpec(
+        option_strings=("--embedding-head-optimizer",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="adam",
     ),
     "embedding_init_method_std": MegatronActionSpec(
         option_strings=("--embedding-init-method-std",),
@@ -13050,6 +13082,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=5,
     ),
+    "muon_qkv_headwise": MegatronActionSpec(
+        option_strings=("--muon-qkv-headwise",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "muon_scalar_optimizer": MegatronActionSpec(
         option_strings=("--muon-scalar-optimizer",),
         action_type="store",
@@ -14474,6 +14513,27 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.1,
+    ),
+    "sinkhorn_iters": MegatronActionSpec(
+        option_strings=("--sinkhorn-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=11,
+    ),
+    "sinkhorn_lr_ratio": MegatronActionSpec(
+        option_strings=("--sinkhorn-lr-ratio",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.18,
+    ),
+    "sinkhorn_momentum": MegatronActionSpec(
+        option_strings=("--sinkhorn-momentum",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.95,
     ),
     "skip_train": MegatronActionSpec(
         option_strings=("--skip-train",),

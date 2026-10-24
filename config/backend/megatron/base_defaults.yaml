@@ -4,7 +4,7 @@
 account_for_embedding_in_pipeline_split: false  # If set, the embedding layer will be treated as a standard transformer layer in the context of partition and placement for pipeline parallelism.
 account_for_loss_in_pipeline_split: false  # If set, the loss layer will be treated as a standard transformer layer in the context of partition and placement for pipeline parallelism.
 accumulate_allreduce_grads_in_fp32: false  # Gradient accumulation and all-reduce in fp32.
-activation_func_clamp_value: null  # Clamp the output of the linear_fc1 in the activation function. Only used when activation_func is quick_gelu.
+activation_func_clamp_value: null  # Clamp the output of the linear_fc1 in the activation function: quick_gelu (GeGLU) and SwiGLU (gpt-oss / DeepSeek-V4.1: the gate half capped at the value, the linear half to +-value; the gradient is zero where a clamp is active). SwiGLU: the unfused path and the fused bias_swiglu / weighted_swiglu kernels; the Triton SwiGLU falls back to the fused kernel, TE's fused ScaledSwiGLU op raises.
 activation_offload_fraction: 1.0  # Fraction of eligible activation offload groups to offload across configured modules. For details, see: https://github.com/NVIDIA/Megatron-LM/blob/main/docs/user-guide/features/fine_grained_activation_offloading.md#activation-offload-fraction.
 adam_beta1: 0.9  # First coefficient for computing running averages of gradient and its square
 adam_beta2: 0.999  # Second coefficient for computing running averages of gradient and its square
@@ -217,6 +217,7 @@ dsa_indexer_topk_freq: 1  # Frequency of DSA indexer top-k computation across la
 dsa_indexer_use_sparse_loss: false  # Whether to use sparse DSA indexer loss. If True, the indexer loss will be computed using the top-k indices.
 dsa_kernel_backend: none  # choices: ['none', 'tilelang', 'cudnn'] | Optional fused DSA kernel backend. ``none`` disables fused DSA kernels. Explicit ``tilelang`` or ``cudnn`` enables only that backend. Unsupported DSA layouts continue to use the PyTorch fallback.
 dump_param_to_param_group_map: null  # Path to a file containing parameter-to-parameter-group mapping. Provide a JSON file that specifies which parameters belong to which parameter group for global coordination.
+embedding_head_optimizer: adam  # choices: ['adam', 'sinkhorn'] | Optimizer of the word embedding and prediction head under a Muon-family optimizer (sinkhorn: DeepSeek-V4.1 Sinkhorn-balanced momentum).
 embedding_init_method_std: null  # Standard deviation of the zero mean normal for the default initialization method for the embedding layer. If None, will be set to init_method_std. Setting this to a value around 1.0 may avoid loss spikes in training. Setting this to any value will also skip applying weight decay on embedding weights to avoid shrinkage towards zero. See https://arxiv.org/abs/2312.16903 for more details.
 embedding_lr_mult: 1.0  # Learning-rate multiplier of the word-embedding matrix (max and min lr). Conflicts with --decoupled-lr.
 embedding_path: null  # Where to save/load Open-Retrieval Embedding data to/from
@@ -693,6 +694,7 @@ muon_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmu
 muon_momentum: 0.9  # Momentum factor for Muon optimizer
 muon_nesterov: false  # Whether to use Nesterov-style momentum in the internal SGD
 muon_num_ns_steps: 5  # Number of Newton-Schulz steps for Muon optimizer
+muon_qkv_headwise: false  # Orthogonalize Q / K / V (and the output gate) per attention head, and the linear mixers' q / k / v projections per head (Muon family).
 muon_scalar_optimizer: adam  # choices: ['adam', 'lion'] | Optimizer for scalar parameters (embeddings, biases, norms) when using muon. Defaults to adam.
 muon_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Scale mode for Muon optimizer. With MuP, set --muon-scale-mode unit_rms_norm to use unit_rms_norm scaling, or set --muon-scale-mode spectral to keep spectral scaling.
 muon_split_qkv: true  # Whether to split QKV parameters for Muon optimizer
@@ -910,6 +912,9 @@ sharp_enabled_group: null  # choices: ['dp', 'dp_replica'] | IB SHARP can be ena
 short_conv_bias: false  # Whether the gated short convolution's depthwise conv has a bias (LFM2's `conv_bias`). Its projections follow `add_bias_linear`.
 short_conv_kernel_size: 3  # Kernel width of the gated short convolution, the `C` layers of a hybrid model (LFM2's `conv_L_cache`).
 short_seq_prob: 0.1  # Probability of producing a short sequence.
+sinkhorn_iters: 11
+sinkhorn_lr_ratio: 0.18
+sinkhorn_momentum: 0.95
 skip_train: false  # If set, bypass the training loop, perform evaluation for validation/test, and exit.
 softmax_type: vanilla  # choices: ['vanilla', 'off-by-one', 'learnable'] | Applies modified softmax from https://www.evanmiller.org/attention-is-off-by-one.html. Supports both TE FusedAttention and local unfused attention. Supports both a fixed offset and and learnable offset.
 spec: null  # Specify the <module_location function_name> pair that returns a spec to customize a model, transformer block, or transformer layer, depending on the use case.To use local spec specify local as the argument.For more details, see the model class, `transformer_block.py`, or `transformer_layer.py`
