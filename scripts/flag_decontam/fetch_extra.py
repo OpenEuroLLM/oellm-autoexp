@@ -61,24 +61,25 @@ URLS = ["https://raw.githubusercontent.com/deepseek-ai/DeepSeek-Coder/main/Evalu
 
 
 def group_subtasks(tm, group):
-    """Leaf task names of an lm-eval group (from the group yaml's `task:` list, recursively)."""
+    """Leaf task names of an lm-eval language-bench group: every yaml in the group's directory of the
+    lm-eval package that defines a `task` (and is not itself a group)."""
+    import pathlib
     import yaml
+    import lm_eval.tasks
 
     class _L(yaml.SafeLoader):
         pass
     _L.add_multi_constructor("!", lambda loader, suffix, node: None)
-    info = tm.task_index.get(group)
-    if not info or info.get("type") not in ("group", "tag"):
-        return [group]
-    if info.get("type") == "tag":
-        return list(info.get("task", [])) or [group]
-    cfg = yaml.load(open(info["yaml_path"]), Loader=_L) or {}
+    root = pathlib.Path(lm_eval.tasks.__file__).parent / group
     out = []
-    for t in cfg.get("task", []):
-        name = t if isinstance(t, str) else (t or {}).get("task")
-        if name:
-            out += group_subtasks(tm, name) if tm.task_index.get(name, {}).get("type") == "group" else [name]
-    return out
+    for y in sorted(root.rglob("*.yaml")):
+        try:
+            cfg = yaml.load(open(y), Loader=_L) or {}
+        except Exception:
+            continue
+        if isinstance(cfg.get("task"), str) and "group" not in cfg:
+            out.append(cfg["task"])
+    return out or [group]
 
 
 def main():
