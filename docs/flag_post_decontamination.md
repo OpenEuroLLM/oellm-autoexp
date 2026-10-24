@@ -364,6 +364,26 @@ The v4 report adds `roles.tsv`: dropped documents / tokens by the most severe fi
 flagged segments (answer > tests > question > options > context > other, from the field paths of the
 attribution), as the basis for the answer-aware policy.
 
+### 4.6 v5 and the written tree (2026-10-24)
+
+v5 = v4 + the datasets fetched after access approval: AdvBench, MultiLoKo (all languages), NorIdiom
+(`mimir-project/noridiom`, `Sprakbanken/Norwegian_idioms`), the Valencian catalan_bench subtasks
+(gplsi/cocoteros_va, truthfulqa_va, ...), Tatoeba MT (`Helsinki-NLP/tatoeba_mt`, parquet branch
+`eng-nor`). refs_v5: 5,892,001 segments (+73,777), 2.86M matchable, 385M n-grams; work
+`flag_decon_v5`, snapshot `$R/autoexp_decon10`; scan 47944498 (8 nodes ~1 h). The 152 benchmarks shared
+with v4 change by < 0.5 pt in n-gram hit rate; new: MultiLoKo 70.0 % (external 11.1 %), Tatoeba 38.3 %
+(11.6 %), AdvBench 1.6 % (24.7 %: its prompts are mostly < 20 tokens), NorIdiom not matchable (idioms
+< 20 tokens). Dry run 47948407: **--frac 0.7/0.8/0.9/1.0: 1.47M/1.25M/1.08M/0.88M docs, 18.0B/13.9B/
+11.9B/10.1B tokens (0.133/0.103/0.088/0.074 %)**; +42k docs / +0.37B tokens vs v4 at 0.9, almost all
+MultiLoKo (7,868 of 29,673 segments found >= 90 % verbatim, 26.6k docs, role context).
+
+**Decision (user, 2026-10-24): the 70 % rule** ("to be on the safe side"): a document is dropped when
+its longest verbatim run of a benchmark item covers >= 70 % of the item, or is >= 200 tokens, and
+>= 20 tokens. Lowering the rule catches truncated / end-modified copies; a change in the middle still
+splits the run, so modified items stay; short items (20-28 tokens) need (nearly) full copies at any
+rule. `flag-decon-v1` = v5 at 0.7: **1.47M documents, 18.0B tokens (0.133 % of 13.5T) dropped**.
+Written to flag-decon-v1.new, verified, then swapped in for the first (v4 @ 0.9, never used) tree.
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
