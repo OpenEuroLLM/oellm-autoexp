@@ -149,9 +149,35 @@ OOM.**
 - **mHC-4 costs -21 % under PP** at both batch sizes: the layout cost FSDP should remove.
 - Memory traces of the 1-node smoke (MoonEP vs all-to-all, iteration 2) are queued (f5).
 
+### Measured after the memory fix (2026-10-24, c5: 8 nodes, 7:1, 112 experts, Adam, gbs 512)
+
+**The FSDP memory problem was the recompute's chunk inputs.** Without a pipeline every GPU holds
+all 96 layers (48 recompute chunks of 2); Megatron-FSDP's backward-hook bookkeeping kept every
+chunk's input (fetched back from host) and its input gradient referenced until the micro-batch's
+backward ended: 46 + 45 x 128 MB live at the peak for PreNorm (memory trace f6), 4x that with
+mHC-4. CheckpointFunction.backward now drops the inputs' gradients and releases a fetched input
+copy once the chunk's recompute is done (Megatron random.py; offload tests: bitwise-equal
+gradients). mHC-4 under ZeRO-3: peak allocated 21.8 GiB at mbs 2, 2 fetched inputs live at the
+peak. (Two slow runs, ~157 s / step, shared 7 nodes of rack as07r5: excluded.)
+
+| HybridEP on both sides | PreNorm | mHC-4 | mHC-4 cost |
+|---|---:|---:|---:|
+| PP4 x VPP2, mbs 2 | 6,717 | 5,497 | -18 % |
+| FSDP ZeRO-3, mbs 2 | 6,819 | 6,184 | -9 % |
+| **FSDP ZeRO-3, mbs 4** | | **6,554** (memory 0.86) | |
+| (PP4 x VPP2 with MoonEP, c1 / c3) | 7,780 | 6,151 | -21 % |
+
+- **mHC-4 under FSDP: +19 % over PP at the same EP backend** (6,554 vs 5,497), 2.4 % below PP's
+  PreNorm (6,717): the width cost of PP is gone, as the traffic model predicts.
+- Already **+6.6 % over PP with MoonEP** (6,151), today's best PP. MoonEP is +16 % over HybridEP
+  under PP (7,780 vs 6,717): with MoonEP under FSDP, mHC-4 could reach ~7,500.
+- 8 nodes are pessimistic for FSDP's memory: the shards are split 32 / 8 ways (dense / experts),
+  at 128 nodes 512 / 128 ways (~20 GB less per GPU).
+
 ## 5. Next
 
-1. Fix the FSDP OOM (f3 tells whether it is MoonEP's).
+1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
+   its expert-gradient path through FSDP's lazily allocated main_grad buffers).
 2. 8-node A/B at the 7:1 layout: PP4 vs FSDP for PreNorm, mHC-4, LDM (f arms), mbs 2 / 4, and
    the ZeRO-1 / ZeRO-2 strategies (`optim` / `optim_grads`, bf16 gradients) at gbs 512 (m = 8
    per GPU, i.e. gbs 8,192 at 128 nodes).
