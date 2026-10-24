@@ -23,9 +23,9 @@ backend:
     ENGRAM_STEP_GROUP: "8"
   megatron:
     num_experts: 216
-    # rolling checkpoints every 250 steps (~6 h at 87 s / step) at 32 nodes: bounds what the flip
-    # loses should the SIGUSR2 save not happen
-    non_persistent_save_interval: 250
+    # rolling checkpoints every 50 steps (~1.2 h at 87 s / step, user 2026-10-25): bounds what a
+    # crash or the flip loses should the SIGUSR2 save not happen
+    non_persistent_save_interval: 50
 
 job:
   name: ambitious_32n
