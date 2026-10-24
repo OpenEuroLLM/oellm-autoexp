@@ -1,0 +1,7 @@
+# W&B sync of the MN5 production runs (offline on the cluster: no outbound internet) to
+# openeurollm-project/flag_hybrid. One line per run: <wandb run id>  <run dir on MN5 (glob)>.
+# Every 3-day segment / restart of a run writes a new offline run (Megatron has no fixed run id);
+# all fragments under the glob are uploaded into the one W&B run <id>, in order of start time.
+# Ids: letters, digits, '-', '_'. Add a line per new main run (owners: the run's agent).
+ambitious_e216_eng40	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main/ambitious_e216_eng40
+conservative_q35_run2	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main
