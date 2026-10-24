@@ -184,6 +184,9 @@ backend:
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
     non_persistent_save_interval: 1000
     distributed_timeout_minutes: 45
+    # SIGUSR2 -> save a checkpoint and exit (the 32 -> 128-node flip, flip_32_to_128.sh)
+    exit_signal_handler: true
+    exit_signal: 12
 
 job:
   name: ${aux.suite}_${aux.arm}
