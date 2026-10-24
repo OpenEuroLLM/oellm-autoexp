@@ -1738,6 +1738,11 @@ def ckpt_offload():
             "chunk, no checkpoint offload", *e_base, dbuf, ldm, sovl,
             {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
              "backend.env.RECOMPUTE_OFFLOAD": "0", "aux.array_tag": f"_e_db_ldm8_rn{rn}_nooff"})
+    # the resume check: e_db_mc_ckpt's step-6 checkpoint (suite e9c), trained to step 12 again --
+    # the losses of steps 7-12 must match e_db_mc_ckpt's
+    arm("e_db_mc_resume", "e_db_mc_ckpt resumed from its step 6", *e_base, dbuf, sovl, mc,
+        {B + "train_iters": 12, B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/e9c_ckptoff/"
+         "e_db_mc_ckpt/ckpt", B + "ckpt_step": 6, "aux.array_tag": "_e_db_mc_resume"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
