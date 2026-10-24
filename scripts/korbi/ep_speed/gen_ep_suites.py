@@ -1728,7 +1728,7 @@ def ckpt_offload():
     # p_e_db_ldm8 OOMs under the profiler (mem 0.97): LDM vs mHC-4 per-layer cost on 1-node
     # smokes instead (8 blocks, 32 experts, mbs 2, steps 5-6)
     sprof = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
-             "slurm.sbatch.nodes": 1, "slurm.sbatch.qos": "acc_debug", "aux.gbs": 32,
+             "slurm.sbatch.nodes": 1, "aux.gbs": 32,
              B + "train_iters": 7, B + "micro_batch_size": 2, B + "profile": True,
              B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
              B + "profile_step_start": 5, B + "profile_step_end": 6}

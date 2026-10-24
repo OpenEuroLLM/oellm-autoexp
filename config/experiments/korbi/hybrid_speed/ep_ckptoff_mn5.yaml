@@ -9876,7 +9876,7 @@ sweep:
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
           slurm.sbatch.account: ehpc533
-          slurm.sbatch.qos: acc_debug
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
@@ -9970,7 +9970,7 @@ sweep:
           backend.env.LIGER_WGRAD_ADDMM: '1'
           backend.env.MEGATRON_LAZY_SINGLETON_GROUPS: '1'
           slurm.sbatch.account: ehpc533
-          slurm.sbatch.qos: acc_debug
+          slurm.sbatch.qos: acc_ehpc
           backend.megatron.use_megatron_fsdp: true
           backend.megatron.data_parallel_sharding_strategy: optim_grads_params
           backend.megatron.overlap_param_gather: true
