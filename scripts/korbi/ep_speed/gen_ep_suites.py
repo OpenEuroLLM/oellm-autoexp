@@ -1797,7 +1797,8 @@ def ckpt_offload():
     # on 1 node (save at 4, resume to 8; steps 5-8 must match)
     smoke_eng = (*e_base, dbuf, sovl, mc_fix, eng_fsdp(vpp_pattern("*LLL" * 2, (8,)), 1048576, 2),
                  {B + "num_experts": 32, "aux.nodes": 1, "slurm.sbatch.nodes": 1, "aux.gbs": 16,
-                  B + "micro_batch_size": 2, B + "train_iters": 8})
+                  B + "micro_batch_size": 2, B + "train_iters": 8,
+                  "backend.env.MEGATRON_DEBUG_OPT_STATE": "1"})
     arm("g_eng_save", "Engram smoke, save at step 4", *smoke_eng,
         {B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 4,
          "aux.array_tag": "_g_eng_save"})
@@ -1807,7 +1808,7 @@ def ckpt_offload():
     # resharding (the 32 -> 128-node flip): g_eng_save's 1-node (4 GPU) step-4 checkpoint loaded
     # on 2 nodes (8 GPUs: FSDP shards, Engram table rows, Muown row states all re-cut)
     arm("g_eng_reshard2n", "Engram smoke on 2 nodes, resumed from the 1-node g_eng_save step 4",
-        *smoke_eng, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 32,
+        *smoke_eng, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 16,
                      B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt",
                      B + "ckpt_step": 4, "aux.array_tag": "_g_eng_reshard2n"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,

@@ -10830,6 +10830,7 @@ sweep:
           backend.env.ENGRAM_SPARSE_GRAD: '1'
           aux.nodes: 1
           slurm.sbatch.nodes: 1
+          backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
           backend.megatron.save: ${job.base_output_dir}/ckpt
           backend.megatron.save_interval: 4
         # Engram smoke, resumed from g_eng_save's step 4
@@ -10935,6 +10936,7 @@ sweep:
           backend.env.ENGRAM_SPARSE_GRAD: '1'
           aux.nodes: 1
           slurm.sbatch.nodes: 1
+          backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
           backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 4
         # Engram smoke on 2 nodes, resumed from the 1-node g_eng_save step 4
@@ -10985,7 +10987,7 @@ sweep:
           backend.megatron.linear_num_value_heads: 16
           aux.topk: 5
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
-          aux.gbs: 32
+          aux.gbs: 16
           backend.megatron.train_iters: 8
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
@@ -11040,6 +11042,7 @@ sweep:
           backend.env.ENGRAM_SPARSE_GRAD: '1'
           aux.nodes: 2
           slurm.sbatch.nodes: 2
+          backend.env.MEGATRON_DEBUG_OPT_STATE: '1'
           backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/g5_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 4
         # 32 nodes: 50B-A2.7B (216 experts) + 40B Engram, mHC-4, muown_classical, mbs 4, gbs 4096
