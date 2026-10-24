@@ -1747,6 +1747,8 @@ def ckpt_offload():
     # state, the update recovered in closed form; torch state math, one layer per chunk)
     unw = {**ldm, B + "depth_memory_impl": "torch", B + "depth_memory_segments": False,
            B + "depth_memory_unwind": True, B + "recompute_num_layers": 1}
+    # e11 (torch state math): 3,155 / 3,259 tok/s/GPU at mbs 2 / 4, mem 0.71 / 0.99; e11f the same
+    # arms with the fused Triton passes (the default on CUDA)
     for mbsz in (2, 4):
         arm(f"e_db_ldm8_unw_m{mbsz}", f"LDM K 8 unwind, FSDP + MoonEP, double buffer, mbs {mbsz}",
             *e_base, dbuf, sovl, unw, {B + "micro_batch_size": mbsz,
