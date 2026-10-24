@@ -47,7 +47,7 @@ scan)      python scripts/flag_decontam/scan.py --mode scan --work "$WORK" --roo
 recheck)   python scripts/flag_decontam/recheck.py --work "$WORK" --root "$ROOT" "$@" ;;
 ngrams)    python scripts/flag_decontam/ngram_report.py --work "$WORK" "$@" ;;
 finalize)  python scripts/flag_decontam/finalize.py --work "$WORK" --root "$ROOT" --out "$OUT" "$@" ;;
-verify)    python scripts/flag_decontam/verify.py tree --out "$OUT" --root "$ROOT" ;;
+verify)    python scripts/flag_decontam/verify.py tree --out "$OUT" --root "$ROOT" --procs 16 "$@" ;;
 audit)     for s in agenttrove-0.0/megatron-lm/data/shard_0000 megamath-0.0.0/megatron-lm/shard_0000; do
                python scripts/flag_decontam/verify.py audit --work "$WORK" --root "$ROOT" --docs 100000 \
                    --shard "$ROOT/${s}_text_document" "$@"
