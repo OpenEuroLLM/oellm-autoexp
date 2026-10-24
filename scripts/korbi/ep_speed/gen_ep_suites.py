@@ -1712,6 +1712,11 @@ def ckpt_offload():
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
                B + "profile_step_start": 10, B + "profile_step_end": 11,
                "aux.array_tag": "_p_e_db"})
+    arm("p_e_db_ldm8", "profile: LDM K 8, FSDP + MoonEP, double buffer, mbs 2 (steps 10-11)",
+        *e_base, dbuf, ldm, {B + "micro_batch_size": 2, B + "profile": True,
+                             B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+                             B + "profile_step_start": 10, B + "profile_step_end": 11,
+                             "aux.array_tag": "_p_e_db_ldm8"})
     # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
     # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
     # double buffering, to locate the kernel
