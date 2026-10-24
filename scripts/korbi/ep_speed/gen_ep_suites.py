@@ -1721,6 +1721,16 @@ def ckpt_offload():
         arm(f"e_db_ldm8_rn{rn}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs 2, {rn} layers per chunk",
             *e_base, dbuf, ldm, sovl, {B + "micro_batch_size": 2, B + "recompute_num_layers": rn,
                                        "aux.array_tag": f"_e_db_ldm8_rn{rn}"})
+    # e9: the production optimizer on Megatron-FSDP (muown_classical, row-sharded Newton-Schulz
+    # on owner ranks): speed vs e_db_ovl (Adam), and a checkpoint save (fsdp_dtensor, compact
+    # [rows, 1] row states) for the resume check
+    mc = {B + "optimizer": "muown_classical", B + "lr": 0.0025, B + "min_lr": 0.00025,
+          "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}
+    arm("e_db_mc", "mHC-4, FSDP + MoonEP, double buffer, shared-expert overlap, muown_classical",
+        *e_base, dbuf, sovl, mc, {"aux.array_tag": "_e_db_mc"})
+    arm("e_db_mc_ckpt", "e_db_mc, 12 steps, checkpoint at step 6 and 12", *e_base, dbuf, sovl, mc,
+        {B + "train_iters": 12, B + "save": "${job.base_output_dir}/ckpt", B + "save_interval": 6,
+         "aux.array_tag": "_e_db_mc_ckpt"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
