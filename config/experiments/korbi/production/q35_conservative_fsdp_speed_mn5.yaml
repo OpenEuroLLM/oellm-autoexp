@@ -1,0 +1,84 @@
+# @package _global_
+# 8-node A/B: the conservative run (q35_conservative_mn5.yaml) under PP4 x VPP2 (its layout) vs
+# Megatron-FSDP ZeRO-3 + MoonEP (the ambitious run's 2026-10-24 stack, docs/pp_vs_fsdp.md: PreNorm
+# 8,865 vs ~7,700 tok/s/GPU under PP). Goal (user 2026-10-24): > 6k tok/s/GPU at 32 nodes, and a
+# 128-node version that keeps it. GBS 2048 at 32 / 128 nodes is emulated by the micro-batches
+# per GPU (PP: per pipeline): 32-node regime = gbs 512 here, 128-node regime = gbs 128.
+# Every arm keeps the expert metrics (per-layer logging + viability, user 2026-10-24).
+# s128 (q35_conservative_speed128_mn5, same data): PP at 8 micro-batches 5,113; 16: 5,689.
+#
+#   pp32        PP4 x VPP2, mbs 2, gbs 512 (32 micro-batches / pipeline = the 32-node run)
+#   pp32_li10   pp32 with log_interval 10 (the metrics' reductions every 10 steps, not every step)
+#   fsdp_m4_32  FSDP ZeRO-3 + MoonEP, mbs 4, gbs 512 (4 micro-batches / GPU = 32 nodes)
+#   fsdp_m4_128 FSDP, mbs 4, gbs 128 (1 micro-batch / GPU = 128 nodes)
+#   fsdp_m2_32  FSDP, mbs 2, gbs 512 (memory fallback)
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35f scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_fsdp_speed_mn5 --yes
+defaults:
+  - q35_conservative_speed_mn5
+  - _self_
+
+aux:
+  suite: f8
+  arm: pp32
+  gbs: 512
+  only: []
+  # the PP layout without stage splits (one stage under FSDP)
+  pattern_flat: "*ELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*E"
+  fsdp: false
+
+backend:
+  env:
+    # every arm: the ambitious run's neutral-or-better flags (s128: no cost), MoonEP barrier patch
+    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+    LIGER_WGRAD_ADDMM: "1"
+    MEGATRON_LAZY_SINGLETON_GROUPS: "1"
+    FLA_TENSOR_CACHE_SIZE: "64"
+  megatron:
+    # ---- FSDP arms (aux.fsdp): the ambitious run's Megatron-FSDP ZeRO-3 + MoonEP stack ----
+    use_megatron_fsdp: ${aux.fsdp}
+    fsdp_double_buffer: ${aux.fsdp}
+    moe_shared_expert_overlap: ${aux.fsdp}
+    # fp32 gradient reduction: MoonEP's wgrad needs fp32 main grads
+    megatron_fsdp_main_grads_dtype: ${oc.if:${aux.fsdp},fp32,auto}
+    megatron_fsdp_grad_comm_dtype: ${oc.if:${aux.fsdp},fp32,auto}
+    ckpt_format: ${oc.if:${aux.fsdp},fsdp_dtensor,torch_dist}
+    pipeline_model_parallel_size: ${oc.if:${aux.fsdp},1,4}
+    overlap_p2p_comm: ${oc.if:${aux.fsdp},false,true}
+    hybrid_layer_pattern: ${oc.if:${aux.fsdp},${aux.pattern_flat},${aux.pattern}}
+    recompute_num_layers: ${oc.if:${aux.fsdp},2,1}
+    log_interval: ${oc.if:${aux.fsdp},10,1}
+    train_iters: 80
+    lr_warmup_iters: 10
+    data_cache_path: ${job.base_output_dir}/data_cache
+
+job:
+  est_step_time_s: 6.0
+
+slurm:
+  sbatch:
+    time: "00:50:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: pp32
+        - aux.arm: pp32_li10
+          backend.megatron.log_interval: 10
+        - aux.arm: fsdp_m4_32
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 4
+          aux.gbs: 512
+        - aux.arm: fsdp_m4_128
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 4
+          aux.gbs: 128
+        - aux.arm: fsdp_m2_32
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 2
+          aux.gbs: 512
