@@ -1931,6 +1931,14 @@ def write5():
                   ("", {}, "kvret,passkey,lambada"),
                   ("logn", {B + "attention_length_scaling": "logn",
                             B + "attention_length_scaling_base": 8192}, "kvret"))],
+            # the harder long-context set (64k long-document loss by position, 64-fact retrieval,
+            # variable tracking, passkey) on the same 2-node s2 trio (user 2026-10-24: recheck LDM
+            # vs mHC-4; small scale, noisy), plain and with eval-time log-n
+            *[("s2", f"ds5lcldm{tag}", arms5downstream_any(
+                [(n, "screen5ldm2_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
+                 for n, _, kv in arms5ldm2_s2()], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             ("s2", "screen5udadapt", arms5udadapt("s2")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
