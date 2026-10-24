@@ -50,11 +50,14 @@ HF_DATASETS = [  # (repo id, config or None) -- the external table's benchmarks 
     ("google-research-datasets/paws-x", None), ("facebook/xnli", None), ("li-lab/MMLU-ProX", None),
     ("openai/MMMLU", None), ("Muennighoff/xwinograd", None), ("juletxara/xstory_cloze", None),
     ("cambridgeltl/xcopa", None), ("rajpurkar/squad_v2", None), ("jbross-ibm-research/mgsm", None),
-    ("ltg/noridiom", None), ("Helsinki-NLP/tatoeba_mt", "eng-nor"), ("Helsinki-NLP/tatoeba", None),
+    ("mimir-project/noridiom", None), ("Sprakbanken/Norwegian_idioms", None),   # NorIdiom (NorEval) and its source
 ]
 # script-based datasets the current `datasets` refuses: Hugging Face's auto-converted parquet branch
 PARQUET_FALLBACK = [("allenai/math_qa", None), ("csebuetnlp/xlsum", "data_dir=spanish"), ("PlanTL-GOB-ES/wnli-es", None),
-                    ("GEM/OrangeSum", None), ("asi/wikitext_fr", None)]   # "data_dir=x": a subdirectory, not a config
+                    ("GEM/OrangeSum", None), ("asi/wikitext_fr", None),   # "data_dir=x": a subdirectory, not a config
+                    ("Helsinki-NLP/tatoeba_mt", "eng-nob"), ("Helsinki-NLP/tatoeba_mt", "eng-nno"),
+                    ("Helsinki-NLP/tatoeba_mt", "eng-nor"), ("Helsinki-NLP/tatoeba_mt", "data_dir=eng-nob"),
+                    ("Helsinki-NLP/tatoeba_mt", "data_dir=eng-nor")]   # Tatoeba Challenge test sets (gated)
 # single data files of a dataset repo
 HF_FILES = [("tatsu-lab/alpaca_eval", "alpaca_eval.json")]
 # lm-eval groups whose subtasks are fetched one by one (one script-based or gated subtask fails a whole group)
