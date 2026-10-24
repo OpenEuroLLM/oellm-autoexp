@@ -190,3 +190,4 @@ sweep:
           backend.megatron.overlap_param_gather: true
           backend.megatron.overlap_grad_reduce: true
           backend.megatron.ckpt_format: fsdp_dtensor
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'

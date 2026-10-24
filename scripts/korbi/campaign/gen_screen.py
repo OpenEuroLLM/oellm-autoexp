@@ -1465,6 +1465,21 @@ def arms5embhead(size: str = "s1"):
     return [(n, d, {**base, **kv}) for n, d, kv in arms]
 
 
+def arms5embhead2(size: str = "s1"):
+    """screen5embhead's two embedding-multiplier arms again (2026-10-24): with the embedding in its
+    own parameter group (lr mult / no weight decay) the distributed optimizer's overlapped param
+    gather asserted at step 1 (`param_gather_handle is None`, a bucket gathered twice). Same arms
+    without overlap_param_gather (communication only: identical math, so they still pair with
+    screen5embhead's shared / head02), each on its crashed run's finished data index."""
+    out = []
+    for n, d, kv in arms5embhead(size):
+        if "emb5" in n:
+            cache = f"/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5embhead_{size}/{n}/data_cache"
+            out.append((n, d + " (no overlapped param gather)",
+                        {**kv, B + "overlap_param_gather": False, B + "data_cache_path": cache}))
+    return out
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1480,6 +1495,8 @@ def arms5fsdpeq(size: str = "s1"):
     run.pop(B + "lr_decay_iters", None)
     fsdp = {B + "use_megatron_fsdp": True, B + "data_parallel_sharding_strategy": "optim_grads_params",
             B + "overlap_param_gather": True, B + "overlap_grad_reduce": True, B + "ckpt_format": "fsdp_dtensor"}
+    # Megatron-FSDP asserts CUDA_DEVICE_MAX_CONNECTIONS > 1 (our base: 1); 8 as the EP speed runs
+    fsdp["backend.env.CUDA_DEVICE_MAX_CONNECTIONS"] = "8"
     return [("distopt", "muown_classical, distributed optimizer (the campaign's path), 2 nodes", run),
             ("fsdp", "muown_classical, Megatron-FSDP ZeRO-3, 2 nodes", {**run, **fsdp})]
 
@@ -1788,6 +1805,9 @@ def write5():
             ("s2", "screen5opt4", arms5opt4("s2")),
             ("s1", "screen5embhead", arms5embhead("s1")),
             ("s1", "screen5fsdpeq", arms5fsdpeq("s1")),
+            ("s1", "screen5embhead2", arms5embhead2("s1")),
+            # the fsdp arm alone after its CUDA_DEVICE_MAX_CONNECTIONS assert (distopt kept running)
+            ("s1", "screen5fsdpeq2", [a for a in arms5fsdpeq("s1") if a[0] == "fsdp"]),
             *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
