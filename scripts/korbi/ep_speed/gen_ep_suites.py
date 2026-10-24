@@ -1802,6 +1802,23 @@ def ckpt_offload():
         "gbs 4096", *e_base, dbuf, sovl, mc_fix,
         eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
         {"aux.array_tag": "_g32_full"})
+    # e13: g32_full ran 5,770 tok/s/GPU (91 s / step at gbs 4096) vs ~7,600 on 8 nodes (112
+    # experts, no Engram): attribution on 8 nodes -- the per-GPU expert traffic per layer is the
+    # same as at 32 nodes, so 216 experts at half the depth (24 blocks; the static memory fits)
+    # reproduce the 32-node ratio of FSDP traffic to compute
+    af48 = vpp_pattern("*LLLLLLL" * 6, (48,))
+    af24 = vpp_pattern("*LLLLLLL" * 3, (24,))
+    eng_full = eng_fsdp(af48, 19480384, 4)
+    eng_half = dict(eng_fsdp(af24, 19480384, 4), **{"aux.pattern": with_engram(af24, (1, 12))})
+    g8 = (*e_base, dbuf, sovl, mc_fix, {"aux.gbs": 512})
+    arm("g8_e112", "8 nodes: 112 experts, 48 blocks, no Engram (production settings)", *g8,
+        {"aux.pattern": af48, "aux.array_tag": "_g8_e112"})
+    arm("g8_e112_eng", "8 nodes: 112 experts, 48 blocks, Engram 40B", *g8, eng_full,
+        {"aux.array_tag": "_g8_e112_eng"})
+    arm("g8_e216_h", "8 nodes: 216 experts, 24 blocks, no Engram", *g8,
+        {"aux.pattern": af24, B + "num_experts": 216, "aux.array_tag": "_g8_e216_h"})
+    arm("g8_e216_h_eng", "8 nodes: 216 experts, 24 blocks, Engram 40B", *g8, eng_half,
+        {B + "num_experts": 216, "aux.array_tag": "_g8_e216_h_eng"})
     # p_e_db: profile of the best mHC-4 setup (e_db, 7,537 tok/s/GPU), as p_z3_mhc4_hep_m4
     arm("p_e_db", "profile: mHC-4, FSDP + MoonEP, double buffer, mbs 4 (steps 10-11)", *e_base,
         dbuf, {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
