@@ -3005,3 +3005,17 @@ emerge at size):
   borderline. LDM's state helps prediction, but not exact recall of a specific key among many.
 - Open: does this hold at 7:1 (where mHC-4's retrieval jumped)? Only if LDM's at-scale speed is fixed
   (EP: 4,275 vs 7,537 tok/s/GPU under FSDP).
+
+**Decision (user, 2026-10-24): the residual is mHC-4, final.** The evidence:
+- **Loss:** LDM (CuTe kernels, K = 8, a site before each sublayer, its own Adam lr ×2.0, the best of
+  ×0.25 / 0.5 / 1 / 2 / 4) beats mHC-4 (mixer lr ×0.25): by 0.014 at s1 step 4000 (−0.068 vs −0.054
+  vs plain) and by 0.008 at s2 (−0.052 vs −0.044). Its long-document loss is also best at every length
+  up to 64k (32–64k: 2.307 vs 2.333).
+- **Retrieval:** LDM is clearly worst from 8k on, on both eval sets. Multi-key at 32k: 0.20 vs 0.50.
+  64-fact retrieval at 32k: 0.24 vs 0.76, with log-n 0.34 vs 0.80. mHC-4 generalizes in length; LDM
+  does not.
+- **Speed at scale:** under Megatron-FSDP at 8 nodes LDM runs at 4,275 tok/s/GPU vs mHC-4's 7,537
+  (−43 %). Its state, ~35 KB per token vs mHC-4's 16 KB, is carried through the checkpoints and the
+  recompute offload. The fix (rebuild the state in the backward) is not built.
+- **Caveat (user):** small scale and noisy evals. Long-context behaviour may change at size.
+  Revisit LDM only if its speed is fixed and a paired 7:1 run is affordable.
