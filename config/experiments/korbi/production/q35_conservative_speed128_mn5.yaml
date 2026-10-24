@@ -5,9 +5,10 @@
 # (job 47889054); goal > 6k at 128 nodes. Arms add the ambitious run's measured speed stack
 # (docs/ep_fp8_speed.md §6d-5) step by step; all in one launch (tok/s drifts across launch times).
 #
-#   ref          the production config (viability metrics on: -5 % in the colleague's t8 tests)
-#   noviab       moe_expert_viability_metrics off (per-layer router logging kept)
-#   stack        noviab + LIGER_WGRAD_ADDMM (+2.2 % on the 262k LM head), lazy singleton NCCL
+# Every arm keeps the expert metrics (per-layer router logging + viability: user 2026-10-24,
+# ~5 % in the colleague's t8 tests).
+#   ref          the production config
+#   stack        ref + LIGER_WGRAD_ADDMM (+2.2 % on the 262k LM head), lazy singleton NCCL
 #                groups (-1.9 GiB), FLA_TENSOR_CACHE_SIZE=64, pylibs_moonep2 (barrier timeout)
 #   stack_off    stack + RECOMPUTE_OFFLOAD (+ LEAF / LAST): memory, not speed (-1.4 % at 8k there)
 #   stack_mbs1   stack, MBS 1: 16 micro-batches per pipeline (half the bubble, smaller GEMMs)
@@ -59,27 +60,21 @@ sweep:
     - type: list
       configs:
         - aux.arm: ref
-        - aux.arm: noviab
-          backend.megatron.moe_expert_viability_metrics: false
         - aux.arm: stack
-          backend.megatron.moe_expert_viability_metrics: false
           aux.stack: "1"
           aux.fla_cache: "64"
           aux.moonep_lib: pylibs_moonep2
         - aux.arm: stack_off
-          backend.megatron.moe_expert_viability_metrics: false
           aux.stack: "1"
           aux.fla_cache: "64"
           aux.moonep_lib: pylibs_moonep2
           aux.offload: "1"
         - aux.arm: stack_mbs1
-          backend.megatron.moe_expert_viability_metrics: false
           aux.stack: "1"
           aux.fla_cache: "64"
           aux.moonep_lib: pylibs_moonep2
           backend.megatron.micro_batch_size: 1
         - aux.arm: stack_gbs256
-          backend.megatron.moe_expert_viability_metrics: false
           aux.stack: "1"
           aux.fla_cache: "64"
           aux.moonep_lib: pylibs_moonep2
