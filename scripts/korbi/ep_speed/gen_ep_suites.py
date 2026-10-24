@@ -1884,7 +1884,10 @@ def ckpt_offload():
     arm("g32_rn1", "g32_full with one layer per recompute chunk (no save)", *e_base, dbuf, sovl,
         mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
         {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
-         B + "recompute_num_layers": 1, "aux.array_tag": "_g32_rn1"})
+         B + "recompute_num_layers": 1, "aux.array_tag": "_g32_rn1",
+         # the first attempt: NCCL's first-step buffers OOMed (ncclCuMemAlloc in an all-reduce)
+         "backend.env.EMPTY_CACHE_FIRST_STEPS": "2",
+         "backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})

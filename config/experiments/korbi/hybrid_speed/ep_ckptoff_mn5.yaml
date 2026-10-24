@@ -12350,6 +12350,7 @@ sweep:
           backend.megatron.save: null
           backend.megatron.save_interval: null
           slurm.env.WATCHDOG_STARTUP_S: '1800'
+          backend.env.EMPTY_CACHE_FIRST_STEPS: '2'
         # 8-node proxy + Engram 10B, mbs 8 (4 micro-batches)
         - aux.arm: g8q_eng_m8
           aux.pattern: '*ENLELELELELENLELE*ELELELE'
