@@ -307,6 +307,45 @@ items present >= 90 % verbatim somewhere: ARC 99.95 %, SQuAD 99.7 %, SocialIQA 9
 CoQA 84.5 %, BoolQ 70.9 %, HumanEval (openai) 58.4 %, GSM8K 54.3 %, MBPP 47-49 %, AIME24 48.3 %,
 MATH500 28.7 %, MMLU 26.8 %, LiveCodeBench 15.6 %, HellaSwag 13.4 %, Include 9.3 %.
 
+### 4.5 v4: benchmarks outside the FLAG suite (user, 2026-10-24: "we should also include the other benchmarks")
+
+Sources: (1) every oellm-eval task group outside FLAG (`oellm/resources/task-groups.yaml`: pawsx-eu,
+xnli-eu, mmlu-prox-eu, mmmlu-eu, generic-multilingual = xwinograd / xstorycloze / all-language xcopa,
+belebele-eu-cf, the v0.02 reference corrections over gsm8k / squad_v2 / gpqa); (2) the 26 benchmarks of
+the external table we did not have. Fetched on the JUPITER login node (internet) into a separate cache
+`/e/scratch/e-sta-openeurollm/poeppel1/flag-decon/hf_extra` (14 GB) with `scripts/flag_decontam/fetch_extra.py`
+(lm-eval task names where lm-eval has them -- `get_task_dict` with oellm-eval's custom task dir --,
+else Hub ids; the Spanish / Catalan / French / Basque bench groups subtask by subtask; script datasets
+from the Hub's parquet branch; DeepSeek-Coder's LeetCode contest file from GitHub; AlpacaEval's json):
+
+```bash
+D=/e/scratch/e-sta-openeurollm/$USER/flag-decon; cd $D   # fetch_extra.py, extract_refs.py, oellm-eval's custom_lm_eval_tasks copied here
+apptainer exec --cleanenv -B /e --env HF_HOME=$D/hf_extra --env HF_TOKEN_PATH=$HOME/.cache/huggingface/token \
+    /e/project1/e-sta-openeurollm/container/oellm-eval-vllm.sif python fetch_extra.py --oellm-tasks $D/custom_lm_eval_tasks
+H1=/e/scratch/e-sta-openeurollm/$USER/flag-evals/hf_home
+apptainer exec ... python extract_refs.py --hf-home $H1 --hf-home $D/hf_extra --append-to refs.jsonl.gz --out refs_v4.jsonl.gz
+apptainer exec ... python extract_refs.py --hf-home $H1 --hf-home $D/hf_extra --attribute refs_v4.jsonl.gz --out refs_v4.attrib.jsonl.gz
+```
+
+Fetch result (3 rounds): 133 lm-eval tasks and 372 Hub dataset configs; 101 of 110 language-bench
+subtasks. Not fetched: **gated** -- walledai/AdvBench, facebook/multiloko, Helsinki-NLP/tatoeba_mt
+(eng-nor), gplsi/cocoteros_va, gplsi/truthfulqa_va (need access approval for the JUPITER HF token);
+**not found** -- NorIdiom (no Hub id known); covered otherwise -- lm-eval paws_es / xnli_es (Hub ids
+paws-x / xnli), xcopa / medmcqa / mmlu_redux / pubmedqa (Hub ids), the v0.02 tasks (their data).
+Not used: a full LeetCode dump (greengerong/leetcode, all problems -- the benchmark is the contest
+file). refs_v4: 5,818,224 segments = the 2,406,959 of refs.jsonl.gz unchanged (same ids) + 3,411,265
+new (largest: MMLU-ProX 1.39M, WikiAnn 468k, FLORES all 200 languages 323k -- the language-bench
+groups load it --, MMMLU 275k, SciRIFF 210k, XNLI 125k, XStoryCloze 100k, PAWS-X, MMLU-Pro, EusExams,
+RACE, TriviaQA, XLSum-es, AlpacaEval, MathQA, CoQCat, MedMCQA, ARC-ca / -eu, OrangeSum, wikitext-fr,
+EusProficiency, ...); 2,829,542 in more than one benchmark; 5,448,773 items. On MN5 in
+`flag_decon_v4/refs/` (sha256 refs_v4 f254da37..., attrib 690cd150..., items 4b796887...). Note:
+wikitext-fr, XLSum, OrangeSum, WikiAnn and FLORES are Wikipedia / news text: decontaminating against
+them also drops copies of those articles (the report shows the cost per benchmark).
+
+The v4 report adds `roles.tsv`: dropped documents / tokens by the most severe field role of their
+flagged segments (answer > tests > question > options > context > other, from the field paths of the
+attribution), as the basis for the answer-aware policy.
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
