@@ -174,6 +174,32 @@ peak. (Two slow runs, ~157 s / step, shared 7 nodes of rack as07r5: excluded.)
 - 8 nodes are pessimistic for FSDP's memory: the shards are split 32 / 8 ways (dense / experts),
   at 128 nodes 512 / 128 ways (~20 GB less per GPU).
 
+### MoonEP under FSDP (2026-10-24, c7: 8 nodes, 7:1, 112 experts, Adam, gbs 512)
+
+Two MoonEP bugs under Megatron-FSDP (Megatron moonep.py):
+1. FSDP sets no `main_grad` attribute (its unsharded grad bucket comes from `get_main_grad()`):
+   MoonEP fell back to private fp32 grads (~25-36 GB) the optimizer never saw -- the earlier
+   MoonEP ZeRO-3 numbers (c1 / c3) did not train the experts.
+2. FSDP's buckets are fresh for every backward (`overwrite_main_grad`); MoonEP accumulated into
+   them uninitialised: grad norm 2,814 at step 1 (healthy ~3), NaN at step 3, then an illegal
+   address in MoonEP's dispatch on the garbage routing (2-node run with CUDA_LAUNCH_BLOCKING).
+   Now: zero the bucket, then accumulate. (fp32 gradient communication for now: MoonEP's wgrad
+   needs fp32 main grads.)
+
+| FSDP ZeRO-3 + MoonEP | PreNorm | mHC-4 |
+|---|---:|---:|
+| mbs 2 | 7,101 | 6,353 |
+| **mbs 4** | **8,319** | **7,320** |
+| (PP4 x VPP2 + MoonEP, c1 / c3) | 7,780 | 6,151 |
+| (FSDP ZeRO-3 + HybridEP, mbs 4) | | 6,554 |
+
+- **mHC-4 at 7,320 tok/s/GPU** (+19 % over PP + MoonEP, 2.4 % below the ~7,500 target); PreNorm
+  at 8,319 is above PP's 7,780.
+- Losses match the HybridEP runs (7.68 vs 7.67 at step 15): the expert gradients are right.
+- **MoonEP stays balanced:** the step time is flat (~35.8 s) while the load-balancing loss goes
+  1.00 -> 1.53 (steps 5-7); HybridEP's step grew 15 % there (the routing specialises when the LR
+  reaches its peak; the expert bias pulls it back to ~1.06 by step 15).
+
 ## 5. Next
 
 1. ~~Fix the FSDP OOM~~ (done: recompute-input release). MoonEP under FSDP (still OOMs:
