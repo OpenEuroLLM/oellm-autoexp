@@ -7,9 +7,8 @@
 #   - model + MoonEP + memory settings: the q35_moon arm of korbi/hybrid_speed/ep_ladder_mn5.yaml
 #   - router and data loading: the x_35 arm of korbi/hybrid_speed/ep_a3b50_mn5.yaml;
 #   - data: backend/megatron/data_flag_decon_v1_mn5.yaml (user 2026-10-24: the decontaminated flag mix
-#     flag-decon-v1 for all major runs; 452 shards, 8k, document masking, BOS). run_1 (job 47951871)
-#     started on data_flag_mn5 before the switch: a resume of it must keep that data (its snapshot does);
-#     a new run uses flag-decon-v1;
+#     flag-decon-v1 for all major runs; 452 shards, 8k, document masking, BOS). run_1 (job 47951871,
+#     data_flag_mn5) was cancelled during startup, before step 1: run_2 is the first run, on flag-decon-v1;
 # Needs $HYBRID_ENV/data -> /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data (the flag list).
 #
 # REVIEW: values marked "# REVIEW" are proposals to agree on before launching.
@@ -31,7 +30,7 @@ defaults:
 aux:
   experiment_group: q35_conservative
   family: q35
-  suite: run_1
+  suite: run_2                   # run_1: cancelled before step 1 (old flag data)
   # 32 nodes: the stability check (user 2026-10-24). 128 nodes when the queue allows (cns144 has
   # more GPU hours; > 100 nodes need acc_xehpc): DP 128 x MBS 2 = 8 micro-batches per pipeline at
   # GBS 2048 (32 at 32 nodes), the ambitious run's layout (hybrid_main_mn5); speed:
