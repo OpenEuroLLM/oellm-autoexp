@@ -1865,6 +1865,9 @@ def write5():
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
             ("s1", "screen5fsdpeq7", [a for a in arms5fsdpeq4("s1") if a[0] == "fsdp"]),
+            # the 2-step distopt arm repeated: the step-1 noise floor of the weight diff (mHC phi
+            # differs ~9 % fsdp vs distopt on the fixed code: noise from near-zero Adam steps?)
+            ("s1", "screen5fsdpeq8", [a for a in arms5fsdpeq4("s1") if a[0] == "distopt"]),
             # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
             # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
             # matched nothing), 300 steps on its finished index; distopt reference = screen5fsdpeq3
