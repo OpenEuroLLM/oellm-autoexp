@@ -1878,6 +1878,12 @@ def ckpt_offload():
                 "backend.env.ENGRAM_STEP_GROUP": "4", "aux.array_tag": "_g8q_eng_m8_rn1"})
     arm("g8q_eng_rn1", "8-node proxy + Engram 10B, mbs 4, 1 layer per recompute chunk (ref)", *gq,
         eng_q, {B + "recompute_num_layers": 1, "aux.array_tag": "_g8q_eng_rn1"})
+    # g8q_eng_rn1: one layer per recompute chunk is +7 % on the proxy (140.2 vs 130.6 TFLOP/s; mem
+    # 0.90 vs 0.83) -> at 32 nodes
+    arm("g32_rn1", "g32_full with one layer per recompute chunk (no save)", *e_base, dbuf, sovl,
+        mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
+        {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
+         B + "recompute_num_layers": 1, "aux.array_tag": "_g32_rn1"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})
