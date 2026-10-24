@@ -1293,6 +1293,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "depth_memory_unwind": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="LDM \"torch\" with full activation recompute, one layer per chunk, no pipeline parallelism: nothing of the state is checkpointed. The forward updates (M, P) in place without a tape; a layer's recompute (in the backward, the state then at that layer's edge) reads from the current state and recovers the edge's update in closed form (kappa = P_e kbar, u = (vbar - M_e' kbar) / (1 - kappa . kbar)); the backward unwinds M, P to the previous edge. The checkpoints carry only the [x, r] streams (depth_memory_state.UnwindingDepthMemoryWorkspace).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "depth_memory_window": MegatronArgMetadata(
         arg_type=int,
         default=4,
@@ -9442,6 +9450,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="all",
+    ),
+    "depth_memory_unwind": MegatronActionSpec(
+        option_strings=("--depth-memory-unwind",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "depth_memory_window": MegatronActionSpec(
         option_strings=("--depth-memory-window",),
