@@ -1698,6 +1698,17 @@ def ckpt_offload():
         {B + "micro_batch_size": 8, "aux.array_tag": "_e_db_m8"})
     arm("e_db_plain", "PreNorm, FSDP + MoonEP, double buffer, mbs 4", *e_base, dbuf, PLAIN,
         {"aux.array_tag": "_e_db_plain"})
+    # e3: LDM under FSDP + double buffering hit an illegal memory access (e_db_ldm8_m2, async, last
+    # seen in the compiled site addresses): 1-node smokes with blocking launches, with / without
+    # double buffering, to locate the kernel
+    smoke = {"aux.pattern": vpp_pattern("LLL*" * 2, (8,)), B + "num_experts": 32, "aux.nodes": 1,
+             "slurm.sbatch.nodes": 1, "slurm.sbatch.qos": "acc_debug", "aux.gbs": 16,
+             B + "train_iters": 8, B + "micro_batch_size": 2,
+             "backend.env.CUDA_LAUNCH_BLOCKING": "1"}
+    arm("e_ldm_smoke_db", "smoke: LDM K 8, FSDP + MoonEP, double buffer, 1 node, blocking", *e_base,
+        ldm, dbuf, smoke, {"aux.array_tag": "_e_ldm_smoke_db"})
+    arm("e_ldm_smoke", "smoke: LDM K 8, FSDP + MoonEP, 1 node, blocking", *e_base, ldm, smoke,
+        {"aux.array_tag": "_e_ldm_smoke"})
     for mbsz in (2, 4):
         arm(f"e_db_ldm8_m{mbsz}", f"LDM K 8, FSDP + MoonEP, double buffer, mbs {mbsz}", *e_base, dbuf,
             ldm, {B + "micro_batch_size": mbsz, "aux.array_tag": f"_e_db_ldm8_m{mbsz}"})
