@@ -1,8 +1,9 @@
 # @package _global_
 # PRELIMINARY production config of the hybrid main run on MareNostrum 5 (2026-10-22).
 #
-# The speed stack measured in docs/ep_fp8_speed.md (§6d-5..6d-7) -- the 128-node arm s128_cand40
-# of scripts/korbi/ep_speed/gen_ep_suites.py, 5,813 tok/s/GPU on its 8-node reference -- plus
+# Parallelism (2026-10-24): Megatron-FSDP ZeRO-3 + MoonEP (EP4 in-node), double buffering,
+# shared-expert overlap -- mHC-4 at 7,646 tok/s/GPU with muown_classical on 8 nodes
+# (docs/pp_vs_fsdp.md; the 32-node full-model test e12 / g32_full pending) -- plus
 # the training machinery of campaign_3b/base_train_mn5.yaml (rolling checkpoints, resume, wandb,
 # divergence guards) and the production checklist (memory: production-settings-checklist).
 # Items marked TODO are the campaign's to decide (schedule, U decay, token budget, data
@@ -27,18 +28,18 @@ aux:
   arm: mhc4_eng40
   nodes: 128
   ep: 4
-  # TODO(user / campaign): 2048 = 8 micro-batches per pipeline at DP 128 (19 % bubble at PP4 x
-  # VPP2); 8192 matches the 8-node speed runs' 32 (5 %); or more virtual stages / less PP
-  gbs: 2048
+  # user 2026-10-24: 4096 x 16k = 64M tokens per step. FSDP: gbs = mbs 4 x 512 GPUs x 2
+  # micro-batches at 128 nodes (8 at 32 nodes); no pipeline, no bubble
+  gbs: 4096
   seq: 16384
   topk: 5
   expert_ffn: 768
-  # TODO(campaign): the token budget. 600k GPU-h at ~5.8k tok/s/GPU is ~12.5T tokens.
+  # TODO(campaign): the token budget. 600k GPU-h at ~7.5k tok/s/GPU is ~16T tokens.
   tokens: 12e12
   wandb_project: hybrid_main
-  # 48 blocks (CKDA 5 : attention 1), PP4 x VPP2 7/7/7/6 | 6/6/6/3, Engram (N) before blocks 1
-  # and 24 (stages 0 and 3)
-  pattern: "LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E"
+  # 48 blocks, 7:1 attention first in every period (campaign decision), each mixer followed by a
+  # MoE layer; Engram (N) before blocks 1 and 24; one stage (FSDP)
+  pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE"
 
 backend:
   env:
@@ -47,10 +48,8 @@ backend:
     CUDA_DEVICE_MAX_CONNECTIONS: "8"
     FLA_TENSOR_CACHE_SIZE: "64"
     MHC_FUSED_READ: "1"
-    # recompute-chunk inputs, the last chunks and the pipeline receive buffers in pinned host RAM
+    # recompute-chunk inputs in pinned host RAM (mHC-4's 4-stream checkpoints at mbs 4)
     RECOMPUTE_OFFLOAD: "1"
-    RECOMPUTE_OFFLOAD_LAST: "1"
-    RECOMPUTE_OFFLOAD_LEAF: "1"
     # Engram: step lookup in groups of 8 micro-batches, touched-row table gradients
     ENGRAM_STEP_LOOKUP: "1"
     ENGRAM_STEP_GROUP: "8"
@@ -117,12 +116,23 @@ backend:
     engram_lr_mult: 5.0
     engram_table_rowwise_v: true
     engram_table_momentum_dtype: bf16
-    # ---- parallelism / speed ----
-    pipeline_model_parallel_size: 4
+    # ---- parallelism / speed: Megatron-FSDP ZeRO-3 (+ the Muon family's row-sharded
+    # Newton-Schulz), MoonEP, double buffering, shared expert under the dispatch ----
+    use_megatron_fsdp: true
+    data_parallel_sharding_strategy: optim_grads_params
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    fsdp_double_buffer: true
+    # fp32 gradient reduction (MoonEP's wgrad needs fp32 main grads; bf16 deliberately not used)
+    megatron_fsdp_main_grads_dtype: fp32
+    megatron_fsdp_grad_comm_dtype: fp32
+    ckpt_format: fsdp_dtensor
+    moe_shared_expert_overlap: true
+    pipeline_model_parallel_size: 1
     expert_model_parallel_size: ${aux.ep}
     tensor_model_parallel_size: 1
-    overlap_p2p_comm: true
-    micro_batch_size: 2
+    overlap_p2p_comm: false
+    micro_batch_size: 4
     global_batch_size: ${aux.gbs}
     recompute_granularity: full
     recompute_method: uniform
@@ -132,16 +142,15 @@ backend:
     manual_gc_interval: 10
     mmap_bin_files: false
     # ---- optimizer / schedule ----
-    optimizer: angular_muown
-    lr: 4.0e-3
+    # user 2026-10-24: classical Muown, no weight decay; lr 8.5e-4 (the campaign's N^-0.417
+    # law at 3B active), constant (stable-only), no warmup; mixer x0.25, Engram x5, embedding /
+    # head at the shared lr (Sinkhorn x0.18 if screen5ds41 favours it)
+    optimizer: muown_classical
+    lr: 8.5e-4
+    min_lr: 8.5e-4
     residual_mixer_lr_mult: 0.25
-    # TODO(campaign): schedule and minimum LR; angular MuOwn's U decay (default 1/(1+0.001 t) on
-    # the direction LR; pending the screen5udecay results) -- set it explicitly here.
-    min_lr: 4.0e-4
-    lr_warmup_iters: 2000
-    lr_decay_style: WSD
-    lr_wsd_decay_style: linear
-    lr_wsd_decay_iters: "${oc.eval:'int(0.1 * ${backend.megatron.train_iters})'}"
+    lr_warmup_iters: 0
+    lr_decay_style: constant
     train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
     # ---- data (data_flag_mn5: the flag mix, OELLM 256k tokenizer, BOS per document, document
     # masking) ----
@@ -160,8 +169,8 @@ backend:
     wandb_entity: openeurollm-project
     wandb_exp_name: ${job.name}
     wandb_save_dir: ${job.base_output_dir}/wandb
-    # ---- checkpoints: rolling (latest only) every 1000 steps (~4 h at ~14 s / step), a
-    # persistent one every 15000 (~2.4 days: about one per 3-day job); load = save resumes ----
+    # ---- checkpoints: rolling (latest only) every 1000 steps (~5 h at ~17.5 s / step), a
+    # persistent one every 15000 (~3 days: about one per 3-day job); load = save resumes ----
     save: ${job.base_output_dir}/ckpt
     load: ${job.base_output_dir}/ckpt
     save_interval: 15000
@@ -174,9 +183,8 @@ job:
   name: ${aux.suite}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
   array_group: null
-  # gbs 2048 at 128 nodes = DP 128 x 16 samples: 8 micro-batches per pipeline per step (a
-  # quarter of the 8-node speed runs' per-GPU work, bubble 3/16 at VPP2): ~12-15 s per step
-  est_step_time_s: 14.0
+  # gbs 4096 x 16k at 128 nodes: 67M tokens / (512 GPUs x ~7.5k tok/s) ~ 17.5 s per step
+  est_step_time_s: 17.5
   est_startup_min: 15.0
   # TODO: the full production event set (config/job/auto_restart.yaml, as the 32B runs) once
   # merged with these; for now: resume on wall time, stop on divergence
