@@ -22,11 +22,11 @@ aux:
   nodes: 1
   time: "00:30:00"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
-  # v4 (v3 matcher + benchmarks outside FLAG and from the external table, 2026-10-24);
-  # v1 / v2 / v3 stay in flag_decon_v1 / _v2 / _v3 (v1-v3 used flag_decon_v1/refs/refs.jsonl.gz)
-  version: v4
+  # v5 (v3 matcher + benchmarks outside FLAG, the external table, and the gated sets incl. Tatoeba,
+  # 2026-10-24) -- the one written as flag-decon-v1; v1-v4 stay in flag_decon_v1 .. _v4
+  version: v5
   work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_${aux.version}
-  refs: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v4/refs/refs_v4.jsonl.gz
+  refs: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v5/refs/refs_v5.jsonl.gz
   out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v1
   root: /gpfs/projects/ehpc533/training-data-collection/flag
   # the NGC 26.09 training image: torch, sentencepiece, pytest
