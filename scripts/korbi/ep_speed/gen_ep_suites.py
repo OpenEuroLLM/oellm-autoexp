@@ -1671,6 +1671,14 @@ def ckpt_offload():
         {"aux.pattern": vpp_pattern("LLLLLLL*" * 2, (16,)), B + "num_experts": 32, "aux.nodes": 2,
          "slurm.sbatch.nodes": 2, "aux.gbs": 32, B + "train_iters": 8,
          "backend.env.CUDA_LAUNCH_BLOCKING": "1", "aux.array_tag": "_d_moon_fsdp_2n"})
+    # c8: MoonEP + FSDP works (c7: mHC-4 mbs 4 7,320, PreNorm mbs 4 8,319): mbs 8 and LDM
+    for res, rd in (("plain", PLAIN), ("mhc4", {})):
+        arm(f"c_z3_{res}_moon_m8", f"{res}, FSDP ZeRO-3, MoonEP, mbs 8, fp32 grad comm", *f_base, resa,
+            e112, rd, fsdp, fp32g, {B + "micro_batch_size": 8, "aux.array_tag": f"_c_z3_{res}_moon_m8"})
+    for mbsz in (2, 4):
+        arm(f"c_z3_ldm8_moon_m{mbsz}", f"LDM K 8 (CuTe, segments), FSDP ZeRO-3, MoonEP, mbs {mbsz}",
+            *f_base, resa, e112, fsdp, fp32g, ldm,
+            {B + "micro_batch_size": mbsz, "aux.array_tag": f"_c_z3_ldm8_moon_m{mbsz}"})
     # mHC-4 OOMs under FSDP with every EP backend (c2): its first step traced on every rank
     arm("c_z3_mhc4_hep_trace", "mHC-4, FSDP ZeRO-3, HybridEP, mbs 2: memory trace of the first step",
         *f_base, resa, e112, fsdp, HEP,
