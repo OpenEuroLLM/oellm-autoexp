@@ -1494,6 +1494,25 @@ def arms5embhead3(size: str = "s1"):
     return out
 
 
+def arms5ds41(size: str = "s1"):
+    """DeepSeek-V4.1 optimizer tweaks (user 2026-10-24) on the final recipe at s1 (screen5embhead's
+    "shared" arm: CKDA + mHC-4, attention first, untied, classical Muown, no overlapped param
+    gather), all with SwiGLU clamping at 10 (adopted): reference; the Sinkhorn-balanced momentum
+    for the word embedding and the head instead of Adam (embedding_head_optimizer); head-wise
+    Q / K / V orthogonalization (muon_qkv_headwise). gbs 64 x 8k, 3000 steps (1.6B tokens): stable
+    2400 + WSD linear to lr / 10 over 600. Each arm builds its own data index."""
+    base = dict((n, kv) for n, _, kv in arms5embhead(size))["shared"]
+    lr = base[B + "lr"]
+    steps = 3000
+    run = {**base, B + "global_batch_size": 64, "aux.gbs": 64, B + "train_iters": steps,
+           B + "exit_interval": steps, B + "lr_decay_iters": steps, B + "lr_wsd_decay_iters": steps // 5,
+           B + "min_lr": lr / 10, "job.est_steps": steps, B + "overlap_param_gather": False,
+           B + "activation_func_clamp_value": 10.0}
+    return [("ref", "final recipe + SwiGLU clamp 10", run),
+            ("sinkhorn", "+ Sinkhorn-balanced embedding / head update", {**run, B + "embedding_head_optimizer": "sinkhorn"}),
+            ("headwise", "+ head-wise Q / K / V orthogonalization", {**run, B + "muon_qkv_headwise": True})]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1841,6 +1860,7 @@ def write5():
             ("s1", "screen5fsdpeq", arms5fsdpeq("s1")),
             ("s1", "screen5embhead2", arms5embhead2("s1")),
             ("s1", "screen5embhead3", arms5embhead3("s1")),
+            ("s1", "screen5ds41", arms5ds41("s1")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
             # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
