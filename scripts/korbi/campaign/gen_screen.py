@@ -1862,6 +1862,9 @@ def write5():
             ("s1", "screen5embhead3", arms5embhead3("s1")),
             ("s1", "screen5ds41", arms5ds41("s1")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
+            # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
+            # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
+            ("s1", "screen5fsdpeq7", [a for a in arms5fsdpeq4("s1") if a[0] == "fsdp"]),
             # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
             # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
             # matched nothing), 300 steps on its finished index; distopt reference = screen5fsdpeq3
