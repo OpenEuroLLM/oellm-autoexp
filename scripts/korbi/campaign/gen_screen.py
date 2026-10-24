@@ -1845,6 +1845,12 @@ def write5():
             # the fsdp arm again on Megatron cc802f3c0 (FSDP's DTensor params now keep every parameter
             # attribute: mHC phi / Canon / tables were routed to Muown and the residual-mixer lr group
             # matched nothing), 300 steps on its finished index; distopt reference = screen5fsdpeq3
+            # noise floor of the equivalence: the distopt arm once more (same config and data as
+            # screen5fsdpeq3; only GPU nondeterminism differs)
+            ("s1", "screen5fsdpeq6", [(n, d + " (repeat: noise floor)", {**kv, B + "overlap_param_gather": False,
+                                       B + "data_cache_path": "/gpfs/scratch/ehpc533/hybrid_nucleus/"
+                                       "campaign_3b/screen5fsdpeq_s1/distopt/data_cache"})
+                                      for n, d, kv in arms5fsdpeq("s1") if n == "distopt"]),
             ("s1", "screen5fsdpeq5", [(n, d + " (Megatron cc802f3c0)", {**kv, B + "data_cache_path":
                                        "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fsdpeq2_s1/fsdp/data_cache"})
                                       for n, d, kv in arms5fsdpeq("s1") if n == "fsdp"]),
