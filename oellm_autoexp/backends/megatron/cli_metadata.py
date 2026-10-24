@@ -1734,6 +1734,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "embedding_lr_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Learning-rate multiplier of the word-embedding matrix (max and min lr). Conflicts with --decoupled-lr.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "embedding_path": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -6218,6 +6226,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "output_layer_lr_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Learning-rate multiplier of the untied output layer (max and min lr). No effect with tied embeddings. Conflicts with --decoupled-lr.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "output_z_loss_coeff": MegatronArgMetadata(
         arg_type=float,
         default=None,
@@ -9807,6 +9823,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "embedding_lr_mult": MegatronActionSpec(
+        option_strings=("--embedding-lr-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "embedding_path": MegatronActionSpec(
         option_strings=("--embedding-path",),
@@ -13546,6 +13569,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "output_layer_lr_mult": MegatronActionSpec(
+        option_strings=("--output-layer-lr-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "output_z_loss_coeff": MegatronActionSpec(
         option_strings=("--output-z-loss-coeff",),
