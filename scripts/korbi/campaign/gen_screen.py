@@ -1465,6 +1465,25 @@ def arms5embhead(size: str = "s1"):
     return [(n, d, {**base, **kv}) for n, d, kv in arms]
 
 
+def arms5fsdpeq(size: str = "s1"):
+    """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
+    Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
+    "shared" arm), same seed / data / gbs, 2 nodes (expert-DP 2 with EP4: the smallest layout that
+    also shards the experts). 300 steps at gbs 64 x 8k; CUDA graphs off in both (one variable).
+    The curves should agree to bf16 noise (and v_norm-driven drift must not open a gap)."""
+    base = dict((n, kv) for n, _, kv in arms5embhead(size))["shared"]
+    steps = 300
+    run = {**{k: v for k, v in base.items() if not k.startswith(B + "lr_wsd")},
+           B + "global_batch_size": 64, "aux.gbs": 64, B + "train_iters": steps, B + "exit_interval": steps,
+           B + "lr_decay_style": "constant", B + "min_lr": base[B + "lr"], "job.est_steps": steps,
+           B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [], "slurm.sbatch.nodes": 2}
+    run.pop(B + "lr_decay_iters", None)
+    fsdp = {B + "use_megatron_fsdp": True, B + "data_parallel_sharding_strategy": "optim_grads_params",
+            B + "overlap_param_gather": True, B + "overlap_grad_reduce": True, B + "ckpt_format": "fsdp_dtensor"}
+    return [("distopt", "muown_classical, distributed optimizer (the campaign's path), 2 nodes", run),
+            ("fsdp", "muown_classical, Megatron-FSDP ZeRO-3, 2 nodes", {**run, **fsdp})]
+
+
 def arms5opt3(size: str = "s2"):
     """muown_classical at s2 again, with compact row-state checkpoints (ANGULAR_MUOWN_COMPACT_CKPT=1):
     its extra per-row state (||v||), expanded to weight shape for the save, host-OOM-killed both s2
@@ -1768,6 +1787,7 @@ def write5():
             ("s2", "screen5opt3", arms5opt3("s2")),
             ("s2", "screen5opt4", arms5opt4("s2")),
             ("s1", "screen5embhead", arms5embhead("s1")),
+            ("s1", "screen5fsdpeq", arms5fsdpeq("s1")),
             *[("s1", f"opttiny2_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
