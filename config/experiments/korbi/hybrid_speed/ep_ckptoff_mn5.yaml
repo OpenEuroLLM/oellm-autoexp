@@ -10236,7 +10236,7 @@ sweep:
           backend.megatron.lr: 0.0025
           backend.megatron.min_lr: 0.00025
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
-          backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/e9c_ckptoff/e_db_mc_ckpt/ckpt
+          backend.megatron.load: ${oc.env:OUTPUT_DIR}/hybrid_speed/e9c_ckptoff/dense/ckpt
           backend.megatron.ckpt_step: 6
         # LDM K 8 unwind, FSDP + MoonEP, double buffer, mbs 2
         - aux.arm: e_db_ldm8_unw_m2

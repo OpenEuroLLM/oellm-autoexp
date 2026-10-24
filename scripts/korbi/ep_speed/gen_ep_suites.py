@@ -1742,7 +1742,7 @@ def ckpt_offload():
     # the losses of steps 7-12 must match e_db_mc_ckpt's
     arm("e_db_mc_resume", "e_db_mc_ckpt resumed from its step 6", *e_base, dbuf, sovl, mc,
         {B + "train_iters": 12, B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/e9c_ckptoff/"
-         "e_db_mc_ckpt/ckpt", B + "ckpt_step": 6, "aux.array_tag": "_e_db_mc_resume"})
+         "dense/ckpt", B + "ckpt_step": 6, "aux.array_tag": "_e_db_mc_resume"})
     # e11: depth_memory_unwind (no state in the checkpoints: each layer's recompute reads the unwound
     # state, the update recovered in closed form; torch state math, one layer per chunk)
     unw = {**ldm, B + "depth_memory_impl": "torch", B + "depth_memory_segments": False,
