@@ -33,7 +33,7 @@ TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v3")
+    ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v4")
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
     ap.add_argument("--shard", required=True, help="substring of the shard key")
     ap.add_argument("--bench", default="", help="substring of the benchmark source (e.g. gsm8k, mmlu)")
