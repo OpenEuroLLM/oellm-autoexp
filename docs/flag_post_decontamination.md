@@ -342,6 +342,24 @@ EusProficiency, ...); 2,829,542 in more than one benchmark; 5,448,773 items. On 
 wikitext-fr, XLSum, OrangeSum, WikiAnn and FLORES are Wikipedia / news text: decontaminating against
 them also drops copies of those articles (the report shows the cost per benchmark).
 
+v4 run (snapshot `$R/autoexp_decon9`, work `flag_decon_v4`): build 47917924 -- 5,818,224 segments,
+2,824,237 matchable (2.28M n=13, 165k n=24, 384k n=40), 2.99M too short, 365.1M n-grams, 679k template
+n-grams dropped; count / prune 47918121 / 47918166 -- 2.81M n-grams seen in the sample, 22k dropped,
+175 segments made unmatchable; scan 47918178 (8 nodes, ~1 h, ~127M tok/s/GPU); ngrams 47920439;
+dry run 47921047: **--frac 0.7/0.8/0.9/1.0: 1.42M/1.20M/1.04M/0.84M docs, 17.6B/13.5B/11.5B/9.7B
+tokens (0.130/0.100/0.085/0.072 %)** -- 3x v3, from the added benchmarks: SciRIFF (373k doc-segment
+pairs), MathQA (280k; verbatim on aptitude / worked-solution pages in megamath -- the problems come
+from GMAT/GRE banks via AQuA-RAT), WikiAnn (238k; Wikipedia sentences), SciQ (52k), AQuA-RAT (34k),
+XLSum-es (33k), TriviaQA (26k), MMLU-Pro (21k). One AlpacaEval segment held back as generic (would
+drop 44k docs). Per source at 0.9: stackv2 7.0k docs / 3.29B tokens (0.46 %), megamath 206k / 2.29B
+(0.72 %), hplt 234k / 1.48B, dclm 239k / 1.29B, finepdfs 12k / 1.05B, nemotron-cc 100k / 0.97B,
+mixture-vitae 135k / 0.45B, finemath 26k / 0.13B (0.33 %), finewiki 28k / 84M (0.34 %), openwebmath
+7.6k / 67M (0.48 %). By role (0.9): answer 200k docs / 2.98B tokens, tests 5.4k / 0.96B, question
+383k / 4.12B, options 81k / 0.74B, context 69k / 0.42B, other (field not recognised: e.g. WikiAnn's
+joined token lists) 303k / 2.31B. Cross-match of all 40 benchmarks of the external table:
+`docs/flag_decon/crossmatch_image23_v4.tsv` (34 fetched; AdvBench, MultiLoKo, Tatoeba gated, NorIdiom
+not found, COPA too short).
+
 The v4 report adds `roles.tsv`: dropped documents / tokens by the most severe field role of their
 flagged segments (answer > tests > question > options > context > other, from the field paths of the
 attribution), as the basis for the answer-aware policy.

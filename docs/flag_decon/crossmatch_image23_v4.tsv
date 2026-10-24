@@ -1,0 +1,41 @@
+external_benchmark	external_hit_pct	our_source	our_ngram_hit_pct	our_matchable_segments	our_segments_verbatim_ge90_pct	our_doc_segment_pairs_ge90	note
+BoolQ	56.7780	aps/super_glue	89.6261	5457	70.94	44970	
+SciRIFFYesNo	56.0956	allenai/SciRIFF	29.6252	201693	20.82	373061	
+DeepSeekLeetCode	46.5415	file/20240121-Jul	11.0420	538	55.02	855	
+WinogradSchemaChallenge	41.2955	winograd_wsc	98.8304	82	97.56	399	
+RACE	38.5504	ehovy/race	61.7465	2970	31.89	3626	
+SpanishBench_Phrases	31.9330	-	-	-	-	-	fetched via spanish_bench subtasks; short items
+MathQA	30.5079	allenai/math_qa	45.4943	13923	27.67	279556	
+WikiAnn	29.7402	unimelb-nlp/wikiann	59.0284	86335	63.46	238323	
+NaturalQuestions	29.2057	google-research-datasets/nq_open	12.0879	8	12.50	4	
+LiveCodeBench	29.1606	livecodebench/code_generation_lite	27.5627	2065	15.59	3475	
+AQuARAT	28.9997	deepmind/aqua_rat	35.2875	897	33.33	34211	
+PubMedQA	26.3867	qiaojin/PubMedQA	63.5981	4210	60.59	10715	
+AdvBench	24.7140	-	-	-	-	-	gated, not fetched
+AIME2024	24.5714	evalchemy/AIME24	44.4757	60	48.33	63	
+SciQ	23.3048	allenai/sciq	88.7271	1795	77.10	51944	
+MMLU_Redux	22.6906	edinburgh-dawg/mmlu-redux-2.0	43.0584	3915	35.86	8445	
+NorIdiom	22.2222	-	-	-	-	-	dataset not found
+SVAMP	21.2454	ChilleD/SVAMP	15.5221	505	1.58	22	
+SocialIQA	21.1268	allenai/social_i_qa	99.2987	242	97.93	703	
+TriviaQA	20.0590	mandarjoshi/trivia_qa	33.5056	4707	26.47	25561	
+COPA	20.0000	-	-	-	-	-	all items < 20 tokens
+AlpacaEval	18.4843	tatsu-lab/alpaca_eval	4.1333	25062	0.47	39186	
+HellaSwag	17.0500	Rowan/hellaswag	19.2938	75871	13.36	56649	
+HumanEval_Plus	13.6092	evalchemy/HumanEvalPlus	1.6024	393	16.54	1743	
+HumanEval	13.1264	openai/human-eval	70.6861	423	58.39	1291	
+ArcEasy	13.0063	allenai/ai2_arc	99.6208	1963	99.95	5702	
+BasqueBench_EusProficiency	12.9025	HiTZ/EusProficiency	9.5518	762	8.27	88	
+ArcChallenge	12.5962	allenai/ai2_arc	99.6208	1963	99.95	5702	
+MMLU	12.4534	cais/mmlu	29.4554	12758	26.73	19731	
+MedMCQA	12.0998	openlifescienceai/medmcqa	14.8804	3662	5.98	1816	
+Include	11.9727	CohereForAI/include-base-44	27.6780	8853	9.25	27685	
+SpanishBench_XLSUM	11.6915	csebuetnlp/xlsum	35.2076	22339	30.83	33059	
+TatoebaEngNor	11.6118	-	-	-	-	-	gated, not fetched
+CatalanBench_CatalanQA	11.1920	projecte-aina/catalanqa	66.6114	3863	47.63	3427	
+MultiLoKo	11.1342	-	-	-	-	-	gated, not fetched
+FrenchBench_Grammar_Vocab_Reading	10.8108	-	-	-	-	-	fetched via french_bench; see report
+FrenchBench_BoolQ	10.5608	-	-	-	-	-	fetched via french_bench; see report
+MMLU_Pro	10.4943	TIGER-Lab/MMLU-Pro	21.9479	14605	15.84	20929	
+CatalanBench_TECA	10.2486	projecte-aina/teca	21.5612	2814	34.68	3178	
+MBPP	9.9521	google-research-datasets/mbpp	29.5757	522	47.15	1352	
