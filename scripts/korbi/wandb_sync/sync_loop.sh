@@ -5,8 +5,10 @@
 # W&B keeps only steps beyond the ones it has (checked 2026-10-24 with two fragments, one id).
 #
 #   nohup setsid scripts/korbi/wandb_sync/sync_loop.sh >> ~/wandb_sync_mn5.log 2>&1 &
+#   stop it with: kill "$(cat ~/wandb_sync_mn5.pid)"   (never pkill -f: it matches the calling shell)
 #   ONCE=1 scripts/korbi/wandb_sync/sync_loop.sh        # a single pass
 set -u
+[ -z "${ONCE:-}" ] && echo $$ > "${PIDFILE:-$HOME/wandb_sync_mn5.pid}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RUNS="${RUNS:-$HERE/runs.tsv}"
 MIRROR="${MIRROR:-$HOME/wandb_mirror_mn5}"
@@ -29,8 +31,12 @@ while true; do
         mapfile -t files < <(find "$dest" -name 'run-*.wandb' -path '*offline-run-*' 2>/dev/null | sort)
         if [ "${#files[@]}" -eq 0 ]; then echo "$id: no offline runs yet"; continue; fi
         echo "$id: ${#files[@]} fragment(s) -> $ENTITY/$PROJECT/$id"
-        "$WANDB" beta sync --no-skip-synced -e "$ENTITY" -p "$PROJECT" --id "$id" "${files[@]}" </dev/null 2>&1 \
-            | grep -E "Finished|uploading|rror|failed|No runs" | tail -4
+        # one call per fragment, oldest first (the names sort by start time): a fragment cut off by a
+        # crash ends mid-record, and in one multi-file call that error stops the later fragments
+        for f in "${files[@]}"; do
+            "$WANDB" beta sync --no-skip-synced -e "$ENTITY" -p "$PROJECT" --id "$id" "$f" </dev/null 2>&1 \
+                | grep -E "uploading history|Finished|rror|failed" | tail -2 | sed "s#^#  $(basename "$(dirname "$f")"): #"
+        done
     done
     [ -n "${ONCE:-}" ] && break
     sleep "$INTERVAL"
