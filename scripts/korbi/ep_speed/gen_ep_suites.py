@@ -1819,6 +1819,18 @@ def ckpt_offload():
     arm("g_eng_fresh2n", "Engram smoke on 2 nodes from scratch (the reshard arm's control)",
         *smoke_eng, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 16,
                      "aux.array_tag": "_g_eng_fresh2n"})
+    # user 2026-10-25: q35 lost ~38 % at 128 nodes (HSDP 16 x 8-node groups, 4,028 vs 6,489
+    # tok/s/GPU at 32); before our 128-node segment, (1) checkpoint conversion plain ZeRO-3 -> HSDP
+    # with Muown + Engram: g_eng_save's 1-node ZeRO-3 step 4 on 2 nodes as 2 replicas x 1 node
+    # (control: the same from scratch; plain ZeRO-3 2n reference g_eng_fresh2n)
+    hsdp2 = {B + "num_distributed_optimizer_instances": 2, B + "outer_dp_sharding_strategy": "no_shard"}
+    arm("g_eng_hsdp_reshard2n", "1-node ZeRO-3 step 4 resumed on 2 nodes as HSDP 2 x 1 node",
+        *smoke_eng, hsdp2, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 16,
+                            B + "load": "${oc.env:OUTPUT_DIR}/hybrid_speed/g36_ckptoff/dense/ckpt",
+                            B + "ckpt_step": 4, "aux.array_tag": "_g_eng_hsdp_reshard2n"})
+    arm("g_eng_hsdp_fresh2n", "HSDP 2 x 1 node from scratch (the HSDP reshard arm's control)",
+        *smoke_eng, hsdp2, {"aux.nodes": 2, "slurm.sbatch.nodes": 2, "aux.gbs": 16,
+                            "aux.array_tag": "_g_eng_hsdp_fresh2n"})
     full32 = {B + "num_experts": 216, "aux.nodes": 32, "slurm.sbatch.nodes": 32, "aux.gbs": 4096,
               B + "train_iters": 12, "slurm.sbatch.time": "01:00:00",
               # a checkpoint at step 6: fsdp_dtensor with 40B Engram + Muown's row states (host
@@ -1914,6 +1926,20 @@ def ckpt_offload():
         mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 8), full32,
         {B + "train_iters": 8, B + "save": None, B + "save_interval": None,
          "aux.array_tag": "_g32_fc"})
+    # (2) the 128-node per-GPU load at 32 nodes: gbs 1024 = 2 micro-batches per GPU (as 4096 on
+    # 512 GPUs); plain ZeRO-3 vs HSDP with 16-node (2 replicas) and 8-node groups (4 replicas): the
+    # same per-GPU state and inner group as at 128 nodes, the outer all-reduce over 2 / 4 instead of
+    # 8 / 16 replicas
+    h32 = {B + "train_iters": 12, B + "save": None, B + "save_interval": None, "aux.gbs": 1024}
+    for name, comment, extra in (
+            ("h32_z3", "plain ZeRO-3 over 32 nodes", {}),
+            ("h32_hsdp16n", "HSDP 2 x 16-node groups", {B + "num_distributed_optimizer_instances": 2,
+                                                       B + "outer_dp_sharding_strategy": "no_shard"}),
+            ("h32_hsdp8n", "HSDP 4 x 8-node groups", {B + "num_distributed_optimizer_instances": 4,
+                                                     B + "outer_dp_sharding_strategy": "no_shard"})):
+        arm(name, f"128-node load (2 micro-batches per GPU) at 32 nodes: {comment}", *e_base, dbuf,
+            sovl, mc_fix, eng_fsdp(vpp_pattern("*LLLLLLL" * 6, (48,)), 19480384, 2), full32, h32,
+            extra, {"aux.array_tag": f"_{name}"})
     arm("g8q_eng_m8", "8-node proxy + Engram 10B, mbs 8 (4 micro-batches)", *gq, eng_q,
         {B + "micro_batch_size": 8, "backend.env.ENGRAM_STEP_GROUP": "4",
          "aux.array_tag": "_g8q_eng_m8"})
