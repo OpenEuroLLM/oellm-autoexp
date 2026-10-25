@@ -1,0 +1,68 @@
+# @package _global_
+# 32-node A/B for the conservative run (q35_conservative_mn5.yaml). Its FSDP ZeRO-3 layout steps in
+# 29.8 s at 32 nodes (4,385 tok/s/GPU, job 47974985) but ~20.3 s at 8 / ~20.9 s at 16 nodes at the
+# same per-GPU work (q35_conservative_fsdp_diag_mn5: 6,472 / 6,260; log interval and the flag data
+# cost nothing). The parameter all-gathers / gradient reduce-scatters span all 128 data-parallel
+# ranks (32 expert-DP) at 32 nodes; GPUs are healthy (full clocks, no throttling).
+#
+#   hsdp4  hybrid sharding: ZeRO-3 within 8-node groups (the fast 8-node layout), 4 replicas
+#          (num_distributed_optimizer_instances 4: one cross-group gradient all-reduce per step)
+#   pp     the colleague's PP4 x VPP2, mbs 2 (5,933 at 32 nodes on the old flag data)
+# Both on the production data and batch (flag-decon-v1, gbs 2048 x 8k; the run's data index), 60 steps.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35s32 scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_scale32_mn5 --yes
+defaults:
+  - q35_conservative_speed_mn5
+  - _self_
+
+aux:
+  suite: s32
+  arm: hsdp4
+  nodes: 32
+  gbs: 2048
+  only: []
+
+backend:
+  megatron:
+    # the production data and its index (same sample count: train_iters x gbs)
+    data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_decon_v1_datamix_mn5.txt
+    data_path: null
+    split: "998,2,0"
+    eval_iters: 1
+    train_iters: 807700
+    exit_interval: 60
+    lr_warmup_iters: 2000
+    data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/data_cache
+    log_interval: 1
+
+job:
+  est_step_time_s: 25.0
+  est_startup_min: 15.0
+
+slurm:
+  sbatch:
+    time: "00:50:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: hsdp4
+          backend.megatron.num_distributed_optimizer_instances: 4
+          backend.megatron.outer_dp_sharding_strategy: no_shard
+        - aux.arm: pp
+          aux.pattern: "*ELELE*ELELE|LE*ELELELE*E|LELELE*ELELE|LE*ELE|LELE*ELELELE|*ELELELE*ELE|LELE*ELELELE|*E"
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.overlap_p2p_comm: true
+          backend.megatron.use_megatron_fsdp: false
+          backend.megatron.fsdp_double_buffer: false
+          backend.megatron.moe_shared_expert_overlap: false
+          backend.megatron.megatron_fsdp_main_grads_dtype: auto
+          backend.megatron.megatron_fsdp_grad_comm_dtype: auto
+          backend.megatron.ckpt_format: torch_dist
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.recompute_num_layers: 1
