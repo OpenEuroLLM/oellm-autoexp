@@ -20,10 +20,30 @@ log "waiting for one of $NAMES to run"
 until squeue -u "$USER" -h -n "$NAMES" -t R -o %i | grep -q .; do sleep 60; done
 WINNER=$(squeue -u "$USER" -h -n "$NAMES" -t R -o %j | head -1)
 log "128-node job running: $WINNER $(squeue -u "$USER" -h -n "$WINNER" -t R -o '%i %N' | head -1)"
+# The cns144 job stays queued when it loses (user 2026-10-25: its actual start time is the argument
+# for that account's priority): its monitor stops (no resubmits); a watcher records when it gets its
+# nodes and cancels it within a minute -- still in its startup, long before a first save (it would
+# otherwise train next to the winner in the same run directory). Start time -> $R/monitor_logs/
+# cns144_start.log.
+watch_cns144() {
+    until squeue -u "$USER" -h -n ambitious_128n -t R -o %i | grep -q .; do
+        squeue -u "$USER" -h -n ambitious_128n -o %i | grep -q . || { log "cns144 job left the queue unstarted"; return; }
+        sleep 30
+    done
+    local info; info=$(squeue -u "$USER" -h -n ambitious_128n -t R -o '%i submitted=%V started=%S')
+    scancel -u "$USER" -n ambitious_128n
+    log "cns144 128-node job STARTED: $info -- cancelled (not needed)"
+    echo "$(date '+%F %T') $info" >> "${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/monitor_logs/cns144_start.log"
+}
 for N in ambitious_128n ambitious_128n_e533; do
     [ "$N" = "$WINNER" ] && continue
     if pkill -f "${MONITOR[$N]} "; then log "stopped the $N monitor"; fi
-    scancel -u "$USER" -n "$N" && log "cancelled the other 128-node job ($N)"
+    if [ "$N" = ambitious_128n ]; then
+        watch_cns144 &
+        log "cns144 job kept queued; its start is watched (pid $!)"
+    else
+        scancel -u "$USER" -n "$N" && log "cancelled the other 128-node job ($N)"
+    fi
 done
 if pkill -f "hybrid_ambitious_32_mn5 "; then log "stopped the 32-node monitor"; fi
 for J in $(squeue -u "$USER" -h -n ambitious_32n -t R -o %i); do
@@ -42,3 +62,4 @@ for J in $(squeue -u "$USER" -h -n ambitious_32n -t R -o %i); do
 done
 scancel -u "$USER" -n ambitious_32n -t PD && log "cancelled queued 32-node jobs"
 log "flip done"
+wait  # the cns144 watcher, if any
