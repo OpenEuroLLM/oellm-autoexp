@@ -17,10 +17,15 @@ backend:
     ENGRAM_STEP_GROUP: "2"
   megatron:
     num_experts: 216
-    # rolling checkpoints about hourly, as at 32 nodes (est. ~25 s / step at 128 nodes)
-    non_persistent_save_interval: 150
+    # rolling checkpoints about hourly, as at 32 nodes (est. ~25 s / step at 128 nodes); a divisor of
+    # 500: the equal-token eval marks at steps 500 * 2^n (scripts/korbi/eval_marks) are hard-linked
+    # from complete checkpoints
+    non_persistent_save_interval: 125
     # persistent (kept) checkpoints every 1000 steps (user 2026-10-25)
     save_interval: 1000
+    # keep only every 10000th persistent checkpoint (+ the newest): ~0.61 TB each, ~179 over the run
+    # would be ~110 TB of the 154 TB scratch; the eval marks are hard links and survive
+    save_retain_interval: 10000
     # asynchronous checkpoint saves (user 2026-10-25): a synchronous rolling save took ~7.3 min at
     # 32 nodes (~9 % of a 50-step interval); the background worker writes while training runs
     async_save: true
