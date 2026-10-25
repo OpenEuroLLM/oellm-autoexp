@@ -50,7 +50,7 @@ The normative description is the dllm-bd3-spec (spec sections are cited in the c
 | `config/backend/megadlm_bd_torchrun.yaml` | backend: launcher, `aux.difflm_args`, `aux.bd_args` |
 | `config/backend/megatron/dllm/bd/` | `bd_train_defaults`, `qwen3_<size>_base`, data config |
 | `config/{container,slurm}/snellius_megadlm_native.yaml` | jobs on the native venv (no container) |
-| `config/experiments/dllm/bd/` | conversion, smoke, probe, tier 0 and tier 1, and evaluation experiments |
+| `config/experiments/dllm/bd/` | conversion, smoke, probe, tier 0 and tier 1, method preset, and evaluation experiments |
 
 ## Software stack (Snellius, no container)
 
@@ -72,7 +72,7 @@ offline to `<run dir>/wandb`; upload them with `wandb sync`.
 
 ## Launcher flags
 
-`--bd-objective {bd3,ar}`, `--bd-block-size N`, `--bd-block-schedule "0:4,0.15:8"`,
+`--bd-objective {bd3,ar,nld}`, `--bd-block-size N`, `--bd-block-schedule "0:4,0.15:8"`,
 `--bd-token-shift {0,1}`, `--bd-complementary-mask {0,1}`, `--bd-loss-weighting {elbo,uniform}`,
 `--bd-t-min F`, `--bd-t-max F`, `--bd-doc-mask {0,1}`, `--bd-val-seed N`, and for
 `--bd-objective nld` also `--bd-nld-ar-weight F`, `--bd-nld-diffusion-weight F` and
@@ -110,8 +110,11 @@ PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/con
 
 The result is `$OUTPUT_DIR/dllm-ablations/converted/qwen3_<size>_tp<TP>`; the converter refuses an
 output directory that already holds a converted checkpoint. The parity check
-(`eval/parity_check.py`) compares AR-mode logits with HF (top-1 >= 99 percent, mean KL <= 1e-3
-nats) and checks invariant I3. The steps by hand:
+(`eval/parity_check.py`) runs both sides in float32 (bf16 rounding alone moves top-1 below the
+bar) and compares AR-mode logits with HF (top-1 >= 99 percent, mean KL <= 1e-3 nats), checks
+invariant I3 (mean and maximum per-token cross-entropy difference <= 2e-3 and 5e-2 nats) and the
+nld clean stream against HF. Qwen3 0.6B (TP 1 and 2), 1.7B, 4B and 8B pass with top-1 >= 0.9995
+and KL <= 4e-7. The steps by hand:
 
 ```bash
 python -m oellm_autoexp.dllm.convert.hf_qwen3_to_megadlm --hf Qwen/Qwen3-0.6B-Base \
@@ -122,7 +125,9 @@ python -m oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3 --megatron <ckpt dir> \
 
 Training loads the converted checkpoint with `--pretrained-checkpoint` (finetune semantics, no
 optimizer state) and resumes from its own `--save` directory afterwards. Jobs that load these
-files set `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`.
+files set `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`. For a trained checkpoint (`iter_*`) the exporter
+checks the block size, token shift and clean-stream attention against the checkpoint's arguments
+and takes `dllm_clean_attention` from `bd_objective` by default.
 
 ## Training
 
@@ -142,8 +147,8 @@ data from GPFS with 8 loader workers per rank (tier 0: about 30k tokens/s/GPU at
 | Experiment | Purpose |
 |---|---|
 | `probe_qwen3` | 20-iteration throughput probe; size, TP and micro batch as overrides |
-| `tier0_qwen3_0.6B` | learning rates 1e-5, 3e-5, 1e-4 at 0.5B tokens (list sweep, `--array-subset i`) |
-| `tier1_qwen3_0.6B` | R00-R11 at 2B tokens (one factor at a time, AR control R10, nld hybrid R11) |
+| `tier0_qwen3_0.6B` | learning rates 1e-5, 3e-5, 1e-4 and the edge step 3e-4 at 0.5B tokens (list sweep, `--array-subset i`) |
+| `tier1_qwen3_0.6B` | R00-R11 at 2B tokens and lr 1e-4 (one factor at a time, AR control R10, nld hybrid R11) |
 
 Run names follow `bd3-q3_<size>-B<B>-sh<shift>-cm<comp>-w<weight>-t<tmin>_<tmax>-dm<doc>-sc<schedule>-lr<lr>-T<tokens>`
 (schedule `0:4,0.15:8` is written `0-4_0.15-8`), `ar-q3_<size>-lr<lr>-T<tokens>`, and
@@ -178,7 +183,10 @@ With complementary masks, the global and micro batch are halved (same FLOPs per 
 
 `eval_qwen3.yaml` runs export, M1 and GSM8K for one model on one GPU (`eval/eval_chain.sh`); the
 `EVAL_*` keys under `backend.env` select the checkpoint and settings, and the results land in
-`$OUTPUT_DIR/dllm-ablations/eval` as `<run>.m1.json` and `<run>.gsm8k_<mode>.json`:
+`$OUTPUT_DIR/dllm-ablations/eval` as `<run>.m1.json` and `<run>.gsm8k_<mode>.json`. Tier jobs run
+the same chain in their own allocation after the last iteration (`train_then_eval.sh`, one GPU
+per task). `EVAL_DTYPE=float32` runs both evaluators in float32 (used for the GPU check of I8, which
+bf16 kernel rounding breaks); `EVAL_CLEAN_ATTENTION` overrides the clean attention of the export:
 
 ```bash
 PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/eval_qwen3 --submit-and-exit \
