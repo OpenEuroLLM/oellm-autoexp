@@ -1,0 +1,16 @@
+# @package _global_
+# The 128-node conservative run on ehpc533 / acc_xehpc: the same job as q35_conservative_128_mn5
+# (cns144), submitted in parallel (user 2026-10-25: queue priority). Whichever starts first takes
+# over the 32-node run's checkpoint; flip_q35_32_to_128.sh then stops the 32-node run and cancels
+# the other 128-node job (and its monitor).
+defaults:
+  - q35_conservative_128_mn5
+  - _self_
+
+job:
+  name: q35c_128e
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_xehpc
