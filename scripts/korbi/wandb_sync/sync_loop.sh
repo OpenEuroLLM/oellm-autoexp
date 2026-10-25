@@ -1,6 +1,6 @@
 #!/bin/bash
 # Mirror the offline W&B runs of the MN5 production runs and upload them to
-# openeurollm-project/flag_hybrid, every $INTERVAL seconds (runs on a machine with internet and a
+# openeurollm-project/flag_hybrid, every $INTERVAL seconds (default 15 min), after keeping the equal-token checkpoints (eval_marks/) (runs on a machine with internet and a
 # W&B login in ~/.netrc). Re-uploading a growing run is safe: Megatron logs with explicit steps and
 # W&B keeps only steps beyond the ones it has (checked 2026-10-24 with two fragments, one id).
 #
@@ -14,11 +14,13 @@ RUNS="${RUNS:-$HERE/runs.tsv}"
 MIRROR="${MIRROR:-$HOME/wandb_mirror_mn5}"
 ENTITY="${ENTITY:-openeurollm-project}"
 PROJECT="${PROJECT:-flag_hybrid}"
-INTERVAL="${INTERVAL:-1800}"
+INTERVAL="${INTERVAL:-900}"
 HOST="${HOST:-marenostrum_new}"
 WANDB="${WANDB:-$HOME/.miniconda3/envs/oellm/bin/wandb}"
 while true; do
     echo "=== $(date -Is) sync pass"
+    # keep the equal-token checkpoints first (the rolling ones are deleted ~2 saves later)
+    "$HERE/../eval_marks/link_marks.sh"
     grep -v '^\s*#' "$RUNS" | while IFS=$'\t' read -r id dir; do
         [ -z "${id:-}" ] && continue
         dest="$MIRROR/$id"
