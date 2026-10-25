@@ -3,7 +3,7 @@
 # that runs the monitors:
 #   setsid nohup scripts/korbi/production/flip_32_to_128.sh > $R/monitor_logs/flip_32_to_128.log 2>&1 &
 # Waits until the 128-node job (ambitious_128n) runs, then stops the 32-node run: first its monitor
-# (no restart), then the job itself with SIGUSR2 -- Megatron's exit signal handler
+# (no restart), then the job's training ranks with SIGUSR2 -- Megatron's exit signal handler
 # (exit_signal_handler, exit_signal SIGUSR2) saves a checkpoint and exits; the 128-node job waits
 # for that (WAIT_FOR_JOB_NAME=ambitious_32n in its sbatch) before it loads the newest checkpoint.
 # A job that has not exited after 30 minutes is cancelled; queued 32-node restarts are cancelled.
@@ -14,7 +14,9 @@ until squeue -u "$USER" -h -n ambitious_128n -t R -o %i | grep -q .; do sleep 60
 log "128-node job running: $(squeue -u "$USER" -h -n ambitious_128n -t R -o '%i %N' | head -1)"
 if pkill -f "hybrid_ambitious_32_mn5"; then log "stopped the 32-node monitor"; fi
 for J in $(squeue -u "$USER" -h -n ambitious_32n -t R -o %i); do
-    scancel --signal=USR2 --full "$J" && log "sent SIGUSR2 to $J (save + exit)"
+    # SIGUSR2 to the training ranks only: scancel --signal=USR2 --full also hits torchrun, whose
+    # default action (terminate) killed a q35 job without a save (signal_save_exit.sh)
+    "$(dirname "$0")/signal_save_exit.sh" "$J" && log "sent SIGUSR2 to $J's ranks (save + exit)"
     for _ in $(seq 60); do
         squeue -h -j "$J" -o %i 2>/dev/null | grep -q . || break
         sleep 30
