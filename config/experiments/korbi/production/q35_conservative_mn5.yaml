@@ -116,6 +116,12 @@ backend:
     overlap_p2p_comm: false
     use_megatron_fsdp: true
     data_parallel_sharding_strategy: optim_grads_params
+    # hybrid sharding: ZeRO-3 within 8-node groups, replicated across groups (one gradient
+    # all-reduce per step). ZeRO-3 over all ranks fell from 6,457 (8 nodes) / 6,265 (16) to 4,385
+    # tok/s/GPU at 32 nodes (job 47974985); 4 x 8-node replicas: 6,347 (PP: 5,902), same losses
+    # (q35_conservative_scale32_mn5, 2026-10-25)
+    num_distributed_optimizer_instances: "${oc.eval:'max(1, ${aux.nodes} // 8)'}"
+    outer_dp_sharding_strategy: no_shard
     overlap_param_gather: true
     overlap_grad_reduce: true
     fsdp_double_buffer: true

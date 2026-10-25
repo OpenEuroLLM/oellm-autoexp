@@ -62,6 +62,12 @@ sweep:
           aux.fmt: fsdp
           aux.fsdp: true
           backend.megatron.micro_batch_size: 4
+        # hybrid sharding (2026-10-25): the 8-node ZeRO-3 checkpoint on 16 nodes = 2 replicas
+        - aux.arm: grow_hsdp
+          aux.fmt: fsdp
+          aux.fsdp: true
+          backend.megatron.micro_batch_size: 4
+          aux.nodes: 16
         - aux.arm: grow_fsdp
           aux.fmt: fsdp
           aux.fsdp: true
