@@ -28,6 +28,10 @@ backend:
     non_persistent_save_interval: 50
     # persistent (kept) checkpoints every 1000 steps (user 2026-10-25)
     save_interval: 1000
+    # asynchronous checkpoint saves (user 2026-10-25): a synchronous rolling save took ~7.3 min at
+    # 32 nodes (~9 % of a 50-step interval); the background worker writes while training runs
+    async_save: true
+    use_persistent_ckpt_worker: true
 
 job:
   name: ambitious_32n
