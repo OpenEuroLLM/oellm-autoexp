@@ -131,6 +131,13 @@ backend:
     megatron_fsdp_grad_comm_dtype: fp32
     ckpt_format: fsdp_dtensor
     moe_shared_expert_overlap: true
+    # as the measured 32-node runs (g32_fc): grouped expert GEMM + fused permute, no CUDA graphs
+    # (document masking changes cu_seqlens every micro-batch: Megatron refuses graphs with it --
+    # ambitious_32n failed 9 starts on the inherited cuda_graph_impl local, 2026-10-25)
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    cuda_graph_impl: none
+    cuda_graph_modules: []
     pipeline_model_parallel_size: 1
     expert_model_parallel_size: ${aux.ep}
     tensor_model_parallel_size: 1
