@@ -8,6 +8,11 @@
 #   hsdp16n  HSDP with 16-node groups (8 replicas): half the outer all-reduce bytes per GPU
 #   pp       the colleague's PP4 x VPP2, mbs 2 (8 micro-batches per pipeline); torch_dist would
 #            need a checkpoint conversion from the run's fsdp_dtensor
+#   nccl16   the production layout (HSDP 16 x 8n) with 16 NCCL channels instead of the slurm
+#            config's 4 (set for PP memory; may starve the cross-node all-reduce)
+#   outer_optim  the production layout, optimizer state also sharded across the replicas
+#            (outer_dp_sharding_strategy optim: reduce-scatter + all-gather across groups)
+#   pp_gbs4096  PP with 16 micro-batches per pipeline (information only: a GBS change)
 # One 128-node job at a time (acc_xehpc: 3 running per user, shared with production and the
 # ambitious run), 45 minutes each for backfill.
 #
@@ -50,6 +55,27 @@ sweep:
           backend.megatron.num_distributed_optimizer_instances: 8
           backend.megatron.outer_dp_sharding_strategy: no_shard
         - aux.arm: pp
+          aux.pattern: "*ELELE*ELELE|LE*ELELELE*E|LELELE*ELELE|LE*ELE|LELE*ELELELE|*ELELELE*ELE|LELE*ELELELE|*E"
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.overlap_p2p_comm: true
+          backend.megatron.use_megatron_fsdp: false
+          backend.megatron.fsdp_double_buffer: false
+          backend.megatron.moe_shared_expert_overlap: false
+          backend.megatron.megatron_fsdp_main_grads_dtype: auto
+          backend.megatron.megatron_fsdp_grad_comm_dtype: auto
+          backend.megatron.ckpt_format: torch_dist
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.recompute_num_layers: 1
+          backend.megatron.num_distributed_optimizer_instances: 1
+        - aux.arm: nccl16
+          slurm.env.NCCL_MIN_NCHANNELS: "16"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "16"
+        - aux.arm: outer_optim
+          backend.megatron.outer_dp_sharding_strategy: optim
+        - aux.arm: pp_gbs4096
+          aux.gbs: 4096
+          # the same sample count, so the run's data index (train_iters x gbs)
+          backend.megatron.train_iters: 403850
           aux.pattern: "*ELELE*ELELE|LE*ELELELE*E|LELELE*ELELE|LE*ELE|LELE*ELELELE|*ELELELE*ELE|LELE*ELELELE|*E"
           backend.megatron.pipeline_model_parallel_size: 4
           backend.megatron.overlap_p2p_comm: true
