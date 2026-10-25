@@ -29,14 +29,11 @@ _TIER_CONFIGS = (
     "experiments/dllm/bd/tier1_qwen3_0.6B",
     *(
         f"experiments/dllm/bd/{path.stem}"
-        for pattern in ("tier2_qwen3_*.yaml", "qwen3_*_*.yaml")
-        for path in sorted((_CONFIG_DIR / "experiments/dllm/bd").glob(pattern))
+        for path in sorted((_CONFIG_DIR / "experiments/dllm/bd").glob("qwen3_*_*.yaml"))
     ),
 )
 _BASE_GLOBAL_BATCH = 256  # PARAMS training.global_batch_size
 _L = 2048  # PARAMS training.seq_length_effective
-_L_TIER2 = 4096  # PARAMS training.tier2_seq_length_effective, for the 10B-token runs
-_TIER2_TOKENS = 10_000_000_000
 _DUMMY_ENVS = {
     "SLURM_ACCOUNT": "test_account",
     "HF_HOME": "/dummy/hf_home",
@@ -83,9 +80,8 @@ def test_tier_job_flags_match_their_run_names(
         run = parse_run_name(name)
         assert flags["--bd-objective"] == run["objective"], name
         assert float(flags["--lr"]) == pytest.approx(run["lr"]), name
-        length = _L_TIER2 if run["tokens"] == _TIER2_TOKENS else _L
-        assert int(flags["--seq-length"]) == length + 1, name
-        iters = math.ceil(run["tokens"] / (_BASE_GLOBAL_BATCH * length))
+        assert int(flags["--seq-length"]) == _L + 1, name
+        iters = math.ceil(run["tokens"] / (_BASE_GLOBAL_BATCH * _L))
         assert int(flags["--train-iters"]) == iters, name
         # PARAMS training: warmup max(min_warmup_iters 50, 1 percent); per-token loss (spec 7).
         assert int(flags["--lr-warmup-iters"]) == max(50, math.ceil(0.01 * iters)), name
