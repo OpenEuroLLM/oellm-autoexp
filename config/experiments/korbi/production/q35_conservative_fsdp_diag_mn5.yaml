@@ -1,0 +1,54 @@
+# @package _global_
+# Why the 32-node FSDP run (job 47974985) steps in 29.8 s (4,385 tok/s/GPU) where the 8-node arm
+# fsdp_m4_32 of q35_conservative_fsdp_speed_mn5 took 20.3 s (6,450) at the same per-GPU work
+# (mbs 4, 4 micro-batches): every step is slower, no spikes. Differences: the run logs every step
+# (the 8-node FSDP arms every 10; under FSDP the per-step expert viability statistics read the
+# sharded expert weights / grads), the 452-shard flag blend (one file here), 4x the ranks.
+#
+#   li10      the 6,450 arm again (control)
+#   li1       log_interval 1 (the run's)
+#   li1_flag  li1 + the run's flag-decon-v1 blend, its data index reused (same sample count:
+#             train_iters x gbs = 807,700 x 2,048; exits at step 80)
+#   li1_16n   li1 on 16 nodes, gbs 1024 (still 4 micro-batches per GPU): the scale
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35d scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_fsdp_diag_mn5 --yes
+defaults:
+  - q35_conservative_fsdp_speed_mn5
+  - _self_
+
+aux:
+  suite: d8
+  arm: li10
+  fsdp: true
+  gbs: 512
+  only: []
+
+backend:
+  megatron:
+    micro_batch_size: 4
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: li10
+          backend.megatron.log_interval: 10
+        - aux.arm: li1
+          backend.megatron.log_interval: 1
+        - aux.arm: li1_flag
+          backend.megatron.log_interval: 1
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_decon_v1_datamix_mn5.txt
+          backend.megatron.data_path: null
+          backend.megatron.split: "998,2,0"
+          backend.megatron.eval_iters: 1
+          backend.megatron.train_iters: 3230800
+          backend.megatron.exit_interval: 80
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/data_cache
+        - aux.arm: li1_16n
+          backend.megatron.log_interval: 1
+          aux.nodes: 16
+          aux.gbs: 1024
