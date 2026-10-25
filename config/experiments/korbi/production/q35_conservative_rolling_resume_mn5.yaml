@@ -1,0 +1,38 @@
+# @package _global_
+# Resume test of the conservative run's ROLLING (non-persistent global) fsdp_dtensor checkpoint:
+# job 47988548 failed at load with "Checkpoint directory None does not exist" -- Megatron's
+# non-persistent loader only read torch_dist (fixed: rolling fsdp_dtensor checkpoints take the
+# global path). Loads run_2/main/ckpt_rolling/iter_0000200 (written by plain ZeRO-3 on 32 nodes)
+# on 16 nodes with hybrid sharding (2 replicas) and trains to step 215 without saving; the run
+# logged steps 201-233 (job 47974985), so the losses compare step by step (same gbs: same data).
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35rr scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_rolling_resume_mn5 --yes
+defaults:
+  - q35_conservative_scale32_mn5
+  - _self_
+
+aux:
+  suite: rr
+  arm: resume16
+  nodes: 16
+  only: []
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/ckpt
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/ckpt_rolling
+    # a save directory of its own; no save happens before the exit
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 100000
+    non_persistent_save_interval: 100000
+    exit_interval: 215
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.arm: resume16
