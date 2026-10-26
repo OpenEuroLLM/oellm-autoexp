@@ -9,7 +9,7 @@ defaults:
   - _self_
 
 job:
-  name: ambitious_128n_e533
+  name: ambitious_gqa_128n_e533
 
 slurm:
   sbatch:

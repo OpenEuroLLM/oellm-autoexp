@@ -32,7 +32,7 @@ backend:
     use_persistent_ckpt_worker: true
 
 job:
-  name: ambitious_128n
+  name: ambitious_gqa_128n
   # estimate: ~1/4 of the 32-node step if the scale costs no more (to be measured)
   est_step_time_s: 25.0
 
@@ -43,4 +43,4 @@ slurm:
   env:
     # the flip (flip_32_to_128.sh) sends the 32-node job SIGUSR2 once this job runs: wait for its
     # final save to be written and the job to end before loading (templates/marenostrum.sbatch)
-    WAIT_FOR_JOB_NAME: ambitious_32n
+    WAIT_FOR_JOB_NAME: ambitious_gqa_32n

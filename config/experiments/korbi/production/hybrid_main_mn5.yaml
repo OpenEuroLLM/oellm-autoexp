@@ -24,7 +24,11 @@ defaults:
 
 aux:
   experiment_group: production
-  suite: main
+  # main_gqa (2026-10-26): grouped-query attention. The runs of suite main trained MHA (16 KV
+  # heads: num_query_groups was set without group_query_attention, which Megatron then ignores) and
+  # keep restarting from their own rendered scripts in production/main; a re-render there would
+  # load MHA checkpoints into a GQA model
+  suite: main_gqa
   family: hybrid
   arm: mhc4_eng40
   nodes: 128
@@ -68,6 +72,8 @@ backend:
     kv_channels: 128
     num_attention_heads: 16
     num_query_groups: 2
+    # without it Megatron ignores num_query_groups (MHA, 16 KV heads: suite main)
+    group_query_attention: true
     position_embedding_type: none
     attention_output_gate: true
     exclusive_self_attention: true

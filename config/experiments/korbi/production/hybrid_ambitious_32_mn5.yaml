@@ -37,7 +37,7 @@ backend:
     use_persistent_ckpt_worker: true
 
 job:
-  name: ambitious_32n
+  name: ambitious_gqa_32n
   # measured: 87 s per step at 32 nodes (g32_fc: fused clamped SwiGLU, 6,035 tok/s/GPU)
   est_step_time_s: 87.0
 
