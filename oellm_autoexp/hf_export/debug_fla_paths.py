@@ -41,8 +41,10 @@ def main() -> None:
     ids = torch.tensor(np.concatenate([[bos], d[: a.seq_len - 1]]), device=dev).unsqueeze(0)
     fla = model.model.layers[a.layer].mixer.layer
     grab = {}
-    h = fla.register_forward_hook(lambda m, args, kw, out: grab.setdefault("x", kw["hidden_states"].detach().clone()),
-                                  with_kwargs=True)
+    def keep_input(_mod, _args, kw, _out):  # returns None: a returned value would replace the output
+        grab.setdefault("x", kw["hidden_states"].detach().clone())
+
+    h = fla.register_forward_hook(keep_input, with_kwargs=True)
     with torch.no_grad():
         model.model(input_ids=ids, use_cache=False)
     h.remove()
