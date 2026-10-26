@@ -3021,6 +3021,18 @@ emerge at size):
   no PP, and an fp32 M.
 - **Caveat (user):** small scale and noisy evals. Long-context behaviour may change at size.
   Revisit LDM only if a paired 7:1 run at s2 is affordable and its retrieval holds up there.
+- **Every screen trained MHA (found 2026-10-26).** `num_query_groups: 2` was set without
+  `group_query_attention`, so Megatron ignored it (`argument_utils.py`: `num_query_groups` None).
+  The same held for both main runs. Comparisons within a screen stay paired, but attention had 4x
+  (s2: 4x, 8 vs 2) the KV heads and parameters intended, which may favour retrieval.
+- **Rematch, queued for the LDM authors' optimized PR (user 2026-10-26): `screen5resgqa_s{1,2}`.**
+  - Final recipe with GQA: CKDA attention first (s2 7:1, s1 every 6th), classical Muown, untied,
+    clamp 10, fp32 router, head-wise Q / K / V.
+  - Arms: plain / mHC-4 x0.25 / mHC-4 x0.125 / LDM x2.0. 2 nodes each, 4000 steps with a 20 % WSD
+    cooldown.
+  - Estimate: ~110 (s1) + ~215 (s2) GPU-h.
+  - Swap the LDM implementation in `gen_screen.LDM_REMATCH` when the PR lands. The long-context set
+    then runs on the final checkpoints.
 
 **muown_classical on Megatron-FSDP vs the distributed optimizer** (screen5fsdpeq*; s1 final recipe,
 2 nodes, EP4, gbs 64 × 8k, constant lr, same seed and data; 2 runs per path):

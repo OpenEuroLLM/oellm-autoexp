@@ -1513,6 +1513,49 @@ def arms5ds41(size: str = "s1"):
             ("headwise", "+ head-wise Q / K / V orthogonalization", {**run, B + "muon_qkv_headwise": True})]
 
 
+# LDM as the residual-scheme rematch runs it; swap in the authors' optimized implementation here
+# when their PR lands (user 2026-10-26)
+LDM_REMATCH = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
+               B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
+
+
+def arms5resgqa(size: str):
+    """mHC-4 vs LDM again (user 2026-10-26), on the final recipe and with grouped-query attention.
+    Every screen so far trained MHA: num_query_groups 2 without group_query_attention, which
+    Megatron ignores (argument_utils: num_query_groups None). The final recipe as in production:
+    CKDA, attention first, classical Muown, untied embedding / head at the shared lr, SwiGLU clamp
+    10, router in fp32, head-wise Q / K / V. Pattern: s2 (18 blocks) attention every 8th from block
+    0 (2 attention layers, the production 7:1 period); s1 (12 blocks) every 6th, as the final-recipe
+    screens (7:1 would leave one attention layer). Each scheme at its best residual-mixer lr (LDM
+    x2.0 of a 6-point sweep, mHC-4 x0.25 of 2 points) plus mHC-4 at x0.125, the untested side of its
+    optimum. gbs 64 x 8k, 4000 steps (2.1B tokens): stable 3200 + WSD linear to lr / 10 over 800;
+    the final checkpoints feed the long-context set. 2 nodes per arm (2-node and 1-node runs do not
+    pair); each arm builds its own data index (a new schedule)."""
+    hidden, blocks, *_ = R4_SIZES[size]
+    lr = R4_SIZES[size][4]
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    plain = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    steps = 4000
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]  # s2 nodes OOM-killed at saves with more
+    recipe = {**_opt_variants(lr)["muown_classical"],
+              "aux.pattern": hybrid_every(blocks, {"s1": 6, "s2": 8}[size], "L", attn_first=True),
+              B + "group_query_attention": True, B + "num_query_groups": 2,
+              B + "untie_embeddings_and_output_weights": True, B + "activation_func_clamp_value": 10.0,
+              B + "moe_router_dtype": "fp32", B + "muon_qkv_headwise": True,
+              B + "global_batch_size": 64, "aux.gbs": 64, B + "train_iters": steps, B + "exit_interval": steps,
+              B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": steps,
+              B + "lr_wsd_decay_iters": steps // 5, B + "min_lr": lr / 10, "job.est_steps": steps,
+              B + "overlap_param_gather": False, "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1",
+              "slurm.sbatch.nodes": 2, B + "num_workers": workers[0],
+              B + "dataloader_prefetch_factor": workers[1], **BAD_NODES}
+    mhc = {k: v for k, v in mhc4.items() if k != B + "residual_mixer_lr_mult"}
+    return [(n, d, {**own_cache(base), **recipe, **kv}) for n, d, base, kv in (
+        ("plain", "plain residual", plain, {}),
+        ("mhc4", "mHC-4, mixer lr x0.25", mhc, {B + "residual_mixer_lr_mult": 0.25}),
+        ("mhc4_lr0125", "mHC-4, mixer lr x0.125", mhc, {B + "residual_mixer_lr_mult": 0.125}),
+        ("ldm", "LDM (K 8), its lr x2.0", plain, {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0}))]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1861,6 +1904,7 @@ def write5():
             ("s1", "screen5embhead2", arms5embhead2("s1")),
             ("s1", "screen5embhead3", arms5embhead3("s1")),
             ("s1", "screen5ds41", arms5ds41("s1")),
+            *[(z, "screen5resgqa", arms5resgqa(z)) for z in ("s1", "s2")],
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
