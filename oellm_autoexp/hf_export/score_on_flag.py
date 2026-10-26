@@ -86,6 +86,20 @@ def layer_device_map(cfg, gib: float) -> dict[str, int]:
     return dmap
 
 
+def doc_nll(model, ids: torch.Tensor, chunk: int = 1024) -> float:
+    """Summed next-token NLL of ``ids [1, s]``: the LM head in chunks on its own GPU (the full
+    [s, vocab] fp32 logits are 4 GiB at 4k x 262k, and device_map hooks move outputs to GPU 0)."""
+    hidden = model.model(input_ids=ids, use_cache=False).last_hidden_state[0, :-1]
+    head = model.lm_head
+    dev = head.weight.device
+    hidden, target = hidden.to(dev), ids[0, 1:].to(dev)
+    total = 0.0
+    for i in range(0, hidden.shape[0], chunk):
+        logits = head(hidden[i : i + chunk]).float()
+        total += torch.nn.functional.cross_entropy(logits, target[i : i + chunk], reduction="sum").item()
+    return total
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-dir", type=Path, required=True)
@@ -120,8 +134,7 @@ def main() -> None:
     for d in docs:
         ids = torch.tensor(np.concatenate([[bos], d[: a.seq_len - 1]]), device=dev).unsqueeze(0)
         with torch.no_grad():
-            logits = model(input_ids=ids).logits.float()
-        lp = torch.nn.functional.cross_entropy(logits[0, :-1], ids[0, 1:].to(logits.device), reduction="sum").item()
+            lp = doc_nll(model, ids)
         n = ids.shape[1] - 1
         nll += lp
         cnt += n
