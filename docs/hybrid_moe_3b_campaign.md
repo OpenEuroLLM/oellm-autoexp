@@ -3023,8 +3023,8 @@ emerge at size):
   Revisit LDM only if a paired 7:1 run at s2 is affordable and its retrieval holds up there.
 - **Every screen trained MHA (found 2026-10-26).** `num_query_groups: 2` was set without
   `group_query_attention`, so Megatron ignored it (`argument_utils.py`: `num_query_groups` None).
-  The same held for both main runs. Comparisons within a screen stay paired, but attention had 4x
-  (s2: 4x, 8 vs 2) the KV heads and parameters intended, which may favour retrieval.
+  The same held for both main runs. Comparisons within a screen stay paired, but attention had 3-5x the KV
+  heads intended (s1 6, s2 8, s3 10 instead of 2), which may favour retrieval.
 - **Rematch, queued for the LDM authors' optimized PR (user 2026-10-26): `screen5resgqa_s{1,2}`.**
   - Final recipe with GQA: CKDA attention first (s2 7:1, s1 every 6th), classical Muown, untied,
     clamp 10, fp32 router, head-wise Q / K / V.
