@@ -384,3 +384,35 @@ def test_monitor_resumes_a_pool_that_ran_out_of_work(pool):
     pool.enqueue("b")
     pool.start_monitor()  # monitor_autoexp must not refuse the pool session
     pool.wait_for(lambda: pool.record("dummy_b")["runtime"]["final_state"] == "finished", 120, "b")
+
+
+def test_bad_node_in_a_live_host(pool):
+    pool.create_pool(*FAST)
+    pool.enqueue("a", "aux.iters=200", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 15, 60, "15 iterations")
+    jid, bad = pool.run_state(first).started["job"], pool.run_state(first).started["nodes"]
+    # a node goes bad: exclude it, move the run off it -- the host has a spare node
+    pool.ctl("exclude", bad)
+    pool.ctl("preempt", first)
+    second = pool.wait_for(
+        lambda: [r for r in pool.runs_of("dummy_a") if r != first], 60, "requeue"
+    )[0]
+    pool.wait_for(
+        lambda: pool.run_state(second).status == "RUNNING", 30, "the run on the spare node"
+    )
+    state = pool.run_state(second)
+    assert (state.started["job"], state.started["nodes"]) == (jid, f"n{jid}-1")
+    # a 2-node job cannot run on the degraded host: it is released at once (not after
+    # idle_exit_s) and the new allocation is told to avoid the bad node
+    pool.enqueue("big", "slurm.sbatch.nodes=2")
+    pool.wait_for(lambda: pool.record("dummy_a")["runtime"]["final_state"] == "finished", 90, "a")
+    big = pool.wait_for(lambda: pool.runs_of("dummy_big"), 30, "big queued")[0]
+    pool.wait_for(lambda: pool.run_state(big).status == "COMPLETED", 90, "big on a fresh host")
+    assert pool.run_state(big).started["job"] != jid
+    exited = (pool.layout.host_dir("host001") / "exited").read_text()
+    assert "cannot run any queued job (needs 2 node(s), 1 usable)" in exited
+    assert (
+        f"#SBATCH --exclude={bad}" in (pool.layout.host_dir("host002") / "host.sbatch").read_text()
+    )

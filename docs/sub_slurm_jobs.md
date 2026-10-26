@@ -168,6 +168,18 @@ live: the monitor re-reads `pool.json` every poll and the supervisors re-read
 * **Lost host** (node failure, `scancel`, a stale supervisor heartbeat): the run
   reads `host_lost` (PREEMPTED) and is requeued. It resumes from the last persistent
   checkpoint.
+* **A bad node inside a live host.** Exclude it (`pool_ctl exclude <node>`, or the job's restart
+  hook appends it to its `restart_exclude_file`). The next run of the job skips it, so a host
+  with a spare node keeps working. A host that can no longer fit ANY queued job, because too
+  few usable nodes or too little time is left, is released AT ONCE rather than after
+  `idle_exit_s`, and replaced. Every new host's `--exclude` is the union of the pool's
+  `exclude_nodes` and the host config's own exclusion file, read when the host is created. A
+  queued job bigger than every host of the pool, which only happens if the host definition
+  changed after enqueue, triggers a warning instead of a loop of short-lived allocations.
+* **Fleet-wide exclusion is opt-in.** `jupiter_autoexclude_pool_host` (the
+  `jupiter_autoexclude` group: `$JUPITER_EXCLUDE_NODES`) is for big or long pools. The plain
+  `jupiter_pool_host` (small eval pools) only avoids the pool's own `exclude_nodes`. Choose it
+  with `slurm=jupiter_autoexclude_pool_host` or in the host config's defaults.
 * **A monitor that dies costs no GPU-hours.** An idle host whose `monitor.alive` is
   older than `monitor_dead_exit_s` releases itself. Busy hosts finish their run. A
   new monitor adopts the running pool.

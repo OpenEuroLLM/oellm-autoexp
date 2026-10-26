@@ -607,3 +607,70 @@ def test_failed_host_starts_back_off(env, monkeypatch):
     env.host_up(host)
     env.poll()
     assert env.layout.load_state()["host_failures"] == 0
+
+
+# ---------------------------------------------------------------- bad nodes
+def test_sbatch_get_set_reach_the_rendered_header():
+    from compoconf import asdict
+
+    from oellm_autoexp.monitor.pool import sbatch_get, sbatch_set
+
+    sb = SbatchConfig(nodes=2)
+    # `exclude` is a declared field now: getattr / setattr / the rendered header agree
+    sb.exclude = "a,b"
+    assert asdict(sb)["exclude"] == "a,b" and sb._extras.get("exclude") is None
+    # keys that are still non-strict extras: plain getattr does NOT see them
+    sb._extras["signal"] = "old"
+    assert getattr(sb, "signal", None) is None and sbatch_get(sb, "signal") == "old"
+    setattr(sb, "signal", "shadow")  # a shadowing attribute wins on read ...
+    assert sbatch_get(sb, "signal") == "shadow"
+    sbatch_set(sb, "signal", "B:USR1@60")  # ... and sbatch_set is what reaches the header
+    assert asdict(sb)["signal"] == "B:USR1@60" and sbatch_get(sb, "signal") == "B:USR1@60"
+    sbatch_set(sb, "nodes", 4)
+    assert sb.nodes == 4
+
+
+def test_new_hosts_avoid_pool_and_fleet_exclusions(env, tmp_path):
+    fleet = tmp_path / "fleet_exclude.txt"
+    fleet.write_text("jpbo-001-01\njpbo-[002-003]-07\n")
+    host = env.layout.load_host_definition()
+    host.slurm = replace(host.slurm, exclude_file=str(fleet))
+    from compoconf import asdict
+
+    env.layout.host_definition.write_text(json.dumps(asdict(host)))
+    env.layout.exclude_nodes.write_text("jpbo-009-09\njpbo-001-01\n")
+    env.add_run("job_a")
+    env.poll(2)
+    script = Path(env.hosts()[0].definition.slurm.script_path).read_text()
+    line = next(x for x in script.splitlines() if x.startswith("#SBATCH --exclude="))
+    assert line == "#SBATCH --exclude=jpbo-001-01,jpbo-[002-003]-07,jpbo-009-09"
+    # the fleet file is read when the host is CREATED: a node added later reaches the next host
+    fleet.write_text("jpbo-001-01\njpbo-[002-003]-07\njpbo-004-04\n")
+    env.host_up(env.hosts()[0])  # it did start (a host that never starts triggers the backoff)
+    env.poll()
+    env.fake.set_state(env.hosts()[0].runtime.runtime_job_id, "NODE_FAIL")
+    env.poll(3)
+    newest = env.hosts()[-1]
+    assert "jpbo-004-04" in Path(newest.definition.slurm.script_path).read_text()
+
+
+def test_a_host_that_cannot_fit_any_queued_job_is_released_at_once(env):
+    env.add_run("needs2", nodes=2)
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0])
+    (env.layout.host_dir(hid) / "state").write_text(f"idle {int(time.time())} 1\n")  # a bad node
+    env.poll()
+    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    assert exit_file.exists() and "needs 2 node(s), 1 usable" in exit_file.read_text()
+    (env.layout.host_dir(hid) / "exited").write_text("exit requested\n")
+    env.poll(2)
+    assert len([h for h in env.hosts() if h.runtime.final_state is None]) >= 1  # a replacement
+
+
+def test_no_release_loop_for_a_job_bigger_than_every_host(env):
+    env.add_run("huge", nodes=8)  # bypasses the enqueue check, as a changed host definition would
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0])
+    env.poll(3)
+    assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
+    assert len(env.hosts()) == 1

@@ -54,6 +54,11 @@ class SbatchConfig(NonStrictDataclass):
     qos: str | None = None
     time: str = "0-01:00:00"
     dependency: str | None = None
+    # Declared (not a non-strict extra) so that code can read and set it like any
+    # field: a value in `_extras` is invisible to getattr, and a setattr on it
+    # created a shadow attribute the rendered header never saw. Comma-separated
+    # node names / hostlist ranges; see also SlurmConfig.exclude_file.
+    exclude: str | None = None
 
 
 @dataclass(kw_only=True)

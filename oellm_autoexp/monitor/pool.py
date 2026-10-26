@@ -45,6 +45,7 @@ A run's status is a pure function of its directory:
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import logging
 import os
@@ -455,10 +456,39 @@ def render_step_script(slurm: SlurmConfig, run_id: str, *, log_path: str) -> str
     return "#!/bin/bash\n" + header + text
 
 
+def sbatch_get(sbatch, key: str):
+    """A value of a (non-strict) SbatchConfig, declared field or not.
+
+    Keys the dataclass does not declare (``exclude``, ``output``, ``signal``)
+    live in ``_extras``, which plain ``getattr`` does NOT see; an attribute set
+    later with ``setattr`` (the restart hook) shadows the extra and wins.
+    """
+    if key in vars(sbatch):
+        return vars(sbatch)[key]
+    return (getattr(sbatch, "_extras", None) or {}).get(key)
+
+
+def sbatch_set(sbatch, key: str, value) -> None:
+    """Set a SbatchConfig value so that the rendered ``#SBATCH`` header sees
+    it."""
+    if key in {f.name for f in dataclasses.fields(sbatch)}:
+        setattr(sbatch, key, value)
+        return
+    sbatch._extras[key] = value
+    if key in vars(sbatch):  # drop a shadowing attribute, the extra is what renders
+        delattr(sbatch, key)
+
+
+def _split_nodes(text: str | None) -> list[str]:
+    """Comma/whitespace separated node list, hostlist ranges kept as they
+    are."""
+    return [t for t in re.split(r"[\s,]+(?![^\[]*\])", text or "") if t]
+
+
 def _exclude_list(slurm: SlurmConfig) -> str:
     """The job's own exclusion list, re-read from exclude_file like
     build_sbatch_directives."""
-    current = getattr(slurm.sbatch, "exclude", None)
+    current = sbatch_get(slurm.sbatch, "exclude")
     exclude_file = getattr(slurm, "exclude_file", None)
     if exclude_file:
         from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
@@ -930,11 +960,42 @@ class PoolManager:
                     )
                     break
 
-        # 5. release idle hosts that have had nothing to do for idle_exit_s
+        # 5. release idle hosts that have had nothing to do for idle_exit_s -- or
+        #    at once when there IS queued work and this host can run none of it:
+        #    too few usable nodes (excluded bad nodes) or too little time left only
+        #    get worse, so waiting idle_exit_s would buy nothing. The freed slot
+        #    is refilled by a fresh allocation in step 6.
         for host in live:
             if host.hid in busy or handover_in_progress:
                 continue
             if any(fits(host, item[3]) for item in queued):
+                continue
+            # only if a FRESH host would do better: a job bigger than every host of
+            # this pool (host definition changed after enqueue) must not turn into
+            # a loop of allocations that start and are released at once
+            fresh_fit = [item for item in queued if item[3] <= host.nodes]
+            if queued and not fresh_fit:
+                LOGGER.warning(
+                    "[pool %s] queued job(s) %s need more nodes than any host of this pool (%d)",
+                    cfg.name,
+                    [item[2] for item in queued],
+                    host.nodes,
+                )
+            if fresh_fit:
+                need = min(item[3] for item in fresh_fit)
+                why = (
+                    f"needs {need} node(s), {host.usable_nodes} usable"
+                    if need > host.usable_nodes
+                    else f"{host.remaining_s(now):.0f}s left, {cfg.min_remaining_s:.0f}s needed"
+                )
+                self._control(layout, host.hid, "exit", f"cannot run any queued job ({why})")
+                host.retiring = True
+                LOGGER.info(
+                    "[pool %s] releasing host %s: cannot run any queued job (%s)",
+                    cfg.name,
+                    host.hid,
+                    why,
+                )
                 continue
             idle_for = now - host.state_ts
             if idle_for >= cfg.idle_exit_s:
@@ -1040,12 +1101,25 @@ class PoolManager:
         env["AUTOEXP_POOL_DIR"] = str(layout.root)
         env["AUTOEXP_POOL_HOST"] = hid
         sbatch = copy.deepcopy(base.slurm.sbatch)
+        # The new allocation avoids every node known to be bad NOW: the host
+        # config's own list (its exclude_file re-read, e.g. the JUPITER fleet list
+        # of a *_autoexclude_pool_host config) plus the pool's exclude_nodes
+        # (pool_ctl exclude, which every pool has, autoexclude or not). The union
+        # is baked into the clone and its exclude_file dropped, because rendering
+        # would otherwise REPLACE the list with the file's content alone.
+        excluded = _split_nodes(_exclude_list(base.slurm)) + _split_nodes(
+            _read(layout.exclude_nodes)
+        )
+        excluded = list(dict.fromkeys(excluded))
+        if excluded:
+            sbatch_set(sbatch, "exclude", ",".join(excluded))
         slurm = replace(
             base.slurm,
             name=name,
             script_path=str(hdir / "host.sbatch"),
             env=env,
             sbatch=sbatch,
+            exclude_file=None,
         )
         definition = replace(
             base,
@@ -1065,7 +1139,13 @@ class PoolManager:
             runtime=JobRuntime(submitted=False),
         )
         loop._store.upsert(record)
-        LOGGER.info("[pool %s] created host %s (%s nodes)", cfg.name, hid, sbatch.nodes)
+        LOGGER.info(
+            "[pool %s] created host %s (%s nodes%s)",
+            cfg.name,
+            hid,
+            sbatch.nodes,
+            f", {len(excluded)} node(s) excluded" if excluded else "",
+        )
         return hid
 
     # --- requests from pool_ctl ---------------------------------------------
