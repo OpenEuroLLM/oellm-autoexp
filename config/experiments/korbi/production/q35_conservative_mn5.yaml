@@ -210,6 +210,9 @@ backend:
     # every 100 steps). async_save is silently disabled without the persistent worker.
     async_save: true
     use_persistent_ckpt_worker: true
+    # reuse the global save plan from the 3rd save on (needs Megatron bdbda626a on the fsdp_dtensor
+    # async path): ambitious 32n ~95 s blocking for saves 1-2 after a (re)start, then ~7 s
+    ckpt_assume_constant_structure: true
     exit_signal_handler: true
     # SIGUSR2 (by name: the argument is a signal.Signals enum, "12" fails to parse): save and exit cleanly -- the 32 -> 128-node flip
     # (scripts/korbi/production/flip_q35_32_to_128.sh) stops the 32-node job this way
