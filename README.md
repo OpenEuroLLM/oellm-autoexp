@@ -188,7 +188,8 @@ python scripts/run_autoexp.py --config-name experiments/korbi/pool/jupiter_pool_
 python scripts/run_autoexp.py --pool <pool_dir> --config-name <experiment> [overrides]      # enqueue, any time
 python scripts/pool_ctl.py <pool_dir> status | cancel <job> | preempt <run> | set k=v | close
 ```
-Details, file layout and limits: [`docs/sub_slurm_jobs.md`](docs/sub_slurm_jobs.md).
+Details, file layout and limits: [`docs/sub_slurm_jobs.md`](docs/sub_slurm_jobs.md); hands-on tasks:
+[`docs/sub_slurm_jobs_tutorial.md`](docs/sub_slurm_jobs_tutorial.md).
 
 ### Monitoring sessions
 - Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:

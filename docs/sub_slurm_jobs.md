@@ -13,6 +13,9 @@ file system. Two problems go away:
   on the old allocation (a checkpoint is saved) and continues on the new one. The old
   allocation is then released. The only gap is one save plus one startup.
 
+Hands-on introduction: [sub_slurm_jobs_tutorial.md](sub_slurm_jobs_tutorial.md) (ten tasks, nine of them
+local against the fake SLURM).
+
 Code: `oellm_autoexp/monitor/pool.py` (monitor side), `scripts/pool/supervisor.sh`
 (allocation side), `scripts/pool_ctl.py` (control), `templates/pool_host.sbatch`,
 `config/{backend,job}/pool_host.yaml`, `config/slurm/*_pool_host.yaml`.
