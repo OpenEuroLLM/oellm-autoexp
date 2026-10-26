@@ -30,6 +30,9 @@ backend:
     # 32 nodes (~9 % of a 50-step interval); the background worker writes while training runs
     async_save: true
     use_persistent_ckpt_worker: true
+    # reuse the global save plan from the third save after a (re)start on (Megatron bdbda626a):
+    # planning was ~89 s of every save at 32 nodes, then 0.4 s (blocking ~7 s per save)
+    ckpt_assume_constant_structure: true
 
 job:
   name: ambitious_gqa_128n
