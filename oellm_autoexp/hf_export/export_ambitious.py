@@ -188,7 +188,9 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             if cfg["engram_conv_prenorm"]:
                 writer.add(hp + "mixer.conv_norm.weight", g("conv_norm.weight").to(cast))
             if cfg["engram_token_map"]:
-                writer.add(hp + "mixer.token_map", torch.from_numpy(np.load(m["engram_token_map"]).astype(np.int64)))
+                # the map covers the padded tokenizer vocabulary; ids >= vocab never reach the model
+                tmap = np.load(m["engram_token_map"]).astype(np.int64)[: cfg["vocab_size"]]
+                writer.add(hp + "mixer.token_map", torch.from_numpy(tmap))
         if t:
             raise KeyError(f"layer {i} ({kind}): unmapped tensors {sorted(t)}")
         LOGGER.info("layer %d (%s) done", i, kind)
