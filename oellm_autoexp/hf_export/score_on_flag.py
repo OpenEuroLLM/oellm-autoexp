@@ -100,6 +100,33 @@ def doc_nll(model, ids: torch.Tensor, chunk: int = 1024) -> float:
     return total
 
 
+def first_nonfinite(model, ids: torch.Tensor) -> list[str]:
+    """Forward ``ids`` with hooks on every decoder layer and its mixer: the modules whose output
+    first turns non-finite, in call order (with the token positions affected)."""
+    hits, hooks = [], []
+
+    def hook(name):
+        def fn(_mod, _inp, out):
+            t = out[0] if isinstance(out, tuple) else out
+            if torch.is_tensor(t) and t.is_floating_point() and not bool(torch.isfinite(t).all()):
+                bad = (~torch.isfinite(t.float())).reshape(t.shape[0], t.shape[1], -1).any(-1)[0]
+                pos = torch.nonzero(bad).flatten()
+                hits.append(f"{name}: {int(bad.sum())} positions, first {pos[:5].tolist()}, len {t.shape[1]}")
+        return fn
+
+    for name, mod in model.named_modules():
+        parts = name.split(".")
+        if len(parts) in (3, 4) and parts[:2] == ["model", "layers"] and (len(parts) == 3 or parts[3] == "mixer"):
+            hooks.append(mod.register_forward_hook(hook(name)))
+    try:
+        with torch.no_grad():
+            model.model(input_ids=ids, use_cache=False)
+    finally:
+        for h in hooks:
+            h.remove()
+    return hits[:8]
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-dir", type=Path, required=True)
@@ -130,17 +157,25 @@ def main() -> None:
     docs = sample_docs(a.datamix, a.num_docs, a.min_len, a.seed)
     dev = next(model.parameters()).device
     nll = cnt = 0.0
-    per_doc = []
+    per_doc, bad_docs = [], []
     for d in docs:
         ids = torch.tensor(np.concatenate([[bos], d[: a.seq_len - 1]]), device=dev).unsqueeze(0)
         with torch.no_grad():
             lp = doc_nll(model, ids)
         n = ids.shape[1] - 1
-        nll += lp
-        cnt += n
+        if not np.isfinite(lp):
+            bad_docs.append(len(per_doc))
+            if len(bad_docs) == 1:
+                print(f"doc {len(per_doc)} ({n + 1} tokens) non-finite; first modules:", flush=True)
+                for line in first_nonfinite(model, ids):
+                    print("  " + line, flush=True)
+        else:
+            nll += lp
+            cnt += n
         per_doc.append(lp / n)
     res = {"model": str(a.model_dir), "docs": len(docs), "tokens": int(cnt), "mean_nll": nll / cnt,
-           "doc_nll_median": float(np.median(per_doc)), "seq_len": a.seq_len}
+           "doc_nll_median": float(np.median([x for x in per_doc if np.isfinite(x)] or [np.nan])), "seq_len": a.seq_len,
+           "nonfinite_docs": bad_docs, "doc_lengths": [min(len(d) + 1, a.seq_len) for d in docs]}
     if a.gen_check:  # the cache path (KV / recurrent state / mHC streams) must reproduce the forward
         prompt = torch.tensor(np.concatenate([[bos], docs[0][:255]]), device=dev).unsqueeze(0)
         with torch.no_grad():
