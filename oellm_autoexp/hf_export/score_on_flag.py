@@ -64,6 +64,8 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--bos-id", type=int, default=None, help="default: the tokenizer's / config's bos id")
     p.add_argument("--gen-check", type=int, default=16, help="greedy tokens to compare cached decoding against a full forward (0: off)")
+    p.add_argument("--gpu-mem-gib", type=float, default=None,
+                   help="weights per GPU (device_map auto); the last GPU gets 12 GiB less (it holds the logits)")
     p.add_argument("--out", type=Path)
     a = p.parse_args()
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -75,7 +77,12 @@ def main() -> None:
 
         bos = AutoTokenizer.from_pretrained(a.model_dir).bos_token_id
     t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(a.model_dir, trust_remote_code=True, dtype=torch.bfloat16, device_map="auto").eval()
+    max_memory = None
+    if a.gpu_mem_gib:
+        n = torch.cuda.device_count()
+        max_memory = {i: f"{a.gpu_mem_gib - (12 if i == n - 1 else 0):.0f}GiB" for i in range(n)}
+    model = AutoModelForCausalLM.from_pretrained(a.model_dir, trust_remote_code=True, dtype=torch.bfloat16,
+                                                 device_map="auto", max_memory=max_memory).eval()
     print(f"loaded {a.model_dir.name} in {time.time() - t0:.0f}s; bos {bos}", flush=True)
     docs = sample_docs(a.datamix, a.num_docs, a.min_len, a.seed)
     dev = next(model.parameters()).device
@@ -95,10 +102,18 @@ def main() -> None:
     if a.gen_check:  # the cache path (KV / recurrent state / mHC streams) must reproduce the forward
         prompt = torch.tensor(np.concatenate([[bos], docs[0][:255]]), device=dev).unsqueeze(0)
         with torch.no_grad():
-            gen = model.generate(input_ids=prompt, max_new_tokens=a.gen_check, do_sample=False)
-            ref = model(input_ids=gen).logits.argmax(-1)[0, prompt.shape[1] - 1 : -1].cpu()
+            out = model.generate(input_ids=prompt, max_new_tokens=a.gen_check, do_sample=False,
+                                 output_logits=True, return_dict_in_generate=True)
+            gen = out.sequences
+            cached = torch.stack([x[0].float().cpu() for x in out.logits]).log_softmax(-1)
+            full = model(input_ids=gen).logits[0, prompt.shape[1] - 1 : -1].float().cpu().log_softmax(-1)
         new = gen[0, prompt.shape[1]:].cpu()
-        res["gen_check_match"] = float((new == ref).float().mean())
+        top2 = full.topk(2, dim=-1).values
+        res["gen_check_match"] = float((new == full.argmax(-1)).float().mean())
+        # bf16 near-ties flip the argmax; a broken cache shows up as large log-prob differences
+        res["gen_check_max_logprob_diff"] = float((cached - full).abs().max())
+        res["gen_check_full_top1_top2_gap_at_mismatch"] = [
+            float(top2[i, 0] - top2[i, 1]) for i in range(len(new)) if new[i] != full[i].argmax()]
     print(json.dumps(res, indent=2))
     if a.out:
         a.out.write_text(json.dumps(res, indent=2) + "\n")
