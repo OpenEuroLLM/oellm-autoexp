@@ -3,7 +3,7 @@
 * residual: mHC (``megatron.core.transformer.mhc.MHCMixer``) over n streams. The embedding is copied
   into n streams, every layer reads its input ``h_pre . streams`` and writes back
   ``h_res @ streams + h_post (x) out``, and the trunk ends with the stream mean.
-* layers, one per Megatron pattern symbol (``layer_types``):
+* layers, one per Megatron pattern symbol (``block_types``):
   - "attention" ``*``: NoPE softmax attention with qk-norm, exclusive self attention (XSA,
     ``fused_xsa.xsa_reference``) and the sigmoid output gate, behind ``linear_qkv``'s fused norm;
   - "ckda" ``L``: the FLA ComplexKimiDeltaAttention layer, as Megatron's ComplexKDA builds it;
@@ -226,7 +226,7 @@ class OellmEngramV2(OellmEngram):
 class OellmAmbitiousLayer(nn.Module):
     def __init__(self, config: OellmAmbitiousConfig, layer_idx: int) -> None:
         super().__init__()
-        self.kind = config.layer_types[layer_idx]
+        self.kind = config.block_types[layer_idx]
         self.mhc = OellmMHC(config)
         zcg = config.layernorm_zero_centered_gamma
         if self.kind == "attention":

@@ -1,7 +1,8 @@
 """Configuration of the ambitious hybrid main run (Megatron HybridModel, mHC-4).
 
 Unlike ``oellm_hybrid`` (one HF layer = mixer + MLP), the layers here are Megatron's own: one per
-pattern symbol, ``layer_types`` in {"attention", "ckda", "moe", "engram"}, each wrapped by its mHC
+pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram"} (not ``layer_types``:
+transformers validates that name against its own attention kinds), each wrapped by its mHC
 read / write over ``mhc_expansion_rate`` residual streams.
 """
 
@@ -17,7 +18,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self,
         vocab_size: int = 262144,
         hidden_size: int = 2048,
-        layer_types: list | None = None,
+        block_types: list | None = None,
         rms_norm_eps: float = 1e-5,
         layernorm_zero_centered_gamma: bool = False,
         initializer_range: float = 0.02,
@@ -58,14 +59,14 @@ class OellmAmbitiousConfig(PretrainedConfig):
         use_cache: bool = True,
         **kwargs,
     ):
-        layer_types = list(layer_types or [])
-        bad = sorted(set(layer_types) - set(LAYER_TYPES))
+        block_types = list(block_types or [])
+        bad = sorted(set(block_types) - set(LAYER_TYPES))
         if bad:
-            raise ValueError(f"unknown layer_types {bad}")
+            raise ValueError(f"unknown block_types {bad}")
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
-        self.layer_types = layer_types
-        self.num_hidden_layers = len(layer_types)
+        self.block_types = block_types
+        self.num_hidden_layers = len(block_types)
         self.rms_norm_eps = rms_norm_eps
         self.layernorm_zero_centered_gamma = layernorm_zero_centered_gamma
         self.initializer_range = initializer_range

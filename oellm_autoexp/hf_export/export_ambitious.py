@@ -87,7 +87,7 @@ def hf_config(m: dict, vocab: int) -> dict:
         },
         "vocab_size": vocab,
         "hidden_size": m["hidden_size"],
-        "layer_types": types,
+        "block_types": types,
         "rms_norm_eps": float(m["layernorm_epsilon"]),
         "layernorm_zero_centered_gamma": bool(m.get("layernorm_zero_centered_gamma", False)),
         "mhc_expansion_rate": int(m["mhc_expansion_rate"]),
@@ -143,7 +143,7 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             if t:
                 raise KeyError(f"unmapped non-layer tensors {sorted(t)}")
             continue
-        kind = cfg["layer_types"][i]
+        kind = cfg["block_types"][i]
         p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
         g = lambda name: t.pop(p + name)  # noqa: E731
         mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
