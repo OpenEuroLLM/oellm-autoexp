@@ -174,7 +174,9 @@ backend:
     manual_gc: true
     manual_gc_interval: 10             # raise it if the step times oscillate (GC overhead)
     mmap_bin_files: false
-    data_cache_path: ${job.base_output_dir}/data_cache
+    # run_2's data index (same blend, seq, gbs and train_iters -> the same index; read only):
+    # skips the ~25 min single-rank index build at a 128-node start
+    data_cache_path: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/run_2/main/data_cache
     # one rank builds the index of the 452-shard blend while the others wait: ~22 min at 20 steps
     # (job 47864547), longer for 13.6T (more epochs of the most-weighted files)
     distributed_timeout_minutes: 60
