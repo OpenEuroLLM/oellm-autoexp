@@ -343,6 +343,10 @@ class OellmAmbitiousForCausalLM(OellmAmbitiousPreTrainedModel, GenerationMixin):
                                       hidden_states=out.hidden_states)
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, attention_mask=None, **kwargs):
+        # `generate` hands over a DynamicCache of its own at the prefill; only ours carries the
+        # CKDA / Engram state and the mHC layers' KV (an empty foreign cache holds nothing yet)
+        if past_key_values is not None and not isinstance(past_key_values, OellmHybridCache):
+            past_key_values = None
         if past_key_values is not None and past_key_values.seen_tokens > 0:
             input_ids = input_ids[:, past_key_values.seen_tokens :]
         return {"input_ids": input_ids, "past_key_values": past_key_values, "attention_mask": attention_mask,
