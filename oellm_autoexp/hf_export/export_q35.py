@@ -125,6 +125,24 @@ def split_gdn_in_proj(w: torch.Tensor, nk: int, nv: int, dk: int, dv: int):
     return torch.cat([q, k, v, z], 1).reshape(-1, h), torch.cat([b, a], 1).reshape(-1, h)
 
 
+def special_token_ids(tokenizer: Path | None) -> dict:
+    """bos / eos / pad ids of the tokenizer. transformers 5 configs have no default for them;
+    generate() reads them from generation_config.json."""
+    if tokenizer is None:
+        return {}
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(tokenizer)
+    return {k: getattr(tok, k) for k in ("bos_token_id", "eos_token_id", "pad_token_id")}
+
+
+def write_config(out_dir: Path, cfg: dict, tokenizer: Path | None) -> None:
+    ids = special_token_ids(tokenizer)
+    (out_dir / "config.json").write_text(json.dumps({**cfg, **ids}, indent=2) + "\n")
+    if ids:
+        (out_dir / "generation_config.json").write_text(json.dumps(ids, indent=2) + "\n")
+
+
 def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | None, dtype: str = "bf16") -> Path:
     m = megatron_args(config_yaml)
     cast = {"bf16": torch.bfloat16, "fp32": torch.float32}[dtype]
@@ -187,7 +205,7 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             raise KeyError(f"layer {i}: unmapped tensors {sorted(t)}")
         LOGGER.info("layer %d done", i)
     writer.close()
-    (out_dir / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    write_config(out_dir, cfg, tokenizer)
     for f in ("configuration_oellm_q35.py", "modeling_oellm_q35.py"):
         shutil.copy2(_PKG / f, out_dir / f)
     if tokenizer is not None:

@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 from .convert_megatron_to_hf import _fla_layer_spec
-from .export_q35 import megatron_args, split_gated_qkv
+from .export_q35 import megatron_args, split_gated_qkv, write_config
 from .fsdp_dtensor import ShardedSafetensorsWriter, iter_layers, stack_experts
 
 LOGGER = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             raise KeyError(f"layer {i} ({kind}): unmapped tensors {sorted(t)}")
         LOGGER.info("layer %d (%s) done", i, kind)
     writer.close()
-    (out_dir / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    write_config(out_dir, cfg, tokenizer)
     for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py"):
         shutil.copy2(_PKG / f, out_dir / f)
     # the reused modules (CKDA wrapper, Engram base, norm, cache) and their config

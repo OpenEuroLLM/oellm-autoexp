@@ -57,6 +57,9 @@ class OellmAmbitiousConfig(PretrainedConfig):
         engram_scale_dtype: str = "fp32",
         tie_word_embeddings: bool = False,
         use_cache: bool = True,
+        bos_token_id: int | None = None,
+        eos_token_id: int | None = None,
+        pad_token_id: int | None = None,
         **kwargs,
     ):
         block_types = list(block_types or [])
@@ -100,4 +103,6 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.engram_scale_dtype = engram_scale_dtype
         self.sliding_window = None
         self.use_cache = use_cache
+        # transformers 5: no defaults in PretrainedConfig, each config declares its own
+        self.bos_token_id, self.eos_token_id, self.pad_token_id = bos_token_id, eos_token_id, pad_token_id
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
