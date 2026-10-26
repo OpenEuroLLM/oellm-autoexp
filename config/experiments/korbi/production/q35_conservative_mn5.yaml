@@ -30,7 +30,10 @@ defaults:
 aux:
   experiment_group: q35_conservative
   family: q35
-  suite: run_2                   # run_1: cancelled before step 1 (old flag data)
+  # run_3: GQA (2 KV groups). run_2 (MHA by mistake, 16 KV heads; jobs q35c_32n / q35c_128e) keeps
+  # running from its rendered scripts -- never re-render run_2 with this config (shape mismatch).
+  # run_1: cancelled before step 1 (old flag data)
+  suite: run_3
   # 32 nodes on ehpc533 (q35_conservative_32_mn5.yaml) until the 128-node job on cns144 /
   # acc_xehpc (q35_conservative_128_mn5.yaml) starts and takes over its checkpoint (user
   # 2026-10-24; scripts/korbi/production/flip_q35_32_to_128.sh).
@@ -68,6 +71,10 @@ backend:
     hidden_size: 2048
     ffn_hidden_size: 6144               # unused (every block is MoE)
     num_attention_heads: 16
+    # GQA (Qwen3.5: 2 KV groups). Megatron applies num_query_groups only with
+    # group_query_attention; without it run_1 / run_2 trained MHA with 16 KV heads (8x the KV
+    # cache on the attention layers; found 2026-10-26)
+    group_query_attention: true
     num_query_groups: 2
     kv_channels: 256
     attention_output_gate: true

@@ -10,7 +10,7 @@ aux:
   nodes: 128
 
 job:
-  name: q35c_128n
+  name: q35c_${aux.suite}_128n         # run_2: q35c_128n
   est_step_time_s: 5.5                # ~16.8M tokens / (512 GPUs x ~6,100 tok/s)
 
 slurm:

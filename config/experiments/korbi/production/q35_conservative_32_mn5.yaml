@@ -10,4 +10,4 @@ defaults:
   - _self_
 
 job:
-  name: q35c_32n
+  name: q35c_${aux.suite}_32n          # run_2: q35c_32n
