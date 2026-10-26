@@ -1,0 +1,52 @@
+# @package _global_
+# Async checkpoint test for the conservative run_3 setup (user 2026-10-26: check async saves work
+# and are reasonably fast before run_3 starts). The production config (GQA, async_save +
+# persistent worker, Megatron with the batched uneven-DTensor gather ca6431476) on 16 nodes with
+# hybrid sharding (2 replicas of 8 nodes), one small data file.
+#   1st job: rolling saves every 10 steps, persistent every 30; SIGUSR2 (signal_save_exit.sh) right
+#            after a save starts (async write pending) -> expect a clean save + exit (COMPLETED)
+#   2nd job (same command + backend.megatron.exit_interval=<last step + 15>): loads the last
+#            checkpoint, losses continue
+# Measured: the training stall per save (step times around the saves vs the 4.5 min synchronous
+# saves of run_2 at 128 nodes) and the background write time.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh q35async scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/q35_conservative_async_test_mn5 --yes
+defaults:
+  - q35_conservative_speed_mn5
+  - _self_
+
+aux:
+  suite: async
+  arm: a16
+  nodes: 16
+  gbs: 1024
+  only: []
+
+backend:
+  megatron:
+    micro_batch_size: 4
+    train_iters: 300
+    lr_warmup_iters: 10
+    log_interval: 1
+    save: ${job.base_output_dir}/../ckpt
+    load: ${job.base_output_dir}/../ckpt
+    save_interval: 30
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/../ckpt_rolling
+    non_persistent_save_interval: 10
+
+job:
+  est_step_time_s: 25.0
+
+slurm:
+  sbatch:
+    time: "00:45:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.arm: a16
