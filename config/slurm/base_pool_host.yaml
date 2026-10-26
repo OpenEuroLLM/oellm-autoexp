@@ -1,0 +1,9 @@
+defaults:
+  - base
+  - _self_
+
+# Generic pool host (local tests with tests/fakeslurm, other clusters): see jupiter_pool_host.yaml.
+template_path: "templates/pool_host.sbatch"
+launcher_cmd: ""
+sbatch:
+  signal: "B:USR1@600"

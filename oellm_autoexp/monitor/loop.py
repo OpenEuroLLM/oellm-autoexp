@@ -34,6 +34,7 @@ from oellm_autoexp.monitor.actions import (
 from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
 from oellm_autoexp.monitor.job_client_protocol import JobClientProtocol
 from oellm_autoexp.monitor.submission import JobInterface, SlurmJobConfig, LocalJobConfig
+from oellm_autoexp.monitor.pool import PoolManager
 from oellm_autoexp.monitor.utils.paths import (
     resolve_log_path,
     expand_log_path,
@@ -173,12 +174,20 @@ class MonitorLoop:
         poll_interval_seconds: float = 60.0,
         show_poll_state: bool = True,
         no_error_catching: bool = False,
+        pool_manager: PoolManager | None = None,
     ) -> None:
         _import_registry()
         self._pending_restart_hooks: dict[str, dict[str, Any]] = {}
         self._store = store
         self._slurm_client = slurm_client
         self._local_client = local_client
+        # Runs of sub-SLURM-job pools (job.pool_dir set) are submitted to, and
+        # polled from, the pool manager; it also schedules the pools' hosts,
+        # which are ordinary SLURM records. A session without pools never
+        # touches it.
+        self._pool = pool_manager or PoolManager()
+        # resolved at call time: test doubles of the SLURM client need not implement cancel
+        self._pool._slurm_cancel = lambda job_id: self._slurm_client.cancel(job_id)
         self.poll_interval_seconds = poll_interval_seconds
         self.show_poll_state = show_poll_state
         self.no_error_catching = no_error_catching
@@ -189,6 +198,8 @@ class MonitorLoop:
             raise ValueError("Job definition is None")
 
         if isinstance(job.definition, SlurmJobConfig):
+            if getattr(job.definition, "pool_dir", None):
+                return self._pool
             return self._slurm_client
         elif isinstance(job.definition, LocalJobConfig):
             return self._local_client
@@ -233,11 +244,16 @@ class MonitorLoop:
             statuses.update(self._slurm_client.squeue())
         if self._local_client:
             statuses.update(self._local_client.squeue())
+        records = self._store.load_all()
+        # host views first (they need the SLURM states), then the pool runs'
+        # states, which depend on whether their host is still there
+        self._pool.refresh(statuses, records)
+        statuses.update(self._pool.squeue())
 
         # Array members whose start condition passed this poll, by script: each
         # batch goes out as ONE sbatch --array after the loop.
         array_batches: dict[str, list[JobRecord]] = {}
-        for job in self._store.load_all():
+        for job in records:
             if job.definition is None:
                 continue
             runtime = job.runtime
@@ -254,6 +270,8 @@ class MonitorLoop:
             if runtime.deferred_restart and self._resume_deferred_restart(job, runtime_id):
                 continue
             if self._apply_effect(job, status_effect, runtime_id):
+                continue
+            if self._apply_effect(job, self._pool_status_effect(job, new_status), runtime_id):
                 continue
             if not runtime.submitted:
                 if self._check_cancel(job):
@@ -294,8 +312,14 @@ class MonitorLoop:
             if self._apply_effect(job, effect, runtime_id):
                 continue
 
-            # Check if job completed naturally
-            if runtime.last_status in {"COMPLETED", "FAILED", "CANCELLED"}:
+            # Check if job completed naturally. A pool host ends in whatever state
+            # SLURM gives it (TIMEOUT at the wall clock, NODE_FAIL, ...): its
+            # runs are requeued by the pool, so every end is final for the host.
+            if runtime.last_status in {"COMPLETED", "FAILED", "CANCELLED"} or (
+                PoolManager.is_host(job)
+                and runtime.last_status is not None
+                and runtime.last_status not in self.ACTIVE_STATES
+            ):
                 if runtime_id:
                     client = self._get_client(job)
                     client.remove(runtime_id)
@@ -308,12 +332,17 @@ class MonitorLoop:
         for batch in array_batches.values():
             self._start_array_batch(batch)
 
+        # pool scheduling: assign queued runs to idle hosts, hand over, keep
+        # hosts submitted (new host records are submitted on the next poll)
+        self._pool.tick(self)
+
         if self.show_poll_state:
             statuses: dict[str, str] = {}
             if self._slurm_client:
                 statuses.update(self._slurm_client.squeue())
             if self._local_client:
                 statuses.update(self._local_client.squeue())
+            statuses.update(self._pool.squeue())
 
             poll_state = {}
             for job in self._store.load_all():
@@ -334,6 +363,46 @@ class MonitorLoop:
                     }
 
             LOGGER.info(f"[{time.time():0.6f}]" + f"Monitor Polling: {poll_state}")
+
+    def _pool_status_effect(self, job: JobRecord, new_status: str | None) -> str:
+        """Built-in lifecycle of a pool run on the states only a pool reports.
+
+        PREEMPTED means the run was stopped from outside -- a handover to a
+        newer host, the host's wall clock, a lost host -- not that the job went
+        wrong, so it is requeued (a new run of the same record, which resumes
+        from its checkpoint) up to the pool's ``max_attempts``. A RestartAction
+        a log policy deferred on the same exit (``sigterm_rollover``) has
+        already been resumed by the caller, so this never restarts twice.
+        TIMEOUT (the job's own ``sbatch.time``, enforced by the supervisor) is
+        final, like the cancel the array policy gives a timed-out task.
+        """
+        if not PoolManager.is_run(job) or new_status is None:
+            return "continue"
+        if new_status == "PREEMPTED":
+            try:
+                from oellm_autoexp.monitor.pool import PoolLayout
+
+                max_attempts = PoolLayout(job.definition.pool_dir).load_config().max_attempts
+            except Exception:  # pragma: no cover - a missing pool.json must not wedge the run
+                max_attempts = 20
+            if job.runtime.attempts >= max_attempts:
+                LOGGER.warning(
+                    "Pool run %s of %s preempted after %d attempt(s): giving up",
+                    job.runtime.runtime_job_id,
+                    job.job_id,
+                    job.runtime.attempts,
+                )
+                return "cancelled"
+            LOGGER.info(
+                "Pool run %s of %s was preempted: requeueing (attempt %d)",
+                job.runtime.runtime_job_id,
+                job.job_id,
+                job.runtime.attempts + 1,
+            )
+            return "restart"
+        if new_status == "TIMEOUT":
+            return "cancelled"
+        return "continue"
 
     def _check_start(self, job: JobRecord) -> bool:
         condition = job.definition.start_condition

@@ -1,0 +1,39 @@
+# @package _global_
+# Local pool HOST for tests/pool (sub-SLURM jobs against tests/fakeslurm). Short timers so a full
+# scenario runs in seconds. Root: $POOL_TEST_ROOT.
+#
+#   PATH=tests/fakeslurm/bin:$PATH FAKESLURM_DIR=... POOL_TEST_ROOT=... \
+#     python scripts/run_autoexp.py --config-name experiments/tests/pool_local_host --no-monitor
+defaults:
+  - /backend: pool_host
+  - /slurm: base_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: localpool
+  base_output_dir: ${oc.env:POOL_TEST_ROOT}/pool
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 0
+    min_hosts: 0
+    handover: false
+    idle_exit_s: 30
+    monitor_dead_exit_s: 60
+    min_remaining_s: 0
+    stop_grace_s: 5
+    preempt_grace_s: 20
+    max_attempts: 5
+    host_stale_s: 60
+    poll_s: 1
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:10:00"
+    signal: "B:USR1@20"
+    gres: null
+
+index: 0
+stage: ""

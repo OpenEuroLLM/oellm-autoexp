@@ -149,6 +149,15 @@ def main(argv: list[str] | None = None) -> None:
     # its hands off. Removing it automatically here would let a supervised
     # relaunch quietly override a stop the user asked for.
     stop_file = stop_path(session_dir)
+    # One exception: a POOL session (pools.txt) that the previous monitor closed
+    # because it had run out of work. New jobs are enqueued into it later as a
+    # matter of course, and "all jobs finished" was a fact, not a user's stop.
+    if (
+        stop_file.exists()
+        and (session_dir / "pools.txt").exists()
+        and stop_file.read_text().strip() == "all jobs finished"
+    ):
+        stop_file.unlink()
     if stop_file.exists():
         raise SystemExit(
             f"Stop requested for this session: {stop_file.read_text().strip()}\n"

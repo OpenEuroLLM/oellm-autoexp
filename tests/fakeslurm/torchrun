@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Minimal stand-in for a torchrun elastic agent (tests/fakeslurm).
+
+Starts --nproc_per_node copies of the script as CHILD processes and
+exits with the worst child exit code. Like the real agent, a SIGTERM to
+the AGENT tears the workers down (SIGKILL after 1 s) instead of letting
+them save -- so a test only passes if the supervisor signals the ranks,
+as on the cluster.
+"""
+
+import os
+import signal
+import subprocess
+import sys
+import time
+
+args = sys.argv[1:]
+nproc = 1
+if args[:1] == ["--nproc_per_node"]:
+    nproc, args = int(args[1]), args[2:]
+procs = [
+    subprocess.Popen(
+        [sys.executable, *args], env={**os.environ, "LOCAL_RANK": str(i), "RANK": str(i)}
+    )
+    for i in range(nproc)
+]
+
+
+def teardown(signum, _frame):
+    print(f"[fake-torchrun] agent got signal {signum}: tearing workers down", flush=True)
+    time.sleep(1)
+    for p in procs:
+        p.kill()
+    sys.exit(1)
+
+
+signal.signal(signal.SIGTERM, teardown)
+sys.exit(max(p.wait() for p in procs))

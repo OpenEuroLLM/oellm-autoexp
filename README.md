@@ -178,6 +178,18 @@ eval results are written to `…_2/eval/<timestamp>/results/<hash>_<ts>.json`.
 Per-cluster env / venv / container prerequisites for both backends are in
 [`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md).
 
+### Sub-SLURM jobs: many runs in one allocation, steered from the login node
+A *pool* keeps SLURM for the allocation only. The monitor decides what runs in it, so
+speed ablations and "fix a flag and restart" do not wait in the queue again. A successor
+allocation can wait in the queue without a dependency, so it ages, and take over a long
+training run with a checkpoint handover. Every job keeps its own full config.
+```bash
+python scripts/run_autoexp.py --config-name experiments/korbi/pool/jupiter_pool_n2          # create the pool (+ monitor)
+python scripts/run_autoexp.py --pool <pool_dir> --config-name <experiment> [overrides]      # enqueue, any time
+python scripts/pool_ctl.py <pool_dir> status | cancel <job> | preempt <run> | set k=v | close
+```
+Details, file layout and limits: [`docs/sub_slurm_jobs.md`](docs/sub_slurm_jobs.md).
+
 ### Monitoring sessions
 - Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:
 ```bash

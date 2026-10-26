@@ -1,0 +1,11 @@
+defaults:
+  - jupiter
+  - _self_
+
+# JUPITER pool host: the supervisor in the batch shell (templates/pool_host.sbatch), no outer
+# srun, no container. B:USR1 reaches the batch shell only, so the supervisor stops the current
+# run gracefully (checkpoint) before the wall clock without SLURM logging a cancel.
+template_path: "templates/pool_host.sbatch"
+launcher_cmd: ""
+sbatch:
+  signal: "B:USR1@600"

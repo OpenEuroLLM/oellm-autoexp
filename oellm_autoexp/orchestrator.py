@@ -109,6 +109,7 @@ def submit_jobs(
     no_error_catching: bool = False,
     local_mode: bool = False,
     dry_run: bool = False,
+    provenance: dict | None = None,
 ) -> SubmissionResult:
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
@@ -119,7 +120,10 @@ def submit_jobs(
 
     submitted_job_ids: list[str] = []
     records = _bind_array_groups(
-        [_build_job_record(plan, job, session_id, local_mode=local_mode) for job in plan.jobs]
+        [
+            _build_job_record(plan, job, session_id, local_mode=local_mode, provenance=provenance)
+            for job in plan.jobs
+        ]
     )
     rendered: set[str] = set()
     for record in records:
@@ -462,7 +466,12 @@ def _ensure_state_store(
 
 
 def _build_job_record(
-    plan: ExecutionPlan, job: JobPlan, session_id: str, *, local_mode: bool = False
+    plan: ExecutionPlan,
+    job: JobPlan,
+    session_id: str,
+    *,
+    local_mode: bool = False,
+    provenance: dict | None = None,
 ) -> JobRecord:
     if not isinstance(job.config, RootConfig):
         raise ValueError("JobPlan.config must be RootConfig")
@@ -540,6 +549,7 @@ def _build_job_record(
                 "sweep_index": getattr(job.config, "index", None),
                 "stage": getattr(job.config, "stage", ""),
                 "post_job_commands": post_job_commands,
+                **({"provenance": provenance} if provenance else {}),
             },
             base_config=job,
         )
@@ -567,6 +577,7 @@ def _build_job_record(
             "sweep_index": getattr(job.config, "index", None),
             "stage": getattr(job.config, "stage", ""),
             "post_job_commands": post_job_commands,
+            **({"provenance": provenance} if provenance else {}),
         },
         slurm=slurm_config,
         base_config=job,
@@ -801,6 +812,7 @@ def chain_submit_jobs(
     no_error_catching: bool = False,
     dry_run: bool = False,
     repeat: int = 1,
+    provenance: dict | None = None,
 ) -> SubmissionResult:
     """Submit all jobs to Slurm immediately as a dependency chain.
 
@@ -847,7 +859,7 @@ def chain_submit_jobs(
             jobs_to_submit.append((job, suffix))
 
     for job, repeat_suffix in jobs_to_submit:
-        record = _build_job_record(plan, job, session_id)
+        record = _build_job_record(plan, job, session_id, provenance=provenance)
         # Identity of this job WITHOUT the _rN chain suffix. Taken from the
         # record rather than parsed back out of the suffixed id, so a job whose
         # own name contains "_r" cannot be mis-grouped.
@@ -914,7 +926,123 @@ def chain_submit_jobs(
     )
 
 
+# --- sub-SLURM-job pools ---------------------------------------------------
+#
+# A pool (oellm_autoexp/monitor/pool.py) is a directory plus a monitor session.
+# A HOST config (job.pool_host set) creates or updates it; jobs are put INTO it
+# by writing their records into the pool's session, where the live monitor
+# picks them up on its next poll (the store is re-read every poll), or a new
+# monitor does when none is running.
+
+
+def pool_session_dir(monitor_state_dir: str | Path, name: str) -> Path:
+    from oellm_autoexp.monitor.pool import pool_tag
+
+    return Path(monitor_state_dir).absolute() / f"pool_{pool_tag(name)}"
+
+
+def prepare_pool_host(plan: ExecutionPlan, job: JobPlan) -> tuple[Path, Path]:
+    """Create/update the pool a host config describes.
+
+    Returns (pool dir, session dir).
+    """
+    from oellm_autoexp.monitor.pool import PoolLayout, create_or_update_pool
+
+    cfg = copy.deepcopy(job.config.job.pool_host)
+    cfg.name = cfg.name or str(job.config.job.name)
+    layout = PoolLayout(job.config.job.base_output_dir)
+    session_dir = None
+    if layout.exists():
+        previous = Path(layout.load_meta().get("session_dir", ""))
+        if previous.is_dir():
+            session_dir = previous
+    if session_dir is None:
+        session_dir = pool_session_dir(plan.config_setup.monitor_state_dir, cfg.name)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    record = _build_job_record(plan, job, session_dir.name)
+    if not isinstance(record.definition, SlurmJobConfig):
+        raise ValueError("a pool host must be a SLURM job (no --local / job.local)")
+    create_or_update_pool(
+        layout.root, host_definition=record.definition, config=cfg, session_dir=session_dir
+    )
+    LOGGER.info("Pool '%s' at %s (session %s)", cfg.name, layout.root, session_dir)
+    return layout.root, session_dir
+
+
+def enqueue_into_pool(
+    plan: ExecutionPlan,
+    pool_dir: str | Path,
+    jobs: list[JobPlan] | None = None,
+    *,
+    provenance: dict | None = None,
+) -> tuple[Path, list[str]]:
+    """Write the plan's jobs as pool-run records into the pool's session.
+
+    Every job is checked against the pool's host first (nodes, account,
+    partition, ...): a job that cannot fit is a configuration error here, not a
+    run that waits forever. Returns (session dir, record ids).
+    """
+    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host
+
+    layout = PoolLayout(pool_dir)
+    meta = layout.load_meta()
+    host = layout.load_host_definition()
+    session_dir = Path(meta["session_dir"])
+    session_dir.mkdir(parents=True, exist_ok=True)
+    store = JobFileStore(session_dir)
+    records = []
+    problems: list[str] = []
+    for job in jobs if jobs is not None else plan.jobs:
+        record = _build_job_record(plan, job, session_dir.name, provenance=provenance)
+        if not isinstance(record.definition, SlurmJobConfig):
+            problems.append(f"{record.job_id}: local jobs cannot run in a pool")
+            continue
+        problems += [f"{record.job_id}: {p}" for p in check_fits_host(record.definition, host)]
+        records.append(record)
+    if problems:
+        raise ValueError(f"cannot enqueue into pool {layout.root}:\n  " + "\n  ".join(problems))
+    ids = []
+    now = time.time()
+    for record in records:
+        job_id = record.job_id
+        # the same config enqueued twice is two jobs, not one record overwritten
+        n = 1
+        while store.path_for(job_id).exists():
+            n += 1
+            job_id = f"{record.job_id}_q{n}"
+        definition = replace(
+            record.definition,
+            pool_dir=str(layout.root),
+            metadata={
+                **dict(record.definition.metadata),
+                "pool_job_id": job_id,
+                "pool_enqueued_ts": now,
+            },
+        )
+        store.upsert(replace(record, job_id=job_id, definition=definition))
+        ids.append(job_id)
+        LOGGER.info("Enqueued %s into pool %s", job_id, meta.get("name"))
+    return session_dir, ids
+
+
+def pool_monitor_loop(session_dir: str | Path, *, no_error_catching: bool = False) -> MonitorLoop:
+    """A monitor for a pool session, re-attached to whatever already runs."""
+    store = JobFileStore(session_dir)
+    loop = MonitorLoop(
+        store,
+        slurm_client=SlurmClient(SlurmClientConfig()),
+        local_client=LocalCommandClient(LocalCommandClientConfig()),
+        no_error_catching=no_error_catching,
+    )
+    loop.rehydrate()
+    return loop
+
+
 __all__ = [
+    "pool_session_dir",
+    "prepare_pool_host",
+    "enqueue_into_pool",
+    "pool_monitor_loop",
     "ExecutionPlan",
     "SubmissionResult",
     "build_execution_plan",
