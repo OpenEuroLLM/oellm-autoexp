@@ -63,6 +63,7 @@ def main() -> None:
     p.add_argument("--min-len", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--bos-id", type=int, default=None, help="default: the tokenizer's / config's bos id")
+    p.add_argument("--gen-check", type=int, default=16, help="greedy tokens to compare cached decoding against a full forward (0: off)")
     p.add_argument("--out", type=Path)
     a = p.parse_args()
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -91,6 +92,13 @@ def main() -> None:
         per_doc.append(lp / n)
     res = {"model": str(a.model_dir), "docs": len(docs), "tokens": int(cnt), "mean_nll": nll / cnt,
            "doc_nll_median": float(np.median(per_doc)), "seq_len": a.seq_len}
+    if a.gen_check:  # the cache path (KV / recurrent state / mHC streams) must reproduce the forward
+        prompt = torch.tensor(np.concatenate([[bos], docs[0][:255]]), device=dev).unsqueeze(0)
+        with torch.no_grad():
+            gen = model.generate(input_ids=prompt, max_new_tokens=a.gen_check, do_sample=False)
+            ref = model(input_ids=gen).logits.argmax(-1)[0, prompt.shape[1] - 1 : -1].cpu()
+        new = gen[0, prompt.shape[1]:].cpu()
+        res["gen_check_match"] = float((new == ref).float().mean())
     print(json.dumps(res, indent=2))
     if a.out:
         a.out.write_text(json.dumps(res, indent=2) + "\n")

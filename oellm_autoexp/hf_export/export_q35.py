@@ -32,6 +32,7 @@ _PKG = Path(__file__).resolve().parent / "oellm_q35"
 
 def megatron_args(config_yaml: Path) -> dict:
     doc = yaml.safe_load(Path(config_yaml).read_text())
+    doc = doc.get("config", doc)  # the run's resolved config-<job>.yaml wraps it
     m = doc.get("backend", {}).get("megatron", doc)
     if "hidden_size" not in m:
         raise KeyError(f"{config_yaml}: no backend.megatron.hidden_size")
