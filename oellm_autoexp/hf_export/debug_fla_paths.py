@@ -34,7 +34,11 @@ def main() -> None:
                                                  device_map=layer_device_map(cfg, a.gpu_mem_gib)).eval()
     d = sample_docs(a.datamix, a.num_docs, a.min_len, 0)[a.doc]
     dev = next(model.parameters()).device
-    ids = torch.tensor(np.concatenate([[cfg.bos_token_id or 1], d[: a.seq_len - 1]]), device=dev).unsqueeze(0)
+    from transformers import AutoTokenizer
+
+    bos = getattr(cfg, "bos_token_id", None)
+    bos = AutoTokenizer.from_pretrained(a.model_dir).bos_token_id if bos is None else bos
+    ids = torch.tensor(np.concatenate([[bos], d[: a.seq_len - 1]]), device=dev).unsqueeze(0)
     fla = model.model.layers[a.layer].mixer.layer
     grab = {}
     h = fla.register_forward_hook(lambda m, args, kw, out: grab.setdefault("x", kw["hidden_states"].detach().clone()),
