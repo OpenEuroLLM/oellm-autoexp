@@ -54,6 +54,38 @@ def sample_docs(datamix: Path, num_docs: int, min_len: int, seed: int) -> list[n
     return docs
 
 
+def layer_device_map(cfg, gib: float) -> dict[str, int]:
+    """Whole decoder layers filled onto the GPUs in order, ``gib`` of weights each (the last GPU 12
+    GiB less: it holds the logits). accelerate's own map reserves the largest layer (an Engram
+    table, ~41 GiB) on every GPU and offloads the rest to the CPU; offloaded weights only arrive
+    through a module's forward, which the mHC read / write (methods) never call."""
+    from transformers import AutoModelForCausalLM
+
+    with torch.device("meta"):
+        model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, dtype=torch.bfloat16)
+    size = lambda m: sum(t.numel() * t.element_size() for t in [*m.parameters(), *m.buffers()])  # noqa: E731
+    n = torch.cuda.device_count()
+    cap = [gib * 2**30 - (12 * 2**30 if i == n - 1 else 0) for i in range(n)]
+    used, gpu, dmap = [0.0] * n, 0, {}
+    tail = size(model.model.norm) + (0 if cfg.tie_word_embeddings else size(model.lm_head))
+    cap[n - 1] -= tail
+    dmap["model.embed_tokens"] = 0
+    used[0] += size(model.model.embed_tokens)
+    for i, layer in enumerate(model.model.layers):
+        b = size(layer)
+        while used[gpu] + b > cap[gpu]:
+            gpu += 1
+            if gpu == n:
+                raise RuntimeError(f"layer {i}: the model does not fit {n} x {gib} GiB")
+        dmap[f"model.layers.{i}"] = gpu
+        used[gpu] += b
+    dmap["model.norm"] = n - 1
+    if not cfg.tie_word_embeddings:
+        dmap["lm_head"] = n - 1
+    print("weights per GPU (GiB):", [round(u / 2**30, 1) for u in used], flush=True)
+    return dmap
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-dir", type=Path, required=True)
@@ -65,7 +97,7 @@ def main() -> None:
     p.add_argument("--bos-id", type=int, default=None, help="default: the tokenizer's / config's bos id")
     p.add_argument("--gen-check", type=int, default=16, help="greedy tokens to compare cached decoding against a full forward (0: off)")
     p.add_argument("--gpu-mem-gib", type=float, default=None,
-                   help="weights per GPU (device_map auto); the last GPU gets 12 GiB less (it holds the logits)")
+                   help="weights per GPU, whole layers in order (else device_map auto); the last GPU 12 GiB less")
     p.add_argument("--out", type=Path)
     a = p.parse_args()
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -77,12 +109,9 @@ def main() -> None:
 
         bos = AutoTokenizer.from_pretrained(a.model_dir).bos_token_id
     t0 = time.time()
-    max_memory = None
-    if a.gpu_mem_gib:
-        n = torch.cuda.device_count()
-        max_memory = {i: f"{a.gpu_mem_gib - (12 if i == n - 1 else 0):.0f}GiB" for i in range(n)}
+    dmap = layer_device_map(cfg, a.gpu_mem_gib) if a.gpu_mem_gib else "auto"
     model = AutoModelForCausalLM.from_pretrained(a.model_dir, trust_remote_code=True, dtype=torch.bfloat16,
-                                                 device_map="auto", max_memory=max_memory).eval()
+                                                 device_map=dmap).eval()
     print(f"loaded {a.model_dir.name} in {time.time() - t0:.0f}s; bos {bos}", flush=True)
     docs = sample_docs(a.datamix, a.num_docs, a.min_len, a.seed)
     dev = next(model.parameters()).device
