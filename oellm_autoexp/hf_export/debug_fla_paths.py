@@ -25,6 +25,7 @@ def main() -> None:
     p.add_argument("--seq-len", type=int, default=4096)
     p.add_argument("--min-len", type=int, default=256)
     p.add_argument("--gpu-mem-gib", type=float, default=56)
+    p.add_argument("--save", type=Path, help="save the layer input, weights and spec here (for fla_layer_check)")
     p.add_argument("--warm-docs", type=int, nargs="*", default=[],
                    help="documents forwarded first (scoring order: Triton autotunes on the first shapes it sees)")
     a = p.parse_args()
@@ -59,6 +60,10 @@ def main() -> None:
     print(f"doc {a.doc} in the model: finite {bool(torch.isfinite(hs).all())}", flush=True)
     x = grab["x"]
     T = x.shape[1]
+    if a.save:
+        torch.save({"x": x.cpu(), "state_dict": {k: v.cpu() for k, v in fla.state_dict().items()},
+                    "spec": cfg.fla_layer}, a.save)
+        print(f"saved {a.save}", flush=True)
     print(f"layer {a.layer} ({type(fla).__name__}), input {tuple(x.shape)} {x.dtype}, |x| max {x.abs().max().item():.3g}")
     cu = torch.tensor([0, T], device=x.device, dtype=torch.int32)
 
