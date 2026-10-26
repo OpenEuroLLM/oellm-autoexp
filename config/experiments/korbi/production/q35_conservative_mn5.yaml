@@ -196,6 +196,11 @@ backend:
     non_persistent_ckpt_type: global
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
     non_persistent_save_interval: 100   # rolling (only the latest kept): ~35 min at 32 nodes, ~9 at 128
+    # async saves (as the ambitious run, 2026-10-26): synchronous fsdp_dtensor saves stalled
+    # training ~4.5 min per ~390 GB checkpoint at 128 nodes (~25 % of wall time at a rolling save
+    # every 100 steps). async_save is silently disabled without the persistent worker.
+    async_save: true
+    use_persistent_ckpt_worker: true
     exit_signal_handler: true
     # SIGUSR2 (by name: the argument is a signal.Signals enum, "12" fails to parse): save and exit cleanly -- the 32 -> 128-node flip
     # (scripts/korbi/production/flip_q35_32_to_128.sh) stops the 32-node job this way
