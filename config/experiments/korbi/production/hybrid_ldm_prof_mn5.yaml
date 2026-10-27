@@ -21,6 +21,7 @@ aux:
 backend:
   megatron:
     train_iters: 10
+    log_interval: 1
     profile: true
     use_pytorch_profiler: true
     profile_ranks: [0, 127]

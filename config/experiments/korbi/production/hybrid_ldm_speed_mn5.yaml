@@ -24,6 +24,9 @@ backend:
     ENGRAM_STEP_GROUP: "${oc.eval:'str(max(1, 4096 // (${aux.nodes} * 4 * 4)))'}"
   megatron:
     train_iters: 12
+    # every step logged: at the production log_interval 10 the one line of a 12-step run averages
+    # steps 2-10, compile warm-up included (32 nodes, mHC-4: 100 s / step vs 87 s steady)
+    log_interval: 1
     save: null
     save_interval: null
     non_persistent_save_interval: null
