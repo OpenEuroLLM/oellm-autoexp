@@ -329,6 +329,22 @@ def load_eval_dir(eval_dir: str | os.PathLike[str]) -> dict[str, dict[str, float
     return results
 
 
+def matching_logs(logs_glob: str) -> list[str]:
+    """Return the files that a training-log glob matches, sorted.
+
+    Args:
+        logs_glob: Glob pattern of training logs. Environment variables and ``~`` are expanded.
+            An empty pattern matches no logs.
+
+    Returns:
+        The matching file paths.
+    """
+    if not logs_glob:
+        return []
+    pattern = os.path.expanduser(os.path.expandvars(logs_glob))
+    return [name for name in sorted(glob.glob(pattern, recursive=True)) if Path(name).is_file()]
+
+
 def collect_throughput(
     logs_glob: str,
     runs: Iterable[str],
@@ -358,21 +374,17 @@ def collect_throughput(
         raise ValueError(f"skip_first must be >= 0, got {skip_first}")
     run_list = list(runs)
     series: dict[str, list[list[float]]] = {run: [] for run in run_list}
-    if logs_glob:
-        pattern = os.path.expanduser(os.path.expandvars(logs_glob))
-        for name in sorted(glob.glob(pattern, recursive=True)):
-            path = Path(name)
-            if not path.is_file():
-                continue
-            candidates = [run for run in run_list if run in path.name or run == path.parent.name]
-            if not candidates:
-                print(
-                    f"skipped log {name}: no run name in its file or directory name",
-                    file=sys.stderr,
-                )
-                continue
-            log_text = path.read_text(encoding="utf-8", errors="replace")
-            series[max(candidates, key=len)].append(_throughput_values(log_text))
+    for name in matching_logs(logs_glob):
+        path = Path(name)
+        candidates = [run for run in run_list if run in path.name or run == path.parent.name]
+        if not candidates:
+            print(
+                f"skipped log {name}: no run name in its file or directory name",
+                file=sys.stderr,
+            )
+            continue
+        log_text = path.read_text(encoding="utf-8", errors="replace")
+        series[max(candidates, key=len)].append(_throughput_values(log_text))
     return {run: _median_after_skip(series[run], skip_first) for run in run_list}
 
 
@@ -688,6 +700,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"skipped {run!r}: not a block-diffusion or AR run name", file=sys.stderr)
             continue
         runs.append(run)
+    if not matching_logs(args.logs_glob):
+        message = f"no training log matches --logs-glob {args.logs_glob!r}, so M4 is empty"
+        if args.write:
+            # Writing would replace the recorded M4 column with "-" (P7 gate finding).
+            print(f"{message}; {args.results_md} is unchanged", file=sys.stderr)
+            return 1
+        print(f"warning: {message}", file=sys.stderr)
     throughput = collect_throughput(args.logs_glob, runs)
     rows = [
         {**parse_run_name(run), "run": run, **eval_results[run], "m4": throughput[run]}

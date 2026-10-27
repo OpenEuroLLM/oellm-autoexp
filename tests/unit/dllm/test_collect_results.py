@@ -366,6 +366,22 @@ def test_load_eval_dir_rejects_a_non_finite_metric(tmp_path: Path, value: float)
         cr.load_eval_dir(tmp_path)
 
 
+def test_main_write_keeps_results_md_when_no_training_log_matches(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """P7 gate: a write without matching logs would blank the M4 column, so it is refused."""
+    eval_dir = _write_eval_dir(tmp_path)
+    results_md = tmp_path / "RESULTS.md"
+    results_md.write_text(RESULTS_MD, encoding="utf-8")
+    for glob_args in ([], ["--logs-glob", str(tmp_path / "absent/*.log")]):
+        argv = ["--eval-dir", str(eval_dir), "--results-md", str(results_md), *glob_args]
+        assert cr.main([*argv, "--write"]) == 1
+        assert results_md.read_text(encoding="utf-8") == RESULTS_MD
+        assert "no training log matches" in capsys.readouterr().err
+        assert cr.main(argv) == 0  # without --write: tables printed, a warning on stderr
+        assert "warning: no training log matches" in capsys.readouterr().err
+
+
 def test_main_write_refuses_an_empty_collection(tmp_path: Path) -> None:
     eval_dir = tmp_path / "eval"
     eval_dir.mkdir()
