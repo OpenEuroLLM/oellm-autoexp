@@ -201,6 +201,5 @@ Act on these:
 | | |
 |---|---|
 | fake SLURM, end to end | everything above, including handover, wall clock, host loss, bad node with and without a spare, the fault scan on a pool run, queued-host exclusion updates, failed-start backoff (`tests/pool`) |
-| JUPITER, 130M Megatron, 2-node hosts | back-to-back runs; preempt + requeue in the same allocation (exact-iteration resume); handover of a training run across allocations; idle release |
-| JUPITER, pending | bad node with a spare node, immediate release, the wall-clock stop, `pool_ctl` result reporting (`pool_v2` test) |
+| JUPITER, 130M Megatron, 2-node hosts (2026-10-26/27) | back-to-back runs in one allocation; preempt + requeue in the same allocation, resuming at the exact iteration; handover of a training run across allocations; a bad node excluded, with the next run on the spare node of the same allocation; a host that cannot fit the queue released at once; its replacement's `--exclude` (fleet list + bad node, also in SLURM's `ExcNodeList`); the wall-clock stop with `B:USR1` (graceful, host COMPLETED, resumed on the next host at iteration 1446 after 1445); `pool_ctl` cancel refusal and result reporting; `close` → drain → monitor exit; provenance with and without git; a monitor swap to new code with no host interruption. Every host ended COMPLETED, none TIMEOUT. |
 | not yet run | anything above 2 nodes; a real node failure with `--no-kill`; MareNostrum. Run a 32-64-node pilot with a forced handover, a deliberate `scancel` of a host and a crashing run before going to 512 nodes. |
