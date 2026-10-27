@@ -489,6 +489,55 @@ def test_a_singleton_job_moves_to_the_larger_pool_and_never_runs_twice(pool):
         mon.wait(timeout=20)
 
 
+def test_packing_runs_side_by_side_on_disjoint_nodes(pool):
+    """max_runs_per_host: several small jobs share one allocation at the same time, each on its
+    own nodes; a run that does not fit waits for capacity; preempting one leaves the others."""
+    pool.create_pool(*FAST, "job.pool_host.max_runs_per_host=3", "slurm.sbatch.nodes=3")
+    for tag in ("a", "b", "c"):
+        pool.enqueue(tag, "aux.iters=250", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.enqueue("d", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.start_monitor()
+
+    def running():
+        out = {}
+        for rd in sorted((pool.pool_dir / "runs").iterdir()):
+            st = rd / "started"
+            if st.exists() and not (rd / "rc").exists():
+                nodes = [
+                    ln.split("=", 1)[1]
+                    for ln in st.read_text().splitlines()
+                    if ln.startswith("nodes=")
+                ]
+                out[rd.name] = nodes[0] if nodes else ""
+        return out
+
+    three = pool.wait_for(
+        lambda: (lambda r: r if len(r) == 3 else None)(running()), 60, "3 runs at once"
+    )
+    assert len(set(three.values())) == 3, f"the packed runs share a node: {three}"
+    assert not pool.runs_of("dummy_d") or all(
+        not (pool.pool_dir / "runs" / r / "started").exists() for r in pool.runs_of("dummy_d")
+    ), "a 4th run must wait for capacity"
+    for _ in range(10):  # never more than 3, never a shared node
+        r = running()
+        assert len(r) <= 3 and len(set(r.values())) == len(r), r
+        time.sleep(0.3)
+    b = pool.runs_of("dummy_b")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(b)) or [0]) >= 10, 60, "b trains")
+    pool.ctl("preempt", b)
+    pool.wait_for(lambda: pool.run_state(b).status == "PREEMPTED", 60, "b preempted")
+    others = [pool.runs_of(f"dummy_{t}")[0] for t in ("a", "c")]
+    states = {
+        r: (pool.run_state(r).status, (pool.pool_dir / "runs" / r / "rc").exists()) for r in others
+    }
+    assert all(not rc for _, rc in states.values()), f"a / c keep running: {states}"
+    for name in ("dummy_a", "dummy_b", "dummy_c", "dummy_d"):
+        pool.wait_for(
+            lambda n=name: pool.record(n)["runtime"]["final_state"] == "finished", 120, name
+        )
+    assert len(pool.fake_jobs()) == 1, "all of it in ONE allocation"
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,

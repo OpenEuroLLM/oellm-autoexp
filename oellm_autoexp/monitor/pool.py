@@ -173,6 +173,9 @@ class PoolHostConfig:
     # a pool that is used in bursts (speed tests) otherwise loses its monitor when it runs empty,
     # and the next `run_autoexp --pool --no-monitor` enqueue sits unscheduled
     keep_monitor: bool = False
+    # runs a host executes side by side on disjoint nodes (packing small jobs into one
+    # allocation, e.g. three 8-node runs in a 33-node host); 1 = one run per host
+    max_runs_per_host: int = 1
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -330,6 +333,7 @@ class PoolLayout:
                 "POOL_PREEMPT_GRACE_S": int(round(cfg.preempt_grace_s)),
                 "POOL_RANK_PATTERN": cfg.rank_pattern,
                 "POOL_ADOPT_STOP_MARGIN_S": int(round(cfg.adopt_stop_margin_s)),
+                "POOL_MAX_RUNS_PER_HOST": max(1, int(cfg.max_runs_per_host)),
             },
         )
 
@@ -1128,19 +1132,31 @@ class PoolManager:
         def fits(host: HostView, nodes: int) -> bool:
             return nodes <= host.usable_nodes and host.remaining_s(now) >= cfg.min_remaining_s
 
-        # 4. assign: newest idle host first (after a handover that is the new one)
+        # 4. assign: newest host first (after a handover that is the new one), as many runs
+        #    as its free nodes and max_runs_per_host allow (packing; default one per host)
+        def run_nodes(rid: str) -> int:
+            try:
+                return int(read_env_file(layout.run_dir(rid) / "meta.env").get("NODES", "1") or 1)
+            except ValueError:
+                return 1
+
+        max_runs = max(1, int(cfg.max_runs_per_host))
         for host in sorted(live, key=lambda h: -h.start_ts):
-            if host.hid in busy:
-                continue
-            for item in queued:
+            active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
+            free = host.usable_nodes - sum(run_nodes(r) for r in active)
+            for item in list(queued):
+                if len(active) >= max_runs:
+                    break
                 _, _, rid, nodes, singleton, job_id = item
-                if fits(host, nodes):
+                if nodes <= free and host.remaining_s(now) >= cfg.min_remaining_s:
                     if singleton and not self._claim_singleton(
                         layout, singleton, rid, nodes, job_id
                     ):
                         continue
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
+                    active.append(rid)
+                    free -= nodes
                     queued.remove(item)
                     LOGGER.info(
                         "[pool %s] assigned %s to %s (job %s)",
@@ -1149,7 +1165,6 @@ class PoolManager:
                         host.hid,
                         host.record.runtime.runtime_job_id,
                     )
-                    break
 
         # 5. release idle hosts that have had nothing to do for idle_exit_s -- or
         #    at once when there IS queued work and this host can run none of it:

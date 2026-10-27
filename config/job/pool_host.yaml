@@ -43,5 +43,7 @@ pool_host:
   adopt_hook_timeout_s: 90
   # hosts the pool submits itself (-1: unlimited; 0: only adopted jobs)
   max_own_hosts: -1
+  # runs packed side by side on one host (disjoint nodes); 1 = one run at a time
+  max_runs_per_host: 1
   # monitor stays up while the pool is open, also without work (pools used in bursts)
   keep_monitor: false
