@@ -8,6 +8,8 @@
 #   ... [host]                   the host's supervisor log instead of the run's
 #   ... [err]                    a plain (non-pool) job's StdErr
 #   ... [path]                   only print the log path (no less)
+#   ... [<k>|<name part>]        a host running several packed runs: the k-th (1 = first) or the
+#                                one whose job name contains <name part> (default: the first)
 #
 # An idle host shows its most recent run. A job that is not a pool host shows its own StdOut, as
 # showlog.sh does. Pools are found under $POOLS_ROOT (default: the hybrid_nucleus pools dir).
@@ -15,14 +17,36 @@
 POOLS_ROOT=${POOLS_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/pools}
 n=$1
 shift
-mode="" only_path=""
-for opt in "$@"; do # options in any order: host | err, and path
+mode="" only_path="" pick=""
+for opt in "$@"; do # options in any order: host | err, path, and a packed-run selector
   case $opt in
     path) only_path=1 ;;
     host | err) mode=$opt ;;
-    *) echo "unknown option $opt (host, err, path)" >&2; exit 1 ;;
+    *) pick=$opt ;;
   esac
 done
+
+run_name() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$1/runs/$2/run.json" 2>/dev/null; }
+
+pick_run() { # pick_run <pool dir> <rid,rid,...> -> one rid (by $pick: index or name part)
+  local i=0 r chosen="" rids
+  IFS=, read -r -a rids <<<"$2"
+  if [ "${#rids[@]}" -gt 1 ]; then
+    echo "packed runs on this host:" >&2
+    for r in "${rids[@]}"; do i=$((i + 1)); echo "  $i. $r  $(run_name "$1" "$r")" >&2; done
+  fi
+  if [ -z "$pick" ]; then
+    chosen=${rids[0]}
+  elif [[ $pick =~ ^[0-9]+$ ]]; then
+    chosen=${rids[$((pick - 1))]:-}
+  else
+    for r in "${rids[@]}"; do
+      if [[ "$(run_name "$1" "$r")" == *"$pick"* ]]; then chosen=$r; break; fi
+    done
+  fi
+  [ -n "$chosen" ] || { echo "no packed run matches '$pick'" >&2; return 1; }
+  echo "$chosen"
+}
 
 view() { # view <file>
   echo "$1"
@@ -106,7 +130,7 @@ PY
 }
 
 if [ -z "$n" ]; then
-  sed -n '2,13p' "$0"
+  sed -n '2,15p' "$0"
   exit 1
 fi
 
@@ -134,9 +158,16 @@ fi
 echo "job $slurmid"
 
 # the pool host (or adopted job) with this SLURM job id
-hostdir=$(grep -lx "SLURM_JOB_ID=$slurmid" "$POOLS_ROOT"/*/hosts/*/info.env 2>/dev/null | head -n 1)
+# (one allocation can be a host of two pools: an attached one (pool_ctl attach) and its idle
+# original; take the busy one, else one that has not exited)
+hostdir="" fallback=""
+for f in $(grep -lx "SLURM_JOB_ID=$slurmid" "$POOLS_ROOT"/*/hosts/*/info.env 2>/dev/null); do
+  d=$(dirname "$f")
+  if read -r st _ <"$d/state" 2>/dev/null && [ "$st" = busy ]; then hostdir=$d; break; fi
+  [ -e "$d/exited" ] || [ -n "$fallback" ] || fallback=$d
+done
+hostdir=${hostdir:-$fallback}
 if [ -n "$hostdir" ]; then
-  hostdir=$(dirname "$hostdir")
   pool=$(dirname "$(dirname "$hostdir")")
   hid=$(basename "$hostdir")
   schedule "$pool"
@@ -153,7 +184,8 @@ if [ -n "$hostdir" ]; then
     echo "pool $(basename "$pool"), host $hid is ${what:-?}; its last run: ${rid:-none}"
     [ -z "$rid" ] && exit 1
   else
-    echo "pool $(basename "$pool"), host $hid, running $rid ($(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$pool/runs/$rid/run.json" 2>/dev/null))"
+    rid=$(pick_run "$pool" "$rid") || exit 1
+    echo "pool $(basename "$pool"), host $hid, running $rid ($(run_name "$pool" "$rid"))"
   fi
   view "$(run_log "$pool" "$rid")"
   exit 0
