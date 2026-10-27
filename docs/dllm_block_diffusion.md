@@ -18,10 +18,11 @@ For a training sequence of effective length `L` (Megatron `seq_length = L + 1`) 
   copies.
 - Attention (FlexAttention BlockMask): a noisy block sees its own noisy block (bidirectional) and
   the clean blocks before it; a clean block sees clean blocks up to and including itself. With
-  `--bd-doc-mask 1` attention stays inside a document (EOD = `<|endoftext|>`).
-- Loss: only noisy positions predict `x0`. Token shift 0 predicts `x0[i]` from position `i`;
-  token shift 1 predicts it from position `i - 1` (and from the last clean token of the previous
-  block at a block start). The ELBO weighting divides each block's cross entropy by its exact
+  `--bd-doc-mask 1` clean keys outside the query's document are hidden (EOD = `<|endoftext|>`); a
+  noisy query uses the document of its block start and keeps its whole noisy block (D-039).
+- Loss: the masked positions of the noisy copy are the targets. Token shift 0 predicts `x0[i]`
+  from noisy position `i`; token shift 1 from position `i - 1` (at a block start, the last clean
+  token of the previous block). The ELBO weighting divides each block's cross entropy by its exact
   masked fraction; `uniform` uses plain masked cross entropy.
 - Validation: a deterministic estimator (`--bd-val-seed`) reports `val nelbo bits/token`, an
   upper bound of the NLL that is comparable across block sizes and with AR NLL.
@@ -114,7 +115,7 @@ output directory that already holds a converted checkpoint. The parity check
 bar) and compares AR-mode logits with HF (top-1 >= 99 percent, mean KL <= 1e-3 nats), checks
 invariant I3 (mean and maximum per-token cross-entropy difference <= 2e-3 and 5e-2 nats) and the
 nld clean stream against HF. Qwen3 0.6B (TP 1 and 2), 1.7B, 4B and 8B pass with top-1 >= 0.9995
-and KL <= 4e-7. The steps by hand:
+and KL <= 4.1e-7. The steps by hand:
 
 ```bash
 python -m oellm_autoexp.dllm.convert.hf_qwen3_to_megadlm --hf Qwen/Qwen3-0.6B-Base \
@@ -165,7 +166,7 @@ per size and method (`qwen3_<size>_<method>.yaml`, 0.6B to 8B):
 | `sdar` | B = 4 |
 | `bd3lm` | B = 4, clipped noise t in [0.45, 0.95] |
 | `fastdllm_v2` | B = 32, token shift 1, complementary masks |
-| `llada2` | block-size schedule 2 -> 2048 (full sequence) -> 32, complementary masks |
+| `llada2` | block-size schedule 2, 4, 16, 64, 256, 2048 (full sequence), then 32; complementary masks |
 | `mdlm` | B = L = 2048 (masked diffusion over the whole sequence; the clean copy is unused) |
 | `nld` | hybrid AR + 0.3 x block diffusion, B = 32, 20 percent AR-only |
 
@@ -175,10 +176,10 @@ With complementary masks, the global and micro batch are halved (same FLOPs per 
 
 | Metric | Tool |
 |---|---|
-| M1 NELBO bits/token (AR: exact NLL) on 1000 held-out sequences | `python -m oellm_autoexp.dllm.eval.eval_nelbo` |
+| M1 NELBO bits/token (AR: exact NLL) on 1000 held-out sequences; positions i >= 1 that are not document starts (D-035) | `python -m oellm_autoexp.dllm.eval.eval_nelbo` |
 | AR-mode M1 of nld runs (exact NLL of the clean stream) | `eval_nelbo --objective ar`, `<run>.m1_ar.json` |
 | M2 GSM8K 4-shot accuracy, static and dynamic@0.9 decoding | `python -m oellm_autoexp.dllm.eval.eval_gsm8k` |
-| M3 tokens per forward at dynamic@0.9 | `eval_gsm8k` output |
+| M3 TPF_decode (generated tokens per decode forward pass) at dynamic@0.9 | `eval_gsm8k` output |
 | M4 training tokens/s/GPU | `bd throughput` lines in the training log |
 
 `eval_qwen3.yaml` runs export, M1 and GSM8K for one model on one GPU (`eval/eval_chain.sh`); the
@@ -186,7 +187,8 @@ With complementary masks, the global and micro batch are halved (same FLOPs per 
 `$OUTPUT_DIR/dllm-ablations/eval` as `<run>.m1.json` and `<run>.gsm8k_<mode>.json`. Tier jobs run
 the same chain in their own allocation after the last iteration (`train_then_eval.sh`, one GPU
 per task). `EVAL_DTYPE=float32` runs both evaluators in float32 (used for the GPU check of I8, which
-bf16 kernel rounding breaks); `EVAL_CLEAN_ATTENTION` overrides the clean attention of the export:
+bf16 kernel rounding breaks); `EVAL_CLEAN_ATTENTION` sets the clean attention of the export (for a
+trained checkpoint it must match its objective):
 
 ```bash
 PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/eval_qwen3 --submit-and-exit \
@@ -222,7 +224,7 @@ the AR model (and HF Qwen3 in the GPU parity check), and I12 the nld loss reduce
 
 Qwen3-0.6B-Base, 2B tokens of FineWeb-Edu at L = 2048 and lr 1e-4 (tier 0 picked it from 1e-5 to
 3e-4). M1 is the NELBO in bits/token on 1000 held-out windows (AR: exact NLL), M2 the GSM8K 4-shot
-accuracy on 250 problems, M3 the tokens per forward pass at dynamic@0.9. The base model scores M1
+accuracy on 250 problems, M3 the TPF_decode at dynamic@0.9. The base model scores M1
 3.809 and GSM8K 52.4 with AR greedy decoding.
 
 | Arm | M1 | M2 static | M2 dyn@0.9 | M3 |
