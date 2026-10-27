@@ -1034,12 +1034,17 @@ class OellmFLALayer(nn.Module):
         from fla.models.utils import Cache
 
         cache = state if state is not None else Cache()
-        out, _, cache = self.layer(
-            hidden_states=hidden_states,
-            attention_mask=attention_mask,
-            past_key_values=cache,
-            use_cache=True,
-        )
+        # Some of the fork's Triton kernels launch on the CURRENT device, not their inputs'. With
+        # the model spread over GPUs (device_map) that is another GPU: a "cannot be accessed from
+        # Triton" error, or -- once peer access is on -- unsynchronized reads of this GPU's memory
+        # (NaN / wrong outputs depending on what ran before). Megatron sets one device per rank.
+        with torch.cuda.device(hidden_states.device) if hidden_states.is_cuda else contextlib.nullcontext():
+            out, _, cache = self.layer(
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                past_key_values=cache,
+                use_cache=True,
+            )
         return out, cache
 
 
