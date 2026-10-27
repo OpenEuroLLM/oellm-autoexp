@@ -1778,6 +1778,8 @@ DOWNSTREAM = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/re
 
 
 LONGCTX = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests_longctx.jsonl"
+# the campaign runs started under the shared log root (scripts/korbi/mn5_autoexp.sh OUTPUT_DIR)
+RUNS_NUCLEUS = "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b"
 
 
 def LONGCTX_S2():  # noqa: N802 - the s2 checkpoints of the long-context comparison
@@ -1788,12 +1790,14 @@ def LONGCTX_S2():  # noqa: N802 - the s2 checkpoints of the long-context compari
             ("kron_polar", "screen5kronpfb_s2", "h5_moe_kron_lr_pfb", arms5kron_pfb("s2")[0][2])]
 
 
-def arms5downstream_any(entries, tasks: str = "", requests: str | None = None):
+def arms5downstream_any(entries, tasks: str = "", requests: str | None = None,
+                        runs_root: str | None = None):
     """arms5downstream for any runs: entries = [(name, src suite, src arm, its training config)];
-    `requests`: another request file than DOWNSTREAM (e.g. the long-context set)."""
+    `requests`: another request file than DOWNSTREAM (e.g. the long-context set); `runs_root`: the
+    runs' root if not RUNS5 (runs started under the hybrid_nucleus log root, from 2026-10-24)."""
     out = []
     for name, suite, arm, kv in entries:
-        src = f"{RUNS5}/{suite}/{arm}"
+        src = f"{runs_root or RUNS5}/{suite}/{arm}"
         env = {"backend.env.DOWNSTREAM_EVAL_FILE": requests or DOWNSTREAM}
         if tasks:
             env["backend.env.DOWNSTREAM_EVAL_TASKS"] = tasks
@@ -2003,6 +2007,14 @@ def write5():
             *[("s2", f"ds5lcldm{tag}", arms5downstream_any(
                 [(n, "screen5ldm2_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
                  for n, _, kv in arms5ldm2_s2()], requests=LONGCTX))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # the GQA rematch (screen5resgqa_s2, user 2026-10-27): plain / mHC-4 x0.25 / x0.125 /
+            # LDM x1 / x2.0 (the authors' implementation under recompute) on the long-context set,
+            # final (cooled) step-4000 checkpoints, 1 node each; plain and with eval-time log-n
+            *[("s2", f"ds5lcresgqa{tag}", arms5downstream_any(
+                [(n, "screen5resgqa_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
+                 for n, _, kv in arms5resgqa("s2")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
               for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
                                                      B + "attention_length_scaling_base": 8192}))],
             ("s1", "screen5udadapt", arms5udadapt("s1")),
