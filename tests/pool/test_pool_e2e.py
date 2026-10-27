@@ -380,6 +380,55 @@ def test_attach_packs_runs_into_a_running_allocation_and_leaves_it_alive(pool, t
     assert _fake_job(pool, jid)["state"] == "RUNNING", "an attached allocation is never cancelled"
 
 
+def test_replacing_an_adopted_supervisor_keeps_the_allocation(pool, tmp_path):
+    """Swapping the supervisor of an idle adopted / attached host for new code: SIGKILL its step
+    and drop its info / alive / state files. The monitor starts a new supervisor into the SAME
+    allocation (never releases or cancels it), and the next run goes there."""
+    import subprocess
+
+    wd = tmp_path / "alloc"
+    wd.mkdir()
+    (wd / "idle.sbatch").write_text(IDLE_ALLOC)
+    jid = subprocess.run(
+        ["sbatch", str(wd / "idle.sbatch")],
+        cwd=wd,
+        env=pool.env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.split()[-1]
+    pool.create_pool(
+        *FAST,
+        "job.pool_host.max_own_hosts=0",
+        "job.pool_host.adopt_stop_margin_s=30",
+        "job.pool_host.idle_exit_s=120",
+    )
+    pool.wait_for(lambda: _fake_job(pool, jid)["state"] == "RUNNING", 30, "the allocation runs")
+    pool.ctl("attach", jid, "--no-wait")
+    pool.start_monitor()
+    hdir = pool.pool_dir / "hosts" / "host001"
+    pool.wait_for(lambda: (hdir / "info.env").exists(), 60, "the first supervisor")
+    first = (hdir / "info.env").read_text()
+    steps = pool.slurm("squeue", "-h", "-s", "-j", jid, "-o", "%i %j")
+    sup = [ln.split()[0] for ln in steps.splitlines() if ln.split()[1:] == ["pool-supervisor"]]
+    assert sup, steps
+    for name in ("info.env", "alive", "state"):
+        (hdir / name).unlink(missing_ok=True)
+    pool.slurm("scancel", "--signal=KILL", sup[0])
+    pool.wait_for(
+        lambda: (hdir / "info.env").exists(), 240, "a new supervisor in the same allocation"
+    )
+    assert _fake_job(pool, jid)["state"] == "RUNNING"
+    assert not (pool.pool_dir / "adopt" / f"{jid}.release").exists(), "the allocation was released"
+    assert (hdir / "info.env").read_text() != first
+    pool.enqueue("after", "aux.iters=10", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_after"), 60, "the run")[0]
+    pool.wait_for(
+        lambda: pool.record("dummy_after")["runtime"]["final_state"] == "finished", 90, "run"
+    )
+    assert pool.run_state(rid).started["job"] == jid
+
+
 def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
     """The second, independent fail-safe: registered for adoption but the hook is missing ->
     the monitor cancels the job adopt_hook_timeout_s after it starts."""
