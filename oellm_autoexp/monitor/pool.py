@@ -51,6 +51,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -1116,6 +1117,8 @@ class PoolManager:
                         float(md.get("pool_enqueued_ts") or 0.0),
                         rid,
                         int(meta.get("NODES", "1") or 1),
+                        str(md.get("pool_singleton") or ""),
+                        record.job_id,
                     )
                 )
         queued.sort()
@@ -1128,8 +1131,12 @@ class PoolManager:
             if host.hid in busy:
                 continue
             for item in queued:
-                _, _, rid, nodes = item
+                _, _, rid, nodes, singleton, job_id = item
                 if fits(host, nodes):
+                    if singleton and not self._claim_singleton(
+                        layout, singleton, rid, nodes, job_id
+                    ):
+                        continue
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
                     queued.remove(item)
@@ -1329,6 +1336,77 @@ class PoolManager:
                 self._cancel_host_record(loop, host)
                 host.retiring = True
         return missing, create_account
+
+    # --- one run per job across pools (job.metadata.pool_singleton) ----------
+    @staticmethod
+    def _singleton_dir(layout: PoolLayout, key: str) -> Path:
+        # next to the pools (every pool of a cluster lives under one root): shared by the
+        # monitors of all of them
+        return layout.root.parent / "_singletons" / _sanitize(key)
+
+    @staticmethod
+    def _singleton_holder(d: Path) -> dict | None:
+        """The run that holds the key, while it has not ended (no rc), else None."""
+        try:
+            holder = json.loads((d / "holder.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        rd = Path(holder.get("pool", "")) / "runs" / str(holder.get("rid", ""))
+        if not rd.is_dir() or (rd / "rc").exists():
+            return None
+        return holder
+
+    def _claim_singleton(
+        self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str
+    ) -> bool:
+        """May run `rid` (`nodes` nodes) of the singleton job `key` start in this pool now?
+
+        One run per key across every pool: the key is free (no holder, or its run ended), or
+        held by this very run. A holder in ANOTHER pool on fewer nodes is superseded -- its job
+        is cancelled there (graceful stop with a save, the job does not come back) and this run
+        starts once the holder's run has ended; on as many or more nodes the holder keeps it.
+        Checked and claimed under a mkdir lock (atomic on GPFS), so two monitors never both
+        start the job."""
+        d = self._singleton_dir(layout, key)
+        d.mkdir(parents=True, exist_ok=True)
+        lock = d / "lock"
+        for _ in range(50):
+            try:
+                lock.mkdir()
+                break
+            except FileExistsError:
+                if time.time() - (_mtime(lock) or time.time()) > 120:  # a monitor died holding it
+                    shutil.rmtree(lock, ignore_errors=True)
+                time.sleep(0.2)
+        else:
+            return False
+        try:
+            holder = self._singleton_holder(d)
+            me = {"pool": str(layout.root), "rid": rid}
+            if holder is None or {k: holder.get(k) for k in me} == me:
+                _atomic_write(
+                    d / "holder.json",
+                    json.dumps({**me, "nodes": nodes, "job_id": job_id, "ts": time.time()}),
+                )
+                return True
+            if holder.get("pool") != str(layout.root) and nodes > int(holder.get("nodes", 0)):
+                if not holder.get("superseded"):
+                    LOGGER.info(
+                        "[pool %s] singleton %s: superseding run %s in %s (%s nodes) with %s (%d nodes)",
+                        layout.root.name,
+                        key,
+                        holder["rid"],
+                        holder["pool"],
+                        holder.get("nodes"),
+                        rid,
+                        nodes,
+                    )
+                    submit_request(holder["pool"], "cancel", targets=[holder.get("job_id", "")])
+                    holder["superseded"] = time.time()
+                    _atomic_write(d / "holder.json", json.dumps(holder))
+            return False
+        finally:
+            shutil.rmtree(lock, ignore_errors=True)
 
     # --- adopted hosts ------------------------------------------------------
     def _adopt(self, loop: MonitorLoop, layout: PoolLayout, state: dict, request: dict) -> str:

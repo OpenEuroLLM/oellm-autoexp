@@ -347,6 +347,108 @@ def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
     assert "hook never engaged" in pool.monitor_log.read_text()
 
 
+def test_a_singleton_job_moves_to_the_larger_pool_and_never_runs_twice(pool):
+    """job.metadata.pool_singleton across two pools (two monitors): the job runs on 1 node in
+    the small pool; when the large pool gets a host, the small pool's run is superseded (its
+    job cancelled after a graceful save) and the job continues on 2 nodes in the large pool from
+    that checkpoint. At no time do two runs of the job run."""
+    import json as _json
+    import subprocess
+    import sys
+
+    big = pool.root / "pool_big"
+    pool.create_pool(*FAST)
+    pool.autoexp(
+        "--no-monitor",
+        "--config-name",
+        "experiments/tests/pool_local_host",
+        *FAST,
+        "job.name=localpool_big",
+        f"job.base_output_dir={big}",
+        "slurm.sbatch.nodes=3",
+    )
+    single = "+job.metadata.pool_singleton=sjob"
+    pool.enqueue("s", "aux.iters=400", "aux.tick=0.1", "slurm.sbatch.nodes=1", single)
+    pool.autoexp(
+        "--no-monitor",
+        "--pool",
+        str(big),
+        "--config-name",
+        "experiments/tests/pool_local_dummy",
+        "aux.tag=s",
+        "aux.iters=400",
+        "aux.tick=0.1",
+        "slurm.sbatch.nodes=2",
+        single,
+    )
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_s"), 30, "the small pool's run")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 20, 60, "20 iterations")
+    big_session = _json.loads((big / "pool.json").read_text())["session_dir"]
+    env = {**pool.env, "FAKESLURM_HOLD": "1"}
+    mon = subprocess.Popen(
+        [
+            sys.executable,
+            "scripts/monitor_autoexp.py",
+            "--session-dir",
+            big_session,
+            "--poll-interval",
+            "1",
+            "--force",
+        ],
+        cwd=pool.env["PWD"],
+        env=env,
+        stdout=open(pool.root / "monitor_big.out", "a"),
+        stderr=subprocess.STDOUT,
+    )
+    try:
+
+        def big_runs():
+            return (
+                sorted(p.name for p in (big / "runs").iterdir()) if (big / "runs").exists() else []
+            )
+
+        pool.wait_for(
+            lambda: [j for j in pool.fake_jobs() if j["name"].startswith("localpool_big")],
+            30,
+            "the large pool's host",
+        )
+        host = next(j for j in pool.fake_jobs() if j["name"].startswith("localpool_big"))
+        pool.release(host["id"])
+
+        def running():
+            out = []
+            for root in (pool.pool_dir, big):
+                for rd in (root / "runs").iterdir() if (root / "runs").exists() else []:
+                    if (rd / "started").exists() and not (rd / "rc").exists():
+                        out.append(rd)
+            return out
+
+        deadline = time.time() + 120
+        moved = None
+        while time.time() < deadline and moved is None:
+            assert len(running()) <= 1, f"two runs of the singleton at once: {running()}"
+            for rid in big_runs():
+                if (big / "runs" / rid / "started").exists():
+                    moved = rid
+            time.sleep(0.2)
+        assert moved, "the job never moved to the large pool"
+        assert pool.run_state(first).status == "CANCELLED"
+        saved = max(_iterations(pool.run_log(first)))
+        log = (big / "runs" / moved / "run.json").read_text()
+        big_log = Path(_json.loads(log)["log"])
+        pool.wait_for(
+            lambda: big_log.exists() and _resumed_from(big_log.read_text()) is not None,
+            60,
+            "resume",
+        )
+        assert _resumed_from(big_log.read_text()) == saved
+        assert pool.record("dummy_s")["runtime"]["final_state"] == "cancelled"
+    finally:
+        mon.terminate()
+        mon.wait(timeout=20)
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,
