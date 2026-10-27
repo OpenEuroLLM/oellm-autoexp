@@ -100,7 +100,10 @@ signal_step() { # signal_step <SIG> <rid>
 graceful_stop() { # graceful_stop <rid> <nodelist> <nnodes> [<signal>]
   # <signal>: the run's STOP_SIGNAL (meta.env), the job's own Megatron --exit-signal
   local out n sig=${4:-TERM}
-  out=$(POOL_STOP_SIG="$sig" srun --overlap --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" \
+  # --mem=0: a full step holds all of a node's memory where SLURM allots memory per CPU
+  # (MareNostrum 5: "Memory required by task is not available" for any explicit request);
+  # --mem=0 is the one an --overlap step may share (phase-0 probe, 2026-10-27)
+  out=$(POOL_STOP_SIG="$sig" srun --overlap --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" \
     --ntasks-per-node=1 --cpus-per-task=1 --job-name="relay-$1" \
     bash -c 'n=0; for a in $(pgrep -u "$(id -u)" -f "$POOL_RANK_PATTERN"); do for w in $(pgrep -P "$a"); do kill -"$POOL_STOP_SIG" "$w" && n=$((n+1)); done; done; echo "[relay] $(hostname): SIG$POOL_STOP_SIG to $n rank process(es)"' 2>&1)
   printf '%s\n' "$out"

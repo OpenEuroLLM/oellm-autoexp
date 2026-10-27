@@ -1,0 +1,37 @@
+# @package _global_
+# MareNostrum 5 smoke pool (docs/sub_slurm_jobs_operations.md): one 2-node host at a time on
+# the dev queue (acc_debug: one job per user, 2 h, so no successor), the shared bad-node list.
+# Exercises back-to-back runs, preempt + requeue in the same allocation, a fix enqueued from a
+# new snapshot, and the wall-clock stop (B:USR1 10 min before the 50-min wall).
+#   python scripts/run_autoexp.py --config-name experiments/korbi/pool/mn5_pool_n2   # = its monitor
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_n2
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 0
+    min_hosts: 0
+    handover: false
+    idle_exit_s: 900
+    monitor_dead_exit_s: 1200
+    min_remaining_s: 900
+    stop_grace_s: 300
+    preempt_grace_s: 900
+    poll_s: 10
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:50:00"
+    qos: acc_debug
+    signal: "B:USR1@600"
+
+index: 0
+stage: ""

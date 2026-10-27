@@ -1,0 +1,111 @@
+# @package _global_
+# Pool smoke job on MareNostrum 5 (docs/sub_slurm_jobs_operations.md): the s1 final recipe
+# (screen5ds41_s1's ref arm: CKDA attention-first + mHC-4, MoE, classical Muown, untied, clamp 10)
+# with grouped-query attention, on 2 nodes, Megatron --exit-signal SIGUSR2 as the production runs
+# (the pool must stop it with SIGUSR2), a rolling checkpoint every 50 steps and a persistent one
+# every 200. The schedule is screen5's (7629 iterations) only to reuse its data index: the pool
+# stops the run, not the schedule. Enqueue into a pool whose hosts use the same qos:
+#   python scripts/run_autoexp.py --no-monitor --pool <pool> --config-name experiments/korbi/pool/mn5_s1_pool_smoke \
+#       aux.tag=a slurm.sbatch.qos=acc_debug
+defaults:
+  - ../campaign_3b/base_train_mn5
+  - _self_
+
+aux:
+  suite: pool_smoke
+  family: s1
+  tag: a
+  arm: ${aux.tag}
+  tokens: 4000000000.0
+  gbs: 64
+  experiment_group: pool_tests
+  pattern: '*ELELELELELE*ELELELELELE'
+  seq: 8192
+backend:
+  megatron:
+    hidden_size: 768
+    ffn_hidden_size: 2048
+    eval_interval: 500
+    eval_iters: 5
+    num_attention_heads: 6
+    num_query_groups: 2
+    kv_channels: 128
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 6
+    linear_num_value_heads: 6
+    experimental_attention_variant: complex_kda
+    linear_beta_max: 2.0
+    linear_gate_activation: signed_sigmoid2
+    linear_gate_init_style: shipped
+    linear_output_gate: lowrank
+    linear_drop_qkv_silu: true
+    position_embedding_type: none
+    attention_output_gate: true
+    exclusive_self_attention: true
+    num_experts: 144
+    moe_ffn_hidden_size: 512
+    moe_router_topk: 3
+    moe_shared_expert_intermediate_size: 512
+    moe_grouped_gemm: true
+    moe_token_dispatcher_type: alltoall
+    moe_router_dtype: fp32
+    moe_permute_fusion: true
+    expert_model_parallel_size: 4
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.0001
+    moe_per_layer_logging: true
+    moe_expert_viability_metrics: true
+    cuda_graph_modules:
+    - moe_router
+    - moe_preprocess
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 0.001
+    micro_batch_size: 1
+    optimizer: muown_classical
+    lr: 0.004
+    min_lr: 0.0004
+    lr_warmup_iters: 0
+    exit_interval: null
+    per_split_data_args_path: null
+    data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
+    split: 998,2,0
+    seq_length: 8192
+    max_position_embeddings: 8192
+    dataloader_inter_document_masking: true
+    num_workers: 8
+    dataloader_prefetch_factor: 4
+    manual_gc: true
+    manual_gc_interval: 10
+    mmap_bin_files: false
+    global_batch_size: 64
+    train_iters: 7629
+    cuda_graph_impl: local
+    mhc: true
+    mhc_expansion_rate: 4
+    residual_mixer_lr_mult: 0.25
+    untie_embeddings_and_output_weights: true
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_decay_iters: 7629
+    lr_wsd_decay_iters: 1500
+    overlap_param_gather: false
+    activation_func_clamp_value: 10.0
+    group_query_attention: true
+    exit_signal_handler: true
+    exit_signal: SIGUSR2
+    data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+    save_interval: 200
+    non_persistent_save_interval: 50
+  env:
+    ANGULAR_MUOWN_COMPACT_CKPT: '1'
+job:
+  name: pool_smoke_s1_${aux.tag}
+  est_step_time_s: 2.5
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pool_tests/${job.name}
+  est_steps: 600
+slurm:
+  sbatch:
+    time: 01:00:00
+    nodes: 2
