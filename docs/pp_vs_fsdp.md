@@ -301,6 +301,22 @@ whole model, dense + MoE patterns).
 - M in bf16 (tried): forward reads within 7e-3, but the unwound gradients are off by up to 100 %
   (the subtraction loses the state): M stays fp32 in this mode.
 
+### LDM under full recompute with the CuTe kernels (2026-10-27, l1: 8 nodes, FSDP + MoonEP, double buffer)
+
+The authors' implementation (davidgonmar/ldm-megatron-recompute; Megatron a6ac93843, cute_kernels
+c756eb0): the per-edge records travel in the residual stream like mHC's streams, recomputed layers
+read from the running state, the backward unwinds M by subtraction and P by addition from the FP32
+covariance (no inverse; the torch unwind's closed-form inverse amplifies the rounding of M by
+1.8-5.4x per window). Any layers per recompute chunk.
+
+| arm (LDM K 8, mixer lr x1) | tok/s/GPU | TFLOP/s | mem | vs mHC-4 |
+|---|---:|---:|---:|---:|
+| mHC-4 (e_db, same launch) | 7,520 | 128 | 0.80 | 100 % |
+| **2 layers per chunk, mbs 4** | **6,890** | **117** | 0.96 | **92 %** |
+| 1 layer per chunk, mbs 4 | 6,714 | 114 | 0.92 | 89 % |
+| 2 layers per chunk, mbs 2 | 6,400 | 109 | 0.69 | 85 % |
+| (torch unwind v2, mbs 4, e11g) | 6,142 | | 0.90 | 81 % |
+
 ### Full model at 32 nodes (2026-10-24, g22: 216 experts + 40B Engram, mHC-4, muown_classical, gbs 4096 x 16k, mbs 4)
 
 | arm | tok/s/GPU | TFLOP/s | mem |

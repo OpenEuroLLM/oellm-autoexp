@@ -3033,6 +3033,21 @@ emerge at size):
   - Estimate: ~110 (s1) + ~215 (s2) GPU-h.
   - Swap the LDM implementation in `gen_screen.LDM_REMATCH` when the PR lands. The long-context set
     then runs on the final checkpoints.
+- **Rematch updated and submitted (user 2026-10-27; arrays 48115308 s1 / 48115309 s2):**
+  - LDM on the authors' implementation under full recompute (davidgonmar/ldm-megatron-recompute:
+    Megatron a6ac93843, cute_kernels c756eb0 on branch `ldm-recompute`): the CuTe kernels unchanged,
+    the per-edge records carried in the residual stream, recomputed layers read from the running
+    state, M unwound by subtraction and P by addition from the FP32 covariance -- no inverse.
+    `depth_memory_unwind`, full uniform recompute with 2 layers per chunk; defaults fp32
+    covariance, sites all, window 4. All 14 of the authors' tests pass on H100.
+  - Arms: plain / mHC-4 x0.25 / x0.125 / **LDM x1 (the authors)** / LDM x2.0 (the s1 sweep's optimum
+    on the Adam-based screens: -0.068 vs -0.061 at x1). Estimate ~136 (s1) + ~269 (s2) GPU-h.
+  - Speed at 8 nodes (FSDP + MoonEP, mbs 4, suite l1): LDM 6,890 tok/s/GPU = 92 % of mHC-4's 7,520
+    (the earlier torch unwind: 6,142 = 81 %), memory 0.96 vs 0.80.
+  - The long-context set (`ds5lcresgqa(logn)_s2`, 1 node per arm) runs on the s2 step-4000
+    checkpoints once the rematch monitor ends (`monitor_logs/resgqa_eval_chain.sh` on MN5).
+  - Note: the factor multiplies the main lr. In production (Muown lr 8.5e-4) x1 trains LDM's Adam
+    parameters at 8.5e-4, ~10x below the 8e-3 that won the Adam-based s1 sweep.
 
 **muown_classical on Megatron-FSDP vs the distributed optimizer** (screen5fsdpeq*; s1 final recipe,
 2 nodes, EP4, gbs 64 × 8k, constant lr, same seed and data; 2 runs per path):
