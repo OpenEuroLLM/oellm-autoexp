@@ -1753,6 +1753,18 @@ def ckpt_offload():
         arm(f"e_db_ldm8_unw_m{mbsz}", f"LDM K 8 unwind, FSDP + MoonEP, double buffer, mbs {mbsz}",
             *e_base, dbuf, sovl, unw, {B + "micro_batch_size": mbsz,
                                        "aux.array_tag": f"_e_db_ldm8_unw_m{mbsz}"})
+    # e13 (user 2026-10-27): LDM under full recompute with the CuTe kernels (davidgonmar/
+    # ldm-megatron-recompute, Megatron a6ac93843 + cute_kernels c756eb0): the per-edge records in
+    # the stream, recomputed layers read from the running state, no inverse, any layers per chunk;
+    # the mixer at lr x1 (the LDM authors). There: 17.0 s / step on 4x B200, as mHC-4.
+    rec = {**ldm, B + "depth_memory_segments": False, B + "depth_memory_unwind": True,
+           B + "residual_mixer_lr_mult": 1.0}
+    for rn, mbsz in ((2, 4), (2, 2), (1, 4)):
+        arm(f"e13_ldm8_rec_rn{rn}_m{mbsz}",
+            f"LDM K 8 CuTe under recompute ({rn} layers per chunk), FSDP + MoonEP, double buffer, "
+            f"mbs {mbsz}", *e_base, dbuf, sovl, rec,
+            {B + "recompute_num_layers": rn, B + "micro_batch_size": mbsz,
+             "aux.array_tag": f"_e13_ldm8_rec_rn{rn}_m{mbsz}"})
     # e12 (user 2026-10-24): the 32-node full model -- ~50B-A2.7B (216 experts, top 5; 0.23B per
     # expert slot over 48 MoE layers + ~2B dense) + 20B Engram (2 layers before blocks 1 and 24,
     # 9.77M rows x 16 tables x 64), attention first 7:1, mHC-4, muown_classical, FSDP + MoonEP,
