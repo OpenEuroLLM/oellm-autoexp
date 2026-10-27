@@ -327,6 +327,59 @@ def test_an_adopted_queued_job_runs_pool_work_and_never_its_own(pool, tmp_path):
     assert (pool.pool_dir / "adopt" / f"{jid}.started").exists()
 
 
+IDLE_ALLOC = """#!/bin/bash
+#SBATCH --job-name=idle_alloc
+#SBATCH --nodes=2
+#SBATCH --time=00:10:00
+#SBATCH --account=dev
+sleep 600
+"""
+
+
+def test_attach_packs_runs_into_a_running_allocation_and_leaves_it_alive(pool, tmp_path):
+    """pool_ctl attach: a RUNNING allocation with nothing of its own on its nodes (here a sleeping
+    batch job, on MN5 an idle host of another pool) becomes a host of this pool without a hook; the
+    pool's runs go there side by side, and when the pool is done the allocation is left running."""
+    import subprocess
+
+    wd = tmp_path / "alloc"
+    wd.mkdir()
+    (wd / "idle.sbatch").write_text(IDLE_ALLOC)
+    jid = subprocess.run(
+        ["sbatch", str(wd / "idle.sbatch")],
+        cwd=wd,
+        env=pool.env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.split()[-1]
+    pool.create_pool(
+        *FAST,
+        "job.pool_host.max_runs_per_host=2",
+        "job.pool_host.max_own_hosts=0",
+        "job.pool_host.adopt_stop_margin_s=30",
+    )
+    pool.wait_for(lambda: _fake_job(pool, jid)["state"] == "RUNNING", 30, "the allocation runs")
+    print(pool.ctl("attach", jid, "--no-wait"))
+    for tag in ("x", "y"):
+        pool.enqueue(tag, "aux.iters=40", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.start_monitor()
+    rx, ry = (pool.wait_for(lambda t=t: pool.runs_of(f"dummy_{t}"), 60, t)[0] for t in ("x", "y"))
+    pool.wait_for(
+        lambda: all(pool.run_state(r).status == "RUNNING" for r in (rx, ry)), 60, "both run at once"
+    )
+    sx, sy = pool.run_state(rx).started, pool.run_state(ry).started
+    assert sx["job"] == sy["job"] == jid, "the runs went to the attached allocation"
+    assert sx["nodes"] != sy["nodes"], "side by side on their own nodes"
+    for name in ("dummy_x", "dummy_y"):
+        pool.wait_for(
+            lambda n=name: pool.record(n)["runtime"]["final_state"] == "finished", 90, name
+        )
+    assert [j["id"] for j in pool.fake_jobs()] == [jid], "the pool submitted no host of its own"
+    time.sleep(3)
+    assert _fake_job(pool, jid)["state"] == "RUNNING", "an attached allocation is never cancelled"
+
+
 def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
     """The second, independent fail-safe: registered for adoption but the hook is missing ->
     the monitor cancels the job adopt_hook_timeout_s after it starts."""

@@ -147,6 +147,14 @@ environment has the run's `AUTOEXP_RUN_ID`. Host-wide stops (wall clock, handove
 stop all of them, and the host releases itself once the last run has ended. Set it live with
 `pool_ctl <pool> set max_runs_per_host=3`.
 
+**Attaching to a running allocation (`pool_ctl <pool> attach <jobid>`).** A host started with old
+supervisor code cannot pack. A second pool with packing can take over its allocation while it is
+idle: `attach` registers the RUNNING job like an adopted one, but without a hook. The monitor starts
+the new pool's supervisor into it as an `--overlap` step. That supervisor stops its runs
+`adopt_stop_margin_s` before the job's end and never cancels the job. Keep the old host alive and idle
+(`pool_ctl <old> set idle_exit_s=<long>`, and enqueue nothing there). Its wall-clock signal then
+releases the allocation as usual. Config: `experiments/korbi/pool/mn5_pool_pack33`.
+
 ## 4. What is handled automatically
 
 | Event | What happens | Where you see it |
