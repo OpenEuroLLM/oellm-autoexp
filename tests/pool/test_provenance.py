@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -132,3 +133,69 @@ def test_script_compares_with_the_enqueue_state(repo, tmp_path):
         text=True,
     )
     assert bad.returncode == 0 and "unavailable" in bad.stdout
+
+
+# ---------------------------------------------------------------- without a git binary
+@pytest.fixture
+def no_git(monkeypatch):
+    import oellm_autoexp.utils.provenance as prov
+
+    monkeypatch.setattr(prov, "_have_git", lambda: False)
+
+
+def test_head_is_read_without_git_including_packed_refs_and_worktrees(repo, tmp_path, no_git):
+    from oellm_autoexp.utils.provenance import read_head
+
+    commit = _git(repo, "rev-parse", "HEAD").strip()
+    assert read_head(repo) == (commit, "main")
+    _git(repo, "pack-refs", "--all")  # the loose ref is gone, only packed-refs has it
+    assert not (repo / ".git" / "refs" / "heads" / "main").exists()
+    assert read_head(repo) == (commit, "main")
+    wt = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "-b", "side", str(wt))
+    assert read_head(wt) == (commit, "side")
+
+
+def test_no_git_at_launch_is_not_a_change_but_a_real_edit_still_is(repo, monkeypatch):
+    import oellm_autoexp.utils.provenance as prov
+
+    enqueued = code_provenance(repo)  # enqueue: login node, with git
+    assert isinstance(enqueued["repo"]["dirty"], dict)
+    monkeypatch.setattr(prov, "_have_git", lambda: False)  # launch: compute node, no git
+    launched = code_provenance(repo, reference=enqueued)
+    assert launched["repo"]["git"] == "unavailable" and launched["repo"]["dirty"] is None
+    assert launched["repo"]["commit"] == enqueued["repo"]["commit"]
+    assert code_changes(enqueued, launched) == []
+    (repo / "configs" / "untracked.yaml").write_text("a: 3\n")  # dirty at enqueue, edited since
+    changes = code_changes(enqueued, code_provenance(repo, reference=enqueued))
+    assert len(changes) == 1 and "configs/untracked.yaml" in changes[0]
+
+
+def test_unreadable_side_is_unknown_not_changed():
+    ok = {"repo": {"commit": "a" * 40, "dirty": {}}, "submodules": {}}
+    broken = {"repo": {"error": "no git state: [Errno 2] No such file or directory: 'git'"}}
+    assert code_changes(ok, {**broken, "submodules": {}}) == []
+    assert code_changes({**broken, "submodules": {}}, ok) == []
+
+
+def test_script_on_a_node_without_git(repo, tmp_path):
+    run_json = tmp_path / "run.json"
+    run_json.write_text(json.dumps({"provenance": code_provenance(repo)}))
+    out = tmp_path / "launch.json"
+    env = {**os.environ, "PATH": str(Path(sys.executable).parent)}  # python, but no git
+    assert shutil.which("git", path=env["PATH"]) is None
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--repo",
+        str(repo),
+        "--out",
+        str(out),
+        "--compare",
+        str(run_json),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=True)
+    assert proc.stdout.startswith("provenance: code unchanged since enqueue (no git here")
+    (repo / "modified.py").write_text("edited after enqueue\n")
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=True)
+    assert "CODE CHANGED SINCE ENQUEUE (1): repo: modified.py" in proc.stdout
