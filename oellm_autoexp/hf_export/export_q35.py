@@ -136,8 +136,18 @@ def special_token_ids(tokenizer: Path | None) -> dict:
     return {k: getattr(tok, k) for k in ("bos_token_id", "eos_token_id", "pad_token_id")}
 
 
+def model_token_ids(ids: dict, vocab: int) -> dict:
+    """The tokenizer's ids, with pad -> eos when pad lies outside the model's vocabulary (our
+    tokenizer has 262272 entries, pad 262144, the embedding 262144 rows: a padded batch would
+    index past the embedding)."""
+    ids = dict(ids)
+    if ids and (ids.get("pad_token_id") is None or ids["pad_token_id"] >= vocab):
+        ids["pad_token_id"] = ids.get("eos_token_id")
+    return ids
+
+
 def write_config(out_dir: Path, cfg: dict, tokenizer: Path | None) -> None:
-    ids = special_token_ids(tokenizer)
+    ids = model_token_ids(special_token_ids(tokenizer), cfg["vocab_size"])
     (out_dir / "config.json").write_text(json.dumps({**cfg, **ids}, indent=2) + "\n")
     if ids:
         (out_dir / "generation_config.json").write_text(json.dumps(ids, indent=2) + "\n")

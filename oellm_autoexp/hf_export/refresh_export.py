@@ -11,7 +11,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .export_q35 import special_token_ids
+from .export_q35 import model_token_ids, special_token_ids
 
 _HERE = Path(__file__).resolve().parent
 
@@ -22,8 +22,8 @@ def refresh(d: Path) -> None:
             if (d / f.name).exists():
                 shutil.copy2(f, d / f.name)
                 print(f"{d.name}: {f.name}")
-    ids = special_token_ids(d)
     cfg = json.loads((d / "config.json").read_text())
+    ids = model_token_ids(special_token_ids(d), cfg["vocab_size"])
     (d / "config.json").write_text(json.dumps({**cfg, **ids}, indent=2) + "\n")
     (d / "generation_config.json").write_text(json.dumps(ids, indent=2) + "\n")
     print(f"{d.name}: {ids}")
