@@ -26,7 +26,7 @@ from oellm_autoexp.slurm_gen.schema import SlurmConfig, SbatchConfig
 EVIDENCE = json.loads((Path(__file__).parent / "fixtures/nccl_peer_1725379.json").read_text())
 
 
-def setup(tmp_path):
+def make_scan_inputs(tmp_path):
     e = EVIDENCE
     job = dict(
         job_id=e["job_id"],
@@ -44,7 +44,7 @@ def setup(tmp_path):
 
 
 def test_exact_historical_warning_excludes_peer_not_reporter(tmp_path):
-    job, nodes = setup(tmp_path)
+    job, nodes = make_scan_inputs(tmp_path)
     result = peers.scan(tmp_path, job, nodes)
     assert result["exclude"] == ["jpbo-071-42"]
     exclusions = tmp_path / "exclude"
@@ -80,7 +80,7 @@ def test_exact_historical_warning_excludes_peer_not_reporter(tmp_path):
     ],
 )
 def test_insufficient_or_stale_evidence_never_excludes(tmp_path, case):
-    job, nodes = setup(tmp_path)
+    job, nodes = make_scan_inputs(tmp_path)
     node = nodes[EVIDENCE["peer"]]
     if case == "healthy":
         node["State"] = "IDLE"
@@ -115,13 +115,13 @@ def test_insufficient_or_stale_evidence_never_excludes(tmp_path, case):
 
 
 def test_mass_failure_requires_review(tmp_path):
-    job, nodes = setup(tmp_path)
+    job, nodes = make_scan_inputs(tmp_path)
     result = peers.scan(tmp_path, job, nodes, cap=0)
     assert result["exclude"] == [] and result["refused"]
 
 
 def test_missing_exclusion_file_or_audit_failure_does_not_create_exclusions(tmp_path):
-    job, nodes = setup(tmp_path)
+    job, nodes = make_scan_inputs(tmp_path)
     result = peers.scan(tmp_path, job, nodes)
     f = tmp_path / "missing"
     with pytest.raises(ValueError):
@@ -156,7 +156,7 @@ def fake_scheduler(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("fault", [None, "timeout", "error"])
 def test_cancel_teardown_real_peer_hook_then_render_excludes(tmp_path, monkeypatch, fault):
-    setup(tmp_path)
+    make_scan_inputs(tmp_path)
     fake_scheduler(tmp_path, monkeypatch)
     exclude = tmp_path / "exclude"
     exclude.write_text("jpbo-001-01\n")
@@ -217,7 +217,7 @@ def test_cancel_teardown_real_peer_hook_then_render_excludes(tmp_path, monkeypat
 
 
 def test_size_limit_fails_without_partial_apply(tmp_path):
-    job, nodes = setup(tmp_path)
+    job, nodes = make_scan_inputs(tmp_path)
     with (tmp_path / f"nccl-{EVIDENCE['peer']}.log").open("wb") as f:
         f.truncate(17 * 1024**2)
     with pytest.raises(ValueError, match="size limit"):
@@ -227,7 +227,7 @@ def test_size_limit_fails_without_partial_apply(tmp_path):
 def test_busy_exclusion_lock_times_out_without_writing(tmp_path, monkeypatch):
     import fcntl
 
-    job, nodes = setup(tmp_path)
+    job, nodes = make_scan_inputs(tmp_path)
     result = peers.scan(tmp_path, job, nodes)
     exclusions = tmp_path / "exclude"
     exclusions.write_text("jpbo-001-01\n")
