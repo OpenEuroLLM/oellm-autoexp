@@ -1,0 +1,36 @@
+# @package _global_
+# MareNostrum 5 adoption test pool (pool_ctl adopt): no hosts of its own (max_own_hosts 0), it
+# only runs work in the queued jobs adopted into it. 2-node host definition (the jobs it takes
+# must fit), acc_ehpc. Runs stop 10 min before an adopted job's own end.
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_adopt_test
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 0
+    min_hosts: 0
+    max_own_hosts: 0
+    handover: false
+    idle_exit_s: 600
+    monitor_dead_exit_s: 1200
+    stop_grace_s: 300
+    preempt_grace_s: 900
+    adopt_stop_margin_s: 600
+    adopt_hook_timeout_s: 90
+    poll_s: 10
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "01:00:00"
+    qos: acc_ehpc
+
+index: 0
+stage: ""
