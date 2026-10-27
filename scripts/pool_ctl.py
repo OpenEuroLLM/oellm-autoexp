@@ -108,7 +108,13 @@ def cmd_status(layout: PoolLayout, _args) -> int:
         slurm_id = (host_record or {}).get("runtime", {}).get("runtime_job_id") or info.get(
             "SLURM_JOB_ID", "-"
         )
-        slurm_state = (host_record or {}).get("runtime", {}).get("last_status") or "-"
+        runtime = (host_record or {}).get("runtime", {})
+        # a closed record keeps the LAST POLLED state (e.g. RUNNING): show how it ended instead
+        slurm_state = (
+            (f"ended:{runtime['final_state']}" if runtime.get("final_state") else None)
+            or runtime.get("last_status")
+            or "-"
+        )
         print(
             f"  {hdir.name}  job {slurm_id:<10} {slurm_state:<10} nodes {info.get('NUM_NODES', '-'):<4} "
             f"started {_fmt_ts(info.get('START_TS'))}  heartbeat {_age(hdir / 'alive'):<6} "
