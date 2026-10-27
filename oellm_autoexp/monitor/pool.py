@@ -1225,19 +1225,22 @@ class PoolManager:
         (newest first). Returns (hosts missing, the account to create the next one in).
 
         ``desired`` (max_hosts_running + successors, at least min_hosts) is the total the
-        single-account pool keeps. Here the hosts that are up count once; the queued rest
-        is wanted in the FIRST account, and every other account holds at most one queued
-        host (insurance) while nothing runs or once the running hosts have less than
-        ``fallback_lead_s`` left (0 = always): each account's queue has its own aging host,
-        and whichever starts first takes the run (handover)."""
+        single-account pool keeps. The hosts that are up count once. Of the queued rest,
+        every other account holds one insurance host while nothing runs or once the running
+        hosts have less than ``fallback_lead_s`` left (0 = always); the FIRST account the
+        remainder, and always at least one (its queue keeps an aging host). Whichever starts
+        first takes the run (handover)."""
         up = [h for h in current if h.info]
         wanted_queued = max(0, desired - len(up))
         left = min((h.remaining_s(now) for h in running), default=None)
         fallback_on = cfg.fallback_lead_s <= 0 or left is None or left < cfg.fallback_lead_s
         missing, create_account = 0, None
+        # a fallback account holds one insurance allocation, not a full set of successors;
+        # the first account the rest, and always at least one while any is wanted (it ages)
+        fallback = min(1, wanted_queued) if fallback_on else 0
+        primary = max(min(1, wanted_queued), wanted_queued - fallback * (len(accounts) - 1))
         for i, account in enumerate(accounts):
-            # a fallback account holds one insurance allocation, not a full set of successors
-            target = wanted_queued if i == 0 else (min(1, wanted_queued) if fallback_on else 0)
+            target = primary if i == 0 else fallback
             queued = sorted(
                 (h for h in current if not h.info and (h.account or accounts[0]) == account),
                 key=lambda h: h.record.job_id,
