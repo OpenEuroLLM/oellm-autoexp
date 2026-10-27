@@ -138,6 +138,15 @@ command line. `pkill -f "monitor_autoexp.py --session-dir ..."` sent over ssh ma
 shell running it. Use the PID from `ps`, or `pgrep -f` with a pattern that is not on your own
 command line.
 
+**Packing small runs (`max_runs_per_host`, default 1).** With `max_runs_per_host: N` a host runs up
+to N runs side by side, each on its own nodes (e.g. three 8-node runs on a 33-node host). The monitor
+assigns by free nodes. The supervisor starts each run as soon as its nodes are free and records them
+in `<host>/inuse/<rid>`. A run that does not fit waits until enough nodes are free. Per-run stops
+(`stop`, `preempt`, `max_runtime_s`) affect only that run: the stop relay signals only launchers whose
+environment has the run's `AUTOEXP_RUN_ID`. Host-wide stops (wall clock, handover, `pool_ctl exit`)
+stop all of them, and the host releases itself once the last run has ended. Set it live with
+`pool_ctl <pool> set max_runs_per_host=3`.
+
 ## 4. What is handled automatically
 
 | Event | What happens | Where you see it |

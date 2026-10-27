@@ -45,7 +45,7 @@ ledger() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%FT%T)" "$HID" "${SLURM_JOB_ID
 
 load_cfg() {
   POOL_POLL_S=10 POOL_IDLE_EXIT_S=1200 POOL_MONITOR_DEAD_EXIT_S=1800
-  POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900
+  POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900 POOL_MAX_RUNS_PER_HOST=1
   POOL_RANK_PATTERN='^[^ ]*python[^ ]*( +-[A-Za-z]+)* +(-m +torch\.distributed\.run|[^ ]*/(torchrun|ft_launcher))( |$)'
   # shellcheck disable=SC1091
   [ -f "$POOL/pool.env" ] && . "$POOL/pool.env"
@@ -120,9 +120,11 @@ graceful_stop() { # graceful_stop <rid> <nodelist> <nnodes> [<signal>]
   # --mem=0: a full step holds all of a node's memory where SLURM allots memory per CPU
   # (MareNostrum 5: "Memory required by task is not available" for any explicit request);
   # --mem=0 is the one an --overlap step may share (phase-0 probe, 2026-10-27)
-  out=$(POOL_STOP_SIG="$sig" srun --overlap --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" \
+  # only this run's ranks (AUTOEXP_RUN_ID in their environment; packed runs may share a machine),
+  # all launchers on the node if none carries it (a --cleanenv container drops it)
+  out=$(POOL_STOP_SIG="$sig" POOL_STOP_RID="$1" srun --overlap --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" \
     --ntasks-per-node=1 --cpus-per-task=1 --job-name="relay-$1" \
-    bash -c 'n=0; for a in $(pgrep -u "$(id -u)" -f "$POOL_RANK_PATTERN"); do for w in $(pgrep -P "$a"); do kill -"$POOL_STOP_SIG" "$w" && n=$((n+1)); done; done; echo "[relay] $(hostname): SIG$POOL_STOP_SIG to $n rank process(es)"' 2>&1)
+    bash -c 'all=$(pgrep -u "$(id -u)" -f "$POOL_RANK_PATTERN"); mine=""; for a in $all; do tr "\\0" "\\n" </proc/$a/environ 2>/dev/null | grep -qxF "AUTOEXP_RUN_ID=$POOL_STOP_RID" && mine="$mine $a"; done; n=0; for a in ${mine:-$all}; do for w in $(pgrep -P "$a"); do kill -"$POOL_STOP_SIG" "$w" && n=$((n+1)); done; done; echo "[relay] $(hostname): SIG$POOL_STOP_SIG to $n rank process(es)"' 2>&1)
   printf '%s\n' "$out"
   n=$(printf '%s\n' "$out" | sed -n 's/.*SIG[A-Z0-9]* to \([0-9][0-9]*\) rank.*/\1/p' | awk '{s+=$1} END {print s+0}')
   if [ "${n:-0}" -eq 0 ]; then
@@ -150,28 +152,15 @@ finish_run() { # finish_run <rid> <code> <reason>
 }
 
 STEP_INDEX=0
-run_one() { # run_one <rid>
-  local rid=$1
+# run_one <rid> <nodelist> <step index>: one run on the nodes the main loop picked for it, in the
+# background (several runs side by side on disjoint nodes when POOL_MAX_RUNS_PER_HOST > 1). The
+# main loop owns the host state; a host-wide stop reaches the run through $H/control/signal.
+run_one() {
+  local rid=$1 nl=$2 STEP_INDEX=$3
   local R="$POOL/runs/$rid"
   local NODES=1 NTASKS_PER_NODE=1 MAX_RUNTIME_S=0 LOG="$R/run.log" NAME=run EXCLUDE="" STOP_SIGNAL=TERM WORKDIR=""
-  if [ -e "$R/rc" ]; then
-    rm -f "$H/assign/$rid"
-    return
-  fi
   # shellcheck disable=SC1091
   . "$R/meta.env"
-  if [ -e "$R/stop" ]; then
-    finish_run "$rid" 0 cancelled
-    return
-  fi
-  local nl
-  nl=$(usable_nodes "$EXCLUDE" | head -n "$NODES" | paste -sd, -)
-  if [ "$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)" -lt "$NODES" ]; then
-    log "run $rid needs $NODES node(s), only $(usable_nodes "$EXCLUDE" | grep -c .) usable"
-    finish_run "$rid" -1 insufficient_nodes
-    return
-  fi
-  STEP_INDEX=$((STEP_INDEX + 1))
   export AUTOEXP_RUN_ID="$rid" AUTOEXP_STEP_INDEX="$STEP_INDEX" AUTOEXP_STEP_NODELIST="$nl" \
     AUTOEXP_STEP_NUM_NODES="$NODES" AUTOEXP_STEP_NTASKS=$((NODES * NTASKS_PER_NODE)) \
     AUTOEXP_STEP_NTASKS_PER_NODE="$NTASKS_PER_NODE" AUTOEXP_POOL_DIR="$POOL" AUTOEXP_POOL_HOST="$HID"
@@ -194,7 +183,6 @@ ts=$t0"
   ledger "$rid" "$prov"
   bash "$R/step.sh" >>"$LOG" 2>&1 &
   local pid=$!
-  set_state busy "$rid"
   local reason="" grace=0 stop_at=0 kill_at=0 killed=0
   while kill -0 "$pid" 2>/dev/null; do
     touch "$H/alive"
@@ -204,7 +192,7 @@ ts=$t0"
       adopt_deadline_check
       if [ -e "$R/stop" ]; then
         reason=cancelled grace=$POOL_STOP_GRACE_S
-      elif [ -e "$R/preempt" ] || [ -e "$H/control/exit" ] || [ -n "$HOST_SIGNAL" ]; then
+      elif [ -e "$R/preempt" ] || [ -e "$H/control/exit" ] || [ -e "$H/control/signal" ]; then
         reason=preempted grace=$POOL_PREEMPT_GRACE_S
       elif [ "$MAX_RUNTIME_S" -gt 0 ] && [ $((t - t0)) -ge "$MAX_RUNTIME_S" ]; then
         reason=timeout grace=$POOL_STOP_GRACE_S
@@ -248,8 +236,8 @@ exit_host() {
 }
 
 HOST_SIGNAL=""
-trap 'HOST_SIGNAL=USR1; log "SIGUSR1 received"' USR1
-trap 'HOST_SIGNAL=TERM; log "SIGTERM received"' TERM
+trap 'HOST_SIGNAL=USR1; touch "$H/control/signal"; log "SIGUSR1 received"' USR1
+trap 'HOST_SIGNAL=TERM; touch "$H/control/signal"; log "SIGTERM received"' TERM
 
 # ADOPTED host (pool_ctl adopt): an ordinary queued job, not a pool host, whose own training
 # step 0 is held by the adoption hook (scripts/pool/adopt_sitecustomize.py). This supervisor was
@@ -271,6 +259,7 @@ adopt_deadline_check() {
   [ -n "$ADOPTED" ] && [ -n "$END_TS" ] && [ -z "$HOST_SIGNAL" ] || return 0
   if [ "$(now)" -ge $((END_TS - ${POOL_ADOPT_STOP_MARGIN_S:-1800})) ]; then
     HOST_SIGNAL=USR1
+    touch "$H/control/signal"
     log "adopted job $ADOPTED ends at $(date -d @"$END_TS" +%FT%T): stopping before its wall clock"
   fi
 }
@@ -289,18 +278,90 @@ set_state idle
 ledger "-" "host start nodes=$NUM_NODES"
 log "up: job ${SLURM_JOB_ID:-?}, $NUM_NODES node(s), pool $POOL"
 
+# runs of this host: rid -> pid of its background run_one; the nodes of each in $H/inuse/<rid>
+declare -A RUN_PID=()
+mkdir -p "$H/inuse"
+rm -f "$H/control/signal" "$H"/inuse/*
+free_nodes() { # free_nodes <extra exclude>: usable nodes no running run holds
+  local held
+  held=$(cat "$H"/inuse/* 2>/dev/null | tr ',' '\n' | grep -v '^$')
+  if [ -z "$held" ]; then
+    usable_nodes "$1"
+  else
+    usable_nodes "$1" | grep -vxF -f <(printf '%s\n' "$held")
+  fi
+}
+reap() {
+  local rid
+  for rid in "${!RUN_PID[@]}"; do
+    if ! kill -0 "${RUN_PID[$rid]}" 2>/dev/null; then
+      wait "${RUN_PID[$rid]}" 2>/dev/null
+      unset "RUN_PID[$rid]"
+      rm -f "$H/inuse/$rid"
+    fi
+  done
+}
+LAST_STATE=""
+show_state() { # only on a change: the monitor measures idle time from the state's timestamp
+  local want=idle
+  [ "${#RUN_PID[@]}" -gt 0 ] && want="busy $(printf '%s\n' "${!RUN_PID[@]}" | sort | paste -sd, -)"
+  [ "$want" = "$LAST_STATE" ] && return
+  LAST_STATE=$want
+  # shellcheck disable=SC2086
+  set_state $want
+}
+
 idle_since=$(now)
 while true; do
   touch "$H/alive"
   load_cfg
   adopt_deadline_check
-  [ -n "$HOST_SIGNAL" ] && exit_host "signal $HOST_SIGNAL"
-  [ -e "$H/control/exit" ] && exit_host "exit requested: $(head -n1 "$H/control/exit")"
-  next=$(ls -1 "$H/assign" 2>/dev/null | grep -v '^\.' | sort | head -n1)
-  if [ -n "$next" ]; then
-    run_one "$next"
-    set_state idle
+  reap
+  stopping=""
+  [ -n "$HOST_SIGNAL" ] && stopping="signal $HOST_SIGNAL"
+  [ -z "$stopping" ] && [ -e "$H/control/exit" ] && stopping="exit requested: $(head -n1 "$H/control/exit")"
+  if [ -n "$stopping" ]; then
+    # every run sees the stop (control/exit or control/signal) and preempts itself
+    [ "${#RUN_PID[@]}" -eq 0 ] && exit_host "$stopping"
+    show_state
+    sleep "$POOL_POLL_S" &
+    wait $!
+    continue
+  fi
+  launched=0
+  for rid in $(ls -1 "$H/assign" 2>/dev/null | grep -v '^\.' | sort); do
+    [ -n "${RUN_PID[$rid]:-}" ] && continue
+    [ "${#RUN_PID[@]}" -ge "${POOL_MAX_RUNS_PER_HOST:-1}" ] && break
+    R="$POOL/runs/$rid"
+    if [ -e "$R/rc" ]; then
+      rm -f "$H/assign/$rid"
+      continue
+    fi
+    if [ -e "$R/stop" ]; then
+      finish_run "$rid" 0 cancelled
+      continue
+    fi
+    meta=$(. "$R/meta.env"; printf '%s|%s' "${NODES:-1}" "${EXCLUDE:-}")
+    need=${meta%%|*}
+    nl=$(free_nodes "${meta#*|}" | head -n "$need" | paste -sd, -)
+    if [ "$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)" -lt "$need" ]; then
+      if [ "${#RUN_PID[@]}" -eq 0 ]; then
+        log "run $rid needs $need node(s), only $(free_nodes "${meta#*|}" | grep -c .) usable"
+        finish_run "$rid" -1 insufficient_nodes
+      fi
+      continue  # (packed: it starts once another run frees its nodes)
+    fi
+    STEP_INDEX=$((STEP_INDEX + 1))
+    atomic "$H/inuse/$rid" "$nl"
+    run_one "$rid" "$nl" "$STEP_INDEX" &
+    RUN_PID[$rid]=$!
+    launched=1
+  done
+  show_state
+  if [ "${#RUN_PID[@]}" -gt 0 ] || [ "$launched" -eq 1 ]; then
     idle_since=$(now)
+    sleep "$POOL_POLL_S" &
+    wait $!
     continue
   fi
   [ -e "$H/control/drain" ] && exit_host "drain requested: $(head -n1 "$H/control/drain")"
