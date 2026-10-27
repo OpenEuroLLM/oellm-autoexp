@@ -33,7 +33,70 @@ _CANONICAL_TOKENIZER_FILES = (
 )
 
 
-def patch_config_and_tokenizer(hf_path: Path, tokenizer_path: str) -> None:
+def _reconcile_tokenizer_with_embedding(
+    hf_path: Path, vocab_size: int, pad_token: str
+) -> list[str]:
+    """Drop tokenizer entries the embedding cannot represent, and repoint
+    ``pad_token``.
+
+    A tokenizer can define more ids than the trained embedding has rows: the
+    OpenEuroLLM 256k tokenizer carries ``<pad>`` at 262144 while the 32B runs pin
+    ``padded_vocab_size: 262144`` (rows 0..262143), so ``<pad>`` has no row and
+    tokenizing a padded batch emits an id the model cannot embed. Training never
+    hit it because documents are packed and ``<eos>``-separated.
+
+    Publishing that unchanged hands the problem to anyone fine-tuning the export.
+    So any added token with ``id >= vocab_size`` is removed, and if ``pad_token``
+    was one of them it is repointed at ``pad_token`` (default ``<unused_0>``, a
+    real allocated row that never occurs in training data). ``<eos>`` would also
+    work, but the usual SFT recipe masks labels wherever ``input_ids ==
+    pad_token_id``, which would then also mask every genuine end-of-sequence
+    token and teach the model never to stop.
+
+    No-op when the tokenizer already fits (e.g. the 9B, padded to 262272).
+    """
+    notes: list[str] = []
+
+    def _load(name: str):
+        f = hf_path / name
+        return (json.loads(f.read_text()), f) if f.exists() else (None, f)
+
+    added, added_f = _load("added_tokens.json")
+    over = sorted(t for t, i in (added or {}).items() if i >= vocab_size)
+    if not over:
+        return notes
+    notes.append(f"dropped {over} (id >= vocab_size {vocab_size})")
+
+    added = {t: i for t, i in added.items() if i < vocab_size}
+    added_f.write_text(json.dumps(added, indent=2) + "\n")
+
+    cfg, cfg_f = _load("tokenizer_config.json")
+    if cfg is not None:
+        decoder = cfg.get("added_tokens_decoder") or {}
+        cfg["added_tokens_decoder"] = {k: v for k, v in decoder.items() if int(k) < vocab_size}
+        if cfg.get("pad_token") in over:
+            cfg["pad_token"] = pad_token
+            notes.append(f"pad_token -> {pad_token}")
+        cfg_f.write_text(json.dumps(cfg, indent=2) + "\n")
+
+    stm, stm_f = _load("special_tokens_map.json")
+    if stm is not None and stm.get("pad_token") in over:
+        stm["pad_token"] = pad_token
+        stm_f.write_text(json.dumps(stm, indent=2) + "\n")
+
+    tj, tj_f = _load("tokenizer.json")
+    if tj is not None and isinstance(tj.get("added_tokens"), list):
+        kept = [a for a in tj["added_tokens"] if a.get("id", 0) < vocab_size]
+        if len(kept) != len(tj["added_tokens"]):
+            tj["added_tokens"] = kept
+            tj_f.write_text(json.dumps(tj, ensure_ascii=False) + "\n")
+
+    return notes
+
+
+def patch_config_and_tokenizer(
+    hf_path: Path, tokenizer_path: str, pad_token: str = "<unused_0>"
+) -> None:
     from transformers import AutoTokenizer
 
     print(f"Loading custom tokenizer from: {tokenizer_path}")
@@ -66,6 +129,15 @@ def patch_config_and_tokenizer(hf_path: Path, tokenizer_path: str) -> None:
 
     config = json.loads(config_file.read_text())
     changed: list[str] = []
+
+    # The embedding, not the source tokenizer, is the authority on how many ids
+    # exist. Reconcile before reading special-token ids back.
+    vocab_size = config.get("vocab_size")
+    if isinstance(vocab_size, int):
+        for note in _reconcile_tokenizer_with_embedding(hf_path, vocab_size, pad_token):
+            print(f"  tokenizer: {note}")
+        tokenizer = AutoTokenizer.from_pretrained(str(hf_path), trust_remote_code=True)
+        print(f"  reconciled vocab: len(tokenizer)={len(tokenizer)} vs vocab_size={vocab_size}")
 
     # NOTE: intentionally do NOT touch `vocab_size`. The conversion stage
     # (write_hf_config_dir → Bridge.save_hf_pretrained) sets it to the
@@ -106,6 +178,11 @@ def _parse() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--hf-path", required=True, type=Path)
     ap.add_argument("--tokenizer-path", required=True)
+    ap.add_argument(
+        "--pad-token",
+        default="<unused_0>",
+        help="Token to use as pad when the tokenizer's own pad id exceeds the embedding",
+    )
     return ap.parse_args()
 
 
@@ -114,7 +191,9 @@ def main() -> int:
     if not args.hf_path.exists():
         print(f"ERROR: hf-path does not exist: {args.hf_path}", file=sys.stderr)
         return 1
-    patch_config_and_tokenizer(hf_path=args.hf_path, tokenizer_path=args.tokenizer_path)
+    patch_config_and_tokenizer(
+        hf_path=args.hf_path, tokenizer_path=args.tokenizer_path, pad_token=args.pad_token
+    )
     return 0
 
 
