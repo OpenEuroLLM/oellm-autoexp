@@ -134,8 +134,7 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.depth_memory_lerp: true
           backend.megatron.ngpt: true
-          backend.megatron.weight_normalizer: true
-          backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.ngpt_lerp_normalization: analytic
         # nGPT + LDM (LERP writes, mixer lr x0.25), angular MuOwn p = 1
         - aux.arm: ngpt_ldm_am
           backend.megatron.num_attention_heads: 8
@@ -219,8 +218,7 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.depth_memory_lerp: true
           backend.megatron.ngpt: true
-          backend.megatron.weight_normalizer: true
-          backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.ngpt_lerp_normalization: analytic
           backend.megatron.angular_muown_u_decay_p: 1.0
         # nGPT (plain LERP residual), classical Muown
         - aux.arm: ngpt
@@ -294,5 +292,4 @@ sweep:
           slurm.sbatch.nodes: 8
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.ngpt: true
-          backend.megatron.weight_normalizer: true
-          backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.ngpt_lerp_normalization: analytic

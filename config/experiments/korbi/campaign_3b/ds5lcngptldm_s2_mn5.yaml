@@ -134,8 +134,7 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.depth_memory_lerp: true
           backend.megatron.ngpt: true
-          backend.megatron.weight_normalizer: true
-          backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.ngpt_lerp_normalization: analytic
           backend.megatron.skip_train: true
           backend.megatron.eval_iters: 1
           backend.megatron.no_load_optim: true
@@ -227,8 +226,7 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.depth_memory_lerp: true
           backend.megatron.ngpt: true
-          backend.megatron.weight_normalizer: true
-          backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.ngpt_lerp_normalization: analytic
           backend.megatron.angular_muown_u_decay_p: 1.0
           backend.megatron.skip_train: true
           backend.megatron.eval_iters: 1
@@ -310,8 +308,7 @@ sweep:
           slurm.sbatch.nodes: 1
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.ngpt: true
-          backend.megatron.weight_normalizer: true
-          backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.ngpt_lerp_normalization: analytic
           backend.megatron.skip_train: true
           backend.megatron.eval_iters: 1
           backend.megatron.no_load_optim: true

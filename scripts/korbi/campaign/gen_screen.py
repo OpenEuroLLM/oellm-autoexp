@@ -1565,10 +1565,10 @@ def arms5resgqa(size: str):
     if size == "s3":
         recipe[B + "expert_model_parallel_size"] = 16
     mhc = {k: v for k, v in mhc4.items() if k != B + "residual_mixer_lr_mult"}
-    # s2 only (user 2026-10-27): LDM at x0.25 / x0.125 -- does a lower mixer lr change LDM's long-context
+    # (user 2026-10-27) LDM at x0.25 / x0.125, s2 and s3 -- does a lower mixer lr change LDM's long-context
     # retrieval, as it does mHC-4's (x0.125: best retrieval, +0.014 loss)?
     keep = {"s1": ("plain", "mhc4", "mhc4_lr0125", "ldm", "ldm_lr2"),
-            "s3": ("plain", "mhc4", "ldm")}.get(size)
+            "s3": ("plain", "mhc4", "ldm", "ldm_lr025", "ldm_lr0125")}.get(size)
     return [(n, d, {**own_cache(base), **recipe, **kv}) for n, d, base, kv in (
         ("plain", "plain residual", plain, {}),
         ("mhc4", "mHC-4, mixer lr x0.25", mhc, {B + "residual_mixer_lr_mult": 0.25}),
@@ -1589,17 +1589,18 @@ def arms5resgqa(size: str):
 
 def arms5ngptldm(size: str = "s2"):
     """nGPT + MuOwn + LDM, a "final combination" candidate (user 2026-10-27): the rematch recipe
-    (arms5resgqa: same data order, gbs 64 x 8k, 4000 steps, WSD 20 %) in nGPT form -- unit-norm
-    hidden states, LERP residuals, normalized weight rows (the weight normalizer; it also puts the
-    embeddings on the sphere, which the LERP step assumes) -- with LDM's writes as LERP steps
+    (arms5resgqa: same data order, gbs 64 x 8k, 4000 steps, WSD 20 %) with nGPT's RESIDUAL only
+    (user 2026-10-27: the normalization + LERP, none of nGPT's adaptations outside the residual --
+    no weight normalizer, no Q/K or MLP scalers, no logit scaler): the stream enters on the unit
+    sphere (Megatron b9b6fa1c7) and every sublayer takes the exact ('analytic') LERP step toward
+    its normalized output -- with LDM's writes as LERP steps
     (depth_memory_lerp, Megatron 51b740b4a: the memory stores the step's displacement). LDM mixer
     lr x0.25 (the s2 rematch: x0.25 / x0.125 lead x1 by ~0.05 at step 1500). Arms: classical Muown
     (production's optimizer: pairs with the rematch arms), angular MuOwn (direction decay p = 1,
     explicit), and nGPT without LDM (attribution). 8 nodes per arm, as the 8-node rematch arms
     (ldm_lr025 / ldm_lr0125) they pair with."""
     base = dict((n, kv) for n, _, kv in arms5resgqa(size))
-    ngpt = {B + "ngpt": True, B + "weight_normalizer": True, B + "fused_qk_norm_rope": False,
-            "slurm.sbatch.nodes": 8}
+    ngpt = {B + "ngpt": True, B + "ngpt_lerp_normalization": "analytic", "slurm.sbatch.nodes": 8}
     ldm = {k: v for k, v in base["ldm"].items()}
     ldm.update({B + "residual_mixer_lr_mult": 0.25, B + "depth_memory_lerp": True})
     am = {B + "optimizer": "angular_muown", B + "angular_muown_u_decay_p": 1.0}
