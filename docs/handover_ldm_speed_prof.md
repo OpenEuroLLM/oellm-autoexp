@@ -7,7 +7,7 @@ From session oellm-autoexp-hybrid-89 to the main agent.
 | what | where | state |
 |---|---|---|
 | 32-node profiles: `mhc4`, `mhc4_m2`, `ldm_m2`, `ldm_m4`, `mhc4_pp4`, `ldm_pp4` | pool mn5_pool_speed33 (user: all 32-node speed jobs in one 33-node allocation), enqueued 10:50 from snapshot `$R/autoexp_ldmprof3`; the direct jobs 48126146-51 are cancelled | queued |
-| 128-node rerun `ldm_speed_ldm_m4_128n` (log_interval 1) | pool mn5_pool_p129, run 0010, host 48117532 | running / next |
+| 128-node rerun `ldm_speed_ldm_m4_128n` (log_interval 1) | pool mn5_pool_p129, run 0010, host 48117532 | done: 51.3 s/step, 2,553 tok/s/GPU, mem 0.85 (mHC-4 0008: 50.5 s, 2,595): LDM 98 % of mHC-4 |
 | conservative `q35c_main_gqa` | p33 (32n, running, 6,515 tok/s/GPU); p129 (128n, pending behind 0010) | — |
 | LDM long-context evals `ds5lcresgqa(logn)_s2_ldm*` | results written (downstream.json, 13 keys each); jobs finishing | done |
 
@@ -40,8 +40,8 @@ line averaged steps 2-10.
 - p33 is fine at 32 nodes.
 - Suspect host 48117532 (a node?) or the overlap-step environment at 128 nodes. Check it before the
   conservative run relies on it. The campaign agent (Current edits review) is informed.
-- The 128-node LDM mbs 4 run fits (mem 0.85). Its warm-up-averaged step time equals mHC-4's
-  (59.6 vs 59.5 s).
+- The 128-node LDM mbs 4 run fits (mem 0.85): steady 51.3 vs mHC-4's 50.5 s/step on the same host (98 %).
+  Both are bounded by the same 2x slowdown, so recheck the ratio once that is fixed.
 
 **GQA rematch s2, final (step 4000).**
 - LDM ×1 vs mHC-4:
