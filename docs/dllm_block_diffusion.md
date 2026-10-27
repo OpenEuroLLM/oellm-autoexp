@@ -220,4 +220,28 @@ the AR model (and HF Qwen3 in the GPU parity check), and I12 the nld loss reduce
 
 ## Results
 
-See the ablation tables in the pull request description.
+Qwen3-0.6B-Base, 2B tokens of FineWeb-Edu at L = 2048 and lr 1e-4 (tier 0 picked it from 1e-5 to
+3e-4). M1 is the NELBO in bits/token on 1000 held-out windows (AR: exact NLL), M2 the GSM8K 4-shot
+accuracy on 250 problems, M3 the tokens per forward pass at dynamic@0.9. The base model scores M1
+3.809 and GSM8K 52.4 with AR greedy decoding.
+
+| Arm | M1 | M2 static | M2 dyn@0.9 | M3 |
+|---|---|---|---|---|
+| R00 base: B 8, shift 0, ELBO, t in [0, 1], doc mask | 4.2275 | 10.4 | 10.0 | 1.51 |
+| R01 / R02 / R03: B 4 / 16 / 32 | 4.0756 / 4.3313 / 4.4011 | 10.8 / 2.0 / 1.2 | 10.0 / 2.4 / 1.2 | 1.41 / 1.61 / 1.41 |
+| R04 token shift 1 | 4.3997 | 8.8 | 10.4 | 1.48 |
+| R05 complementary masks (FLOP-matched) | 4.2308 | 8.0 | 8.8 | 1.51 |
+| R06 uniform weighting | 4.2035 | 8.0 | 7.6 | 1.55 |
+| R07 t in [0.2, 0.8] | 4.2083 | 9.2 | 8.8 | 1.56 |
+| R08 block-size schedule 0:4,0.15:8 | 4.2273 | 14.0 | 11.6 | 1.41 |
+| R09 doc mask 0 | 4.2290 | 12.0 | 12.0 | 1.50 |
+| R10 AR control | 3.7121 | 13.2 (AR greedy) | - | - |
+| R11 nld hybrid, B 32 | 4.4906 (AR mode 3.7332) | 14.4 | 12.8 | 1.38 |
+
+- M1 grows with the block size, and GSM8K collapses from B = 16 on; the selection rule keeps B = 8.
+- No binary factor passes the rule (M1 at least 0.5 percent better, M2 at most 1.5 points worse).
+  The block-size warmup (R08) and doc mask 0 (R09) tie on M1 but gain 3.6 and 1.6 points of M2.
+- The AR control loses most of the base model's GSM8K too (52.4 to 13.2): the drop comes largely
+  from continued pretraining on FineWeb-Edu at this LR, not only from the diffusion objective.
+- The nld hybrid keeps an AR mode within 0.6 percent of the AR control and decodes GSM8K best
+  (14.4 static, 12.8 at 1.38 tokens per forward), at +6.2 percent diffusion M1 against R00.
