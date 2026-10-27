@@ -302,7 +302,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: []
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -328,7 +328,7 @@ sweep:
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
           backend.megatron.train_iters: 4000
-          backend.megatron.cuda_graph_impl: local
+          backend.megatron.cuda_graph_impl: none
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           backend.megatron.group_query_attention: true
           backend.megatron.untie_embeddings_and_output_weights: true
@@ -383,7 +383,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: []
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -409,7 +409,7 @@ sweep:
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
           backend.megatron.train_iters: 4000
-          backend.megatron.cuda_graph_impl: local
+          backend.megatron.cuda_graph_impl: none
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           backend.megatron.group_query_attention: true
           backend.megatron.untie_embeddings_and_output_weights: true

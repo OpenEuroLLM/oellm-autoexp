@@ -1522,7 +1522,10 @@ def arms5ds41(size: str = "s1"):
 LDM_REMATCH = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
                B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32,
                B + "depth_memory_unwind": True, B + "recompute_granularity": "full",
-               B + "recompute_method": "uniform", B + "recompute_num_layers": 2}
+               B + "recompute_method": "uniform", B + "recompute_num_layers": 2,
+               # Megatron allows full recompute only with full-iteration CUDA graphs: none (as in
+               # production); the screens' MoE-router graphs failed every LDM arm at startup
+               B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}
 
 
 def arms5resgqa(size: str):
