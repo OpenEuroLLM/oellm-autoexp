@@ -19,14 +19,27 @@ PATHS = {
 }
 
 
-def build(saved, dtype):
+def build(saved, dtype, device="cuda"):
     module, name = saved["spec"]["class"].rsplit(".", 1)
     layer = getattr(importlib.import_module(module), name)(**saved["spec"]["kwargs"], layer_idx=0)
     layer.load_state_dict(saved["state_dict"])
-    return layer.to("cuda", dtype).eval()
+    return layer.to(device, dtype).eval()
+
+
+GUARD = False
 
 
 def call(layer, x, path):
+    import contextlib
+
+    from fla.models.utils import Cache
+
+    ctx = torch.cuda.device(x.device) if GUARD else contextlib.nullcontext()
+    with ctx:
+        return _call(layer, x, path)
+
+
+def _call(layer, x, path):
     from fla.models.utils import Cache
 
     kw = {}
@@ -56,11 +69,16 @@ def main() -> None:
     p.add_argument("--paths", default="hf,nocache,train,cache_cu")
     p.add_argument("--warm", default="", help="comma-separated lengths run first (random input, hf path)")
     p.add_argument("--no-ref", action="store_true")
+    p.add_argument("--device", default="cuda:0", help="the layer's GPU; the current device stays cuda:0")
+    p.add_argument("--guard", action="store_true", help="calls under torch.cuda.device(x.device)")
     a = p.parse_args()
+    global GUARD
+    GUARD = a.guard
+    torch.cuda.set_device(0)
     saved = torch.load(a.saved, weights_only=False)
     torch.manual_seed(0)
-    layer = build(saved, torch.bfloat16)
-    x = saved["x"].to("cuda", torch.bfloat16)
+    layer = build(saved, torch.bfloat16, a.device)
+    x = saved["x"].to(a.device, torch.bfloat16)
     print(f"{saved['spec']['class']}, x {tuple(x.shape)}", flush=True)
     w0 = checksum(layer)
     for n in [int(t) for t in a.warm.split(",") if t]:
@@ -79,9 +97,9 @@ def main() -> None:
             ok = torch.isfinite(o) & torch.isfinite(outs["train"])
             print(f"{path:9s} max |o - train| {float((o - outs['train']).abs()[ok].max()):.3g}", flush=True)
     if not a.no_ref:
-        ref_layer = build(saved, torch.float32)
+        ref_layer = build(saved, torch.float32, "cuda:0")
         ref_layer.backend = "naive_recurrent"
-        ref = call(ref_layer, x.float(), "nocache")
+        ref = call(ref_layer, x.float().to("cuda:0"), "nocache").to(a.device)
         print(f"fp32 naive ref: {nonfinite(ref)}, |ref| max {float(ref.abs().max()):.3g}", flush=True)
         for path, o in outs.items():
             ok = torch.isfinite(o)
