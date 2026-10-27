@@ -7,7 +7,7 @@
 # since the unwind path has no pipeline support).
 #
 #   scripts/korbi/mn5_autoexp_bg.sh ldm_prof32 scripts/run_autoexp.py \
-#       --config-name experiments/korbi/production/hybrid_ldm_prof_mn5 --yes
+#       --config-name experiments/korbi/production/hybrid_ldm_prof_mn5 --yes [aux.only=[a,b]]
 #
 # Traces: <base_output_dir>/torch_profile/rank-{0,127}.json.gz
 defaults:
@@ -57,6 +57,22 @@ sweep:
           backend.megatron.depth_memory_hidden_dim: 32
           backend.megatron.residual_mixer_lr_mult: 1.0
           backend.megatron.micro_batch_size: 2
+        # control: mHC-4 at LDM's mbs 2 (ZeRO-3 re-gathers the parameters every micro-batch:
+        # twice the FSDP traffic per token of mbs 4)
+        - aux.arm: mhc4_m2
+          backend.megatron.micro_batch_size: 2
+        # LDM at mbs 4 (memory 0.98 in the speed test: allocator pressure?)
+        - aux.arm: ldm_m4
+          backend.megatron.mhc: false
+          backend.megatron.mhc_routed_topk: 0
+          backend.megatron.mhc_routed_reversible: false
+          backend.megatron.depth_memory: true
+          backend.megatron.depth_memory_impl: cute
+          backend.megatron.depth_memory_unwind: true
+          backend.megatron.depth_memory_groups: 16
+          backend.megatron.depth_memory_key_dim: 8
+          backend.megatron.depth_memory_hidden_dim: 32
+          backend.megatron.residual_mixer_lr_mult: 1.0
         # mHC-4 under PP4 (no interleaving: DP 32, 64 micro-batches of 2 per pipeline, bubble
         # 3/64), distributed optimizer, 13 / 12 / 12 / 11 blocks (the LM head on the last stage;
         # Engram before blocks 1 and 24 on stages 0 and 1); checkpoints, the last chunk and the
