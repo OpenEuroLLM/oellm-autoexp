@@ -1,0 +1,36 @@
+# @package _global_
+# MareNostrum 5 packing smoke (max_runs_per_host, docs/sub_slurm_jobs_operations.md §3): one 2-node
+# host on the dev queue running two 1-node runs side by side; preempting one must leave the other.
+#   python scripts/run_autoexp.py --no-monitor --config-name experiments/korbi/pool/mn5_pool_pack2
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_pack2
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 0
+    min_hosts: 0
+    handover: false
+    idle_exit_s: 300
+    monitor_dead_exit_s: 1200
+    min_remaining_s: 900
+    stop_grace_s: 300
+    preempt_grace_s: 900
+    poll_s: 10
+    max_runs_per_host: 2
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:40:00"
+    qos: acc_debug
+    signal: "B:USR1@600"
+
+index: 0
+stage: ""
