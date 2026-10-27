@@ -141,7 +141,9 @@ class PoolHostConfig:
     # (preemption saves a checkpoint, which takes minutes at scale)
     stop_grace_s: float = 120.0
     preempt_grace_s: float = 900.0
-    # requeues of one job after preemption / host loss before it is given up
+    # UNHEALTHY requeues of one job (lost host, host without enough nodes) before
+    # it is given up; healthy ones (handover, wall clock, pool_ctl preempt) are
+    # unlimited, a continuous run has one per segment
     max_attempts: int = 20
     # a RUNNING host whose supervisor heartbeat is older than this is cancelled
     host_stale_s: float = 900.0
@@ -499,6 +501,78 @@ def _exclude_list(slurm: SlurmConfig) -> str:
         if fresh:
             current = fresh
     return str(current or "")
+
+
+def run_fault_context(layout: PoolLayout, rid: str) -> dict | None:
+    """What the restart hooks need to know about a pool run, or None.
+
+    A pool run is not a SLURM job: ``runtime_job_id`` is its run id, so a hook
+    templated with ``{runtime_job_id}`` would hand ``sacct`` an id it does not
+    know. This gives the HOST's SLURM job id, the run's own nodes (the step's,
+    not the allocation's) and its time window.
+    """
+    state = read_run_state(layout, rid)
+    started = state.started
+    if not started.get("job"):
+        return None
+    rd = layout.run_dir(rid)
+    try:
+        start = float(started.get("ts", "0"))
+    except ValueError:
+        start = 0.0
+    end = _mtime(rd / "rc") or time.time()
+    nodes = [n for n in (started.get("nodes") or "").split(",") if n]
+    return {
+        "slurm_job_id": started["job"],
+        "run_id": rid,
+        "host": started.get("host", ""),
+        "nodes": nodes,
+        "start": start,
+        "end": end,
+        "status": state.status,
+        "reason": state.reason,
+    }
+
+
+def scan_pool_run(
+    context: dict, *, log_root: str | Path, job_log: str | Path, exclude_file: str | Path
+) -> dict:
+    """The NCCL / node-fault attribution of monitor/nccl_peers.py for ONE pool
+    run.
+
+    nccl_peers.py reads a FAILED SLURM ALLOCATION from sacct (state,
+    node list, time window) and stays silent for a live one -- but a
+    pool run fails inside an allocation that keeps running. Its rules
+    only need five facts about the failed attempt, so they are applied
+    here to the RUN: its host's job id, its step's nodes in task order,
+    its own window, and a failed state. Exclusions are applied exactly
+    as nccl_peers.py --apply does (append-only, locked, audited next to
+    the job's NCCL sidecars).
+    """
+    from oellm_autoexp.monitor import nccl_peers
+
+    state = context["status"] if context["status"] in nccl_peers.FAILED else "FAILED"
+    job = {
+        "job_id": context["slurm_job_id"],
+        "state": state,
+        "start": context["start"],
+        "end": context["end"],
+        "hosts": list(context["nodes"]),
+    }
+    nodes: dict = {}
+    try:
+        for line in nccl_peers.command(["scontrol", "show", "nodes", "--oneliner"]).splitlines():
+            fields = dict(re.findall(r"(\w+)=([^\s]+)", line))
+            if fields.get("NodeName") in job["hosts"]:
+                nodes[fields["NodeName"]] = fields
+    except Exception as exc:  # scheduler view is corroboration only
+        LOGGER.warning("[pool] node scan without scheduler state (%s)", exc)
+    result = nccl_peers.scan(Path(log_root), job, nodes, job_log=Path(job_log))
+    result["pool_run"] = context["run_id"]
+    result["newly_excluded"] = nccl_peers.apply(
+        result, Path(exclude_file), Path(log_root) / "nccl-peer-events.jsonl"
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1003,7 +1077,8 @@ class PoolManager:
                 host.retiring = True
                 LOGGER.info("[pool %s] releasing idle host %s", cfg.name, host.hid)
 
-        # 6. keep hosts submitted
+        # 6. keep hosts submitted, and their exclusion lists current while queued
+        self._refresh_queued_host_excludes(loop, layout, hosts)
         work = bool(runs)
         running = [h for h in hosts if h.live(cfg.host_stale_s) and not h.retiring]
         successors = cfg.keep_pending
@@ -1090,6 +1165,62 @@ class PoolManager:
         _atomic_write(layout.run_dir(rid) / "assigned", f"{hid}\n")
         _atomic_write(layout.host_dir(hid) / "assign" / rid, f"{rid}\n")
 
+    @staticmethod
+    def _host_excludes(layout: PoolLayout, base: SlurmJobConfig) -> list[str]:
+        """Nodes a host of this pool must avoid NOW: the host config's own list
+        (its exclude_file re-read) plus the pool's exclude_nodes."""
+        excluded = _split_nodes(_exclude_list(base.slurm)) + _split_nodes(
+            _read(layout.exclude_nodes)
+        )
+        return list(dict.fromkeys(excluded))
+
+    def _refresh_queued_host_excludes(
+        self, loop: MonitorLoop, layout: PoolLayout, hosts: list[HostView]
+    ) -> None:
+        """Push exclusions found since a host was submitted to it while it
+        waits.
+
+        A successor (keep_pending) can sit in the queue for hours; a
+        node that failed meanwhile -- appended to the fleet list by a
+        fault scan, or to the pool's exclude_nodes -- must not end up in
+        it when it starts. SLURM lets a PENDING job's ExcNodeList be
+        edited (scontrol update), so the full, current list is set on
+        every queued host that lacks part of it.
+        """
+        queued = [h for h in hosts if h.submitted and not h.info and not h.dead and not h.retiring]
+        queued = [h for h in queued if h.status in (None, "PENDING")]
+        if not queued or loop._slurm_client is None:
+            return
+        try:
+            target = self._host_excludes(layout, layout.load_host_definition())
+        except Exception as exc:  # pragma: no cover - never block the poll
+            LOGGER.warning("[pool] could not read the exclusion lists: %s", exc)
+            return
+        for host in queued:
+            sbatch = host.record.definition.slurm.sbatch
+            current = _split_nodes(sbatch_get(sbatch, "exclude"))
+            missing = [n for n in target if n not in current]
+            if not missing:
+                continue
+            nodelist = ",".join(dict.fromkeys(current + target))
+            try:
+                loop._slurm_client.update_excludes(host.record.runtime.runtime_job_id, nodelist)
+            except Exception as exc:  # it may have just started; next poll sees info
+                LOGGER.warning(
+                    "[pool] could not update the exclusions of queued host %s: %s", host.hid, exc
+                )
+                continue
+            sbatch_set(sbatch, "exclude", nodelist)
+            loop._store.upsert(host.record)
+            LOGGER.info(
+                "[pool %s] queued host %s (job %s): %d more node(s) excluded: %s",
+                layout.root.name,
+                host.hid,
+                host.record.runtime.runtime_job_id,
+                len(missing),
+                ",".join(missing[:10]),
+            )
+
     def _create_host(self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig) -> str:
         from oellm_autoexp.monitor.loop import JobRecord, JobRuntime
 
@@ -1107,10 +1238,7 @@ class PoolManager:
         # (pool_ctl exclude, which every pool has, autoexclude or not). The union
         # is baked into the clone and its exclude_file dropped, because rendering
         # would otherwise REPLACE the list with the file's content alone.
-        excluded = _split_nodes(_exclude_list(base.slurm)) + _split_nodes(
-            _read(layout.exclude_nodes)
-        )
-        excluded = list(dict.fromkeys(excluded))
+        excluded = self._host_excludes(layout, base)
         if excluded:
             sbatch_set(sbatch, "exclude", ",".join(excluded))
         slurm = replace(

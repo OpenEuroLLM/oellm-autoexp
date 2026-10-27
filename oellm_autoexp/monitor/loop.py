@@ -379,25 +379,43 @@ class MonitorLoop:
         if not PoolManager.is_run(job) or new_status is None:
             return "continue"
         if new_status == "PREEMPTED":
-            try:
-                from oellm_autoexp.monitor.pool import PoolLayout
+            from oellm_autoexp.monitor.pool import PoolLayout, read_run_state
 
-                max_attempts = PoolLayout(job.definition.pool_dir).load_config().max_attempts
+            layout = PoolLayout(job.definition.pool_dir)
+            try:
+                max_attempts = layout.load_config().max_attempts
             except Exception:  # pragma: no cover - a missing pool.json must not wedge the run
                 max_attempts = 20
-            if job.runtime.attempts >= max_attempts:
+            reason = read_run_state(layout, job.runtime.runtime_job_id).reason
+            # Only UNHEALTHY requeues count against max_attempts: a lost host or a
+            # host that no longer has the nodes. A handover, the host's wall clock
+            # or a pool_ctl preempt (reason "preempted") is the pool working as
+            # intended -- a continuous run hands over every segment, and counting
+            # those would cancel it after max_attempts segments (~10 days at 12 h).
+            counters = job.runtime.action_state.setdefault("pool:requeues", {})
+            counters[reason or "preempted"] = int(counters.get(reason or "preempted", 0)) + 1
+            unhealthy = sum(
+                v for k, v in counters.items() if k in ("host_lost", "insufficient_nodes")
+            )
+            if unhealthy > max_attempts:
                 LOGGER.warning(
-                    "Pool run %s of %s preempted after %d attempt(s): giving up",
+                    "Pool run %s of %s %s: %d unhealthy requeue(s) > max_attempts %d, giving up",
                     job.runtime.runtime_job_id,
                     job.job_id,
-                    job.runtime.attempts,
+                    reason,
+                    unhealthy,
+                    max_attempts,
                 )
+                # the cancel path reloads the record from disk: keep the counters
+                self._store.upsert(job)
                 return "cancelled"
             LOGGER.info(
-                "Pool run %s of %s was preempted: requeueing (attempt %d)",
+                "Pool run %s of %s was preempted (%s): requeueing (attempt %d; requeues %s)",
                 job.runtime.runtime_job_id,
                 job.job_id,
+                reason or "preempted",
                 job.runtime.attempts + 1,
+                dict(counters),
             )
             return "restart"
         if new_status == "TIMEOUT":
@@ -936,7 +954,42 @@ class MonitorLoop:
             variables["log_dir"] = str(Path(variables["log_path"]).parent)
         except Exception:  # pragma: no cover - best effort
             variables["log_path"] = ""
-        if hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
+        pool_context = None
+        if PoolManager.is_run(job):
+            # A pool run's runtime id is a RUN id (pool.0007), which sacct does not
+            # know: hand the hooks the host's SLURM job id, plus what only a pool
+            # run has ({run_id}, {step_nodes}).
+            from oellm_autoexp.monitor.pool import PoolLayout, run_fault_context
+
+            run_id = variables["runtime_job_id"]
+            pool_context = run_fault_context(PoolLayout(job.definition.pool_dir), run_id)
+            variables["run_id"] = run_id
+            variables["step_nodes"] = ",".join((pool_context or {}).get("nodes", []))
+            if pool_context:
+                variables["runtime_job_id"] = pool_context["slurm_job_id"]
+        if hooks.get("nccl_peer_scan") and exclude_file and pool_context is not None:
+            # same rules as below, applied to the failed RUN inside a live host
+            from oellm_autoexp.monitor.pool import scan_pool_run
+
+            try:
+                result = scan_pool_run(
+                    pool_context,
+                    log_root=Path(variables["log_path"]).parent.parent,
+                    job_log=variables["log_path"],
+                    exclude_file=exclude_file,
+                )
+                LOGGER.info(
+                    "NCCL peer scan of pool run %s (host job %s, %d node(s)): %d event(s), "
+                    "newly excluded %s",
+                    pool_context["run_id"],
+                    pool_context["slurm_job_id"],
+                    len(pool_context["nodes"]),
+                    len(result.get("events", [])),
+                    result.get("newly_excluded"),
+                )
+            except Exception as exc:
+                LOGGER.warning("NCCL peer scan of a pool run failed; continuing recovery: %s", exc)
+        elif hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
             # This hook runs after cancellation/teardown, never in the critical
             # cancellation path. A broken scanner must not block recovery.
             import subprocess

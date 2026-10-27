@@ -354,19 +354,27 @@ def test_preempted_run_is_requeued_with_a_new_run(env):
     assert read_run_state(env.layout, rec.runtime.runtime_job_id).status == "PENDING"
 
 
-def test_preemption_budget(env):
+def test_preemption_budget_counts_only_unhealthy_requeues(env):
     meta = env.layout.load_meta()
     meta["config"]["max_attempts"] = 2
     env.layout.write_meta(meta)
     env.add_run("job_a")
     env.poll(2)
     env.host_up(env.hosts()[0])
-    for _ in range(2):
+    # healthy requeues (handover / wall clock / preempt) never use up the budget
+    for _ in range(5):
         env.poll()
-        rid = env.rec("job_a").runtime.runtime_job_id
-        write_rc(env.layout, rid, -1, "host_lost")
+        write_rc(env.layout, env.rec("job_a").runtime.runtime_job_id, 0, "preempted")
     env.poll()
-    assert env.rec("job_a").runtime.final_state == "cancelled"
+    assert env.rec("job_a").runtime.final_state is None
+    # unhealthy ones do: two are allowed, the third gives up
+    for _ in range(3):
+        env.poll()
+        write_rc(env.layout, env.rec("job_a").runtime.runtime_job_id, -1, "host_lost")
+    env.poll()
+    rec = env.rec("job_a")
+    assert rec.runtime.final_state == "cancelled"
+    assert rec.runtime.action_state["pool:requeues"] == {"preempted": 5, "host_lost": 3}
 
 
 def test_timeout_is_final(env):
@@ -674,3 +682,64 @@ def test_no_release_loop_for_a_job_bigger_than_every_host(env):
     env.poll(3)
     assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
     assert len(env.hosts()) == 1
+
+
+# ---------------------------------------------------------------- fault scan / queued excludes
+def test_restart_hooks_attribute_a_failed_pool_run_to_its_node(env, tmp_path):
+    env.add_run("train", nodes=2)
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0])
+    env.poll()
+    rid = env.rec("train").runtime.runtime_job_id
+    host_job = env.hosts()[0].runtime.runtime_job_id
+    (env.layout.run_dir(rid) / "started").write_text(
+        f"host={hid}\njob={host_job}\nstep_index=1\nnodes=jpbo-001-01,jpbo-001-02\nts={int(time.time()) - 60}\n"
+    )
+    log = Path(env.rec("train").definition.log_path.replace("%j", rid))
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        "[default0]: using world size: 8, data-parallel size: 8\n"
+        "[rank5]: RuntimeError: CUDA error: uncorrectable ECC error encountered\n"
+        "srun: error: jpbo-001-02: task 1: Exited with exit code 1\n"
+    )
+    write_rc(env.layout, rid, 1, "failed")
+    excl = tmp_path / "fleet_exclude.txt"
+    excl.write_text("# fleet list\n")
+    out = tmp_path / "pre.out"
+    env.loop._pending_restart_hooks[env.rec("train").job_id] = {
+        "nccl_peer_scan": True,
+        "exclude_file": str(excl),
+        "pre_command": f"echo {{runtime_job_id}} {{run_id}} {{step_nodes}} > {out}",
+    }
+    env.loop._run_restart_hooks(env.rec("train"), rid)
+    # the node whose rank logged the fault (task 1 -> second node) is excluded, with evidence
+    assert "jpbo-001-02" in excl.read_text().split() and "jpbo-001-01" not in excl.read_text()
+    assert f"job {host_job}" in excl.read_text()
+    audit = (log.parent.parent / "nccl-peer-events.jsonl").read_text()
+    assert f'"pool_run": "{rid}"' in audit
+    # hooks get the HOST's SLURM job id, not the run id, plus the run's own facts
+    assert out.read_text().split() == [host_job, rid, "jpbo-001-01,jpbo-001-02"]
+
+
+def test_queued_successor_gets_exclusions_found_after_its_submission(env, monkeypatch):
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=1, handover=True)
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(3)
+    running, queued = env.hosts()
+    env.host_up(running)
+    env.poll()
+    calls = []
+    monkeypatch.setattr(
+        env.fake, "update_excludes", lambda job_id, nodes: calls.append((job_id, nodes))
+    )
+    env.layout.exclude_nodes.write_text("jpbo-007-07\n")
+    env.poll()
+    assert calls == [(queued.runtime.runtime_job_id, "jpbo-007-07")]  # the queued one only
+    assert env.rec(queued.job_id).definition.slurm.sbatch.exclude == "jpbo-007-07"
+    env.poll(2)
+    assert len(calls) == 1  # nothing new, no repeated scontrol calls
+    env.layout.exclude_nodes.write_text("jpbo-007-07\njpbo-008-08\n")
+    env.poll()
+    assert calls[-1] == (queued.runtime.runtime_job_id, "jpbo-007-07,jpbo-008-08")

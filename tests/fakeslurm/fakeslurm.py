@@ -601,6 +601,29 @@ def cmd_scontrol(argv: list[str]) -> int:
     return 1
 
 
+def cmd_sinfo(argv: list[str]) -> int:
+    """``sinfo -h -N -n <nodes> -o "%N %t"``: node states from
+    ``$FAKESLURM_DIR/node_states`` (``<node> <state>`` lines), ``alloc``
+    otherwise."""
+    nodes: list[str] = []
+    i = 0
+    while i < len(argv):
+        if argv[i] in ("-n", "--nodes"):
+            nodes = expand_hostlist(argv[i + 1])
+            i += 1
+        i += 1
+    states = {}
+    path = ROOT / "node_states"
+    if path.exists():
+        for line in path.read_text().splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                states[parts[0]] = parts[1]
+    for node in nodes:
+        print(f"{node} {states.get(node, 'alloc')}")
+    return 0
+
+
 def cmd_killall(_argv: list[str]) -> int:
     """Test teardown: end every job (batch shells, steps) right now."""
     for job in _all_jobs():
@@ -627,6 +650,7 @@ def cmd_crash(argv: list[str]) -> int:
 COMMANDS = {
     "_killall": cmd_killall,
     "_crash": cmd_crash,
+    "sinfo": cmd_sinfo,
     "sbatch": cmd_sbatch,
     "_run": cmd_run,
     "srun": cmd_srun,

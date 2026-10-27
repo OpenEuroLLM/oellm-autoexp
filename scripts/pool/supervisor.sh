@@ -58,14 +58,25 @@ ALL_NODES=$(expand_hosts "$SLURM_JOB_NODELIST")
 NUM_NODES=$(printf '%s\n' "$ALL_NODES" | grep -c .)
 
 # usable nodes in allocation order, minus every exclusion source
+# Nodes of this allocation SLURM itself reports unusable: down, drained/draining, failing,
+# maintenance, unknown, or not responding (`*`). With `#SBATCH --no-kill` the allocation
+# survives a node failure; this keeps the next run off the dead node before any fault
+# scan has named it (one spare node per host is then enough to keep running).
+sick_nodes() {
+  sinfo -h -N -n "$SLURM_JOB_NODELIST" -o "%N %t" 2>/dev/null |
+    awk '$2 ~ /(down|drain|drng|fail|maint|unk|npc|\*)/ {print $1}' | sort -u
+}
+
 usable_nodes() { # usable_nodes <extra exclude list>
   local excl
   excl=$(
     {
       cat "$POOL/exclude_nodes" "$H/exclude_nodes" 2>/dev/null
       printf '%s\n' "$1"
-    } | tr ', ' '\n\n' | grep -v '^$' | while read -r e; do expand_hosts "$e"; done | sort -u
+    } | tr ', ' '\n\n' | grep -v '^$' | while read -r e; do expand_hosts "$e"; done
+    sick_nodes
   )
+  excl=$(printf '%s\n' "$excl" | grep -v '^$' | sort -u)
   if [ -z "$excl" ]; then
     printf '%s\n' "$ALL_NODES"
   else

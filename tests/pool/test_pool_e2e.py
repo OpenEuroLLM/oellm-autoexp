@@ -416,3 +416,24 @@ def test_bad_node_in_a_live_host(pool):
     assert (
         f"#SBATCH --exclude={bad}" in (pool.layout.host_dir("host002") / "host.sbatch").read_text()
     )
+
+
+def test_a_node_slurm_reports_down_is_skipped_by_the_next_run(pool):
+    # the spare-node model: a host one node larger than its job, with --no-kill, survives a
+    # node failure; the supervisor keeps the next run off a node SLURM reports unusable,
+    # before any fault scan has named it
+    pool.create_pool(*FAST)
+    pool.enqueue("a", "aux.iters=300", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 15, 60, "15 iterations")
+    jid, node = pool.run_state(first).started["job"], pool.run_state(first).started["nodes"]
+    (pool.fs / "node_states").write_text(f"{node} down*\n")
+    pool.ctl("preempt", first)
+    second = pool.wait_for(
+        lambda: [r for r in pool.runs_of("dummy_a") if r != first], 60, "requeue"
+    )[0]
+    pool.wait_for(lambda: pool.run_state(second).status == "RUNNING", 30, "the run on the spare")
+    state = pool.run_state(second)
+    assert (state.started["job"], state.started["nodes"]) == (jid, f"n{jid}-1")
+    assert pool.layout.exclude_nodes.read_text().strip() == ""  # nobody had to exclude it
