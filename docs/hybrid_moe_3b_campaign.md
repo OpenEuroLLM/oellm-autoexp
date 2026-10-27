@@ -3150,3 +3150,62 @@ over 16k / 32k / 64k (150 questions, SE ≈ 0.04 per arm).
 - What would settle the loss question: s2 mHC-4 and LDM ×1 run to 8000 steps (stable to 7200, same
   cooldown share), ~200 GPU-h. No pre-cooldown checkpoint exists (rolling 3500 / 3750 are inside the
   cooldown), so it is a fresh pair.
+
+### Rematch final, s2 + s3, and the residual decision (2026-10-27, evening)
+
+**Node count = data order.** The cyclic sampler buckets the samples per data-parallel rank, so runs
+on other node counts see other training AND validation batches. Equal-step gaps across node counts
+are batch noise (up to ±0.08 per step). Across layouts, compare fitted curves
+(`scripts/korbi/campaign/rematch_fit.py`: 100-step windows, E + A t^-a on the stable phase) or
+fixed sets (the long-context set).
+- Rematch layouts: s1 all arms on 2 nodes; s2 the original five on 2 nodes, LDM x0.25 / x0.125 and
+  the nGPT arms on 8; s3 all arms on 8.
+
+**Loss (gap vs mHC-4 x0.25):**
+
+| | s2, fitted @3200 | s2 val @4000 | s3 val @4000 |
+|---|---:|---:|---:|
+| plain | +0.031 | +0.027 | +0.041 |
+| LDM x2 | -0.018 | -0.016 | |
+| LDM x1 | -0.016 | -0.015 | -0.0075 |
+| LDM x0.25 (8 nodes) | -0.014 | (other batches) | queued |
+| LDM x0.125 (8 nodes) | -0.010 | (other batches) | queued |
+
+- LDM's mixer lr is flat from x0.25 to x2; x0.125 is clearly worse.
+- s3's lead (-0.0075) holds over the second half of the stable phase, and the cooldown barely
+  changes it (-0.0008).
+
+**Long context** (fixed set; plain eval, log-n in brackets; 64-fact retrieval averaged over
+16/32/64k):
+
+| | NLL 32-64k | 64-fact 16-64k | 16-fact @64k |
+|---|---:|---:|---:|
+| s2 mHC-4 x0.25 | 2.260 (2.240) | 0.44 (0.63) | 0.56 (0.76) |
+| s2 LDM x1 | 2.228 (2.219) | 0.39 (0.50) | 0.44 (0.50) |
+| s2 LDM x0.25 (8 nodes) | 2.234 (2.217) | 0.73 (0.85) | 0.64 (0.88) |
+| s2 LDM x0.125 (8 nodes) | 2.256 (2.226) | 0.45 (0.63) | 0.46 (0.74) |
+| s3 mHC-4 x0.25 | 2.248 (2.201) | 0.49 (0.65) | 0.46 (0.68) |
+| s3 LDM x1 | 2.223 (2.185) | 0.61 (0.83) | 0.32 (0.80) |
+
+- LDM's s2 retrieval deficit does not hold at s3: with log-n it retrieves better than mHC-4.
+- LDM has the best long-document NLL at both sizes.
+- Single-run retrieval varies more than the lr arms differ (s2 x0.25 vs x0.125 on the same
+  batches: 0.73 vs 0.45).
+
+**Decision (user, 2026-10-27): LDM is the residual.**
+- Open: the residual-stream growth. An nGPT-like normalized stream is adopted only if it lowers the
+  loss; otherwise production uses plain LDM at mixer lr x1.
+
+**nGPT on LDM, attempts:**
+1. Full nGPT form (weight normalizer, approx LERP, unbounded alpha): grad norm 150-280 by step
+   10-20, NaN at ~30.
+2. nGPT's residual only (stream normalized at entry, exact LERP toward the normalized output, alpha
+   <= 0.5; screen5ngptldm_s2). nGPT alone stopped at step 2500, grad norm 1.3e5, loss still fine.
+   - The gradient sits in the embedding (51 %) and layer-0 attention QKV (49 %).
+   - Cause: normalizing the sublayer output makes its last projection scale-free. Layer 0's
+     attention output projection shrank to ~1/10 of the others' scale, and 1/|a| amplified
+     everything upstream.
+   - nGPT + LDM followed the same pattern, slower (grad norm 60 at step 2500).
+3. Running: `screen5ldmnorm_s{2,3}`. LDM x1, LERP toward the RAW output with an exact
+   renormalization, x' = Norm((1 - alpha) x + alpha a). A vanishing output then switches its
+   sublayer off, with no 1/|a| amplification. Paired with LDM x1 (s2 on 2 nodes, s3 on 8).
