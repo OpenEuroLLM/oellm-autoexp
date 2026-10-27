@@ -271,6 +271,93 @@ def cmd_request(op: str):
     return run
 
 
+_HOOK_MARK = "# Pool adoption hook (oellm_autoexp/monitor/pool.py, `pool_ctl adopt`)"
+
+
+def _hook_ids(path: Path) -> set[str] | None:
+    """Job ids of an installed adoption hook; None if the file is not ours."""
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith(_HOOK_MARK):
+        return None
+    import ast
+
+    for line in text.splitlines():
+        if line.startswith("_ADOPTED = "):
+            value = line.split("=", 1)[1].split("#", 1)[0].strip()
+            return set(ast.literal_eval(value) or ()) if value != "set()" else set()
+    return None
+
+
+def render_hook(ids: set[str], adopt_dir: Path, hold_max_s: int) -> str:
+    template = (Path(__file__).resolve().parent / "pool" / "adopt_sitecustomize.py").read_text()
+    text = (
+        template.replace("{__ADOPTED_JOB_IDS__}", repr(set(sorted(ids))) if ids else "set()")
+        .replace("__ADOPT_DIR__", repr(str(adopt_dir)))
+        .replace("__HOLD_MAX_S__", str(int(hold_max_s)))
+    )
+    compile(text, "sitecustomize.py", "exec")  # never install a hook that does not parse
+    return text
+
+
+def cmd_adopt(layout: PoolLayout, args) -> int:
+    """Adopt a QUEUED SLURM job as a host of this pool: install the fail-closed hook into its
+    working directory (its own training step will never run) and register it with the monitor,
+    which starts the supervisor into the allocation once it runs."""
+    import subprocess
+
+    jid = str(args.job_id)
+    row = subprocess.run(
+        ["squeue", "-h", "-j", jid, "-o", "%T|%D|%a|%l|%Z"], capture_output=True, text=True
+    ).stdout.strip()
+    if not row:
+        print(f"job {jid} is not in the queue", file=sys.stderr)
+        return 1
+    state, nodes, account, limit, workdir = row.split("|")
+    hook = Path(args.workdir or workdir) / "sitecustomize.py"
+    ids = _hook_ids(hook) if hook.exists() else set()
+    if ids is None:
+        print(f"{hook} exists and is not an adoption hook: refusing", file=sys.stderr)
+        return 1
+    if args.remove:
+        ids.discard(jid)
+        if ids:
+            hook.write_text(
+                render_hook(ids, layout.root / "adopt", args.hold_max_s), encoding="utf-8"
+            )
+        else:
+            hook.unlink(missing_ok=True)
+        print(
+            f"job {jid} removed from {hook} ({'still holds ' + ', '.join(sorted(ids)) if ids else 'hook removed'})"
+        )
+        return 0
+    if state != "PENDING":
+        print(
+            f"job {jid} is {state}: only a queued job can be adopted (its step must not have started)",
+            file=sys.stderr,
+        )
+        return 1
+    (layout.root / "adopt").mkdir(parents=True, exist_ok=True)
+    text = render_hook(ids | {jid}, layout.root / "adopt", args.hold_max_s)
+    tmp = hook.with_name(f".sitecustomize.{jid}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(hook)  # replace, never edit in place: a starting job may be reading it
+    assert jid in (_hook_ids(hook) or set()), "hook does not list the job after install"
+    print(f"hook installed: {hook} (holds {', '.join(sorted(ids | {jid}))})")
+    path = submit_request(
+        layout.root,
+        "adopt",
+        job_id=jid,
+        nodes=int(nodes),
+        account=account,
+        time=limit,
+        workdir=str(hook.parent),
+    )
+    print(f"request adopt written: {path.name}")
+    if args.no_wait:
+        return 0
+    return _await_result(layout, path, args.wait)
+
+
 def cmd_preempt(layout: PoolLayout, args) -> int:
     rd = layout.run_dir(args.run)
     if not (rd / "run.json").exists():
@@ -358,6 +445,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("target", help="job id, job name, or any run id of the job")
     p.add_argument("--all", action="store_true", help="cancel every active job the name matches")
     p.set_defaults(func=cmd_request("cancel"))
+    p = waiting(sub.add_parser("adopt", help="adopt a queued SLURM job as a host of this pool"))
+    p.add_argument("job_id")
+    p.add_argument("--workdir", help="where the job's step runs Python (default: its WorkDir)")
+    p.add_argument(
+        "--hold-max-s",
+        type=int,
+        default=1800,
+        help="the held step leaves (rc 0, no training) if no supervisor attaches by then",
+    )
+    p.add_argument("--remove", action="store_true", help="take the job out of the hook again")
+    p.set_defaults(func=cmd_adopt)
     p = sub.add_parser("preempt")
     p.add_argument("run")
     p.set_defaults(func=cmd_preempt)

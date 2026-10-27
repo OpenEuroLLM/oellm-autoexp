@@ -385,7 +385,8 @@ def cmd_srun(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    overlap = opts.get("overlap") == "true"
+    # SLURM_OVERLAP: srun's input variable for --overlap (the adopted supervisor exports it)
+    overlap = opts.get("overlap") == "true" or os.environ.get("SLURM_OVERLAP") == "1"
     name = opts.get("job-name", Path(command[0]).name if command else "step")
 
     steps_dir = JOBS / jid / "steps"
@@ -436,6 +437,7 @@ def cmd_srun(argv: list[str]) -> int:
                 "SLURM_JOB_ID": jid,
                 "SLURM_STEP_ID": str(step_id),
                 "SLURM_STEP_NODELIST": ",".join(nodes),
+                "SLURM_JOB_NODELIST": ",".join(alloc),
                 "SLURM_STEP_NUM_NODES": str(nnodes),
                 "SLURM_NNODES": str(nnodes),
                 "SLURM_NODEID": str(node_idx),
@@ -526,7 +528,17 @@ def cmd_squeue(argv: list[str]) -> int:
         if job.get("time_s") and job.get("start_ts"):
             rem = max(0, int(job["start_ts"] + job["time_s"] - time.time()))
             left = f"{rem // 3600}:{rem % 3600 // 60:02d}:{rem % 60:02d}"
-        rows.append({"i": job["id"], "T": job["state"], "j": job["name"], "L": left})
+        iso = lambda ts: time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)) if ts else "N/A"  # noqa: E731
+        start = job.get("start_ts")
+        limit = int(job.get("time_s") or 0)
+        rows.append({
+            "i": job["id"], "T": job["state"], "j": job["name"], "L": left,
+            # adoption (pool_ctl adopt, the adopted supervisor) reads these
+            "S": iso(start), "e": iso(start + limit) if start and limit else "N/A",
+            "D": job.get("nodes", 1), "a": job.get("account") or "",
+            "l": f"{limit // 3600}:{limit % 3600 // 60:02d}:{limit % 60:02d}" if limit else "UNLIMITED",
+            "Z": job.get("cwd", ""), "N": ",".join(job.get("nodelist", [])) if start else "",
+        })
     if header:
         print(_fmt(fmt, {"i": "JOBID", "T": "STATE", "j": "NAME", "L": "TIME_LEFT"}))
     for row in rows:

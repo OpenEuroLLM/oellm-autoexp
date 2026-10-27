@@ -380,8 +380,11 @@ def run_loop(controller: MonitorLoop) -> str:
 
             active_jobs = list(loop._store.load_all())
             if not active_jobs:
-                LOGGER.info("All jobs finished.")
-                break
+                from oellm_autoexp.monitor.pool import pools_have_pending_requests
+
+                if not pools_have_pending_requests(session_dir):
+                    LOGGER.info("All jobs finished.")
+                    break
 
             write_heartbeat(session_dir)
             try:
