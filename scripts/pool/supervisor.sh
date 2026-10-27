@@ -54,10 +54,22 @@ load_cfg() {
 
 expand_hosts() { scontrol show hostnames "$1" 2>/dev/null; }
 
-# an adopted host's supervisor is a 1-node step started from outside: take the JOB's nodes
+# An adopted host's supervisor is a 1-node, 1-cpu step started from outside: take the JOB's
+# nodes, and drop the step-level variables srun would read as input for the run steps it
+# starts (MareNostrum 5 sets SLURM_MEM_PER_CPU: "SLURM_MEM_PER_CPU, SLURM_MEM_PER_GPU, and
+# SLURM_MEM_PER_NODE are mutually exclusive"), so they see what a batch shell would.
 if [ -n "${AUTOEXP_POOL_ADOPTED_JOB:-}" ]; then
   SLURM_JOB_NODELIST=$(squeue -h -j "$AUTOEXP_POOL_ADOPTED_JOB" -o %N 2>/dev/null)
   export SLURM_JOB_NODELIST SLURM_JOB_ID="$AUTOEXP_POOL_ADOPTED_JOB"
+  unset SLURM_MEM_PER_CPU SLURM_MEM_PER_GPU SLURM_MEM_PER_NODE SLURM_GRES SLURM_GPUS \
+    SLURM_GPUS_PER_NODE SLURM_GPUS_PER_TASK SLURM_GPUS_ON_NODE SLURM_TRES_PER_TASK \
+    SLURM_NTASKS SLURM_NPROCS SLURM_NTASKS_PER_NODE SLURM_TASKS_PER_NODE SLURM_CPUS_PER_TASK \
+    SLURM_CPU_BIND SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE SLURM_CPU_BIND_VERBOSE \
+    SLURM_DISTRIBUTION SLURM_STEP_ID SLURM_STEPID SLURM_STEP_NODELIST SLURM_STEP_NUM_NODES \
+    SLURM_STEP_NUM_TASKS SLURM_STEP_TASKS_PER_NODE SLURM_STEP_GPUS SLURM_NODELIST \
+    SLURM_JOB_CPUS_PER_NODE SLURM_EXCLUSIVE CUDA_VISIBLE_DEVICES
+  SLURM_NNODES=$(scontrol show hostnames "$SLURM_JOB_NODELIST" 2>/dev/null | grep -c .)
+  export SLURM_NNODES SLURM_JOB_NUM_NODES=$SLURM_NNODES SLURM_NODELIST=$SLURM_JOB_NODELIST
 fi
 ALL_NODES=$(expand_hosts "$SLURM_JOB_NODELIST")
 NUM_NODES=$(printf '%s\n' "$ALL_NODES" | grep -c .)
