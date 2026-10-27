@@ -1782,6 +1782,12 @@ class MegatronConfig(ConfigInterface):
     # (cute_ldm.workspace.CuteRecomputeWorkspace).
     depth_memory_unwind: bool = False
 
+    # LDM "torch" / "cute" with the nGPT residual (requires ngpt): every write site takes
+    # nGPT's LERP step of the unit-norm stream toward the normalized sublayer output instead
+    # of ``x + out``, and writes the step's displacement ``x' - x`` into the memory
+    # (depth_memory.ldm_residual). The reads stay ``x + r``.
+    depth_memory_lerp: bool = False
+
     # LDM "cute": the window E of deferred writes (the paper: 4).
     depth_memory_window: int = 4
 
