@@ -1,0 +1,77 @@
+# @package _global_
+# LDM vs mHC-4 at the production scale (user 2026-10-27): the ambitious production model (GQA suite:
+# ~50B-A2.7B, 216 experts top 5, 40B Engram, 7:1 attention first, muown_classical, Megatron-FSDP +
+# MoonEP, full recompute with host offload, gbs 4096 x 16k) with its residual scheme swapped: mHC-4
+# (production) vs LDM under recompute with the CuTe kernels (Megatron a6ac93843 + cute_kernels
+# c756eb0; mixer lr x1, the LDM authors). 8 nodes (FSDP + MoonEP, 64 experts): LDM 92 % of mHC-4
+# (6,890 vs 7,520 tok/s/GPU); target at 32 / 128 nodes: within 10 %. Speed only: 12 steps, no
+# saves, no eval.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh ldm_speed32 scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_ldm_speed_mn5 aux.nodes=32 --yes
+#   ... aux.nodes=128 slurm.sbatch.qos=acc_xehpc   (128 nodes: ENGRAM_STEP_GROUP 2, see below)
+defaults:
+  - hybrid_ambitious_32_mn5
+  - _self_
+
+aux:
+  suite: ldm_speed
+  arm: mhc4
+
+backend:
+  env:
+    # Engram step lookup groups the micro-batches per step: 8 at 32 nodes (mbs 4), 2 at 128
+    ENGRAM_STEP_GROUP: "${oc.eval:'str(max(1, 4096 // (${aux.nodes} * 4 * 4)))'}"
+  megatron:
+    train_iters: 12
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+    eval_interval: 100000
+    eval_iters: 0
+    lr_warmup_iters: 0
+
+job:
+  name: ${aux.suite}_${aux.arm}_${aux.nodes}n
+  array_group: ${aux.suite}_${aux.nodes}n
+  est_step_time_s: 90.0
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # production: mHC-4, mixer lr x0.25
+        - aux.arm: mhc4
+        # LDM K 8 under recompute (2 layers per chunk, as production), mixer lr x1
+        - aux.arm: ldm_m4
+          backend.megatron.mhc: false
+          backend.megatron.mhc_routed_topk: 0
+          backend.megatron.mhc_routed_reversible: false
+          backend.megatron.depth_memory: true
+          backend.megatron.depth_memory_impl: cute
+          backend.megatron.depth_memory_unwind: true
+          backend.megatron.depth_memory_groups: 16
+          backend.megatron.depth_memory_key_dim: 8
+          backend.megatron.depth_memory_hidden_dim: 32
+          backend.megatron.residual_mixer_lr_mult: 1.0
+        # the same at mbs 2 (8 nodes: memory 0.69 vs 0.96 at mbs 4), twice the micro-batches
+        - aux.arm: ldm_m2
+          backend.megatron.mhc: false
+          backend.megatron.mhc_routed_topk: 0
+          backend.megatron.mhc_routed_reversible: false
+          backend.megatron.depth_memory: true
+          backend.megatron.depth_memory_impl: cute
+          backend.megatron.depth_memory_unwind: true
+          backend.megatron.depth_memory_groups: 16
+          backend.megatron.depth_memory_key_dim: 8
+          backend.megatron.depth_memory_hidden_dim: 32
+          backend.megatron.residual_mixer_lr_mult: 1.0
+          backend.megatron.micro_batch_size: 2
