@@ -147,6 +147,11 @@ live: the monitor re-reads `pool.json` every poll and the supervisors re-read
   The result (`code unchanged since enqueue` or `CODE CHANGED SINCE ENQUEUE (n): ...`) goes into
   the ledger, the host log and the run log, and `pool_ctl status` flags changed runs. It never
   blocks a run: no python or a timeout only writes `provenance: unavailable`.
+* **Without a `git` binary** (JUPITER compute nodes, most containers) the launch check reads the
+  commit and branch from the `.git` files, and hashes the files that were dirty at enqueue again
+  in pure Python. A commit change, or an edit or sync of those files, is still caught. Files that
+  were clean at enqueue, and new untracked files, are not, and the launch line says so. A check
+  that could not be made is never reported as a change.
 
 ## Lifecycle details
 
