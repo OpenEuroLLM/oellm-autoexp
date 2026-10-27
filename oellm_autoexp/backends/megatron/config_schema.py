@@ -1766,13 +1766,20 @@ class MegatronConfig(ConfigInterface):
     # recompute (one workspace per stage holds one segment's tapes).
     depth_memory_segments: bool = False
 
-    # LDM "torch" with full activation recompute, one layer per chunk, no pipeline
-    # parallelism: nothing of the state is checkpointed. The forward updates (M, P) in place
-    # without a tape; a layer's recompute (in the backward, the state then at that layer's
-    # edge) reads from the current state and recovers the edge's update in closed form (kappa
-    # = P_e kbar, u = (vbar - M_e' kbar) / (1 - kappa . kbar)); the backward unwinds M, P to
-    # the previous edge. The checkpoints carry only the [x, r] streams
-    # (depth_memory_state.UnwindingDepthMemoryWorkspace).
+    # LDM with full activation recompute and no pipeline parallelism: nothing of the state is
+    # checkpointed; the checkpoints carry only the [x, r] streams. "torch" (one layer per
+    # chunk): the forward updates (M, P) in place without a tape; a layer's recompute (in the
+    # backward, the state then at that layer's edge) reads from the current state and recovers
+    # the edge's update in closed form (kappa = P_e kbar, u = (vbar - M_e' kbar) / (1 - kappa
+    # . kbar)); the backward unwinds M, P to the previous edge
+    # (depth_memory_state.UnwindingDepthMemoryWorkspace). This inverse amplifies the rounding
+    # of the state across depth; the paper's kernels do not use it. "cute" (any chunk size):
+    # the paper's kernels, unchanged. Their per-edge tapes travel in the residual stream as
+    # records, one per edge of a recompute group, so Megatron checkpoints and offloads them
+    # with the stream as it does mHC's streams; a recomputed layer takes its read from the
+    # running state at its window's boundary (the read kernel), and the backward unwinds M by
+    # subtraction and P by addition from the FP32 running covariance
+    # (cute_ldm.workspace.CuteRecomputeWorkspace).
     depth_memory_unwind: bool = False
 
     # LDM "cute": the window E of deferred writes (the paper: 4).
