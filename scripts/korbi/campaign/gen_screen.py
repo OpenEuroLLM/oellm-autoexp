@@ -1565,7 +1565,10 @@ def arms5resgqa(size: str):
     if size == "s3":
         recipe[B + "expert_model_parallel_size"] = 16
     mhc = {k: v for k, v in mhc4.items() if k != B + "residual_mixer_lr_mult"}
-    keep = ("plain", "mhc4", "ldm") if size == "s3" else None
+    # s2 only (user 2026-10-27): LDM at x0.25 / x0.125 -- does a lower mixer lr change LDM's long-context
+    # retrieval, as it does mHC-4's (x0.125: best retrieval, +0.014 loss)?
+    keep = {"s1": ("plain", "mhc4", "mhc4_lr0125", "ldm", "ldm_lr2"),
+            "s3": ("plain", "mhc4", "ldm")}.get(size)
     return [(n, d, {**own_cache(base), **recipe, **kv}) for n, d, base, kv in (
         ("plain", "plain residual", plain, {}),
         ("mhc4", "mHC-4, mixer lr x0.25", mhc, {B + "residual_mixer_lr_mult": 0.25}),
@@ -1575,7 +1578,11 @@ def arms5resgqa(size: str):
         ("ldm", "LDM (K 8, under recompute), mixer lr x1 (the authors)", plain,
          {**LDM_REMATCH, B + "residual_mixer_lr_mult": 1.0}),
         ("ldm_lr2", "LDM (K 8, under recompute), mixer lr x2.0 (the s1 sweep)", plain,
-         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0})) if keep is None or n in keep]
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0}),
+        ("ldm_lr025", "LDM (K 8, under recompute), mixer lr x0.25", plain,
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.25}),
+        ("ldm_lr0125", "LDM (K 8, under recompute), mixer lr x0.125", plain,
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.125})) if keep is None or n in keep]
 
 
 def arms5fsdpeq(size: str = "s1"):
