@@ -32,3 +32,8 @@ pool_host:
   max_attempts: 20
   host_stale_s: 900
   poll_s: 10
+  # SLURM accounts in order of preference ("cns144,ehpc533"; "" = the host config's own): the
+  # first queues the usual hosts, every other one insurance host while nothing runs or once
+  # the running host has less than fallback_lead_s left (0 = always); first to start wins
+  host_accounts: ""
+  fallback_lead_s: 0

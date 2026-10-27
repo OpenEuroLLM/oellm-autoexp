@@ -172,6 +172,97 @@ def test_preempt_saves_requeues_and_resumes_from_the_checkpoint(pool):
     assert len(pool.fake_jobs()) == 1, "the requeue stays in the same allocation"
 
 
+def test_preempt_uses_the_jobs_own_exit_signal(pool):
+    """A job with Megatron --exit-signal SIGUSR2 (our MareNostrum production runs) must get
+    SIGUSR2 on a preemption: SIGTERM would kill it without a save."""
+    pool.create_pool(*FAST)
+    pool.enqueue("u", "aux.iters=150", "aux.tick=0.1", "aux.extra_args=--exit-signal SIGUSR2")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_u"), 30, "run")[0]
+    meta = (pool.pool_dir / "runs" / first / "meta.env").read_text()
+    assert "STOP_SIGNAL=USR2" in meta, meta
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 25, 60, "25 iterations")
+    pool.ctl("preempt", first)
+    pool.wait_for(lambda: pool.run_state(first).status == "PREEMPTED", 30, "the preemption")
+    log = pool.run_log(first)
+    assert "exiting program after receiving SIGTERM." in log, "SIGUSR2 must reach the rank"
+    saved = max(_iterations(log))
+    second = pool.wait_for(
+        lambda: [r for r in pool.runs_of("dummy_u") if r != first], 30, "the requeue"
+    )[0]
+    pool.wait_for(
+        lambda: pool.record("dummy_u")["runtime"]["final_state"] == "finished",
+        60,
+        "the resumed run to finish",
+    )
+    assert _resumed_from(pool.run_log(second)) == saved
+
+
+def test_runs_execute_in_the_directory_they_were_enqueued_from(pool, tmp_path):
+    """MareNostrum runs from synced snapshots: a job enqueued from a new snapshot must run
+    there, not in the directory the host was submitted from (job.metadata.pool_workdir,
+    default the enqueuing process's working directory)."""
+    import shlex
+
+    snapshot = tmp_path / "autoexp_new_snapshot"
+    snapshot.mkdir()
+    pool.create_pool(*FAST)
+    pool.enqueue("w", "aux.iters=3", "aux.tick=0.1", f"+job.metadata.pool_workdir={snapshot}")
+    pool.start_monitor()
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_w"), 30, "run")[0]
+    step = (pool.pool_dir / "runs" / rid / "step.sh").read_text()
+    assert f"cd {shlex.quote(str(snapshot))} ||" in step
+    meta = (pool.pool_dir / "runs" / rid / "meta.env").read_text()
+    assert f"WORKDIR={shlex.quote(str(snapshot))}" in meta
+    pool.wait_for(
+        lambda: pool.record("dummy_w")["runtime"]["final_state"] == "finished", 60, "the run"
+    )
+
+
+def test_host_accounts_race_and_the_first_account_keeps_its_successor(pool):
+    """host_accounts: the first account queues its usual hosts, a fallback one insurance host;
+    whichever starts takes the run, and the first account keeps a successor queued (aging)."""
+    pool.create_pool(
+        *FAST,
+        "job.pool_host.keep_pending=1",
+        "job.pool_host.handover=true",
+        "job.pool_host.handover_min_age_s=3",
+        'job.pool_host.host_accounts="dev,accB"',
+    )
+    pool.enqueue("acc", "aux.iters=300", "aux.tick=0.1")
+    pool.start_monitor(hold_new_jobs=True)
+
+    def pending(account):
+        return [
+            j["id"] for j in pool.fake_jobs() if j["state"] == "PENDING" and j["account"] == account
+        ]
+
+    # nothing runs: run + successor in dev, one insurance host in accB
+    pool.wait_for(
+        lambda: len(pending("dev")) == 2 and len(pending("accB")) == 1, 40, "2 dev + 1 accB"
+    )
+    time.sleep(3)
+    assert len(pending("dev")) == 2 and len(pending("accB")) == 1, "no more hosts than that"
+    # the fallback starts first: it takes the run
+    b1 = pending("accB")[0]
+    pool.release(b1)
+    first = pool.wait_for(lambda: pool.runs_of("dummy_acc"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(first).status == "RUNNING", 30, "running")
+    assert pool.run_state(first).started["job"] == b1
+    # one host is up: dev keeps exactly one queued successor, accB a new insurance host
+    pool.wait_for(
+        lambda: len(pending("dev")) == 1 and len(pending("accB")) == 1, 40, "1 dev + 1 accB queued"
+    )
+    # the dev successor starts: the run moves over to it
+    a1 = pending("dev")[0]
+    pool.release(a1)
+    second = pool.wait_for(
+        lambda: [r for r in pool.runs_of("dummy_acc") if r != first], 60, "handover requeue"
+    )[0]
+    pool.wait_for(lambda: pool.run_state(second).status == "RUNNING", 60, "run on the dev host")
+    assert pool.run_state(second).started["job"] == a1
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,

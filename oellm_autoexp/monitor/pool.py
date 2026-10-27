@@ -150,6 +150,18 @@ class PoolHostConfig:
     # supervisor poll period
     poll_s: float = 10.0
     rank_pattern: str = DEFAULT_RANK_PATTERN
+    # Several SLURM accounts, in order of preference ("cns144,ehpc533"; empty = the host
+    # definition's own). Each host is submitted under one of them; a run's steps simply use
+    # the allocation they land in. The FIRST account keeps the usual queued hosts
+    # (keep_pending successors age in its queue); every other one gets queued hosts only
+    # while nothing runs, or once the running hosts have less than `fallback_lead_s` left
+    # (0: always -- the accounts race, and the first host to start takes the run).
+    host_accounts: str = ""
+    fallback_lead_s: float = 0.0
+
+
+def host_accounts(cfg: PoolHostConfig) -> list[str]:
+    return [a.strip() for a in (cfg.host_accounts or "").split(",") if a.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +415,20 @@ _STEP_ENV_SUBSTITUTIONS = (
 )
 
 
-def render_step_script(slurm: SlurmConfig, run_id: str, *, log_path: str) -> str:
+_EXIT_SIGNAL = re.compile(r"--exit[-_]signal[\s=]+['\"]?(?:SIG)?([A-Z0-9]+)")
+
+
+def stop_signal_of(step_text: str) -> str:
+    """The signal that stops a run gracefully: the job's own Megatron ``--exit-signal``
+    (SIGUSR2 in our MareNostrum production runs: SIGTERM would kill it without a save),
+    else TERM (Megatron's default ``--exit-signal-handler`` signal)."""
+    m = _EXIT_SIGNAL.search(step_text)
+    return m.group(1) if m else "TERM"
+
+
+def render_step_script(
+    slurm: SlurmConfig, run_id: str, *, log_path: str, workdir: str | None = None
+) -> str:
     """The job's own sbatch template, turned into a script for one srun step.
 
     * the ``#SBATCH`` header is kept, commented out: it documents what the job
@@ -452,6 +477,12 @@ def render_step_script(slurm: SlurmConfig, run_id: str, *, log_path: str) -> str
         "# [pool] the supervisor exports AUTOEXP_RUN_ID, AUTOEXP_STEP_INDEX, AUTOEXP_STEP_NODELIST,\n"
         "# [pool] AUTOEXP_STEP_NUM_NODES, AUTOEXP_STEP_NTASKS(_PER_NODE), AUTOEXP_POOL_DIR, AUTOEXP_POOL_HOST\n"
     )
+    if workdir:
+        # the job's relative paths (PYTHONPATH=., ./submodules/...) resolve against the
+        # directory it was enqueued from, not the host's
+        header += (
+            f'cd {shlex.quote(workdir)} || {{ echo "[pool] no workdir {workdir}" >&2; exit 97; }}\n'
+        )
     if text.startswith("#!"):
         first, _, rest = text.partition("\n")
         return f"{first}\n{header}{rest}"
@@ -626,14 +657,21 @@ def submit_request(pool_dir: str | Path, op: str, **payload: Any) -> Path:
     return path
 
 
-def check_fits_host(job: SlurmJobConfig, host: SlurmJobConfig) -> list[str]:
-    """Reasons a job cannot run inside this pool's hosts (empty = fine)."""
+def check_fits_host(
+    job: SlurmJobConfig, host: SlurmJobConfig, accounts: list[str] | None = None
+) -> list[str]:
+    """Reasons a job cannot run inside this pool's hosts (empty = fine). ``accounts``:
+    the pool's ``host_accounts``; a job of any of them fits."""
     problems: list[str] = []
     jsb, hsb = job.slurm.sbatch, host.slurm.sbatch
     if int(jsb.nodes or 1) > int(hsb.nodes or 1):
         problems.append(f"needs {jsb.nodes} nodes, the pool's hosts have {hsb.nodes}")
     for key in ("account", "partition", "qos", "reservation"):
         mine, theirs = getattr(jsb, key, None), getattr(hsb, key, None)
+        if key == "account" and accounts:
+            if mine and str(mine) not in accounts:
+                problems.append(f"sbatch.account={mine} but the pool's hosts use {accounts}")
+            continue
         if mine and theirs and str(mine) != str(theirs):
             problems.append(f"sbatch.{key}={mine} but the pool's hosts use {theirs}")
     if job.slurm.array or job.array_group:
@@ -663,6 +701,15 @@ class HostView:
     @property
     def submitted(self) -> bool:
         return bool(self.record.runtime.submitted)
+
+    @property
+    def account(self) -> str | None:
+        meta = getattr(self.record.definition, "metadata", None) or {}
+        acc = meta.get("pool_host_account")
+        if acc:
+            return str(acc)
+        acc = sbatch_get(self.record.definition.slurm.sbatch, "account")
+        return str(acc) if acc else None
 
     @property
     def dead(self) -> bool:
@@ -741,12 +788,14 @@ class PoolManager:
         priority = int(metadata.get("pool_priority", 0) or 0)
         enqueued_ts = float(metadata.get("pool_enqueued_ts") or time.time())
 
-        (rd / "step.sh").write_text(
-            render_step_script(job.slurm, rid, log_path=log_path), encoding="utf-8"
-        )
+        workdir = metadata.get("pool_workdir") or ""
+        step_text = render_step_script(job.slurm, rid, log_path=log_path, workdir=workdir or None)
+        (rd / "step.sh").write_text(step_text, encoding="utf-8")
         write_env_file(
             rd / "meta.env",
             {
+                "STOP_SIGNAL": metadata.get("pool_stop_signal") or stop_signal_of(step_text),
+                "WORKDIR": workdir,
                 "NODES": nodes,
                 "NTASKS_PER_NODE": tpn,
                 "MAX_RUNTIME_S": int(max_runtime),
@@ -1101,16 +1150,24 @@ class PoolManager:
                     self._cancel_host_record(loop, host)
                 host.retiring = True
         current = [h for h in hosts if not h.retiring and not h.dead]
-        # hosts still waiting in the queue beyond what is needed (keep_pending
-        # lowered, work gone): cancel the newest; an up host is left to idle_exit
-        queued_hosts = sorted(
-            (h for h in current if not h.info), key=lambda h: h.record.job_id, reverse=True
-        )
-        for host in queued_hosts[: max(0, len(current) - desired)]:
-            self._cancel_host_record(loop, host)
-            host.retiring = True
-        current = [h for h in current if not h.retiring]
-        missing = desired - len(current)
+        accounts = host_accounts(cfg)
+        create_account: str | None = None
+        if accounts:
+            missing, create_account = self._account_targets(
+                loop, cfg, accounts, current, running, desired, now
+            )
+            current = [h for h in current if not h.retiring]
+        else:
+            # hosts still waiting in the queue beyond what is needed (keep_pending
+            # lowered, work gone): cancel the newest; an up host is left to idle_exit
+            queued_hosts = sorted(
+                (h for h in current if not h.info), key=lambda h: h.record.job_id, reverse=True
+            )
+            for host in queued_hosts[: max(0, len(current) - desired)]:
+                self._cancel_host_record(loop, host)
+                host.retiring = True
+            current = [h for h in current if not h.retiring]
+            missing = desired - len(current)
         # A host that ended without its supervisor ever starting -- sbatch failed,
         # or SLURM killed it before the batch shell ran -- and that the pool did not
         # cancel on purpose (those carry an `exited` file) is a FAILED START. Back
@@ -1143,7 +1200,7 @@ class PoolManager:
         # One host at a time while one is still waiting for its sbatch.
         if missing > 0 and not any(not h.submitted for h in current):
             if waited >= backoff:
-                state["last_host_id"] = self._create_host(loop, layout, cfg)
+                state["last_host_id"] = self._create_host(loop, layout, cfg, create_account)
                 state["last_host_created_ts"] = now
             elif failures:
                 LOGGER.info(
@@ -1153,6 +1210,57 @@ class PoolManager:
                     failures,
                 )
         layout.write_state(state)
+
+    def _account_targets(
+        self,
+        loop: MonitorLoop,
+        cfg: PoolHostConfig,
+        accounts: list[str],
+        current: list[HostView],
+        running: list[HostView],
+        desired: int,
+        now: float,
+    ) -> tuple[int, str | None]:
+        """host_accounts: the queued hosts wanted per account, surplus ones cancelled
+        (newest first). Returns (hosts missing, the account to create the next one in).
+
+        ``desired`` (max_hosts_running + successors, at least min_hosts) is the total the
+        single-account pool keeps. Here the hosts that are up count once; the queued rest
+        is wanted in the FIRST account, and every other account holds at most one queued
+        host (insurance) while nothing runs or once the running hosts have less than
+        ``fallback_lead_s`` left (0 = always): each account's queue has its own aging host,
+        and whichever starts first takes the run (handover)."""
+        up = [h for h in current if h.info]
+        wanted_queued = max(0, desired - len(up))
+        left = min((h.remaining_s(now) for h in running), default=None)
+        fallback_on = cfg.fallback_lead_s <= 0 or left is None or left < cfg.fallback_lead_s
+        missing, create_account = 0, None
+        for i, account in enumerate(accounts):
+            # a fallback account holds one insurance allocation, not a full set of successors
+            target = wanted_queued if i == 0 else (min(1, wanted_queued) if fallback_on else 0)
+            queued = sorted(
+                (h for h in current if not h.info and (h.account or accounts[0]) == account),
+                key=lambda h: h.record.job_id,
+                reverse=True,
+            )
+            for host in queued[: max(0, len(queued) - target)]:
+                self._cancel_host_record(loop, host)
+                host.retiring = True
+            gap = target - min(len(queued), target)
+            if gap > 0 and create_account is None:
+                create_account = account
+            missing += gap
+        # queued hosts of an account no longer in the list
+        for host in current:
+            if (
+                not host.info
+                and not host.retiring
+                and host.account
+                and host.account not in accounts
+            ):
+                self._cancel_host_record(loop, host)
+                host.retiring = True
+        return missing, create_account
 
     @staticmethod
     def _control(layout: PoolLayout, hid: str, name: str, reason: str) -> None:
@@ -1221,7 +1329,9 @@ class PoolManager:
                 ",".join(missing[:10]),
             )
 
-    def _create_host(self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig) -> str:
+    def _create_host(
+        self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig, account: str | None = None
+    ) -> str:
         from oellm_autoexp.monitor.loop import JobRecord, JobRuntime
 
         base = layout.load_host_definition()
@@ -1241,6 +1351,8 @@ class PoolManager:
         excluded = self._host_excludes(layout, base)
         if excluded:
             sbatch_set(sbatch, "exclude", ",".join(excluded))
+        if account:
+            sbatch_set(sbatch, "account", account)
         slurm = replace(
             base.slurm,
             name=name,
@@ -1259,6 +1371,7 @@ class PoolManager:
                 "pool_role": POOL_ROLE_HOST,
                 "pool_dir": str(layout.root),
                 "pool_host_id": hid,
+                **({"pool_host_account": account} if account else {}),
             },
         )
         record = JobRecord(
@@ -1268,10 +1381,11 @@ class PoolManager:
         )
         loop._store.upsert(record)
         LOGGER.info(
-            "[pool %s] created host %s (%s nodes%s)",
+            "[pool %s] created host %s (%s nodes%s%s)",
             cfg.name,
             hid,
             sbatch.nodes,
+            f", account {account}" if account else "",
             f", {len(excluded)} node(s) excluded" if excluded else "",
         )
         return hid

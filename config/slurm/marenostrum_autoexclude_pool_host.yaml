@@ -1,0 +1,15 @@
+defaults:
+  - marenostrum_autoexclude
+  - _self_
+
+# MareNostrum 5 pool host (project ehpc533) that avoids the shared bad-node list
+# ($MN5_EXCLUDE_NODES / hybrid_v019/mn5_exclude_nodes.txt; its writer is the in-job watchdog),
+# re-read whenever the pool creates a host. Use it for large or long pools. The supervisor is the
+# batch shell (templates/pool_host.sbatch: no outer srun, no container); B:USR1 reaches it before
+# the wall clock, so the current run is stopped gracefully (its own exit signal, a checkpoint).
+# The host's account / qos come from marenostrum_ehpc533 (SLURM_QOS, default acc_ehpc; > 100
+# nodes need slurm.sbatch.qos=acc_xehpc).
+template_path: "templates/pool_host.sbatch"
+launcher_cmd: ""
+sbatch:
+  signal: "B:USR1@600"
