@@ -1,0 +1,48 @@
+# @package _global_
+# MareNostrum 5 production pool, 33-node hosts on ehpc533 / acc_ehpc (docs/sub_slurm_jobs_operations.md;
+# user 2026-10-27): always one host submitted (min_hosts 1) and, with work, one successor
+# aging in the queue without a dependency (keep_pending 1); runs move to a newer allocation
+# (handover, not before the old one is 6 h old). One spare node (--no-kill): a node failure
+# restarts the run inside the allocation. For the full-size speed tests (LDM vs mHC-4) first,
+# then the main runs (32 nodes); queued cns144 jobs can be adopted (pool_ctl adopt, 128
+# nodes, no spare). B:USR1 45 min before the 3-day wall: the run saves (its own exit signal).
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --config-name experiments/korbi/pool/mn5_pool_p33
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_p33
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 1
+    min_hosts: 1
+    handover: true
+    handover_min_age_s: 21600
+    successor_delay_s: 0
+    idle_exit_s: 600
+    monitor_dead_exit_s: 3600
+    min_remaining_s: 3600
+    stop_grace_s: 1800
+    preempt_grace_s: 2700
+    max_attempts: 20
+    host_stale_s: 1800
+    poll_s: 30
+    adopt_stop_margin_s: 2700
+    adopt_hook_timeout_s: 90
+
+slurm:
+  sbatch:
+    nodes: 33
+    time: "3-00:00:00"
+    qos: acc_ehpc
+    signal: "B:USR1@2700"
+    no_kill: true
+
+index: 0
+stage: ""
