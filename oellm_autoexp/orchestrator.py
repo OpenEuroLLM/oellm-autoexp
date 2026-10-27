@@ -982,7 +982,7 @@ def enqueue_into_pool(
     partition, ...): a job that cannot fit is a configuration error here, not a
     run that waits forever. Returns (session dir, record ids).
     """
-    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host
+    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host, host_accounts
 
     layout = PoolLayout(pool_dir)
     meta = layout.load_meta()
@@ -997,7 +997,10 @@ def enqueue_into_pool(
         if not isinstance(record.definition, SlurmJobConfig):
             problems.append(f"{record.job_id}: local jobs cannot run in a pool")
             continue
-        problems += [f"{record.job_id}: {p}" for p in check_fits_host(record.definition, host)]
+        problems += [
+            f"{record.job_id}: {p}"
+            for p in check_fits_host(record.definition, host, host_accounts(layout.load_config()))
+        ]
         records.append(record)
     if problems:
         raise ValueError(f"cannot enqueue into pool {layout.root}:\n  " + "\n  ".join(problems))
@@ -1017,6 +1020,10 @@ def enqueue_into_pool(
                 **dict(record.definition.metadata),
                 "pool_job_id": job_id,
                 "pool_enqueued_ts": now,
+                # runs execute here (the step script cd's into it), not in the host's
+                # working directory: on clusters that run from synced snapshots, a fix is
+                # enqueued from a new snapshot while the host was submitted from an old one
+                "pool_workdir": record.definition.metadata.get("pool_workdir") or os.getcwd(),
             },
         )
         store.upsert(replace(record, job_id=job_id, definition=definition))

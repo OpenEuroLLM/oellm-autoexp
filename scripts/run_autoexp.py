@@ -421,7 +421,7 @@ def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) 
     planned jobs into a pool; then hand over to the pool's monitor."""
     import shutil
 
-    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host, render_step_script
+    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host, host_accounts, render_step_script
     from oellm_autoexp.orchestrator import (
         _build_job_record,
         ensure_no_live_monitor,
@@ -458,7 +458,7 @@ def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) 
             host = layout.load_host_definition()
             for job in pool_jobs:
                 record = _build_job_record(plan, job, "dry-run")
-                problems = check_fits_host(record.definition, host)
+                problems = check_fits_host(record.definition, host, host_accounts(layout.load_config()))
                 out = Path(record.definition.slurm.script_path).with_suffix(".pool-step.sh")
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_text(

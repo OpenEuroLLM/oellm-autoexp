@@ -15,6 +15,7 @@ aux:
   iters: 30
   tick: 0.2
   repo: ${oc.env:PWD}
+  extra_args: ""
 
 job:
   name: dummy_${aux.tag}
@@ -28,7 +29,7 @@ job:
 backend:
   megatron:
     save: ${aux.root}/runs/${job.name}/checkpoints
-  command: "python3 ${aux.repo}/tests/fakeslurm/torchrun --nproc_per_node 1 ${aux.repo}/scripts/sigterm_dummy_trainer.py --ckpt-dir ${aux.root}/runs/${job.name}/checkpoints --iters ${aux.iters} --tick ${aux.tick} --save-every 10 --save-seconds 0.5"
+  command: "python3 ${aux.repo}/tests/fakeslurm/torchrun --nproc_per_node 1 ${aux.repo}/scripts/sigterm_dummy_trainer.py --ckpt-dir ${aux.root}/runs/${job.name}/checkpoints --iters ${aux.iters} --tick ${aux.tick} --save-every 10 --save-seconds 0.5 ${aux.extra_args}"
 
 slurm:
   launcher_cmd: ""

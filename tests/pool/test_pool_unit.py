@@ -743,3 +743,25 @@ def test_queued_successor_gets_exclusions_found_after_its_submission(env, monkey
     env.layout.exclude_nodes.write_text("jpbo-007-07\njpbo-008-08\n")
     env.poll()
     assert calls[-1] == (queued.runtime.runtime_job_id, "jpbo-007-07,jpbo-008-08")
+
+
+def test_stop_signal_of_reads_the_jobs_exit_signal():
+    from oellm_autoexp.monitor.pool import stop_signal_of
+
+    assert stop_signal_of("torchrun pretrain.py --exit-signal SIGUSR2 --save x") == "USR2"
+    assert stop_signal_of("... --exit-signal=SIGUSR1\\\n") == "USR1"
+    assert stop_signal_of("... --exit_signal 'SIGINT'") == "INT"
+    assert stop_signal_of("torchrun pretrain.py --exit-signal-handler") == "TERM"
+    assert stop_signal_of("bash -c 'echo hi'") == "TERM"
+
+
+def test_check_fits_host_accepts_any_of_the_host_accounts(tmp_path):
+    from oellm_autoexp.monitor.pool import sbatch_set
+
+    host = _host_definition(tmp_path, nodes=4)
+    job = _run_definition(tmp_path, tmp_path, "acc", nodes=4)
+    sbatch_set(job.slurm.sbatch, "account", "ehpc533")
+    sbatch_set(host.slurm.sbatch, "account", "cns144")
+    assert any("account" in p for p in check_fits_host(job, host))
+    assert check_fits_host(job, host, ["cns144", "ehpc533"]) == []
+    assert any("account" in p for p in check_fits_host(job, host, ["cns144"]))

@@ -97,16 +97,17 @@ signal_step() { # signal_step <SIG> <rid>
   fi
 }
 
-graceful_stop() { # graceful_stop <rid> <nodelist> <nnodes>
-  local out n
-  out=$(srun --overlap --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" \
+graceful_stop() { # graceful_stop <rid> <nodelist> <nnodes> [<signal>]
+  # <signal>: the run's STOP_SIGNAL (meta.env), the job's own Megatron --exit-signal
+  local out n sig=${4:-TERM}
+  out=$(POOL_STOP_SIG="$sig" srun --overlap --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" \
     --ntasks-per-node=1 --cpus-per-task=1 --job-name="relay-$1" \
-    bash -c 'n=0; for a in $(pgrep -u "$(id -u)" -f "$POOL_RANK_PATTERN"); do for w in $(pgrep -P "$a"); do kill -TERM "$w" && n=$((n+1)); done; done; echo "[relay] $(hostname): SIGTERM to $n rank process(es)"' 2>&1)
+    bash -c 'n=0; for a in $(pgrep -u "$(id -u)" -f "$POOL_RANK_PATTERN"); do for w in $(pgrep -P "$a"); do kill -"$POOL_STOP_SIG" "$w" && n=$((n+1)); done; done; echo "[relay] $(hostname): SIG$POOL_STOP_SIG to $n rank process(es)"' 2>&1)
   printf '%s\n' "$out"
-  n=$(printf '%s\n' "$out" | sed -n 's/.*SIGTERM to \([0-9][0-9]*\) rank.*/\1/p' | awk '{s+=$1} END {print s+0}')
+  n=$(printf '%s\n' "$out" | sed -n 's/.*SIG[A-Z0-9]* to \([0-9][0-9]*\) rank.*/\1/p' | awk '{s+=$1} END {print s+0}')
   if [ "${n:-0}" -eq 0 ]; then
     log "run $1: no launcher rank processes found, signalling the step"
-    signal_step TERM "$1"
+    signal_step "$sig" "$1"
   fi
 }
 
@@ -116,7 +117,7 @@ graceful_stop() { # graceful_stop <rid> <nodelist> <nnodes>
 launch_provenance() { # launch_provenance <rid>
   local py
   py=$(command -v python3 || command -v python) || { echo "provenance: unavailable (no python)"; return; }
-  timeout 90 "$py" "$REPO/oellm_autoexp/utils/provenance.py" --repo "$REPO" \
+  timeout 90 "$py" "$REPO/oellm_autoexp/utils/provenance.py" --repo "${WORKDIR:-$REPO}" \
     --out "$POOL/runs/$1/launch_provenance.json" --compare "$POOL/runs/$1/run.json" 2>&1 | tail -n 1
 }
 
@@ -132,7 +133,7 @@ STEP_INDEX=0
 run_one() { # run_one <rid>
   local rid=$1
   local R="$POOL/runs/$rid"
-  local NODES=1 NTASKS_PER_NODE=1 MAX_RUNTIME_S=0 LOG="$R/run.log" NAME=run EXCLUDE=""
+  local NODES=1 NTASKS_PER_NODE=1 MAX_RUNTIME_S=0 LOG="$R/run.log" NAME=run EXCLUDE="" STOP_SIGNAL=TERM WORKDIR=""
   if [ -e "$R/rc" ]; then
     rm -f "$H/assign/$rid"
     return
@@ -190,7 +191,7 @@ ts=$t0"
       if [ -n "$reason" ]; then
         log "run $rid: stopping ($reason), grace ${grace}s"
         echo "[pool] $(date +%FT%T) stopping run $rid ($reason)" >>"$LOG"
-        graceful_stop "$rid" "$nl" "$NODES"
+        graceful_stop "$rid" "$nl" "$NODES" "$STOP_SIGNAL"
         stop_at=$((t + grace))
       fi
     elif [ "$killed" -eq 0 ] && [ "$t" -ge "$stop_at" ]; then

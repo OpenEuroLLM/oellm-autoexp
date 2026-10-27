@@ -60,8 +60,11 @@ def main():
     ap.add_argument("--tick", type=float, default=1.0, help="seconds per iteration")
     ap.add_argument("--save-every", type=int, default=30)
     ap.add_argument("--save-seconds", type=float, default=3.0)
+    # Megatron's --exit-signal: only this signal saves and exits; with another one (e.g.
+    # SIGUSR2 on MareNostrum), a SIGTERM keeps its default action and kills without a save
+    ap.add_argument("--exit-signal", default="SIGTERM")
     a = ap.parse_args()
-    signal.signal(signal.SIGTERM, _handler)
+    signal.signal(getattr(signal, a.exit_signal), _handler)
     os.makedirs(a.ckpt_dir, exist_ok=True)
     start = 0
     tracker = os.path.join(a.ckpt_dir, "latest_checkpointed_iteration.txt")

@@ -199,6 +199,7 @@ def cmd_sbatch(argv: list[str]) -> int:
     job = {
         "id": jid,
         "name": opts.get("job-name", Path(script).name),
+        "account": opts.get("account"),
         "nodes": nodes,
         "nodelist": nodelist,
         "time_s": _parse_time(opts.get("time")),
