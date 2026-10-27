@@ -433,7 +433,8 @@ def test_a_singleton_job_moves_to_the_larger_pool_and_never_runs_twice(pool):
                     moved = rid
             time.sleep(0.2)
         assert moved, "the job never moved to the large pool"
-        assert pool.run_state(first).status == "CANCELLED"
+        # superseded = preempted (saved), NOT cancelled: the small pool keeps the job queued
+        assert pool.run_state(first).status == "PREEMPTED"
         saved = max(_iterations(pool.run_log(first)))
         log = (big / "runs" / moved / "run.json").read_text()
         big_log = Path(_json.loads(log)["log"])
@@ -443,7 +444,46 @@ def test_a_singleton_job_moves_to_the_larger_pool_and_never_runs_twice(pool):
             "resume",
         )
         assert _resumed_from(big_log.read_text()) == saved
-        assert pool.record("dummy_s")["runtime"]["final_state"] == "cancelled"
+        assert pool.record("dummy_s")["runtime"]["final_state"] is None, (
+            "the small job stays queued"
+        )
+        # the large run goes away (cancelled): the small pool takes the job back from its checkpoint
+        pool.wait_for(
+            lambda: max(_iterations(big_log.read_text()) or [0]) >= saved + 10,
+            60,
+            "large run trains",
+        )
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/pool_ctl.py",
+                str(big),
+                "cancel",
+                "dummy_s",
+                "--wait",
+                "60",
+            ],
+            cwd=pool.env["PWD"],
+            env=pool.env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        back = pool.wait_for(
+            lambda: [
+                r
+                for r in pool.runs_of("dummy_s")
+                if r != first and pool.run_state(r).status == "RUNNING"
+            ],
+            120,
+            "the job back in the small pool",
+        )[0]
+        big_saved = max(_iterations(big_log.read_text()))
+        pool.wait_for(
+            lambda: _resumed_from(pool.run_log(back)) is not None, 60, "resume in the small pool"
+        )
+        assert _resumed_from(pool.run_log(back)) == big_saved
+        assert len(running()) == 1
     finally:
         mon.terminate()
         mon.wait(timeout=20)
