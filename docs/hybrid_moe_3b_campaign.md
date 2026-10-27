@@ -3109,6 +3109,15 @@ emerge at size):
   from the stable phase, it reaches zero near step ~7,500-8,000 (~4B tokens). That is a guide only:
   the earlier `rematch_report.py` "gap @ 10B" fit ran across the cooldown, and single-run
   extrapolations are not resolved (§11.8).
+- **The scale trend favours LDM.** At matched tokens per non-embedding parameter (LDM ×1 −
+  mHC-4, train loss):
+  - At 4 / 6 / 8 tokens per parameter: s1 −0.029 / −0.015 / −0.008, s2 −0.031 / −0.018 / −0.014.
+  - So the larger model's lead decays more slowly. The s2 point at 8 sits at the end of the cooldown,
+    which cost LDM ~0.004.
+  - But the decay persists at both sizes, and production trains at hundreds of tokens per parameter.
+  - The MHA / Adam rematch showed the opposite size trend (s1 −0.014, s2 −0.008).
+  - Two sizes and one seed do not resolve the trend in scale. An s3 pair (+ the long-context set)
+    would.
 - **lr factor:** ×1 vs ×2 differ by ≤ 0.002, i.e. LDM is not lr-starved under Muown. mHC-4 ×0.125
   is clearly worse than ×0.25 in loss.
 
