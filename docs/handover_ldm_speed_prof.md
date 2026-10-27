@@ -6,7 +6,7 @@ From session oellm-autoexp-hybrid-89 to the main agent.
 
 | what | where | state |
 |---|---|---|
-| 32-node profiles: `mhc4`, `mhc4_m2`, `ldm_m2`, `ldm_m4`, `mhc4_pp4`, `ldm_pp4` | jobs 48126146-51, acc_ehpc, direct sbatch (not a pool); snapshot `$R/autoexp_ldmprof3`; monitor `monitor_logs/ldm_prof32c` | pending |
+| 32-node profiles: `mhc4`, `mhc4_m2`, `ldm_m2`, `ldm_m4`, `mhc4_pp4`, `ldm_pp4` | pool mn5_pool_speed33 (user: all 32-node speed jobs in one 33-node allocation), enqueued 10:50 from snapshot `$R/autoexp_ldmprof3`; the direct jobs 48126146-51 are cancelled | queued |
 | 128-node rerun `ldm_speed_ldm_m4_128n` (log_interval 1) | pool mn5_pool_p129, run 0010, host 48117532 | running / next |
 | conservative `q35c_main_gqa` | p33 (32n, running, 6,515 tok/s/GPU); p129 (128n, pending behind 0010) | — |
 | LDM long-context evals `ds5lcresgqa(logn)_s2_ldm*` | results written (downstream.json, 13 keys each); jobs finishing | done |
