@@ -5,6 +5,7 @@
 # and eval (aux.only, no array group). Run detached on MN5 from the snapshot the runs execute in:
 #   setsid nohup scripts/korbi/campaign/resgqa_pool_eval_chain.sh <pool dir> <snapshot> <size>:<arm>... \
 #       > $R/monitor_logs/resgqa_pool_eval_chain.log 2>&1 &
+# Other suites: TRAIN=screen5ngptldm EVAL=ds5lcngptldm (training suite / eval suite prefixes).
 set -u
 R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
 POOL=${1:?pool dir}
@@ -12,6 +13,8 @@ SNAP=${2:?snapshot dir}
 shift 2
 SPECS=("$@")
 C=/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b
+TRAIN=${TRAIN:-screen5resgqa}
+EVAL=${EVAL:-ds5lcresgqa}
 log() { echo "$(date '+%F %T') $*"; }
 declare -A done_
 left=${#SPECS[@]}
@@ -21,10 +24,10 @@ while [ "$left" -gt 0 ]; do
         [ -n "${done_[$spec]:-}" ] && continue
         size=${spec%%:*}
         a=${spec#*:}
-        it=$(cat $C/screen5resgqa_$size/$a/ckpt/latest_checkpointed_iteration.txt 2>/dev/null)
+        it=$(cat $C/${TRAIN}_$size/$a/ckpt/latest_checkpointed_iteration.txt 2>/dev/null)
         [ "${it:-0}" = 4000 ] || continue
         cd "$SNAP"
-        for s in ds5lcresgqa_$size ds5lcresgqalogn_$size; do
+        for s in ${EVAL}_$size ${EVAL}logn_$size; do
             scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
                 --monitor-state-dir $R/pool_state --pool "$POOL" \
                 --config-name "experiments/korbi/campaign_3b/${s}_mn5" "aux.only=[$a]" \

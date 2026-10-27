@@ -1587,6 +1587,28 @@ def arms5resgqa(size: str):
          {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.125, "slurm.sbatch.nodes": 8})) if keep is None or n in keep]
 
 
+def arms5ngptldm(size: str = "s2"):
+    """nGPT + MuOwn + LDM, a "final combination" candidate (user 2026-10-27): the rematch recipe
+    (arms5resgqa: same data order, gbs 64 x 8k, 4000 steps, WSD 20 %) in nGPT form -- unit-norm
+    hidden states, LERP residuals, normalized weight rows (the weight normalizer; it also puts the
+    embeddings on the sphere, which the LERP step assumes) -- with LDM's writes as LERP steps
+    (depth_memory_lerp, Megatron 51b740b4a: the memory stores the step's displacement). LDM mixer
+    lr x0.25 (the s2 rematch: x0.25 / x0.125 lead x1 by ~0.05 at step 1500). Arms: classical Muown
+    (production's optimizer: pairs with the rematch arms), angular MuOwn (direction decay p = 1,
+    explicit), and nGPT without LDM (attribution). 8 nodes per arm, as the 8-node rematch arms
+    (ldm_lr025 / ldm_lr0125) they pair with."""
+    base = dict((n, kv) for n, _, kv in arms5resgqa(size))
+    ngpt = {B + "ngpt": True, B + "weight_normalizer": True, B + "fused_qk_norm_rope": False,
+            "slurm.sbatch.nodes": 8}
+    ldm = {k: v for k, v in base["ldm"].items()}
+    ldm.update({B + "residual_mixer_lr_mult": 0.25, B + "depth_memory_lerp": True})
+    am = {B + "optimizer": "angular_muown", B + "angular_muown_u_decay_p": 1.0}
+    return [(n, d, {**kv, **ngpt, **extra}) for n, d, kv, extra in (
+        ("ngpt_ldm", "nGPT + LDM (LERP writes, mixer lr x0.25), classical Muown", ldm, {}),
+        ("ngpt_ldm_am", "nGPT + LDM (LERP writes, mixer lr x0.25), angular MuOwn p = 1", ldm, am),
+        ("ngpt", "nGPT (plain LERP residual), classical Muown", base["plain"], {}))]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1940,6 +1962,7 @@ def write5():
             ("s1", "screen5embhead3", arms5embhead3("s1")),
             ("s1", "screen5ds41", arms5ds41("s1")),
             *[(z, "screen5resgqa", arms5resgqa(z)) for z in ("s1", "s2", "s3")],
+            ("s2", "screen5ngptldm", arms5ngptldm("s2")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
@@ -2035,6 +2058,12 @@ def write5():
             *[("s2", f"ds5lcresgqa{tag}", arms5downstream_any(
                 [(n, "screen5resgqa_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
                  for n, _, kv in arms5resgqa("s2")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # nGPT + MuOwn + LDM (screen5ngptldm_s2): the same long-context set, 1 node each
+            *[("s2", f"ds5lcngptldm{tag}", arms5downstream_any(
+                [(n, "screen5ngptldm_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
+                 for n, _, kv in arms5ngptldm("s2")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
               for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
                                                      B + "attention_length_scaling_base": 8192}))],
             # the s3 rematch (plain / mHC-4 x0.25 / LDM x1, 8-node training): its final checkpoints
