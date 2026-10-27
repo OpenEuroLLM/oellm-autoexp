@@ -47,6 +47,64 @@ run_log() { # run_log <pool dir> <rid> -> the run's log, as the pool's named sym
   python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['log'])" "$1/runs/$2/run.json" 2>/dev/null
 }
 
+schedule() { # schedule <pool dir>: hosts, the queue in start order, the last finished runs
+  python3 - "$1" <<'PY'
+import glob, json, os, sys, time
+pool = sys.argv[1]
+def env(path):
+    out = {}
+    try:
+        for line in open(path):
+            k, _, v = line.strip().partition("=")
+            out[k] = v.strip("'\"")
+    except OSError:
+        pass
+    return out
+def read(path):
+    try:
+        return open(path).read().strip()
+    except OSError:
+        return ""
+runs = []
+for rd in sorted(glob.glob(f"{pool}/runs/*/")):
+    try:
+        meta = json.load(open(rd + "run.json"))
+    except (OSError, ValueError):
+        continue
+    started, rc = env(rd + "started"), read(rd + "rc")
+    link = ""
+    if started.get("job") and started.get("step_index"):
+        hits = glob.glob(f"{pool}/slurm-{started['job']}.{started['step_index']}-*.log")
+        link = os.path.basename(hits[0]) if hits else ""
+    state = ("done " + rc) if rc else ("RUNNING" if started else ("assigned" if read(rd + "assigned") else "queued"))
+    runs.append(dict(rid=os.path.basename(rd.rstrip("/")), name=meta.get("name", "?"), nodes=meta.get("nodes", "?"),
+                     prio=int(meta.get("priority", 0) or 0), enq=float(meta.get("enqueued_ts", 0) or 0),
+                     state=state, host=started.get("host") or read(rd + "assigned"), link=link,
+                     end=os.path.getmtime(rd + "rc") if rc else 0))
+print(f"--- pool {os.path.basename(pool)}")
+for hd in sorted(glob.glob(f"{pool}/hosts/*/")):
+    hid, info = os.path.basename(hd.rstrip("/")), env(hd + "info.env")
+    if os.path.exists(hd + "exited") or not info:
+        continue
+    st = read(hd + "state").split()
+    what = (f"running {st[1]}" if st and st[0] == "busy" else (st[0] if st else "?"))
+    adopted = f" (adopted {info['ADOPTED']})" if info.get("ADOPTED") else ""
+    print(f"  host {hid}  job {info.get('SLURM_JOB_ID', '?')}{adopted}  {info.get('NUM_NODES', '?')} nodes  {what}")
+live = [r for r in runs if r["state"] in ("RUNNING", "assigned")]
+queued = sorted((r for r in runs if r["state"] == "queued"), key=lambda r: (-r["prio"], r["enq"]))
+done = sorted((r for r in runs if r["state"].startswith("done")), key=lambda r: r["end"])[-5:]
+for title, rows in (("now", live), ("next (start order)", queued), ("last finished", done)):
+    if not rows:
+        continue
+    print(f"  {title}:")
+    for i, r in enumerate(rows, 1):
+        prefix = f"{i:2d}." if title.startswith("next") else "   "
+        where = f" on {r['host']}" if r["host"] else ""
+        print(f"   {prefix} {r['name']:<32} {str(r['nodes']):>4}n prio {r['prio']:<3} {r['state']:<18}"
+              f"{where}  {r['link'] or r['rid']}")
+PY
+}
+
 if [ -z "$n" ]; then
   sed -n '2,13p' "$0"
   exit 1
@@ -56,6 +114,7 @@ fi
 if [[ $n == *.[0-9][0-9][0-9][0-9] ]]; then
   for p in "$POOLS_ROOT"/*/; do
     if [ -d "$p/runs/$n" ]; then
+      schedule "${p%/}"
       echo "pool $(basename "$p"), run $n"
       view "$(run_log "${p%/}" "$n")"
       exit 0
@@ -80,6 +139,7 @@ if [ -n "$hostdir" ]; then
   hostdir=$(dirname "$hostdir")
   pool=$(dirname "$(dirname "$hostdir")")
   hid=$(basename "$hostdir")
+  schedule "$pool"
   if [ "$mode" = host ]; then
     echo "pool $(basename "$pool"), host $hid: supervisor log"
     view "$pool/slurm-$slurmid.log"
