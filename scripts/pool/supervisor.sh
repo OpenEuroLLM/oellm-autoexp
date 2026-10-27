@@ -54,6 +54,11 @@ load_cfg() {
 
 expand_hosts() { scontrol show hostnames "$1" 2>/dev/null; }
 
+# an adopted host's supervisor is a 1-node step started from outside: take the JOB's nodes
+if [ -n "${AUTOEXP_POOL_ADOPTED_JOB:-}" ]; then
+  SLURM_JOB_NODELIST=$(squeue -h -j "$AUTOEXP_POOL_ADOPTED_JOB" -o %N 2>/dev/null)
+  export SLURM_JOB_NODELIST SLURM_JOB_ID="$AUTOEXP_POOL_ADOPTED_JOB"
+fi
 ALL_NODES=$(expand_hosts "$SLURM_JOB_NODELIST")
 NUM_NODES=$(printf '%s\n' "$ALL_NODES" | grep -c .)
 
@@ -184,6 +189,7 @@ ts=$t0"
     t=$(now)
     if [ -z "$reason" ]; then
       load_cfg
+      adopt_deadline_check
       if [ -e "$R/stop" ]; then
         reason=cancelled grace=$POOL_STOP_GRACE_S
       elif [ -e "$R/preempt" ] || [ -e "$H/control/exit" ] || [ -n "$HOST_SIGNAL" ]; then
@@ -224,6 +230,8 @@ exit_host() {
   atomic "$H/exited" "$1"
   set_state exited
   ledger "-" "host exit: $1"
+  # adopted: let the held step 0 go (rc 0), so the job ends COMPLETED
+  [ -n "$ADOPTED" ] && atomic "$POOL/adopt/$ADOPTED.release" "$(now) $1"
   exit 0
 }
 
@@ -231,12 +239,38 @@ HOST_SIGNAL=""
 trap 'HOST_SIGNAL=USR1; log "SIGUSR1 received"' USR1
 trap 'HOST_SIGNAL=TERM; log "SIGTERM received"' TERM
 
+# ADOPTED host (pool_ctl adopt): an ordinary queued job, not a pool host, whose own training
+# step 0 is held by the adoption hook (scripts/pool/adopt_sitecustomize.py). This supervisor was
+# started INTO that allocation as an --overlap step from the login node, so every run step must
+# overlap step 0 too (and take no memory of its own: step 0 holds it all), and there is no
+# B:USR1: the runs are stopped POOL_ADOPT_STOP_MARGIN_S before the job's own end time.
+ADOPTED=${AUTOEXP_POOL_ADOPTED_JOB:-}
+JOB_START_TS=""
+END_TS=""
+if [ -n "$ADOPTED" ]; then
+  export SLURM_OVERLAP=1 SLURM_MEM_PER_NODE=0
+  ADOPT_DIR="$POOL/adopt"
+  read -r _start _end < <(squeue -h -j "$ADOPTED" -o "%S %e" 2>/dev/null)
+  JOB_START_TS=$(date -d "${_start:-now}" +%s 2>/dev/null || now)
+  END_TS=$(date -d "${_end:-}" +%s 2>/dev/null || echo "")
+  atomic "$ADOPT_DIR/$ADOPTED.attached" "$(now) $(hostname) $HID"
+fi
+adopt_deadline_check() {
+  [ -n "$ADOPTED" ] && [ -n "$END_TS" ] && [ -z "$HOST_SIGNAL" ] || return 0
+  if [ "$(now)" -ge $((END_TS - ${POOL_ADOPT_STOP_MARGIN_S:-1800})) ]; then
+    HOST_SIGNAL=USR1
+    log "adopted job $ADOPTED ends at $(date -d @"$END_TS" +%FT%T): stopping before its wall clock"
+  fi
+}
+
 load_cfg
 START_TS=$(now)
 atomic "$H/info.env" "SLURM_JOB_ID=${SLURM_JOB_ID:-}
 NUM_NODES=$NUM_NODES
 NODELIST=$(printf '%s\n' "$ALL_NODES" | paste -sd, -)
 START_TS=$START_TS
+JOB_START_TS=${JOB_START_TS:-$START_TS}
+ADOPTED=$ADOPTED
 BATCH_HOST=$(hostname)"
 touch "$H/alive"
 set_state idle
@@ -247,6 +281,7 @@ idle_since=$(now)
 while true; do
   touch "$H/alive"
   load_cfg
+  adopt_deadline_check
   [ -n "$HOST_SIGNAL" ] && exit_host "signal $HOST_SIGNAL"
   [ -e "$H/control/exit" ] && exit_host "exit requested: $(head -n1 "$H/control/exit")"
   next=$(ls -1 "$H/assign" 2>/dev/null | grep -v '^\.' | sort | head -n1)

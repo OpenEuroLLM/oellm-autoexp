@@ -158,6 +158,16 @@ class PoolHostConfig:
     # (0: always -- the accounts race, and the first host to start takes the run).
     host_accounts: str = ""
     fallback_lead_s: float = 0.0
+    # ADOPTED hosts (pool_ctl adopt: an ordinary queued job whose own step is held by the
+    # adoption hook): stop the runs this long before the job's own end time (it has no
+    # B:USR1), and cancel the job when it runs but the hook's start marker has not
+    # appeared within adopt_hook_timeout_s (the hook did not engage: its own training must
+    # not proceed)
+    adopt_stop_margin_s: float = 1800.0
+    adopt_hook_timeout_s: float = 90.0
+    # hosts the pool submits itself (-1: as many as the settings above ask for; 0: none, the
+    # pool only uses adopted jobs)
+    max_own_hosts: int = -1
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -314,6 +324,7 @@ class PoolLayout:
                 "POOL_STOP_GRACE_S": int(round(cfg.stop_grace_s)),
                 "POOL_PREEMPT_GRACE_S": int(round(cfg.preempt_grace_s)),
                 "POOL_RANK_PATTERN": cfg.rank_pattern,
+                "POOL_ADOPT_STOP_MARGIN_S": int(round(cfg.adopt_stop_margin_s)),
             },
         )
 
@@ -657,6 +668,18 @@ def submit_request(pool_dir: str | Path, op: str, **payload: Any) -> Path:
     return path
 
 
+def pools_have_pending_requests(session_dir: str | Path) -> bool:
+    """Whether a pool of this monitor session has pool_ctl requests not yet processed (a
+    monitor with no job records left must still handle them: an `adopt` creates the first)."""
+    for pool_dir in (_read(Path(session_dir) / "pools.txt") or "").split():
+        try:
+            if any(PoolLayout(pool_dir).requests_dir.glob("*.json")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def check_fits_host(
     job: SlurmJobConfig, host: SlurmJobConfig, accounts: list[str] | None = None
 ) -> list[str]:
@@ -701,6 +724,13 @@ class HostView:
     @property
     def submitted(self) -> bool:
         return bool(self.record.runtime.submitted)
+
+    @property
+    def adopted(self) -> str | None:
+        """The SLURM job id of an adopted host (pool_ctl adopt), else None."""
+        meta = getattr(self.record.definition, "metadata", None) or {}
+        jid = meta.get("pool_host_adopted")
+        return str(jid) if jid else None
 
     @property
     def account(self) -> str | None:
@@ -751,7 +781,12 @@ class HostView:
     def remaining_s(self, now: float) -> float:
         if self.time_limit_s is None or not self.start_ts:
             return float("inf")
-        return self.start_ts + self.time_limit_s - now
+        # an adopted host's allocation started before its supervisor (JOB_START_TS)
+        try:
+            start = float(self.info.get("JOB_START_TS") or self.start_ts)
+        except ValueError:
+            start = self.start_ts
+        return start + self.time_limit_s - now
 
     def assignments(self) -> list[str]:
         d = self.layout.host_dir(self.hid) / "assign"
@@ -920,7 +955,20 @@ class PoolManager:
             gone = host is None or host.dead
             if host is not None and not gone and host.status == "RUNNING" and host.info:
                 cfg = layout.load_config()
-                if host.alive_age is None or host.alive_age > cfg.host_stale_s:
+                if (host.alive_age is None or host.alive_age > cfg.host_stale_s) and host.adopted:
+                    LOGGER.warning(
+                        "[pool] adopted host %s (job %s): supervisor heartbeat %s s old -- "
+                        "replacing the supervisor (the allocation is kept)",
+                        host.hid,
+                        host.adopted,
+                        "?" if host.alive_age is None else f"{host.alive_age:.0f}",
+                    )
+                    self._kill_adopted_supervisor(host)
+                    for name in ("info.env", "alive", "state"):
+                        (layout.host_dir(host.hid) / name).unlink(missing_ok=True)
+                    host.info = {}
+                    gone = True
+                elif host.alive_age is None or host.alive_age > cfg.host_stale_s:
                     LOGGER.warning(
                         "[pool] host %s (job %s) heartbeat is %s s old: cancelling it",
                         host.hid,
@@ -951,6 +999,8 @@ class PoolManager:
                 LOGGER.warning("[pool] could not cancel host job %s: %s", rid, exc)
 
     def _cancel_host_record(self, loop: MonitorLoop, host: HostView) -> None:
+        if host.adopted:  # never cancel an adopted job just because it is not needed
+            return
         LOGGER.info("[pool] cancelling queued host %s", host.hid)
         self._cancel_host_job(host)
         _atomic_write(host.layout.host_dir(host.hid) / "exited", "cancelled while queued\n")
@@ -1003,6 +1053,7 @@ class PoolManager:
             and r.runtime.final_state is None
         ]
         hosts = list(self._hosts.get(str(layout.root), {}).values())
+        self._manage_adopted(loop, layout, cfg, hosts, state, now)
 
         # 1. close assignments of finished runs a dead supervisor left behind
         for host in hosts:
@@ -1149,7 +1200,10 @@ class PoolManager:
                     # still waiting in the queue: it would only start to sit idle
                     self._cancel_host_record(loop, host)
                 host.retiring = True
-        current = [h for h in hosts if not h.retiring and not h.dead]
+        # adopted jobs still in their queue are not the pool's to count or cancel
+        current = [
+            h for h in hosts if not h.retiring and not h.dead and not (h.adopted and not h.info)
+        ]
         accounts = host_accounts(cfg)
         create_account: str | None = None
         if accounts:
@@ -1197,6 +1251,9 @@ class PoolManager:
         failures = int(state.get("host_failures", 0))
         backoff = 0.0 if failures == 0 else min(600.0, 30.0 * 2 ** (failures - 1))
         waited = now - float(state.get("last_host_created_ts", 0.0))
+        if cfg.max_own_hosts >= 0:
+            own = [h for h in current if not h.adopted]
+            missing = min(missing, max(0, cfg.max_own_hosts - len(own)))
         # One host at a time while one is still waiting for its sbatch.
         if missing > 0 and not any(not h.submitted for h in current):
             if waited >= backoff:
@@ -1264,6 +1321,188 @@ class PoolManager:
                 self._cancel_host_record(loop, host)
                 host.retiring = True
         return missing, create_account
+
+    # --- adopted hosts ------------------------------------------------------
+    def _adopt(self, loop: MonitorLoop, layout: PoolLayout, state: dict, request: dict) -> str:
+        """Register a queued SLURM job (its hook already installed by pool_ctl adopt) as a
+        host of this pool."""
+        from oellm_autoexp.monitor.loop import JobRecord, JobRuntime
+
+        jid = str(request["job_id"])
+        for view in self._hosts.get(str(layout.root), {}).values():
+            if view.adopted == jid:
+                return f"already adopted as {view.hid}"
+        base = layout.load_host_definition()
+        hid = layout.allocate_host_id()
+        sbatch = copy.deepcopy(base.slurm.sbatch)
+        sbatch.nodes = int(request.get("nodes") or sbatch.nodes or 1)
+        if request.get("time"):
+            sbatch.time = str(request["time"])
+        if request.get("account"):
+            sbatch_set(sbatch, "account", str(request["account"]))
+        slurm = replace(base.slurm, name=f"adopted_{jid}", sbatch=sbatch, exclude_file=None)
+        definition = replace(
+            base,
+            name=f"adopted_{jid}",
+            slurm=slurm,
+            pool_dir=None,
+            metadata={
+                **dict(base.metadata or {}),
+                "pool_role": POOL_ROLE_HOST,
+                "pool_dir": str(layout.root),
+                "pool_host_id": hid,
+                "pool_host_adopted": jid,
+                "pool_host_account": request.get("account"),
+                "pool_adopt_workdir": request.get("workdir"),
+            },
+        )
+        record = JobRecord(
+            job_id=f"{pool_tag(layout.load_config().name)}.{hid}",
+            definition=definition,
+            runtime=JobRuntime(submitted=True, runtime_job_id=jid),
+        )
+        loop._store.upsert(record)
+        # the SLURM client only tracks what it submitted (or rehydrated at startup)
+        register = getattr(loop._get_client(record), "register_job", None)
+        if register is not None:
+            register(record.definition, jid, "PENDING")
+        layout.host_dir(hid).mkdir(parents=True, exist_ok=True)
+        LOGGER.info("[pool] adopted SLURM job %s as host %s (%s nodes)", jid, hid, sbatch.nodes)
+        return f"adopted {jid} as {hid}"
+
+    def _manage_adopted(
+        self, loop, layout: PoolLayout, cfg: PoolHostConfig, hosts, state, now
+    ) -> None:
+        """Adopted jobs: when one runs, check that its hook engaged (else cancel it: its own
+        training must not proceed) and start the supervisor into it; release one the pool
+        no longer wants before a supervisor is up."""
+        adopt_dir = layout.root / "adopt"
+        seen = state.setdefault("adopt", {})
+        for host in hosts:
+            jid = host.adopted
+            if not jid or host.exited or host.dead:
+                continue
+            entry = seen.setdefault(jid, {})
+            if host.status != "RUNNING":
+                continue
+            entry.setdefault("running_seen", now)
+            started = adopt_dir / f"{jid}.started"
+            if not started.exists():
+                if now - entry["running_seen"] >= cfg.adopt_hook_timeout_s:
+                    LOGGER.error(
+                        "[pool] adopted job %s RUNS but its hook never engaged (no %s after %.0f s):"
+                        " cancelling it so its own training cannot proceed",
+                        jid,
+                        started,
+                        now - entry["running_seen"],
+                    )
+                    _atomic_write(
+                        layout.host_dir(host.hid) / "exited", "adoption hook did not engage\n"
+                    )
+                    host.exited = True
+                    self._cancel_host_job(host)
+                    loop._store.mark_finished(host.record.job_id, "cancelled")
+                continue
+            if "start_logged" not in entry:
+                entry["start_logged"] = now
+                line = started.read_text().strip() if started.exists() else ""
+                ledger_line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{host.hid}\t{jid}\t-\tadopted job started: {line}\n"
+                with open(layout.root / "ledger.tsv", "a") as fh:
+                    fh.write(ledger_line)
+                log = os.environ.get("POOL_ADOPT_START_LOG")
+                if log:
+                    try:
+                        with open(log, "a") as fh:
+                            fh.write(
+                                f"{time.strftime('%F %T')} {jid} started={line} (adopted by pool {cfg.name})\n"
+                            )
+                    except OSError:
+                        pass
+            if host.retiring and not host.info:
+                _atomic_write(
+                    adopt_dir / f"{jid}.release", f"{now:.0f} retired before its supervisor\n"
+                )
+                continue
+            if host.info:
+                continue
+            last = float(entry.get("supervisor_launch_ts", 0))
+            if now - last < max(120.0, cfg.poll_s * 4):
+                continue
+            entry["supervisor_launch_ts"] = now
+            entry["supervisor_launches"] = int(entry.get("supervisor_launches", 0)) + 1
+            self._launch_adopted_supervisor(layout, host, jid)
+
+    def _launch_adopted_supervisor(self, layout: PoolLayout, host: HostView, jid: str) -> None:
+        import subprocess
+
+        nodes = subprocess.run(
+            ["squeue", "-h", "-j", jid, "-o", "%N"], capture_output=True, text=True, timeout=60
+        ).stdout.strip()
+        first = subprocess.run(
+            ["scontrol", "show", "hostnames", nodes], capture_output=True, text=True, timeout=60
+        ).stdout.split()
+        repo = Path(__file__).resolve().parents[2]
+        env = dict(os.environ)
+        env.update(
+            AUTOEXP_POOL_DIR=str(layout.root),
+            AUTOEXP_POOL_HOST=host.hid,
+            AUTOEXP_POOL_ADOPTED_JOB=jid,
+        )
+        env.pop("PYTHONPATH", None)
+        cmd = [
+            "srun",
+            f"--jobid={jid}",
+            "--overlap",
+            "--mem=0",
+            "--nodes=1",
+            "--ntasks=1",
+            "--ntasks-per-node=1",
+            "--cpus-per-task=1",
+            "--job-name=pool-supervisor",
+        ]
+        if first:
+            cmd.append(f"--nodelist={first[0]}")
+        cmd += [
+            "bash",
+            str(repo / "scripts" / "pool" / "supervisor.sh"),
+            str(layout.root),
+            host.hid,
+        ]
+        out = open(layout.root / f"slurm-{jid}.log", "a")
+        LOGGER.info(
+            "[pool] starting the supervisor of adopted host %s (job %s): %s",
+            host.hid,
+            jid,
+            " ".join(cmd),
+        )
+        subprocess.Popen(
+            cmd,
+            cwd=str(repo),
+            env=env,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    @staticmethod
+    def _kill_adopted_supervisor(host: HostView) -> None:
+        import subprocess
+
+        jid = host.adopted
+        try:
+            rows = subprocess.run(
+                ["squeue", "-h", "-s", "-j", jid, "-o", "%i %j"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout.splitlines()
+            for row in rows:
+                parts = row.split()
+                if len(parts) == 2 and parts[1] == "pool-supervisor":
+                    subprocess.run(["scancel", parts[0]], timeout=60)
+        except Exception as exc:  # pragma: no cover - best effort
+            LOGGER.warning("[pool] could not stop the old supervisor of %s: %s", jid, exc)
 
     @staticmethod
     def _control(layout: PoolLayout, hid: str, name: str, reason: str) -> None:
@@ -1414,6 +1653,8 @@ class PoolManager:
                 elif op == "cancel":
                     targets = request.get("targets") or [str(request.get("target", ""))]
                     result = self._cancel_targets(loop, layout, [str(t) for t in targets])
+                elif op == "adopt":
+                    result = self._adopt(loop, layout, state, request)
                 elif op == "drain":
                     for hid in request.get("hosts") or [
                         h.hid for h in self._hosts.get(str(layout.root), {}).values()

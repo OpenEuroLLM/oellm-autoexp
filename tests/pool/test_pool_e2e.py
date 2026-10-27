@@ -263,6 +263,90 @@ def test_host_accounts_race_and_the_first_account_keeps_its_successor(pool):
     assert pool.run_state(second).started["job"] == a1
 
 
+USER_JOB = """#!/bin/bash
+#SBATCH --job-name=user_job
+#SBATCH --nodes=1
+#SBATCH --time=00:10:00
+#SBATCH --account=dev
+export PYTHONPATH=.
+srun --nodes=1 --ntasks=1 python3 -c "import time; print('USER TRAINING RAN', flush=True); time.sleep(${USER_TRAIN_S:-0})"
+echo "user batch: step rc $?"
+"""
+
+
+def _submit_user_job(pool, workdir, train_s=0):
+    import subprocess
+
+    script = workdir / "user_job.sbatch"
+    script.write_text(USER_JOB)
+    env = {**pool.env, "FAKESLURM_HOLD": "1", "USER_TRAIN_S": str(train_s)}
+    out = subprocess.run(
+        ["sbatch", str(script)], cwd=workdir, env=env, capture_output=True, text=True, timeout=30
+    ).stdout
+    return out.split()[-1]
+
+
+def _fake_job(pool, jid):
+    return next(j for j in pool.fake_jobs() if j["id"] == jid)
+
+
+def test_an_adopted_queued_job_runs_pool_work_and_never_its_own(pool, tmp_path):
+    """pool_ctl adopt: a queued job's own step is held by the hook; when it runs, the pool's
+    supervisor is started into the allocation, runs the pool's job there, and on release the
+    job ends COMPLETED -- its own training never ran."""
+    wd = tmp_path / "user_snapshot"
+    wd.mkdir()
+    pool.create_pool(*FAST, "job.pool_host.adopt_stop_margin_s=30")
+    jid = _submit_user_job(pool, wd)
+    print(pool.ctl("adopt", jid, "--hold-max-s", "120", "--no-wait"))
+    assert (wd / "sitecustomize.py").exists()
+    pool.enqueue("ad", "aux.iters=15", "aux.tick=0.1")
+    pool.start_monitor(hold_new_jobs=True)  # the pool's own hosts stay queued
+    pool.release(jid)
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_ad"), 60, "the run")[0]
+    pool.wait_for(
+        lambda: pool.run_state(rid).status in ("RUNNING", "COMPLETED"), 60, "the run to start"
+    )
+    assert pool.run_state(rid).started["job"] == jid, "the run went to the adopted allocation"
+    pool.wait_for(
+        lambda: pool.record("dummy_ad")["runtime"]["final_state"] == "finished",
+        90,
+        "the run to finish",
+    )
+    # nothing left to do: the adopted host is released, its held step leaves, the job completes
+    pool.wait_for(
+        lambda: _fake_job(pool, jid)["state"] in ("COMPLETED", "FAILED", "CANCELLED"),
+        90,
+        "the adopted job to end",
+    )
+    job = _fake_job(pool, jid)
+    log = Path(job["output"]).read_text()
+    assert job["state"] == "COMPLETED", log
+    assert "USER TRAINING RAN" not in log
+    assert "adopted by a pool" in log and "released" in log
+    assert (pool.pool_dir / "adopt" / f"{jid}.started").exists()
+
+
+def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
+    """The second, independent fail-safe: registered for adoption but the hook is missing ->
+    the monitor cancels the job adopt_hook_timeout_s after it starts."""
+    wd = tmp_path / "user_snapshot"
+    wd.mkdir()
+    pool.create_pool(*FAST, "job.pool_host.adopt_hook_timeout_s=5")
+    jid = _submit_user_job(pool, wd, train_s=120)  # its own "training" would run for minutes
+    pool.ctl("adopt", jid, "--no-wait")
+    (wd / "sitecustomize.py").unlink()  # the hook "does not load"
+    pool.start_monitor(hold_new_jobs=True)
+    pool.release(jid)
+    pool.wait_for(
+        lambda: _fake_job(pool, jid)["state"] in ("CANCELLED", "COMPLETED", "FAILED"),
+        60,
+        "the job to end",
+    )
+    assert _fake_job(pool, jid)["state"] == "CANCELLED"
+    assert "hook never engaged" in pool.monitor_log.read_text()
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,
