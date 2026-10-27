@@ -669,13 +669,21 @@ def submit_request(pool_dir: str | Path, op: str, **payload: Any) -> Path:
 
 
 def pools_have_pending_requests(session_dir: str | Path) -> bool:
-    """Whether a pool of this monitor session has pool_ctl requests not yet processed (a
-    monitor with no job records left must still handle them: an `adopt` creates the first)."""
+    """Whether a pool of this monitor session still needs its monitor although no job record
+    is active: unprocessed pool_ctl requests (an `adopt` creates the first record), or a pool
+    that keeps hosts without work (min_hosts > 0, not closed) and has none yet."""
     for pool_dir in (_read(Path(session_dir) / "pools.txt") or "").split():
+        layout = PoolLayout(pool_dir)
         try:
-            if any(PoolLayout(pool_dir).requests_dir.glob("*.json")):
+            if any(layout.requests_dir.glob("*.json")):
                 return True
-        except OSError:
+            if (
+                layout.exists()
+                and layout.load_config().min_hosts > 0
+                and not layout.load_state().get("closed")
+            ):
+                return True
+        except (OSError, ValueError):
             continue
     return False
 
