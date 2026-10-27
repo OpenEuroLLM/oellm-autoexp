@@ -26,11 +26,14 @@ stamp() {
 STAMP=$(stamp)
 echo "$STAMP" > SYNC_STAMP
 
+# /sitecustomize.py: a pool adoption hook (pool_ctl adopt) installed into this snapshot for a
+# queued job -- never deleted or overwritten by a sync (it is not in the repository)
 rsync -a --delete --stats \
     --exclude .git --exclude __pycache__ --exclude '*.pyc' --exclude .pytest_cache \
     --exclude dump/ --exclude outputs/ --exclude monitor_state --exclude '*.sif' \
     --exclude 'build/' --exclude '*.egg-info' --exclude .venv --exclude .local_pydeps \
     --exclude 'helpers_cpp*.so' \
+    --exclude '/sitecustomize.py' --exclude '/.sitecustomize.*.tmp' \
     ./ "$HOST:$DEST/" 2>&1 | grep -E '^(Number of (created|deleted|regular) files|Total transferred file size)' || true
 
 echo "synced to $HOST:$DEST"
