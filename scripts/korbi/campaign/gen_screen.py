@@ -1614,6 +1614,23 @@ def arms5ngptldm(size: str = "s2"):
         ("ngpt", "nGPT (plain LERP residual), classical Muown", base["plain"], {}))]
 
 
+def arms5ldmnorm(size: str):
+    """LDM (x1) with a normalized residual stream (user 2026-10-27: LDM is the residual; adopt an
+    nGPT-like stream normalization only if it lowers the loss). The stream stays on the unit sphere
+    (normalized at entry, Megatron b9b6fa1c7) and every write is nGPT's LERP toward the RAW
+    sublayer output, renormalized exactly: x' = Norm((1 - alpha) x + alpha a), alpha <= 0.5
+    (half_sigmoid). No normalization of a: in screen5ngptldm the normalized output (a / |a|)
+    made the last projection of a sublayer scale-free; layer 0's attention output shrank to ~1/10
+    and its gradient 1/|a| grew to 1e5 (51 % embedding, 49 % layer-0 QKV). Paired with the
+    rematch's LDM x1 (same layout and batches): s2 on 2 nodes, s3 on 8."""
+    ldm = dict((n, kv) for n, _, kv in arms5resgqa(size))["ldm"]
+    norm = {B + "ngpt": True, B + "depth_memory_lerp": True, B + "ngpt_lerp_normalization": "direct",
+            B + "ngpt_post_layer_norm_attn": False, B + "ngpt_post_layer_norm_ffn": False,
+            B + "ngpt_alpha_activation": "half_sigmoid"}
+    return [("ldm_norm", "LDM x1, normalized stream (direct LERP toward the raw output)",
+             {**ldm, **norm})]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1968,6 +1985,7 @@ def write5():
             ("s1", "screen5ds41", arms5ds41("s1")),
             *[(z, "screen5resgqa", arms5resgqa(z)) for z in ("s1", "s2", "s3")],
             ("s2", "screen5ngptldm", arms5ngptldm("s2")),
+            *[(z, "screen5ldmnorm", arms5ldmnorm(z)) for z in ("s2", "s3")],
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
@@ -2063,6 +2081,14 @@ def write5():
             *[("s2", f"ds5lcresgqa{tag}", arms5downstream_any(
                 [(n, "screen5resgqa_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
                  for n, _, kv in arms5resgqa("s2")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # LDM with the normalized stream (screen5ldmnorm): s2 on 1 node, s3 on 4 (EP16)
+            *[(z, f"ds5lcldmnorm{tag}", arms5downstream_any(
+                [(n, f"screen5ldmnorm_{z}", n, {**kv, "slurm.sbatch.nodes": {"s2": 1, "s3": 4}[z],
+                                                 **extra})
+                 for n, _, kv in arms5ldmnorm(z)], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
+              for z in ("s2", "s3")
               for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
                                                      B + "attention_length_scaling_base": 8192}))],
             # nGPT + MuOwn + LDM (screen5ngptldm_s2): the same long-context set, 1 node each
