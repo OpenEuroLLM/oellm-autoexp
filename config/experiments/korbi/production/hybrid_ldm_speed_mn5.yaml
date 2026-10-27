@@ -30,12 +30,31 @@ backend:
     async_save: false
     eval_interval: 100000
     eval_iters: 0
+    # no validation split: with eval_iters 0 the production split 998,2,0 builds an empty
+    # validation loader, which the cyclic sampler rejects ("no sample to consume: 0", every rank)
+    split: "1000,0,0"
     lr_warmup_iters: 0
 
 job:
   name: ${aux.suite}_${aux.arm}_${aux.nodes}n
   array_group: ${aux.suite}_${aux.nodes}n
   est_step_time_s: 90.0
+  # speed tests: no retries but one for a lost node (the production policy retried a deterministic
+  # startup error 6 times, ~90 GPU-h at 33 nodes)
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+      action: {class_name: RestartAction, reason: "lost its node -- one retry", exclude_file: "${slurm.exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node again"}
+    - name: give_up_oom
+      transition: [null, OUT_OF_MEMORY]
+      action: {class_name: CancelAction, reason: "out of host memory (speed test: no retry)"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (speed test: no retry)"}
 
 slurm:
   sbatch:
