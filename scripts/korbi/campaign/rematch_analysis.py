@@ -47,13 +47,17 @@ def gap(train, a, b, lo, hi):
 
 
 def main():
-    for size in ("s1", "s2"):
+    for size in ("s1", "s2", "s3"):
         train, val = load(size)
+        if not train:
+            continue
         print(f"\n## {size}: validation loss (20 x 64 x 8192 tokens per eval)\n")
         evals = sorted({i for a in ARMS for i in val[a]})
         print("| arm | " + " | ".join(str(i) for i in evals) + " | vs mHC-4 @4000 |")
         print("|---|" + "---:|" * (len(evals) + 1))
         for a in ARMS:
+            if a not in val:
+                continue
             ref = val["mhc4"].get(4000)
             d = f"{val[a][4000] - ref:+.4f}" if 4000 in val[a] and ref else ""
             print(f"| {NAMES[a]} | " + " | ".join(f"{val[a].get(i, float('nan')):.4f}"
@@ -65,7 +69,7 @@ def main():
         print("| arm | " + " | ".join(f"{lo}-{hi}" for lo, hi in wins) + " |")
         print("|---|" + "---:|" * len(wins))
         for a in ARMS:
-            if a == "mhc4":
+            if a == "mhc4" or a not in train:
                 continue
             cells = []
             for lo, hi in wins:
@@ -75,6 +79,8 @@ def main():
         # the change through the cooldown: gap at its end minus gap just before it
         print()
         for a in ("ldm", "ldm_lr2", "plain", "mhc4_lr0125"):
+            if a not in train:
+                continue
             pre = gap(train, a, "mhc4", 3000, COOL)[0]
             end = gap(train, a, "mhc4", 3900, 4000)[0]
             print(f"- {NAMES[a]} - mHC-4: {pre:+.4f} before the cooldown -> {end:+.4f} at its end "

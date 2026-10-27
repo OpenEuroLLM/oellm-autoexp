@@ -1539,15 +1539,20 @@ def arms5resgqa(size: str):
     points) plus x0.125, the untested side of its optimum; LDM at the authors' x1 and at x2.0 (the
     best of the s1 sweep on the Adam-based screens). gbs 64 x 8k, 4000 steps (2.1B tokens): stable 3200 + WSD linear to lr / 10 over 800;
     the final checkpoints feed the long-context set. 2 nodes per arm (2-node and 1-node runs do not
-    pair); each arm builds its own data index (a new schedule)."""
+    pair); each arm builds its own data index (a new schedule).
+
+    s3 (user 2026-10-27: the size trend of LDM's gap, s1 0 / s2 -0.015 at step 4000): plain /
+    mHC-4 x0.25 / LDM x1 (x2.0 and mHC-4 x0.125 settled at s1 / s2), 7:1 (3 attention layers),
+    8 nodes per arm (twice the s3 screens' 4-node layout, for speed; DP 32 = 2 sequences per GPU
+    per step), EP16 as there (144 experts, 9 per GPU; EP8 OOMed)."""
     hidden, blocks, *_ = R4_SIZES[size]
     lr = R4_SIZES[size][4]
     mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
     plain = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
     steps = 4000
-    workers = {"s1": (8, 4), "s2": (6, 3)}[size]  # s2 nodes OOM-killed at saves with more
+    workers = {"s1": (8, 4), "s2": (6, 3), "s3": (6, 3)}[size]  # s2 nodes OOM-killed at saves with more
     recipe = {**_opt_variants(lr)["muown_classical"],
-              "aux.pattern": hybrid_every(blocks, {"s1": 6, "s2": 8}[size], "L", attn_first=True),
+              "aux.pattern": hybrid_every(blocks, {"s1": 6, "s2": 8, "s3": 8}[size], "L", attn_first=True),
               B + "group_query_attention": True, B + "num_query_groups": 2,
               B + "untie_embeddings_and_output_weights": True, B + "activation_func_clamp_value": 10.0,
               B + "moe_router_dtype": "fp32", B + "muon_qkv_headwise": True,
@@ -1555,9 +1560,12 @@ def arms5resgqa(size: str):
               B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": steps,
               B + "lr_wsd_decay_iters": steps // 5, B + "min_lr": lr / 10, "job.est_steps": steps,
               B + "overlap_param_gather": False, "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1",
-              "slurm.sbatch.nodes": 2, B + "num_workers": workers[0],
+              "slurm.sbatch.nodes": {"s1": 2, "s2": 2, "s3": 8}[size], B + "num_workers": workers[0],
               B + "dataloader_prefetch_factor": workers[1], **BAD_NODES}
+    if size == "s3":
+        recipe[B + "expert_model_parallel_size"] = 16
     mhc = {k: v for k, v in mhc4.items() if k != B + "residual_mixer_lr_mult"}
+    keep = ("plain", "mhc4", "ldm") if size == "s3" else None
     return [(n, d, {**own_cache(base), **recipe, **kv}) for n, d, base, kv in (
         ("plain", "plain residual", plain, {}),
         ("mhc4", "mHC-4, mixer lr x0.25", mhc, {B + "residual_mixer_lr_mult": 0.25}),
@@ -1567,7 +1575,7 @@ def arms5resgqa(size: str):
         ("ldm", "LDM (K 8, under recompute), mixer lr x1 (the authors)", plain,
          {**LDM_REMATCH, B + "residual_mixer_lr_mult": 1.0}),
         ("ldm_lr2", "LDM (K 8, under recompute), mixer lr x2.0 (the s1 sweep)", plain,
-         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0}))]
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0})) if keep is None or n in keep]
 
 
 def arms5fsdpeq(size: str = "s1"):
@@ -1922,7 +1930,7 @@ def write5():
             ("s1", "screen5embhead2", arms5embhead2("s1")),
             ("s1", "screen5embhead3", arms5embhead3("s1")),
             ("s1", "screen5ds41", arms5ds41("s1")),
-            *[(z, "screen5resgqa", arms5resgqa(z)) for z in ("s1", "s2")],
+            *[(z, "screen5resgqa", arms5resgqa(z)) for z in ("s1", "s2", "s3")],
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
@@ -2018,6 +2026,13 @@ def write5():
             *[("s2", f"ds5lcresgqa{tag}", arms5downstream_any(
                 [(n, "screen5resgqa_s2", n, {**kv, "slurm.sbatch.nodes": 1, **extra})
                  for n, _, kv in arms5resgqa("s2")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # the s3 rematch (plain / mHC-4 x0.25 / LDM x1, 8-node training): its final checkpoints
+            # on 4 nodes (EP16 as in training; the s3 screens' long-context layout)
+            *[("s3", f"ds5lcresgqa{tag}", arms5downstream_any(
+                [(n, "screen5resgqa_s3", n, {**kv, "slurm.sbatch.nodes": 4, **extra})
+                 for n, _, kv in arms5resgqa("s3")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
               for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
                                                      B + "attention_length_scaling_base": 8192}))],
             ("s1", "screen5udadapt", arms5udadapt("s1")),
