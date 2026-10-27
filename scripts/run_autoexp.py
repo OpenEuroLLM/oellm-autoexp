@@ -91,6 +91,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run locally instead of submitting to SLURM (uses LocalCommandClient)",
     )
     parser.add_argument(
+        "--pool",
+        type=Path,
+        default=None,
+        metavar="POOL_DIR",
+        help=(
+            "Run the planned jobs INSIDE this pool's host allocation (sub-SLURM jobs, "
+            "oellm_autoexp/monitor/pool.py) instead of submitting them. Same as setting "
+            "job.pool_dir. The pool's live monitor picks them up; without one, this "
+            "process becomes the pool's monitor."
+        ),
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help="Monitor poll period in seconds (default 60).",
+    )
+    parser.add_argument(
         "overrides", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
     )
     return parser.parse_args(argv)
@@ -151,13 +169,32 @@ def _render_log_hint(log_template: str | Path, job_id: str) -> str:
     return log_str.replace("%j", job_id)
 
 
+def _plan_provenance(plan: ExecutionPlan) -> tuple[Path, dict]:
+    """(manifest path, code provenance) for this invocation.
+
+    The provenance -- commit, branch and the blob hash of every modified
+    or untracked file, for the repo and each submodule
+    (utils/provenance.py) -- is computed ONCE per invocation, names the
+    manifest it belongs to, and goes into every record so it ends up in
+    each job's config-<id>.yaml. The manifest path is fixed before any
+    record is built; the file itself is written by
+    _write_job_provenance.
+    """
+    from oellm_autoexp.utils.provenance import code_provenance
+
+    manifest_path = _default_manifest_path(plan.config_setup.monitor_state_dir)
+    return manifest_path, code_provenance(REPO_ROOT, manifest=str(manifest_path))
+
+
 def _write_job_provenance(
     plan: ExecutionPlan,
     *,
     args: argparse.Namespace | None = None,
     subset_indices: set[int] | None = None,
     overrides: list[str] = (),
-) -> None:
+    manifest_path: Path | None = None,
+    code: dict | None = None,
+) -> Path:
     git_meta = _collect_git_metadata(REPO_ROOT)
     sanitized_env = _sanitize_env()
     base_payload = {
@@ -167,11 +204,13 @@ def _write_job_provenance(
         "subset_indices": sorted(subset_indices),
         "plan": asdict(plan),
         "environment": sanitized_env,
+        "code": code,
     }
 
-    manifest_path = _default_manifest_path(plan.config_setup.monitor_state_dir)
+    manifest_path = manifest_path or _default_manifest_path(plan.config_setup.monitor_state_dir)
     with open(manifest_path, "w") as fp:
         json.dump(base_payload, fp)
+    return manifest_path
 
 
 def _parse_slurm_time(time_str: str) -> float:
@@ -486,6 +525,125 @@ def _print_resume_hint(resume_cmd: str, res, *, reason: str) -> None:
     print(f"{bar}\n", flush=True)
 
 
+def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) -> None:
+    """Sub-SLURM-job pools: create/update a pool from a HOST config, or put the
+    planned jobs into a pool; then hand over to the pool's monitor."""
+    import shutil
+
+    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host, render_step_script
+    from oellm_autoexp.orchestrator import (
+        _build_job_record,
+        ensure_no_live_monitor,
+        enqueue_into_pool,
+        pool_monitor_loop,
+        prepare_pool_host,
+        stop_requested,
+    )
+
+    if args.local:
+        sys.exit("--local cannot drive a pool; test pools locally with tests/fakeslurm on PATH")
+    if host_jobs and pool_jobs:
+        sys.exit("A plan either defines a pool (job.pool_host) or puts jobs into one, not both.")
+
+    if pool_jobs:
+        targets = {str(PoolLayout(args.pool or j.config.job.pool_dir).root) for j in pool_jobs}
+        if len(targets) != 1:
+            sys.exit(f"All jobs of one invocation must go into one pool, got {sorted(targets)}")
+        pool_dir = Path(targets.pop())
+        layout = PoolLayout(pool_dir)
+        if not layout.exists():
+            sys.exit(f"{pool_dir} is not a pool (no pool.json); create it from a host config first")
+
+    if args.dry_run:
+        if host_jobs:
+            for job in host_jobs:
+                print(
+                    f"DRY RUN: pool '{job.config.job.pool_host.name or job.config.job.name}' at "
+                    f"{PoolLayout(job.config.job.base_output_dir).root}: hosts of "
+                    f"{job.config.slurm.sbatch.nodes} node(s), {job.config.slurm.sbatch.time}; "
+                    f"{job.config.job.pool_host}"
+                )
+        else:
+            host = layout.load_host_definition()
+            for job in pool_jobs:
+                record = _build_job_record(plan, job, "dry-run")
+                problems = check_fits_host(record.definition, host)
+                out = Path(record.definition.slurm.script_path).with_suffix(".pool-step.sh")
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(
+                    render_step_script(
+                        record.definition.slurm, "DRYRUN.0000", log_path=record.definition.log_path
+                    )
+                )
+                print(f"DRY RUN: {record.job_id} -> pool {pool_dir}: step script {out}")
+                for problem in problems:
+                    print(f"  CANNOT RUN IN THIS POOL: {problem}")
+        exit(0)
+
+    if host_jobs:
+        session_dir = None
+        for job in host_jobs:
+            pool_dir, session_dir = prepare_pool_host(plan, job)
+            print(f"Pool ready: {pool_dir}  (session {session_dir})")
+            print(
+                f"  put jobs into it:  python scripts/run_autoexp.py --pool {pool_dir} --config-name ..."
+            )
+            print(f"  inspect / steer:   python scripts/pool_ctl.py {pool_dir} status")
+    else:
+        manifest_path, code = _plan_provenance(plan)
+        try:
+            session_dir, ids = enqueue_into_pool(plan, pool_dir, pool_jobs, provenance=code)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        manifest = _write_job_provenance(
+            plan,
+            args=args,
+            subset_indices=subset_indices,
+            overrides=args.overrides,
+            manifest_path=manifest_path,
+            code=code,
+        )
+        try:
+            layout.manifests_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(manifest, layout.manifests_dir / manifest.name)
+        except OSError as exc:  # pragma: no cover
+            print(f"  (could not copy the manifest into the pool: {exc})")
+        print(f"Enqueued {len(ids)} job(s) into pool {pool_dir}: {', '.join(ids)}")
+
+    try:
+        ensure_no_live_monitor(session_dir)
+    except SystemExit as exc:
+        print(f"The pool's monitor is running and will schedule this: {exc}".split(". Stop it")[0])
+        return
+    if args.no_monitor or args.submit_and_exit:
+        print(
+            f"No monitor started. Start one with:  python scripts/monitor_autoexp.py --session-dir {session_dir}"
+        )
+        return
+    reason = stop_requested(session_dir)
+    if reason is not None:
+        if reason.strip() == "all jobs finished":
+            stop_path(session_dir).unlink(missing_ok=True)
+        else:
+            print(
+                f"The pool's session has a stop request ({reason}); remove {stop_path(session_dir)} to resume."
+            )
+            return
+    configure_logging(not args.no_verbose, args.debug, log_file=Path(session_dir) / "monitor.log")
+    loop = pool_monitor_loop(session_dir, no_error_catching=args.debug)
+    if args.poll_interval is not None:
+        loop.poll_interval_seconds = args.poll_interval
+    print(f"Monitoring pool session {session_dir} (Ctrl-C detaches; hosts and runs keep going)")
+    outcome = run_loop(loop)
+    if outcome == "signal":
+        print(
+            f"\n[detached] Resume with:  python scripts/monitor_autoexp.py --session-dir {session_dir}"
+        )
+        exit(130)
+    if outcome == "failed":
+        exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(not args.no_verbose, args.debug)
@@ -623,6 +781,17 @@ def main(argv: list[str] | None = None) -> None:
             "job.est_step_time_s (+ job.est_startup_min) or aux.true_time from a measured run."
         )
 
+    host_jobs = [j for j in plan.jobs if getattr(j.config.job, "pool_host", None) is not None]
+    pool_jobs = [
+        j
+        for j in plan.jobs
+        if getattr(j.config.job, "pool_host", None) is None
+        and (args.pool or getattr(j.config.job, "pool_dir", None))
+    ]
+    if host_jobs or pool_jobs:
+        _pool_main(args, plan, host_jobs, pool_jobs, subset_indices)
+        return
+
     if args.dry_run:
         script_paths = render_job_scripts(plan)
         if script_paths:
@@ -659,11 +828,14 @@ def main(argv: list[str] | None = None) -> None:
             print("Aborted.")
             return
 
+    manifest_path, code = _plan_provenance(plan)
     _write_job_provenance(
         plan,
         args=args,
         subset_indices=subset_indices,
         overrides=args.overrides,
+        manifest_path=manifest_path,
+        code=code,
     )
 
     use_chain = args.chain or any(
@@ -673,9 +845,13 @@ def main(argv: list[str] | None = None) -> None:
         if args.local:
             print("--chain is not supported with --local mode", file=sys.stderr)
             return
-        res = chain_submit_jobs(plan, no_error_catching=args.debug, repeat=args.repeat)
+        res = chain_submit_jobs(
+            plan, no_error_catching=args.debug, repeat=args.repeat, provenance=code
+        )
     else:
-        res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
+        res = submit_jobs(
+            plan, no_error_catching=args.debug, local_mode=args.local, provenance=code
+        )
 
     resume_cmd = _resume_command(args, res.session_id)
 

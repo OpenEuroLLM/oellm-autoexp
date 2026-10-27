@@ -76,6 +76,34 @@ class BaseJob:
     # The group is a SLURM QOS: count the user's jobs in it across the cluster (squeue),
     # not only this session's -- for a per-user cap shared by several monitors.
     concurrency_qos: bool = False
+    # Run this job INSIDE a pool's host allocation instead of as its own SLURM
+    # job (oellm_autoexp/monitor/pool.py): the monitor renders the job's sbatch
+    # script into a step script and queues it in <pool_dir>/runs/, and a host's
+    # supervisor runs it as an srun step. The job keeps its own config, log,
+    # events and restarts; only the allocation is shared. Set it in the config
+    # (`job.pool_dir`) or with `run_autoexp.py --pool <dir>`.
+    pool_dir: str | None = None
+
+
+def dump_job_config(path, job: BaseJob) -> None:
+    """Write a job's resolved config (``config-<id>.yaml``).
+
+    The enqueue-time code provenance (``metadata["provenance"]`` of the record,
+    see oellm_autoexp/utils/provenance.py) is injected as
+    ``config.metadata.provenance``: RootConfig.metadata is a free-form dict, so
+    the file still parses, validates and renders exactly as before, and the
+    provenance never enters the config the job id is hashed from.
+    """
+    import yaml
+    from compoconf import asdict
+
+    payload = asdict(job.base_config)
+    provenance = (job.metadata or {}).get("provenance")
+    if provenance and isinstance(payload, dict) and isinstance(payload.get("config"), dict):
+        meta = payload["config"].get("metadata")
+        payload["config"]["metadata"] = {**(meta or {}), "provenance": provenance}
+    with open(path, "w") as fp:
+        yaml.dump(payload, fp)
 
 
 @dataclass(kw_only=True)

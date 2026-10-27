@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-import yaml
 
-from compoconf import ConfigInterface, register, asdict
+from compoconf import ConfigInterface, register
 from oellm_autoexp.slurm_gen import generate_script, validate_job_script
 from oellm_autoexp.slurm_gen.client import (
     BaseSlurmClient,
@@ -15,7 +14,7 @@ from oellm_autoexp.slurm_gen.client import (
 )
 
 from oellm_autoexp.monitor.job_client_protocol import JobClientInterface
-from oellm_autoexp.monitor.submission import SlurmJobConfig
+from oellm_autoexp.monitor.submission import SlurmJobConfig, dump_job_config
 from oellm_autoexp.monitor.utils.paths import expand_log_path
 
 LOGGER = logging.getLogger(__name__)
@@ -92,8 +91,7 @@ class SlurmClient(JobClientInterface):
         if job.config_path:
             config_path = expand_log_path(job.config_path, job_id=job_id)
             LOGGER.info(f"Logging Config to: {config_path}")
-            with open(config_path, "w") as fp:
-                yaml.dump(asdict(job.base_config), fp)
+            dump_job_config(config_path, job)
         return job_id
 
     def submit_array(

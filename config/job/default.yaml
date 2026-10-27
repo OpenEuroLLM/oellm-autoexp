@@ -29,6 +29,11 @@ max_active: null
 # concurrency_group names a SLURM QOS: count the user's jobs in it cluster-wide (squeue),
 # so several monitors share the cap.
 concurrency_qos: false
+# Sub-SLURM-job pools (oellm_autoexp/monitor/pool.py). `pool_dir`: run this job as a
+# step inside that pool's host allocation (same as `run_autoexp.py --pool <dir>`).
+# `pool_host`: this config DEFINES a pool (see config/job/pool_host.yaml).
+pool_dir: null
+pool_host: null
 
 # --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
 # Declared here with null defaults so a plain `job.est_step_time_s=4.2` override

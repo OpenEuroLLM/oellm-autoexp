@@ -178,6 +178,33 @@ eval results are written to `…_2/eval/<timestamp>/results/<hash>_<ts>.json`.
 Per-cluster env / venv / container prerequisites for both backends are in
 [`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md).
 
+### Sub-SLURM jobs: many runs in one allocation, steered from the login node
+A *pool* keeps SLURM for the allocations only. The monitor on the login node decides what runs in
+them:
+* jobs run back to back in an allocation that is already up: speed ablations, profiling, and
+  "fix a flag and restart" without a new queue wait;
+* a successor allocation waits in the queue WITHOUT a dependency, so it ages, and takes over a
+  long training run with a checkpoint handover; the old allocation is then released;
+* node failures, crashes and wall clocks are handled automatically:
+  * a restart in the same allocation, on a spare node if there is one;
+  * or a switch to the next allocation;
+  * exclusion lists are kept current, including on queued successors.
+
+Every job keeps its own full config, log and restart policy. Normal submissions are unchanged.
+
+```bash
+python scripts/run_autoexp.py --config-name experiments/korbi/pool/jupiter_pool_continuous \
+    job.name=<pool> slurm.sbatch.nodes=<N>                                                  # create the pool (+ monitor)
+python scripts/run_autoexp.py --pool <pool_dir> --config-name <experiment> [overrides]      # enqueue, any time
+python scripts/pool_ctl.py <pool_dir> status | cancel <job> | preempt <run> | set k=v | exclude <node> | close
+```
+
+* Operating continuous large runs (setups, procedures, what is automatic, what to watch):
+  [`docs/sub_slurm_jobs_operations.md`](docs/sub_slurm_jobs_operations.md)
+* Concepts, file layout, provenance, limits: [`docs/sub_slurm_jobs.md`](docs/sub_slurm_jobs.md)
+* Hands-on tasks against a local fake SLURM:
+  [`docs/sub_slurm_jobs_tutorial.md`](docs/sub_slurm_jobs_tutorial.md)
+
 ### Monitoring sessions
 - Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:
 ```bash

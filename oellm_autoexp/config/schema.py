@@ -26,6 +26,7 @@ from oellm_autoexp.hydra_staged_sweep.config.schema import (
 from oellm_autoexp.monitor.submission import SlurmJobConfig as SlurmJobConfigBase, SlurmConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClientConfig
 from oellm_autoexp.monitor.slurm_client import SlurmClientConfig
+from oellm_autoexp.monitor.pool import PoolHostConfig
 
 # ---------------------------------------------------------------------------
 # Core interfaces
@@ -131,6 +132,14 @@ class SlurmJobConfig(SlurmJobConfigBase):
     # `setsid nohup ... &`), the monitor waits at most the action's timeout for it.
     checkpoint_hook_command: str = ""
     checkpoint_hook_every: int = 0
+
+    # --- sub-SLURM-job pools (oellm_autoexp/monitor/pool.py) ----------------
+    # Set on a HOST config: run_autoexp then creates/updates the pool at
+    # `base_output_dir` instead of submitting a job, and becomes its monitor.
+    # The host job's slurm section is the allocation every host gets; its
+    # command is the supervisor (config/backend/pool_host.yaml). To run jobs
+    # IN a pool, set `job.pool_dir` (inherited field) or pass `--pool <dir>`.
+    pool_host: PoolHostConfig | None = None
 
 
 @dataclass(kw_only=True)

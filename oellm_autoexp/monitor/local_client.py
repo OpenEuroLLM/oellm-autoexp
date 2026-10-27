@@ -14,14 +14,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-import yaml
 import logging
 
-from compoconf import ConfigInterface, register, asdict
+from compoconf import ConfigInterface, register
 
 from oellm_autoexp.monitor.job_client_protocol import JobClientInterface
 from oellm_autoexp.monitor.utils.paths import resolve_log_path, update_log_symlink
-from oellm_autoexp.monitor.submission import LocalJobConfig
+from oellm_autoexp.monitor.submission import LocalJobConfig, dump_job_config
 
 
 LOGGER = logging.getLogger(__name__)
@@ -103,8 +102,7 @@ class LocalCommandClient(JobClientInterface):
                 )
                 LOGGER.info(f"Logging Config to: {resolved_config_path}")
                 Path(resolved_config_path).parent.mkdir(parents=True, exist_ok=True)
-                with open(resolved_config_path, "w") as fp:
-                    yaml.dump(asdict(job.base_config), fp)
+                dump_job_config(resolved_config_path, job)
                 if job.config_path_current:
                     config_path_obj = Path(resolved_config_path)
                     update_log_symlink(config_path_obj, Path(job.config_path_current))

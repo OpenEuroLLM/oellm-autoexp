@@ -34,6 +34,7 @@ from oellm_autoexp.monitor.actions import (
 from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
 from oellm_autoexp.monitor.job_client_protocol import JobClientProtocol
 from oellm_autoexp.monitor.submission import JobInterface, SlurmJobConfig, LocalJobConfig
+from oellm_autoexp.monitor.pool import PoolManager
 from oellm_autoexp.monitor.utils.paths import (
     resolve_log_path,
     expand_log_path,
@@ -173,12 +174,20 @@ class MonitorLoop:
         poll_interval_seconds: float = 60.0,
         show_poll_state: bool = True,
         no_error_catching: bool = False,
+        pool_manager: PoolManager | None = None,
     ) -> None:
         _import_registry()
         self._pending_restart_hooks: dict[str, dict[str, Any]] = {}
         self._store = store
         self._slurm_client = slurm_client
         self._local_client = local_client
+        # Runs of sub-SLURM-job pools (job.pool_dir set) are submitted to, and
+        # polled from, the pool manager; it also schedules the pools' hosts,
+        # which are ordinary SLURM records. A session without pools never
+        # touches it.
+        self._pool = pool_manager or PoolManager()
+        # resolved at call time: test doubles of the SLURM client need not implement cancel
+        self._pool._slurm_cancel = lambda job_id: self._slurm_client.cancel(job_id)
         self.poll_interval_seconds = poll_interval_seconds
         self.show_poll_state = show_poll_state
         self.no_error_catching = no_error_catching
@@ -189,6 +198,8 @@ class MonitorLoop:
             raise ValueError("Job definition is None")
 
         if isinstance(job.definition, SlurmJobConfig):
+            if getattr(job.definition, "pool_dir", None):
+                return self._pool
             return self._slurm_client
         elif isinstance(job.definition, LocalJobConfig):
             return self._local_client
@@ -233,11 +244,16 @@ class MonitorLoop:
             statuses.update(self._slurm_client.squeue())
         if self._local_client:
             statuses.update(self._local_client.squeue())
+        records = self._store.load_all()
+        # host views first (they need the SLURM states), then the pool runs'
+        # states, which depend on whether their host is still there
+        self._pool.refresh(statuses, records)
+        statuses.update(self._pool.squeue())
 
         # Array members whose start condition passed this poll, by script: each
         # batch goes out as ONE sbatch --array after the loop.
         array_batches: dict[str, list[JobRecord]] = {}
-        jobs = self._store.load_all()
+        jobs = records
         # Submitted, unfinished jobs per concurrency group (job.max_active).
         active_in_group: dict[str, int] = {}
         qos_groups: set[str] = set()
@@ -270,6 +286,8 @@ class MonitorLoop:
             if runtime.deferred_restart and self._resume_deferred_restart(job, runtime_id):
                 continue
             if self._apply_effect(job, status_effect, runtime_id):
+                continue
+            if self._apply_effect(job, self._pool_status_effect(job, new_status), runtime_id):
                 continue
             if not runtime.submitted:
                 if self._check_cancel(job):
@@ -329,8 +347,14 @@ class MonitorLoop:
             if self._apply_effect(job, effect, runtime_id):
                 continue
 
-            # Check if job completed naturally
-            if runtime.last_status in {"COMPLETED", "FAILED", "CANCELLED"}:
+            # Check if job completed naturally. A pool host ends in whatever state
+            # SLURM gives it (TIMEOUT at the wall clock, NODE_FAIL, ...): its
+            # runs are requeued by the pool, so every end is final for the host.
+            if runtime.last_status in {"COMPLETED", "FAILED", "CANCELLED"} or (
+                PoolManager.is_host(job)
+                and runtime.last_status is not None
+                and runtime.last_status not in self.ACTIVE_STATES
+            ):
                 if runtime_id:
                     client = self._get_client(job)
                     client.remove(runtime_id)
@@ -343,12 +367,17 @@ class MonitorLoop:
         for batch in array_batches.values():
             self._start_array_batch(batch)
 
+        # pool scheduling: assign queued runs to idle hosts, hand over, keep
+        # hosts submitted (new host records are submitted on the next poll)
+        self._pool.tick(self)
+
         if self.show_poll_state:
             statuses: dict[str, str] = {}
             if self._slurm_client:
                 statuses.update(self._slurm_client.squeue())
             if self._local_client:
                 statuses.update(self._local_client.squeue())
+            statuses.update(self._pool.squeue())
 
             poll_state = {}
             for job in self._store.load_all():
@@ -378,6 +407,64 @@ class MonitorLoop:
         if not group or limit is None:
             return True
         return active_in_group.get(group, 0) < limit
+
+    def _pool_status_effect(self, job: JobRecord, new_status: str | None) -> str:
+        """Built-in lifecycle of a pool run on the states only a pool reports.
+
+        PREEMPTED means the run was stopped from outside -- a handover to a
+        newer host, the host's wall clock, a lost host -- not that the job went
+        wrong, so it is requeued (a new run of the same record, which resumes
+        from its checkpoint) up to the pool's ``max_attempts``. A RestartAction
+        a log policy deferred on the same exit (``sigterm_rollover``) has
+        already been resumed by the caller, so this never restarts twice.
+        TIMEOUT (the job's own ``sbatch.time``, enforced by the supervisor) is
+        final, like the cancel the array policy gives a timed-out task.
+        """
+        if not PoolManager.is_run(job) or new_status is None:
+            return "continue"
+        if new_status == "PREEMPTED":
+            from oellm_autoexp.monitor.pool import PoolLayout, read_run_state
+
+            layout = PoolLayout(job.definition.pool_dir)
+            try:
+                max_attempts = layout.load_config().max_attempts
+            except Exception:  # pragma: no cover - a missing pool.json must not wedge the run
+                max_attempts = 20
+            reason = read_run_state(layout, job.runtime.runtime_job_id).reason
+            # Only UNHEALTHY requeues count against max_attempts: a lost host or a
+            # host that no longer has the nodes. A handover, the host's wall clock
+            # or a pool_ctl preempt (reason "preempted") is the pool working as
+            # intended -- a continuous run hands over every segment, and counting
+            # those would cancel it after max_attempts segments (~10 days at 12 h).
+            counters = job.runtime.action_state.setdefault("pool:requeues", {})
+            counters[reason or "preempted"] = int(counters.get(reason or "preempted", 0)) + 1
+            unhealthy = sum(
+                v for k, v in counters.items() if k in ("host_lost", "insufficient_nodes")
+            )
+            if unhealthy > max_attempts:
+                LOGGER.warning(
+                    "Pool run %s of %s %s: %d unhealthy requeue(s) > max_attempts %d, giving up",
+                    job.runtime.runtime_job_id,
+                    job.job_id,
+                    reason,
+                    unhealthy,
+                    max_attempts,
+                )
+                # the cancel path reloads the record from disk: keep the counters
+                self._store.upsert(job)
+                return "cancelled"
+            LOGGER.info(
+                "Pool run %s of %s was preempted (%s): requeueing (attempt %d; requeues %s)",
+                job.runtime.runtime_job_id,
+                job.job_id,
+                reason or "preempted",
+                job.runtime.attempts + 1,
+                dict(counters),
+            )
+            return "restart"
+        if new_status == "TIMEOUT":
+            return "cancelled"
+        return "continue"
 
     def _check_start(self, job: JobRecord) -> bool:
         condition = job.definition.start_condition
@@ -911,7 +998,42 @@ class MonitorLoop:
             variables["log_dir"] = str(Path(variables["log_path"]).parent)
         except Exception:  # pragma: no cover - best effort
             variables["log_path"] = ""
-        if hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
+        pool_context = None
+        if PoolManager.is_run(job):
+            # A pool run's runtime id is a RUN id (pool.0007), which sacct does not
+            # know: hand the hooks the host's SLURM job id, plus what only a pool
+            # run has ({run_id}, {step_nodes}).
+            from oellm_autoexp.monitor.pool import PoolLayout, run_fault_context
+
+            run_id = variables["runtime_job_id"]
+            pool_context = run_fault_context(PoolLayout(job.definition.pool_dir), run_id)
+            variables["run_id"] = run_id
+            variables["step_nodes"] = ",".join((pool_context or {}).get("nodes", []))
+            if pool_context:
+                variables["runtime_job_id"] = pool_context["slurm_job_id"]
+        if hooks.get("nccl_peer_scan") and exclude_file and pool_context is not None:
+            # same rules as below, applied to the failed RUN inside a live host
+            from oellm_autoexp.monitor.pool import scan_pool_run
+
+            try:
+                result = scan_pool_run(
+                    pool_context,
+                    log_root=Path(variables["log_path"]).parent.parent,
+                    job_log=variables["log_path"],
+                    exclude_file=exclude_file,
+                )
+                LOGGER.info(
+                    "NCCL peer scan of pool run %s (host job %s, %d node(s)): %d event(s), "
+                    "newly excluded %s",
+                    pool_context["run_id"],
+                    pool_context["slurm_job_id"],
+                    len(pool_context["nodes"]),
+                    len(result.get("events", [])),
+                    result.get("newly_excluded"),
+                )
+            except Exception as exc:
+                LOGGER.warning("NCCL peer scan of a pool run failed; continuing recovery: %s", exc)
+        elif hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
             # This hook runs after cancellation/teardown, never in the critical
             # cancellation path. A broken scanner must not block recovery.
             import subprocess

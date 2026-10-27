@@ -1,0 +1,34 @@
+defaults:
+  - default
+
+# A pool HOST config: run_autoexp creates/updates the pool at job.base_output_dir (its pool dir)
+# and becomes its monitor; the host jobs themselves are created by the monitor on demand.
+# Pair with `/backend: pool_host` and a `*_pool_host` slurm group. Jobs go INTO the pool with
+# `run_autoexp.py --pool <pool dir> ...` or `job.pool_dir: <pool dir>` in their own config.
+#
+# The host needs no log policy: its runs carry their own, and every end of a host is final
+# (its runs are requeued by the pool).
+log_events: []
+state_events: []
+
+pool_host:
+  name: ${job.name}
+  # hosts running at once; with handover the oldest beyond this is retired when a newer is up
+  max_hosts_running: 1
+  # successor hosts kept waiting in the queue while there is work (no dependency: they age)
+  keep_pending: 0
+  # hosts kept submitted even without work, until `pool_ctl close`
+  min_hosts: 0
+  handover: false
+  # do not retire a host younger than this (no ping-pong between fresh allocations)
+  handover_min_age_s: 1800
+  # queue successors only once the running host is this old (0 = at once; short queues: raise)
+  successor_delay_s: 0
+  idle_exit_s: 1200
+  monitor_dead_exit_s: 1800
+  min_remaining_s: 900
+  stop_grace_s: 120
+  preempt_grace_s: 900
+  max_attempts: 20
+  host_stale_s: 900
+  poll_s: 10
