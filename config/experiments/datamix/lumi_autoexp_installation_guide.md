@@ -84,8 +84,8 @@ To run training, conversion and evaluation of all sizes in one go, see [chain_gu
 To run the training you have to edit `backend:megatron:data_path:` and run the command:
 
 ```
-cd /flash/project_462001516/users/vitiugin/oellm-autoexp
-export HF_HOME=/flash/project_462001516/users/vitiugin/.cache
+cd /flash/project_462001516/users/$USER/oellm-autoexp
+export HF_HOME=/flash/project_462001516/users/$USER/.cache
 export SLURM_ACCOUNT=project_462001516
 
 uv run python scripts/run_autoexp.py --config-name experiments/datamix/scale/*.*B
