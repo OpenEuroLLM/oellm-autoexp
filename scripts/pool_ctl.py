@@ -299,6 +299,42 @@ def render_hook(ids: set[str], adopt_dir: Path, hold_max_s: int) -> str:
     return text
 
 
+def cmd_attach(layout: PoolLayout, args) -> int:
+    """Attach to a RUNNING allocation, as `adopt` does to a queued one but without a hook: the
+    allocation must run nothing that uses its nodes (an idle host of another pool, kept alive with a
+    long idle_exit_s). The monitor starts this pool's supervisor into it as an --overlap step; it
+    stops its runs adopt_stop_margin_s before the allocation's end and never cancels it."""
+    import subprocess
+
+    jid = str(args.job_id)
+    row = subprocess.run(
+        ["squeue", "-h", "-j", jid, "-o", "%T|%D|%a|%l"], capture_output=True, text=True
+    ).stdout.strip()
+    if not row:
+        print(f"job {jid} is not in the queue", file=sys.stderr)
+        return 1
+    state, nodes, account, limit = row.split("|")
+    if state != "RUNNING":
+        print(
+            f"job {jid} is {state}: attach takes a running allocation (adopt a queued one)",
+            file=sys.stderr,
+        )
+        return 1
+    adopt_dir = layout.root / "adopt"
+    adopt_dir.mkdir(parents=True, exist_ok=True)
+    # what the adoption hook writes when it holds the job's step: the monitor's go-ahead
+    (adopt_dir / f"{jid}.started").write_text(
+        f"{time.time():.0f} attached (running allocation, no hook)\n"
+    )
+    path = submit_request(
+        layout.root, "adopt", job_id=jid, nodes=int(nodes), account=account, time=limit
+    )
+    print(f"request adopt (attach) written: {path.name}")
+    if args.no_wait:
+        return 0
+    return _await_result(layout, path, args.wait)
+
+
 def cmd_adopt(layout: PoolLayout, args) -> int:
     """Adopt a QUEUED SLURM job as a host of this pool: install the fail-closed hook into its
     working directory (its own training step will never run) and register it with the monitor,
@@ -456,6 +492,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--remove", action="store_true", help="take the job out of the hook again")
     p.set_defaults(func=cmd_adopt)
+    p = waiting(
+        sub.add_parser(
+            "attach",
+            help="take over a RUNNING allocation that runs no training of its own (e.g. an idle"
+            " host of another pool) as a host of this pool",
+        )
+    )
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_attach)
     p = sub.add_parser("preempt")
     p.add_argument("run")
     p.set_defaults(func=cmd_preempt)

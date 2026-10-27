@@ -1,0 +1,46 @@
+# @package _global_
+# MareNostrum 5 packing pool (user 2026-10-27: use the running 33-node speed host for several smaller
+# jobs at once instead of waiting in the queue). It submits no host of its own (max_own_hosts 0): it
+# takes over a RUNNING allocation whose own supervisor is idle, with
+#   pool_ctl <pool> attach <jobid>        (keep the old pool's host alive: pool_ctl <old> set idle_exit_s=...)
+# and runs up to 4 jobs side by side on disjoint nodes. The old host gets B:USR1 15 min before its
+# wall and releases the allocation at once (idle), so this pool stops its runs 40 min before the end
+# (adopt_stop_margin_s), leaving preempt_grace_s for the checkpoint.
+#   python scripts/run_autoexp.py --no-monitor --pool $HYBRID_OUTPUT_DIR/pools/mn5_pool_pack33 \
+#       --monitor-state-dir $R/pool_state --config-name <job config> slurm.sbatch.qos=acc_ehpc
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_pack33
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    max_own_hosts: 0
+    max_runs_per_host: 4
+    keep_pending: 0
+    min_hosts: 0
+    handover: false
+    idle_exit_s: 21600
+    monitor_dead_exit_s: 1800
+    min_remaining_s: 1800
+    stop_grace_s: 600
+    preempt_grace_s: 900
+    adopt_stop_margin_s: 2400
+    host_stale_s: 1800
+    poll_s: 20
+    keep_monitor: true
+
+slurm:
+  sbatch:
+    nodes: 33
+    time: "08:00:00"
+    qos: acc_ehpc
+    no_kill: true
+
+index: 0
+stage: ""
