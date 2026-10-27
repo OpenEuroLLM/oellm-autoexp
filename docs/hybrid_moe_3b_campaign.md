@@ -3071,3 +3071,73 @@ emerge at size):
   sign-like first step on a near-zero init). distopt checkpoints store bf16 model weights and FSDP fp32,
   which explains the norm-gain step ratio of 0.69.
 - **Verdict:** FSDP is cleared for production. No systematic loss difference past the first ~70 steps.
+
+### LDM rematch with GQA, final read-out (2026-10-27)
+
+`screen5resgqa_s{1,2}`, LDM on the authors' recompute path.
+- Runs: 4000 steps × 64 × 8k tokens (2.1B), WSD with a linear 800-step cooldown from step 3200. One
+  seed per arm (1234), the same data order.
+- Total parameters within 0.03 % (s2: LDM 2.0660B, mHC-4 2.0667B, plain 2.0631B).
+- Script: `scripts/korbi/campaign/rematch_analysis.py` (local copy of the logs + downstream.json).
+
+**Validation loss at step 4000** (20 × 64 × 8k held-out tokens). The round-4 seed pairs agree at step
+4000 to ≤ 0.0003.
+
+| arm | s1 | vs mHC-4 | s2 | vs mHC-4 |
+|---|---:|---:|---:|---:|
+| plain | 2.2435 | +0.0385 | 2.1704 | +0.0273 |
+| mHC-4 ×0.25 | 2.2050 | 0 | 2.1430 | 0 |
+| mHC-4 ×0.125 | 2.2221 | +0.0171 | 2.1572 | +0.0142 |
+| LDM ×1 | 2.2053 | +0.0003 | 2.1281 | **−0.0149** |
+| LDM ×2 | 2.2039 | −0.0011 | 2.1272 | **−0.0158** |
+
+**Paired train-loss gap vs mHC-4 over the run.** The window means have SE ≤ 0.001.
+
+| LDM ×1 − mHC-4 | 500–1000 | 1000–2000 | 2000–3000 | 3000–3200 | cooldown 3200–3600 | 3600–3900 | 3900–4000 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| s1 | −0.024 | −0.006 | −0.001 | −0.001 | −0.001 | +0.000 | +0.001 |
+| s2 | −0.045 | −0.039 | −0.023 | −0.018 | −0.017 | −0.015 | −0.014 |
+
+- **LDM's lead shrinks monotonically at both sizes.** At s1 it is gone by step ~2500 (~1.3B tokens,
+  ~15 tokens per non-embedding parameter). At s2 it has shrunk from −0.045 to −0.014 by the end
+  (8 tokens per parameter).
+- **The cooldown gives mHC-4 more than LDM** (s2: +0.004 of the gap; s1: +0.002). Plain and
+  mHC-4 ×0.125 gain on mHC-4 in the cooldown by about the same amount.
+- **mHC-4's lead over plain is stable or growing** (s2: +0.014 → +0.028). LDM's lead over plain
+  shrinks (s2 val: −0.075 at step 500 → −0.042 at 4000).
+- **Extrapolation.** If the s2 gap closes like s1's (in tokens per parameter), or linearly in ln t
+  from the stable phase, it reaches zero near step ~7,500-8,000 (~4B tokens). That is a guide only:
+  the earlier `rematch_report.py` "gap @ 10B" fit ran across the cooldown, and single-run
+  extrapolations are not resolved (§11.8).
+- **lr factor:** ×1 vs ×2 differ by ≤ 0.002, i.e. LDM is not lr-starved under Muown. mHC-4 ×0.125
+  is clearly worse than ×0.25 in loss.
+
+**Long context (s2, step 4000).** Plain eval, eval-time log-n in brackets. 64-fact retrieval averaged
+over 16k / 32k / 64k (150 questions, SE ≈ 0.04 per arm).
+
+| arm | NLL 4–8k | 16–32k | 32–64k | kvret64 16–64k | kvret16 @64k |
+|---|---:|---:|---:|---:|---:|
+| plain | 2.499 | 2.298 | 2.276 | 0.41 (0.59) | 0.54 (0.76) |
+| mHC-4 ×0.25 | 2.462 | 2.272 | 2.260 | 0.44 (0.63) | 0.56 (0.76) |
+| mHC-4 ×0.125 | 2.485 | 2.279 | 2.261 | **0.51 (0.69)** | **0.66 (0.80)** |
+| LDM ×1 | **2.452** | **2.256** | **2.228** | 0.39 (0.50) | 0.44 (0.50) |
+| LDM ×2 | 2.446 | 2.260 | 2.261 | 0.38 (0.47) | 0.40 (0.64) |
+
+- **Long-document NLL:** LDM ×1 is best at every length. But LDM ×2's 32–64k NLL equals mHC-4's,
+  so the 32–64k gap (−0.032) is within run-to-run noise there (few documents > 32k).
+- **Retrieval:** LDM is below mHC-4 and below plain.
+  - Plain eval: −0.05 vs mHC-4 (~1σ).
+  - With log-n: −0.13 (~2σ); 16-fact retrieval at 64k 0.50 vs 0.76 (~2.8σ).
+  - Passkey is 1.00 for all arms; variable tracking is at the floor (0.04–0.24) for all arms.
+- **Compared with the MHA screens**, the retrieval gap narrowed a lot: 64-fact at 32k was 0.24 vs 0.76.
+  GQA lowered mHC-4's retrieval more than LDM's.
+
+**Reading:**
+- LDM converges faster early, but the advantage decays with training at both sizes. At s1 it is gone
+  within this run; at s2 it is a third of its early value.
+- LDM retrieves worse, and with log-n clearly so.
+- Under the stated criterion (retrieval), and with the decaying loss gap, the evidence still points to
+  mHC-4 for a long production run.
+- What would settle the loss question: s2 mHC-4 and LDM ×1 run to 8000 steps (stable to 7200, same
+  cooldown share), ~200 GPU-h. No pre-cooldown checkpoint exists (rolling 3500 / 3750 are inside the
+  cooldown), so it is a fresh pair.
