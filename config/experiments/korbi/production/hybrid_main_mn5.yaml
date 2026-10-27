@@ -178,7 +178,9 @@ backend:
     # 4 x 2 was data-bound; check tok/s against the speed runs at this layout
     num_workers: 8
     dataloader_prefetch_factor: 4
-    data_cache_path: ${job.base_output_dir}/data_cache_flag_decon_v1
+    # the shared index cache (one entry per data recipe, Megatron >= 11bd4aab1; the runs of
+    # suite main keep their rendered per-run cache)
+    data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_shared
     # ---- logging / eval ----
     log_interval: 1                     # every step, as the conservative run
     eval_interval: 2000

@@ -114,8 +114,9 @@ backend:
     data_path: null
     split: null
     num_workers: 2
-    # per arm: concurrent jobs building one shared index cache corrupt it (mmap errors)
-    data_cache_path: ${job.base_output_dir}/data_cache
+    # one shared index cache (hash-addressed entries; Megatron >= 11bd4aab1 locks an entry while
+    # it is built and writes atomically): each data recipe is built once (campaign base_train_mn5)
+    data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_shared
 
     # ---- batch / schedule: 4 GPUs x mbs 8 x 4096 = 131k tokens per step ----
     micro_batch_size: 8

@@ -61,8 +61,13 @@ backend:
     # every 250 steps (s1 ~13 min, s2 ~25 min): restarts / config switches lose little (user
     # 2026-10-18). Two rolling checkpoints on disk per run (~90 GB at s1); scratch quota 146 TB.
     non_persistent_save_interval: 250
-    # per run: array tasks sharing one index cache race on it (EOFError / mmap size errors)
-    data_cache_path: ${job.base_output_dir}/data_cache
+    # one index cache for every run (user 2026-10-27): its entries are addressed by the hash of
+    # the data settings (blend, seed, length, samples, split), so each data recipe is built once
+    # and every later run, arm or restart loads it (cold build 14-25 min, warm load 3-4 min).
+    # Concurrent builders of one entry used to race (EOFError / mmap size errors); Megatron
+    # >= 11bd4aab1 locks the entry and writes atomically. Per-run caches only for the prefetch
+    # / mirror variants (data_staging/mirror_mn5.yaml), which discover their index hash there.
+    data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_shared
     # building the per-run index of the 156-prefix blend from GPFS can take > 10 min (one rank
     # builds, the others wait in a barrier): the default 10-min NCCL timeout killed a run
     distributed_timeout_minutes: 45

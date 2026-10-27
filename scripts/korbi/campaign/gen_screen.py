@@ -745,8 +745,8 @@ def hybrid_every(blocks: int, period: int, mixer: str, attn_first: bool = False)
 
 
 R5_CACHE = "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5"
-# seed-1235 arms: no data_cache_path in the entry -> base_train's per-run cache (another order;
-# two of them would race on a shared one)
+# own_cache: no data_cache_path in the entry -> base_train's cache, now the shared one (hash-
+# addressed entries, one per data recipe; Megatron >= 11bd4aab1 locks an entry while it is built)
 own_cache = lambda kv: {k: v for k, v in kv.items() if k != B + "data_cache_path"}  # noqa: E731
 # document masking hands TE a packed batch: RoPE per document is TE's unfused-path job, the
 # fused q/k-norm + RoPE kernel rejects packed batches with RoPE

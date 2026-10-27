@@ -12,11 +12,15 @@
 # - local rank 0 of each node starts scripts/prefetch_warm.py (lanes mode) inside the container,
 #   paced by a consumption cursor (bounded disk: lookahead / retain rounds).
 # The data order differs from the stock run (same data, windowed shuffle): compare runs with the
-# same setting only. Requires a per-run backend.megatron.data_cache_path (the campaign base sets
-# it): the prefetcher discovers the index hashes there. Expected to matter for many concurrent
+# same setting only. Sets a per-run backend.megatron.data_cache_path (the bases share one): the
+# prefetcher discovers the index hashes there. Expected to matter for many concurrent
 # small runs on GPFS more than for one large run.
 backend:
   launcher_script: ./scripts/pretrain_hybrid_prefetch.py
+  megatron:
+    # per run: the prefetcher discovers the run's index hashes in its cache (the bases use the
+    # shared cache)
+    data_cache_path: ${job.base_output_dir}/data_cache
   env:
     OELLM_PREFETCH_AUTOSTART: "1"
     OELLM_PREFETCH_CLEAN_SCRATCH: "1"
