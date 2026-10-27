@@ -22,7 +22,9 @@ IT = re.compile(r"iteration\s+(\d+)/\s*(\d+) \|.*?lm loss: ([0-9.Ee+-]+)")
 def runs(suite: Path) -> dict:
     out = defaultdict(dict)
     pat = re.compile(rf"{re.escape(suite.name)}/([a-z0-9_.-]+)/ckpt")
-    for f in sorted(glob.glob(str(suite / suite.name / "slurm-*.log"))):
+    # every array group of the suite (suite/<group>/slurm-*.log): arms relaunched in their own
+    # group (e.g. screen5resgqa_s2_ldm) log next to the suite's own
+    for f in sorted(glob.glob(str(suite / "*" / "slurm-*.log"))):
         text = Path(f).read_text(errors="replace")
         m = pat.search(text)
         if not m:
