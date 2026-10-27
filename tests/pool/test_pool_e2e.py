@@ -237,12 +237,12 @@ def test_host_accounts_race_and_the_first_account_keeps_its_successor(pool):
             j["id"] for j in pool.fake_jobs() if j["state"] == "PENDING" and j["account"] == account
         ]
 
-    # nothing runs: run + successor in dev, one insurance host in accB
+    # nothing runs: the run's host + its successor = one queued host in each account
     pool.wait_for(
-        lambda: len(pending("dev")) == 2 and len(pending("accB")) == 1, 40, "2 dev + 1 accB"
+        lambda: len(pending("dev")) == 1 and len(pending("accB")) == 1, 40, "1 dev + 1 accB"
     )
     time.sleep(3)
-    assert len(pending("dev")) == 2 and len(pending("accB")) == 1, "no more hosts than that"
+    assert len(pending("dev")) == 1 and len(pending("accB")) == 1, "no more hosts than that"
     # the fallback starts first: it takes the run
     b1 = pending("accB")[0]
     pool.release(b1)
