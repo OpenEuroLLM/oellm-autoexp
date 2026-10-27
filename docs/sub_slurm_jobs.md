@@ -13,6 +13,7 @@ file system. Two problems go away:
   on the old allocation (a checkpoint is saved) and continues on the new one. The old
   allocation is then released. The only gap is one save plus one startup.
 
+Operating continuous large runs: [sub_slurm_jobs_operations.md](sub_slurm_jobs_operations.md).
 Hands-on introduction: [sub_slurm_jobs_tutorial.md](sub_slurm_jobs_tutorial.md) (ten tasks, nine of them
 local against the fake SLURM).
 
@@ -171,6 +172,17 @@ live: the monitor re-reads `pool.json` every poll and the supervisors re-read
 * **Lost host** (node failure, `scancel`, a stale supervisor heartbeat): the run
   reads `host_lost` (PREEMPTED) and is requeued. It resumes from the last persistent
   checkpoint.
+* **Fault scan of a pool run.** `RestartAction.nccl_peer_scan` scans the failed RUN, not an
+  allocation: the rules of `monitor/nccl_peers.py` are applied with the host's SLURM job id, the
+  step's nodes in task order, and the run's own time window. The host keeps running, so the
+  plain allocation scan would see a live job and find nothing. A `pre_command` gets the host's id
+  as `{runtime_job_id}`, plus `{run_id}` and `{step_nodes}`.
+* **Queued successors stay current.** A host waiting in the queue gets every node excluded since
+  its submission, from the fleet list or the pool's `exclude_nodes`, through `scontrol update
+  ExcNodeList`.
+* **Nodes SLURM reports unusable** (down, drained, failing, not responding) are skipped by the
+  supervisor at every launch. With `--no-kill` and one spare node, a node failure is then
+  absorbed inside the allocation.
 * **A bad node inside a live host.** Exclude it (`pool_ctl exclude <node>`, or the job's restart
   hook appends it to its `restart_exclude_file`). The next run of the job skips it, so a host
   with a spare node keeps working. A host that can no longer fit ANY queued job, because too
