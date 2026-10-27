@@ -116,6 +116,28 @@ cancel of a job that has already ended is refused, and nothing is written.
 re-read them every poll. A new host DEFINITION (nodes, time, account) means re-running the host
 config with `run_autoexp.py`. It applies to hosts created from then on.
 
+**Update code while the pool runs.** Allocations survive code changes. Each piece takes effect at
+a different point:
+
+| What changed | Takes effect | How |
+|---|---|---|
+| monitor code (`oellm_autoexp/monitor/*.py`, `orchestrator.py`) | when the monitor restarts | stop it (Ctrl-C, or `kill` the monitor PID only), start it again; it adopts the running pool. Hosts and runs do not notice. |
+| scripts the supervisor calls per run (`oellm_autoexp/utils/provenance.py`) and the jobs' own code and configs (Megatron, templates) | at the host's next run | nothing to do; the provenance line of the next run reports the change |
+| `scripts/pool/supervisor.sh` | for hosts STARTED after the change | a running host keeps the version it started with |
+
+**Replace `supervisor.sh` on disk, never edit it in place.** Bash reads a running script from its
+file while executing it, so an in-place edit (an editor saving in place, `scp` or `cp` over the
+file, `sed -i`...) can corrupt every host currently running it. Replacing the file gives the new
+version a new inode while running hosts keep the old one. `rsync` (the default, without
+`--inplace`) and `git checkout` both replace the file. Validated on JUPITER, 2026-10-27: one
+host (job 2537762) ran three runs of one job, across a provenance fix synced between runs and a
+monitor swap to new code, without an interruption.
+
+When killing a monitor by pattern, do not use a pattern that also matches your own shell's
+command line. `pkill -f "monitor_autoexp.py --session-dir ..."` sent over ssh matches the remote
+shell running it. Use the PID from `ps`, or `pgrep -f` with a pattern that is not on your own
+command line.
+
 ## 4. What is handled automatically
 
 | Event | What happens | Where you see it |
