@@ -203,3 +203,52 @@ Act on these:
 | fake SLURM, end to end | everything above, including handover, wall clock, host loss, bad node with and without a spare, the fault scan on a pool run, queued-host exclusion updates, failed-start backoff (`tests/pool`) |
 | JUPITER, 130M Megatron, 2-node hosts (2026-10-26/27) | back-to-back runs in one allocation; preempt + requeue in the same allocation, resuming at the exact iteration; handover of a training run across allocations; a bad node excluded, with the next run on the spare node of the same allocation; a host that cannot fit the queue released at once; its replacement's `--exclude` (fleet list + bad node, also in SLURM's `ExcNodeList`); the wall-clock stop with `B:USR1` (graceful, host COMPLETED, resumed on the next host at iteration 1446 after 1445); `pool_ctl` cancel refusal and result reporting; `close` → drain → monitor exit; provenance with and without git; a monitor swap to new code with no host interruption. Every host ended COMPLETED, none TIMEOUT. |
 | not yet run | anything above 2 nodes; a real node failure with `--no-kill`; MareNostrum. Run a 32-64-node pilot with a forced handover, a deliberate `scancel` of a host and a crashing run before going to 512 nodes. |
+
+## 8. MareNostrum 5 (validated 2026-10-27, ehpc533)
+
+**Production pools:** `mn5_pool_p33` (33-node hosts, acc_ehpc) and `mn5_pool_p129` (129-node
+hosts, acc_xehpc), `/gpfs/scratch/ehpc533/hybrid_nucleus/pools/`.
+- Both are run from snapshot `autoexp_pools1`; their sessions are in `$R/pool_state`.
+- `min_hosts 1`, `keep_pending 1`, handover after 6 h, one spare node with `--no-kill`,
+  `B:USR1@2700`.
+- One monitor per pool, started with `scripts/korbi/mn5_autoexp_bg.sh pool_p<N>_mon
+  scripts/monitor_autoexp.py --session-dir $R/pool_state/pool_mn5-pool-p<N> --poll-interval 30`.
+
+**What differs from JUPITER (all fixed in the code):**
+- **Stop signal:** the production runs use `--exit-signal SIGUSR2`, and SIGTERM kills them without
+  a save. A run is stopped with the job's own exit signal (`meta.env` STOP_SIGNAL).
+- **Working directory:** runs execute in the snapshot they were enqueued from
+  (`job.metadata.pool_workdir`), not in the host's.
+- **Relay steps need `--mem=0`:** a full step holds all node memory, and an `--overlap` step with
+  any explicit memory request is refused ("Memory required by task is not available").
+- **Probe CPUs:** MN5 has 160 CPUs per node (`--threads-per-core=2`). The phase-0 probe takes them
+  from the allocation.
+- **acc_debug** allows ONE submitted job per user, shared by every agent (same unix user), so it
+  is not usable for pools that hand over.
+
+**Phase-0 probe:** all mechanics pass (48115049, 48115374).
+
+**2-node smoke** (s1 final recipe, real Megatron), all passed:
+- Back-to-back runs, and preempt + requeue in the same allocation. SIGUSR2 reached 4 ranks per
+  node; the run saved and resumed at the exact iteration.
+- A fix enqueued from a new snapshot ran in it.
+- The wall-clock stop: graceful, host COMPLETED.
+- Six handovers in a row, resuming each time.
+
+**Adopting queued jobs** (`pool_ctl <pool> adopt <jobid>`): turns an already-queued ordinary job,
+such as the cns144 128-node jobs, into a pool host.
+- A fail-closed hook (`scripts/pool/adopt_sitecustomize.py`, installed as `<WorkDir>/sitecustomize.py`)
+  holds the job's own torchrun from the first instant.
+- The monitor starts the supervisor into the allocation (`srun --jobid --overlap --mem=0`); runs
+  are overlapping steps.
+- Second fail-safe: the monitor cancels the job if the hook has not engaged 90 s after it starts.
+- Validated on MN5 (48117110): 0 iterations of the held job, pool work at full speed, COMPLETED 0:0
+  on release. The supervisor must drop the step's SLURM_MEM_PER_CPU and similar variables (done).
+- Never resync a snapshot that holds an installed hook without the current sync script (it now
+  excludes `/sitecustomize.py`).
+
+**One run per job across pools** (`+job.metadata.pool_singleton=<key>`): enqueue the same job,
+with the same `job.name`, into both pools.
+- Only one run holds the key.
+- A larger pool's host supersedes a smaller pool's run: its job is cancelled after a save, and the
+  run resumes in the larger pool from that checkpoint.
