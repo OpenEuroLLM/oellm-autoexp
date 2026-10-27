@@ -1513,10 +1513,16 @@ def arms5ds41(size: str = "s1"):
             ("headwise", "+ head-wise Q / K / V orthogonalization", {**run, B + "muon_qkv_headwise": True})]
 
 
-# LDM as the residual-scheme rematch runs it; swap in the authors' optimized implementation here
-# when their PR lands (user 2026-10-26)
+# LDM as the residual-scheme rematch runs it: the authors' implementation under full recompute
+# (davidgonmar/ldm-megatron-recompute, Megatron a6ac93843 + cute_kernels c756eb0; user 2026-10-27).
+# The CuTe kernels unchanged, the per-edge records carried in the stream, recomputed layers read
+# from the running state, no inverse; the production path (8 nodes, FSDP + MoonEP: 6,890 tok/s/GPU,
+# 92 % of mHC-4's 7,520). Recompute is exact, so the forward matches the CuTe form without it.
+# Defaults kept: fp32 running covariance, depth_memory_sites all, window 4.
 LDM_REMATCH = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
-               B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
+               B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32,
+               B + "depth_memory_unwind": True, B + "recompute_granularity": "full",
+               B + "recompute_method": "uniform", B + "recompute_num_layers": 2}
 
 
 def arms5resgqa(size: str):
@@ -1526,9 +1532,9 @@ def arms5resgqa(size: str):
     CKDA, attention first, classical Muown, untied embedding / head at the shared lr, SwiGLU clamp
     10, router in fp32, head-wise Q / K / V. Pattern: s2 (18 blocks) attention every 8th from block
     0 (2 attention layers, the production 7:1 period); s1 (12 blocks) every 6th, as the final-recipe
-    screens (7:1 would leave one attention layer). Each scheme at its best residual-mixer lr (LDM
-    x2.0 of a 6-point sweep, mHC-4 x0.25 of 2 points) plus mHC-4 at x0.125, the untested side of its
-    optimum. gbs 64 x 8k, 4000 steps (2.1B tokens): stable 3200 + WSD linear to lr / 10 over 800;
+    screens (7:1 would leave one attention layer). mHC-4 at its best residual-mixer lr (x0.25 of 2
+    points) plus x0.125, the untested side of its optimum; LDM at the authors' x1 and at x2.0 (the
+    best of the s1 sweep on the Adam-based screens). gbs 64 x 8k, 4000 steps (2.1B tokens): stable 3200 + WSD linear to lr / 10 over 800;
     the final checkpoints feed the long-context set. 2 nodes per arm (2-node and 1-node runs do not
     pair); each arm builds its own data index (a new schedule)."""
     hidden, blocks, *_ = R4_SIZES[size]
@@ -1553,7 +1559,12 @@ def arms5resgqa(size: str):
         ("plain", "plain residual", plain, {}),
         ("mhc4", "mHC-4, mixer lr x0.25", mhc, {B + "residual_mixer_lr_mult": 0.25}),
         ("mhc4_lr0125", "mHC-4, mixer lr x0.125", mhc, {B + "residual_mixer_lr_mult": 0.125}),
-        ("ldm", "LDM (K 8), its lr x2.0", plain, {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0}))]
+        # the LDM authors: mixer lr x1 (user 2026-10-27); x2.0 was the s1 sweep's optimum on the
+        # Adam-based screens (-0.068 vs -0.061 at x1.0), kept as the comparison
+        ("ldm", "LDM (K 8, under recompute), mixer lr x1 (the authors)", plain,
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 1.0}),
+        ("ldm_lr2", "LDM (K 8, under recompute), mixer lr x2.0 (the s1 sweep)", plain,
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0}))]
 
 
 def arms5fsdpeq(size: str = "s1"):
