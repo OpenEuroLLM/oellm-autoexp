@@ -26,11 +26,24 @@ done
 
 view() { # view <file>
   echo "$1"
+  [ -L "$1" ] && echo "  -> $(readlink "$1")"
   [ -n "$only_path" ] && return
   less +F "$1"
 }
 
-run_log() { # run_log <pool dir> <rid> -> path of the run's log
+run_log() { # run_log <pool dir> <rid> -> the run's log, as the pool's named symlink
+  # <pool>/slurm-<host jobid>.<step index>-<job name>.log (the name says which job it is)
+  local started job step link
+  started="$1/runs/$2/started"
+  job=$(sed -n 's/^job=//p' "$started" 2>/dev/null)
+  step=$(sed -n 's/^step_index=//p' "$started" 2>/dev/null)
+  if [ -n "$job" ] && [ -n "$step" ]; then
+    link=$(ls "$1"/slurm-"$job"."$step"-*.log 2>/dev/null | head -n 1)
+    if [ -n "$link" ]; then
+      echo "$link"
+      return
+    fi
+  fi
   python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['log'])" "$1/runs/$2/run.json" 2>/dev/null
 }
 
