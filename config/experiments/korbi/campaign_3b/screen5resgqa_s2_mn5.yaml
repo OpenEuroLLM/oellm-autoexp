@@ -432,7 +432,7 @@ sweep:
           backend.megatron.recompute_method: uniform
           backend.megatron.recompute_num_layers: 2
           backend.megatron.residual_mixer_lr_mult: 2.0
-        # LDM (K 8, under recompute), mixer lr x0.25
+        # LDM (K 8, under recompute), mixer lr x0.25, 8 nodes
         - aux.arm: ldm_lr025
           backend.megatron.num_attention_heads: 8
           backend.megatron.num_query_groups: 2
@@ -501,7 +501,7 @@ sweep:
           backend.megatron.lr_decay_iters: 4000
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.overlap_param_gather: false
-          slurm.sbatch.nodes: 2
+          slurm.sbatch.nodes: 8
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.depth_memory: true
           backend.megatron.depth_memory_impl: cute
@@ -513,7 +513,7 @@ sweep:
           backend.megatron.recompute_method: uniform
           backend.megatron.recompute_num_layers: 2
           backend.megatron.residual_mixer_lr_mult: 0.25
-        # LDM (K 8, under recompute), mixer lr x0.125
+        # LDM (K 8, under recompute), mixer lr x0.125, 8 nodes
         - aux.arm: ldm_lr0125
           backend.megatron.num_attention_heads: 8
           backend.megatron.num_query_groups: 2
@@ -582,7 +582,7 @@ sweep:
           backend.megatron.lr_decay_iters: 4000
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.overlap_param_gather: false
-          slurm.sbatch.nodes: 2
+          slurm.sbatch.nodes: 8
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.depth_memory: true
           backend.megatron.depth_memory_impl: cute

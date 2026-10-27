@@ -1579,10 +1579,12 @@ def arms5resgqa(size: str):
          {**LDM_REMATCH, B + "residual_mixer_lr_mult": 1.0}),
         ("ldm_lr2", "LDM (K 8, under recompute), mixer lr x2.0 (the s1 sweep)", plain,
          {**LDM_REMATCH, B + "residual_mixer_lr_mult": 2.0}),
-        ("ldm_lr025", "LDM (K 8, under recompute), mixer lr x0.25", plain,
-         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.25}),
-        ("ldm_lr0125", "LDM (K 8, under recompute), mixer lr x0.125", plain,
-         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.125})) if keep is None or n in keep]
+        # 8 nodes (user 2026-10-27: faster; DP 32 = 2 sequences per GPU per step). Not paired per
+        # window with the 2-node arms (different reduction order), the step-4000 values are
+        ("ldm_lr025", "LDM (K 8, under recompute), mixer lr x0.25, 8 nodes", plain,
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.25, "slurm.sbatch.nodes": 8}),
+        ("ldm_lr0125", "LDM (K 8, under recompute), mixer lr x0.125, 8 nodes", plain,
+         {**LDM_REMATCH, B + "residual_mixer_lr_mult": 0.125, "slurm.sbatch.nodes": 8})) if keep is None or n in keep]
 
 
 def arms5fsdpeq(size: str = "s1"):
