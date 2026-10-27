@@ -169,6 +169,10 @@ class PoolHostConfig:
     # hosts the pool submits itself (-1: as many as the settings above ask for; 0: none, the
     # pool only uses adopted jobs)
     max_own_hosts: int = -1
+    # the monitor stays up while the pool is open (not `pool_ctl close`d), also with no work:
+    # a pool that is used in bursts (speed tests) otherwise loses its monitor when it runs empty,
+    # and the next `run_autoexp --pool --no-monitor` enqueue sits unscheduled
+    keep_monitor: bool = False
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -678,12 +682,10 @@ def pools_have_pending_requests(session_dir: str | Path) -> bool:
         try:
             if any(layout.requests_dir.glob("*.json")):
                 return True
-            if (
-                layout.exists()
-                and layout.load_config().min_hosts > 0
-                and not layout.load_state().get("closed")
-            ):
-                return True
+            if layout.exists() and not layout.load_state().get("closed"):
+                cfg = layout.load_config()
+                if cfg.min_hosts > 0 or cfg.keep_monitor:
+                    return True
         except (OSError, ValueError):
             continue
     return False
