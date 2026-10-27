@@ -135,6 +135,7 @@ sweep:
           backend.megatron.depth_memory_lerp: true
           backend.megatron.ngpt: true
           backend.megatron.ngpt_lerp_normalization: analytic
+          backend.megatron.ngpt_alpha_activation: half_sigmoid
           backend.megatron.attention_length_scaling: logn
           backend.megatron.attention_length_scaling_base: 8192
           backend.megatron.skip_train: true
@@ -229,6 +230,7 @@ sweep:
           backend.megatron.depth_memory_lerp: true
           backend.megatron.ngpt: true
           backend.megatron.ngpt_lerp_normalization: analytic
+          backend.megatron.ngpt_alpha_activation: half_sigmoid
           backend.megatron.angular_muown_u_decay_p: 1.0
           backend.megatron.attention_length_scaling: logn
           backend.megatron.attention_length_scaling_base: 8192
@@ -313,6 +315,7 @@ sweep:
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
           backend.megatron.ngpt: true
           backend.megatron.ngpt_lerp_normalization: analytic
+          backend.megatron.ngpt_alpha_activation: half_sigmoid
           backend.megatron.attention_length_scaling: logn
           backend.megatron.attention_length_scaling_base: 8192
           backend.megatron.skip_train: true

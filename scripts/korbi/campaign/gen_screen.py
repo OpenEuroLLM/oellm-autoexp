@@ -1600,7 +1600,11 @@ def arms5ngptldm(size: str = "s2"):
     explicit), and nGPT without LDM (attribution). 8 nodes per arm, as the 8-node rematch arms
     (ldm_lr025 / ldm_lr0125) they pair with."""
     base = dict((n, kv) for n, _, kv in arms5resgqa(size))
-    ngpt = {B + "ngpt": True, B + "ngpt_lerp_normalization": "analytic", "slurm.sbatch.nodes": 8}
+    # the LERP step bounded (alpha <= 0.5, half_sigmoid): the first version (weight normalizer,
+    # approx LERP, unbounded alpha) went to grad norm 150-280 by step 10-20 (plain: 3-8) and NaN
+    # at step ~30
+    ngpt = {B + "ngpt": True, B + "ngpt_lerp_normalization": "analytic",
+            B + "ngpt_alpha_activation": "half_sigmoid", "slurm.sbatch.nodes": 8}
     ldm = {k: v for k, v in base["ldm"].items()}
     ldm.update({B + "residual_mixer_lr_mult": 0.25, B + "depth_memory_lerp": True})
     am = {B + "optimizer": "angular_muown", B + "angular_muown_u_decay_p": 1.0}
