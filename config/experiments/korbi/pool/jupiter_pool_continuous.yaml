@@ -1,0 +1,49 @@
+# @package _global_
+# A pool HOST for CONTINUOUS large training on JUPITER (docs/sub_slurm_jobs_operations.md).
+# One allocation runs the job; a successor always waits in the queue WITHOUT a dependency (it
+# ages); when it starts, the run moves over with a checkpoint and the old allocation is released.
+# Overlap of two allocations during a switch is accepted -- the goal is that training keeps
+# running. Fleet-wide node exclusion (autoexclude) is on, as for every large run.
+#
+#   python scripts/run_autoexp.py --config-name experiments/korbi/pool/jupiter_pool_continuous \
+#       job.name=<pool name> slurm.sbatch.nodes=<job nodes>
+#   python scripts/run_autoexp.py --pool $OUTPUT_DIR/pools/<pool name> --config-name <training experiment>
+#
+# Spare node (long queue waits, slow restarts, e.g. MareNostrum): slurm.sbatch.nodes=<job nodes + 1>
+# and +slurm.sbatch.no_kill=true (the + is needed: not a declared key) -- a node failure then no longer ends the allocation, the run is
+# restarted on the remaining nodes. JUPITER restarts are fast, so no spare by default.
+defaults:
+  - /backend: pool_host
+  - /slurm: jupiter_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: jupiter_pool_continuous
+  base_output_dir: ${oc.env:OUTPUT_DIR,./output}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 1          # a successor always waits in the queue (ages, no dependency)
+    min_hosts: 0
+    handover: true
+    handover_min_age_s: 3600 # no switch before an allocation has run 1 h (no ping-pong in short queues)
+    successor_delay_s: 0     # queue the successor at once: maximum age priority
+    idle_exit_s: 1800
+    monitor_dead_exit_s: 3600
+    min_remaining_s: 1800    # >= startup + one checkpoint interval at scale
+    stop_grace_s: 600
+    preempt_grace_s: 1800    # >= 2x the measured checkpoint save time
+    max_attempts: 20         # UNHEALTHY requeues only (lost host, too few nodes)
+    host_stale_s: 1800
+    poll_s: 15
+
+slurm:
+  sbatch:
+    nodes: 512
+    time: "12:00:00"
+    # graceful stop (signal checkpoint) 20 min before the wall
+    signal: "B:USR1@1200"
+
+index: 0
+stage: ""

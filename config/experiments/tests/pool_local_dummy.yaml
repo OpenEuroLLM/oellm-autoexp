@@ -1,0 +1,41 @@
+# @package _global_
+# Local sub-job for tests/pool: scripts/sigterm_dummy_trainer.py (Megatron's SIGTERM / checkpoint /
+# resume semantics, stdlib only) under a fake `torchrun` agent, so the supervisor's rank relay is
+# exercised exactly as on the cluster. Root: $POOL_TEST_ROOT. Knobs: aux.iters, aux.tick, aux.tag.
+defaults:
+  - /backend: bash
+  - /slurm: base
+  - /job: auto_restart_ckptreset
+  - /sweep: none
+  - _self_
+
+aux:
+  root: ${oc.env:POOL_TEST_ROOT}
+  tag: a
+  iters: 30
+  tick: 0.2
+  repo: ${oc.env:PWD}
+
+job:
+  name: dummy_${aux.tag}
+  base_output_dir: ${aux.root}/runs/${job.name}
+  # keys the auto_restart_ckptreset policy interpolates
+  checkpoint_hook_command: ""
+  checkpoint_hook_every: 0
+  restart_pre_command: ""
+  restart_exclude_file: ""
+
+backend:
+  megatron:
+    save: ${aux.root}/runs/${job.name}/checkpoints
+  command: "python3 ${aux.repo}/tests/fakeslurm/torchrun --nproc_per_node 1 ${aux.repo}/scripts/sigterm_dummy_trainer.py --ckpt-dir ${aux.root}/runs/${job.name}/checkpoints --iters ${aux.iters} --tick ${aux.tick} --save-every 10 --save-seconds 0.5"
+
+slurm:
+  launcher_cmd: ""
+  sbatch:
+    nodes: 1
+    time: "00:05:00"
+    gres: null
+
+index: 0
+stage: ""

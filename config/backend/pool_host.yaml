@@ -1,0 +1,6 @@
+# Backend of a pool HOST (oellm_autoexp/monitor/pool.py): the command is the supervisor.
+# The monitor sets AUTOEXP_POOL_DIR / AUTOEXP_POOL_HOST in the env of every host it creates.
+# Relative to the submit directory, which is the repo root the monitor runs from.
+class_name: BashBackend
+command: bash scripts/pool/supervisor.sh "$AUTOEXP_POOL_DIR" "$AUTOEXP_POOL_HOST"
+env: {}

@@ -22,7 +22,8 @@ repos:
     args: [ --autofix, --no-sort-keys ]
   - id: name-tests-test
     args: [ --pytest-test-first ]
-    exclude: ^tests/trainer/helpers/
+    # test helpers, not tests: trainer helpers, the local fake SLURM, the pool e2e harness
+    exclude: ^tests/(trainer/helpers/|fakeslurm/|pool/harness\.py$)
   - id: trailing-whitespace
 - repo: https://github.com/asottile/setup-cfg-fmt
   rev: v3.1.0

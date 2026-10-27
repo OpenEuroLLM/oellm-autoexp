@@ -1,0 +1,49 @@
+# @package _global_
+# Real-Megatron sub-job for validating sub-SLURM-job pools on JUPITER (docs/sub_slurm_jobs.md):
+# the verified 130M smoke stack (mcore 0.19, te218-fa3, torch.distributed.run with static
+# rendezvous) on 2 nodes, 300 iterations, a persistent checkpoint every 50, and Megatron's exit
+# signal handler, so a pool preemption (handover / `pool_ctl preempt` / host wall clock) saves
+# and the requeued run resumes. Goes INTO a pool:
+#
+#   python scripts/run_autoexp.py --pool <pool dir> --config-name experiments/korbi/pool/megatron_130M_pool_smoke \
+#       aux.additional_tag=a [slurm.sbatch.nodes=1]
+defaults:
+  - /experiments/korbi/megatron_niccolo_130M_smoke_jupiter
+  - override /container: jupiter_te218_fa3
+  - override /backend: megatron_torchdist_localaddr
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "pool_smoke"
+  additional_tag: "a"
+
+backend:
+  megatron:
+    valid_data_path:
+      - /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all
+    num_attention_heads: 8
+    num_query_groups: 8
+    data_cache_path: ${job.base_output_dir}/data_cache
+    train_iters: 300
+    lr_warmup_iters: 10
+    lr_wsd_decay_iters: 60
+    log_interval: 5
+    save_interval: 50
+    eval_iters: 2
+    eval_interval: 1000000
+    exit_signal_handler: true
+    wandb_project: oellm_pool_smoke
+
+job:
+  name: "pool_smoke_130M_${aux.additional_tag}"
+  est_step_time_s: 0.7
+  est_startup_min: 6
+  est_steps: 300
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 2
+    time: "00:40:00"
