@@ -1358,15 +1358,33 @@ class PoolManager:
             return None
         return holder
 
+    @staticmethod
+    def _singleton_reservation(d: Path, max_age_s: float = 3 * 3600) -> dict | None:
+        """The run the key is reserved for (it superseded the holder), while that run has not
+        ended and the reservation is younger than max_age_s, else None."""
+        try:
+            res = json.loads((d / "reserved.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        rd = Path(res.get("pool", "")) / "runs" / str(res.get("rid", ""))
+        if (
+            not rd.is_dir()
+            or (rd / "rc").exists()
+            or time.time() - float(res.get("ts", 0)) > max_age_s
+        ):
+            return None
+        return res
+
     def _claim_singleton(
         self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str
     ) -> bool:
         """May run `rid` (`nodes` nodes) of the singleton job `key` start in this pool now?
 
-        One run per key across every pool: the key is free (no holder, or its run ended), or
-        held by this very run. A holder in ANOTHER pool on fewer nodes is superseded -- its job
-        is cancelled there (graceful stop with a save, the job does not come back) and this run
-        starts once the holder's run has ended; on as many or more nodes the holder keeps it.
+        One run per key across every pool: the key is free (no holder, or its run ended, and no
+        reservation for a larger run), or held by this very run. A holder in ANOTHER pool on
+        fewer nodes is superseded -- its run is preempted there (graceful stop with a save, its
+        job requeued in that pool) and the key reserved for this run, which starts once the
+        holder's run has ended; on as many or more nodes the holder keeps it.
         Checked and claimed under a mkdir lock (atomic on GPFS), so two monitors never both
         start the job."""
         d = self._singleton_dir(layout, key)
@@ -1385,6 +1403,14 @@ class PoolManager:
         try:
             holder = self._singleton_holder(d)
             me = {"pool": str(layout.root), "rid": rid}
+            reserved = self._singleton_reservation(d)
+            if (
+                holder is None
+                and reserved is not None
+                and {k: reserved.get(k) for k in me} != me
+                and int(reserved.get("nodes", 0)) > nodes
+            ):
+                return False  # the key is promised to a larger run that superseded the holder
             if holder is None or {k: holder.get(k) for k in me} == me:
                 _atomic_write(
                     d / "holder.json",
@@ -1403,9 +1429,18 @@ class PoolManager:
                         rid,
                         nodes,
                     )
-                    submit_request(holder["pool"], "cancel", targets=[holder.get("job_id", "")])
+                    # PREEMPT, not cancel: the smaller pool's run saves and its job is requeued
+                    # there; the reservation keeps the key for this run, so the requeued run waits.
+                    # If this run never starts or ends, the reservation lapses and the job
+                    # continues in the smaller pool on its own.
+                    hold_rd = Path(holder["pool"]) / "runs" / str(holder["rid"])
+                    _atomic_write(hold_rd / "preempt", f"superseded by {layout.root.name} {rid}\n")
                     holder["superseded"] = time.time()
                     _atomic_write(d / "holder.json", json.dumps(holder))
+                    _atomic_write(
+                        d / "reserved.json",
+                        json.dumps({**me, "nodes": nodes, "job_id": job_id, "ts": time.time()}),
+                    )
             return False
         finally:
             shutil.rmtree(lock, ignore_errors=True)
