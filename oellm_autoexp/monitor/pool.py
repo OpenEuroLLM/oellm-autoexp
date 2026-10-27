@@ -1638,7 +1638,9 @@ class PoolManager:
             for row in rows:
                 parts = row.split()
                 if len(parts) == 2 and parts[1] == "pool-supervisor":
-                    subprocess.run(["scancel", parts[0]], timeout=60)
+                    # KILL, never TERM: the supervisor traps TERM as a host-wide stop and
+                    # then releases the adopted job (its held step 0 leaves, the job ends)
+                    subprocess.run(["scancel", "--signal=KILL", parts[0]], timeout=60)
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning("[pool] could not stop the old supervisor of %s: %s", jid, exc)
 
