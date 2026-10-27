@@ -11,7 +11,10 @@ SNAP=${1:?snapshot dir}
 SIZE=${2:?size}
 shift 2
 ARMS=("$@")
-D=/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5resgqa_$SIZE
+# other suites: TRAIN=screen5ngptldm EVAL=ds5lcngptldm (training / eval suite prefixes)
+TRAIN=${TRAIN:-screen5resgqa}
+EVAL=${EVAL:-ds5lcresgqa}
+D=/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/${TRAIN}_$SIZE
 log() { echo "$(date '+%F %T') $*"; }
 declare -A done_
 left=${#ARMS[@]}
@@ -22,7 +25,7 @@ while [ "$left" -gt 0 ]; do
         it=$(cat $D/$a/ckpt/latest_checkpointed_iteration.txt 2>/dev/null)
         [ "${it:-0}" = 4000 ] || continue
         cd "$SNAP"
-        for s in ds5lcresgqa_$SIZE ds5lcresgqalogn_$SIZE; do
+        for s in ${EVAL}_$SIZE ${EVAL}logn_$SIZE; do
             scripts/korbi/mn5_autoexp_bg.sh "${s}_$a" scripts/run_autoexp.py \
                 --config-name "experiments/korbi/campaign_3b/${s}_mn5" "aux.only=[$a]" \
                 "job.array_group=${s}_$a" --yes
