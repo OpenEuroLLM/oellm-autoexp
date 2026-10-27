@@ -1,0 +1,40 @@
+# @package _global_
+# MareNostrum 5 speed-test pool (user 2026-10-27: batch all speed jobs into one 32 / 33-node job):
+# 33-node hosts on ehpc533 / acc_ehpc that exist only while speed jobs are queued (min_hosts 0,
+# no successor) and run them back to back in ONE allocation; released 15 min after the queue is
+# empty. An 8-h wall (speed jobs are short; backfills sooner than 3 days). One spare node.
+#   python scripts/run_autoexp.py --no-monitor --pool $HYBRID_OUTPUT_DIR/pools/mn5_pool_speed33 \
+#       --monitor-state-dir $R/pool_state --config-name <speed config> aux.nodes=32 slurm.sbatch.qos=acc_ehpc
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_speed33
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    keep_pending: 0
+    min_hosts: 0
+    handover: false
+    idle_exit_s: 900
+    monitor_dead_exit_s: 1800
+    min_remaining_s: 1800
+    stop_grace_s: 600
+    preempt_grace_s: 900
+    host_stale_s: 1800
+    poll_s: 20
+
+slurm:
+  sbatch:
+    nodes: 33
+    time: "08:00:00"
+    qos: acc_ehpc
+    signal: "B:USR1@900"
+    no_kill: true
+
+index: 0
+stage: ""
