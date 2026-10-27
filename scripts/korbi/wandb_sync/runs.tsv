@@ -5,3 +5,4 @@
 # Ids: letters, digits, '-', '_'. Add a line per new main run (owners: the run's agent).
 ambitious_e216_eng40	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main/ambitious_e216_eng40
 conservative_q35_run2	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main
+conservative_q35_main_gqa	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/main_gqa/main
