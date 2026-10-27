@@ -27,6 +27,7 @@ job:
     preempt_grace_s: 900
     host_stale_s: 1800
     poll_s: 20
+    keep_monitor: true
 
 slurm:
   sbatch:

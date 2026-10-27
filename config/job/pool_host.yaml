@@ -43,3 +43,5 @@ pool_host:
   adopt_hook_timeout_s: 90
   # hosts the pool submits itself (-1: unlimited; 0: only adopted jobs)
   max_own_hosts: -1
+  # monitor stays up while the pool is open, also without work (pools used in bursts)
+  keep_monitor: false
