@@ -205,6 +205,39 @@ def test_end_to_end(tmp_path):
                                                   offset=int(old.pointers[18])))
 
 
+def test_compare_pure(tmp_path):
+    root, work, prefix, tmp = make_setup(tmp_path)
+    units = scan.plan_units([prefix], 5000, 0)
+    scan.worker(0, 1, units, argparse.Namespace(mode="scan", work=str(work), root=str(root), part=0, min_run=20,
+                                                readers=2))
+    # "their" shard: drop docs 17 (also ours), 5 and 6 (theirs only); keep 99 (ours only); shuffle; no <eos>;
+    # doc 40 gets an extra whitespace piece (same canonical stream, different tokens)
+    idx = Index(prefix + ".idx")
+    docs = [np.fromfile(prefix + ".bin", np.int32, count=int(idx.lengths[d]), offset=int(idx.pointers[d]))
+            for d in range(idx.seq_count)]
+    keep = [d for d in range(len(docs)) if d not in (17, 5, 6)]
+    rng = np.random.default_rng(3)
+    rng.shuffle(keep)
+    pure_docs = []
+    for d in keep:
+        t = docs[d][:-1].astype(np.int64)                          # strip <eos>
+        if d == 40:
+            t = np.concatenate([t[:3], [WS], t[3:]])
+        pure_docs.append(t)
+    pure = str(tmp / "pure" / "shard_0000")
+    os.makedirs(os.path.dirname(pure))
+    write_dataset(pure, pure_docs)
+    out = tmp / "cmp"
+    subprocess.run([sys.executable, os.path.join(HERE, "compare_pure.py"), "--orig", prefix, "--pure", pure,
+                    "--work", str(work), "--root", str(root), "--out", str(out), "--samples", "0", "--procs", "2"],
+                   check=True)
+    sm = json.load(open(out / "summary.json"))
+    assert sm["matched_canonical_only"] == 1 and sm["pure_unmatched_new_or_modified"] == 0
+    assert sm["both"]["docs"] == 1 and sm["theirs_only"]["docs"] == 2 and sm["ours_only"]["docs"] == 1
+    z = np.load(out / "docs.npz")
+    assert np.flatnonzero(z["theirs"]).tolist() == [5, 6, 17] and np.flatnonzero(z["ours"]).tolist() == [17, 99]
+
+
 def test_resume_and_count(tmp_path):
     root, work, prefix, tmp = make_setup(tmp_path)
     units = scan.plan_units([prefix], 5000, 20000)
