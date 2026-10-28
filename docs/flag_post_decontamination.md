@@ -492,6 +492,37 @@ Conclusions:
   pure sets can be combined with ours (keep a document only if both keep it) at a cost of 0.27 % /
   0.47 % of the tokens.
 
+### 4.8 Benchmark list: `docs/decontamination_eval_set.csv` (2026-10-28)
+
+The comparison in 4.7 showed common benchmarks missing from our references (TruthfulQA in
+English, BBH, DROP, full Hendrycks MATH, SWE-bench, Arena-Hard, SimpleQA, ...): the reference set
+was built only from what we evaluate (FLAG suite), oellm-eval groups and one external table.
+`docs/decontamination_eval_set.csv` is now the **record of what the references must cover**, one
+row per benchmark / dataset:
+
+- `in_refs_v5`: `yes` (indexed in refs_v5), `mirror` (same items indexed under another repo, e.g.
+  evalplus/humanevalplus = evalchemy/HumanEvalPlus), `partial` (some configs / subjects only, e.g.
+  AGIEval: only lsat-ar; MATH: only MATH500; SuperGLUE: only the FLAG configs), `no`;
+- `covered_by`: the indexed source; `origin`: FLAG suite / fetch_extra (oellm-eval, external table,
+  gated) / survey;
+- `priority`: high = in many model reports and decontamination pipelines, medium, low;
+- `hf_id`, `config`, `eval_split`, `gated` (HF API, 2026-10-28; `auto` = accept terms), `hf_status`
+  (every listed id resolved; renamed repos written under their new name), `alt_source` (GitHub for
+  benchmarks not on HF: tau-bench, Aider polyglot, RULER generator, BrowseComp, ...), `used_by`, `notes`.
+
+Sources of the 253 non-`yes` rows: benchmark tables of 2024-2026 model reports and leaderboards
+(Qwen2.5-3.5, DeepSeek V3-R1, Llama 3.1/4, Gemma 2/3, OLMo 2/3, SmolLM3, Apertus, EuroLLM,
+Salamandra, Teuken, Kimi K2, GLM-4.5, MiniMax, gpt-oss, Nemotron, Open LLM Leaderboard v1/v2,
+Artificial Analysis, LiveBench, lighteval, Evalchemy) and the benchmark lists in the code of other
+decontamination pipelines (OLMo 3 `decon`, Tulu 3 open-instruct, OLMES, open-r1, Cosmopedia /
+FineMath, NeMo Curator, OpenThoughts, MegaMath, DCLM, Apertus, OpenEuroLLM pretraining-decontamination).
+Status: 132 yes, 19 mirror, 17 partial, 217 no (46 of them high priority).
+
+**Rule going forward:** every eval added to `flag_evals.yaml` or oellm-eval gets a row; before
+a new reference version (v6) all `high` and `medium` rows that are `no` / `partial` are fetched
+(`fetch_extra.py`, on JUPITER; gated ones need the terms accepted first) and the CSV's `in_refs`
+column is updated from the new refs' attribution.
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
