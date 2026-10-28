@@ -1,9 +1,9 @@
 class_name: Container
-image: ${oc.env:CONTAINER_CACHE_DIR,.}/nemo_2507.sif
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_base2512_x86_64_202602200350.sif
 runtime: singularity
-bind: ["/gpfs", "/dev/shm:$TMPDIR", "/apps"]
+bind: ["/gpfs/projects"]
 env:
   WANDB_MODE: "offline"
-  PYTHONPATH: ".:submodules/Megatron-LM"
+  PYTHONPATH: "."
   MACHINE_NAME: "MARENOSTRUM"
 python: "python"

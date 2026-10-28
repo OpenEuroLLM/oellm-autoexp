@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 import yaml
 
 from compoconf import ConfigInterface, register, asdict
@@ -15,7 +16,7 @@ from oellm_autoexp.slurm_gen.client import (
 
 from oellm_autoexp.monitor.job_client_protocol import JobClientInterface
 from oellm_autoexp.monitor.submission import SlurmJobConfig
-from oellm_autoexp.monitor.utils.paths import expand_log_path
+from oellm_autoexp.monitor.utils.paths import expand_log_path, update_log_symlink
 
 LOGGER = logging.getLogger(__name__)
 
@@ -76,15 +77,15 @@ class SlurmClient(JobClientInterface):
         )
         job_id = self._client.submit(job.slurm)
         LOGGER.info(f"Submitted job ({job_id}): {job.slurm.name}")
-        # The current.* symlinks are (re)pointed by the monitor when the job goes
-        # RUNNING (see MonitorLoop._update_current_symlinks), so a shared symlink
-        # in a dependency chain tracks the running job rather than the last
-        # submitted one. We only write the per-job config file here.
+        if job.log_path_current:
+            update_log_symlink(expand_log_path(job.log_path, job_id), Path(job.log_path_current))
         if job.config_path:
             config_path = expand_log_path(job.config_path, job_id=job_id)
             LOGGER.info(f"Logging Config to: {config_path}")
             with open(config_path, "w") as fp:
                 yaml.dump(asdict(job.base_config), fp)
+            if job.config_path_current:
+                update_log_symlink(Path(config_path), Path(job.config_path_current))
         return job_id
 
     def submit_array(
@@ -108,8 +109,12 @@ class SlurmClient(JobClientInterface):
         generate_script(job.slurm)
         validate_job_script(job.slurm.script_path, job.slurm.name)
         job_ids = self._client.submit_array(job.slurm, indices)
-        # current.* symlinks are (re)pointed by the monitor on the RUNNING
-        # transition (see MonitorLoop._update_current_symlinks).
+        if job.log_path_current:
+            for job_id in job_ids:
+                update_log_symlink(
+                    expand_log_path(job.log_path, job_id),
+                    Path(job.log_path_current.replace("%a", job_id.split("_")[-1])),
+                )
         return job_ids
 
     def cancel(self, job_id: str) -> None:
@@ -138,16 +143,6 @@ class SlurmClient(JobClientInterface):
             Statuses: "RUNNING", "COMPLETED", "FAILED", "CANCELLED"
         """
         return self._client.squeue()
-
-    def update_excludes(self, job_id: str, nodelist: str) -> None:
-        """Update a pending job's excluded-node list (delegates to
-        ``scontrol``).
-
-        Args:
-            job_id: SLURM job id of a pending job to edit.
-            nodelist: Full comma-separated node list to set as ExcNodeList (scontrol update).
-        """
-        return self._client.update_excludes(job_id, nodelist)
 
 
 __all__ = ["BaseSlurmClient", "SlurmClient", "SlurmClientConfig"]

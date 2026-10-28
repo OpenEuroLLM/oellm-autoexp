@@ -44,7 +44,6 @@ backend:
 
     # Override base_reference to match JUWELS baseline
     add_qkv_bias: false
-    legacy_tokenizer: false
     override_opt_param_scheduler: true
 
     # Fusions
@@ -59,7 +58,7 @@ backend:
     use_flash_attn: true
     qk_layernorm: true
     normalization: RMSNorm
-    norm_epsilon: 1.0e-05
+    layernorm_epsilon: 1.0e-05
     swiglu: true
     position_embedding_type: rope
     rotary_base: 100000

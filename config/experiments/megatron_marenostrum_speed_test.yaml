@@ -2,14 +2,13 @@
 defaults:
   - base
   - /backend: megatron_torchrun
-  - /container: marenostrum_msc
-  - /slurm: marenostrum_msc
+  - /container: marenostrum
+  - /slurm: marenostrum
   - /sweep: none
-  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_marenostrum_msc]
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_marenostrum]
   - _self_
 
 backend:
-  data_integrity_check: false
   megatron:
     train_iters: 500
     eval_interval: 1000

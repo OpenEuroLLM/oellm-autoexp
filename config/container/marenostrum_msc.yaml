@@ -1,5 +1,0 @@
-defaults:
-  - marenostrum
-  - _self_
-
-bind: ["/gpfs", "/apps", "$TMPDIR:$TMPDIR"]

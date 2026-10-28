@@ -14,7 +14,7 @@ group_query_attention: false
 kv_channels: 128
 untie_embeddings_and_output_weights: False
 rotary_base: 10000
-norm_epsilon: 1.e-5  # -> --norm-epsilon
+layernorm_epsilon: 1.e-5  # -> --norm-epsilon
 attention_softmax_in_fp32: false
 
 seq_length: 4097

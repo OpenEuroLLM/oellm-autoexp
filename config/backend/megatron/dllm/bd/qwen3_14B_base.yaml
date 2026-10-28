@@ -18,7 +18,7 @@ num_query_groups: 8
 group_query_attention: true
 kv_channels: 128
 untie_embeddings_and_output_weights: true
-norm_epsilon: 1.0e-6
+layernorm_epsilon: 1.0e-6
 rotary_base: 1000000
 qk_layernorm: true
 normalization: RMSNorm

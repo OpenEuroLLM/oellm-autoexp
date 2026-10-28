@@ -18,7 +18,7 @@ num_attention_heads: null
 tensor_model_parallel_size: 1
 sequence_parallel: true
 normalization: RMSNorm
-norm_epsilon: 1e-6
+layernorm_epsilon: 1e-6
 swiglu: true
 bf16: true
 use_flash_attn: true

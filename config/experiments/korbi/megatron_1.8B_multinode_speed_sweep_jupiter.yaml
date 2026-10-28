@@ -46,7 +46,6 @@ backend:
     sequence_parallel: false  # default; overridden to true for TP=2 configs
     # CUDA graph settings (require garbage_collection_threshold, not expandable_segments)
     cuda_graph_impl: local
-    cuda_graph_scope: full
     check_for_nan_in_loss_and_grad: false
     use_distributed_optimizer: true
     micro_batch_size: 6
