@@ -236,6 +236,14 @@ def test_compare_pure(tmp_path):
     assert sm["both"]["docs"] == 1 and sm["theirs_only"]["docs"] == 2 and sm["ours_only"]["docs"] == 1
     z = np.load(out / "docs.npz")
     assert np.flatnonzero(z["theirs"]).tolist() == [5, 6, 17] and np.flatnonzero(z["ours"]).tolist() == [17, 99]
+    subprocess.run([sys.executable, os.path.join(HERE, "explain_pure.py"), "--orig", prefix, "--cmp", str(out),
+                    "--work", str(work), "--control", "10", "--procs", "2"], check=True)
+    ex = json.load(open(out / "explain.json"))
+    assert ex["both"]["with_any_table_ngram_pct"] == 100 and ex["ours_only"]["with_any_table_ngram_pct"] == 100
+    assert ex["control_kept_by_both"]["docs"] == 10
+    subprocess.run([sys.executable, os.path.join(HERE, "abs_rule_report.py"), "--work", str(work), "--root", str(root)],
+                   check=True)
+    assert "docs_only_by_abs_rule" in json.load(open(work / "_report_abs_rule.json"))
 
 
 def test_multiset_match():
