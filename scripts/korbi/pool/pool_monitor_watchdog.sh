@@ -2,7 +2,8 @@
 # Restart a production pool monitor whose heartbeat (<pool>/monitor.alive) is older than STALE_S
 # while no monitor process for its session runs (2026-10-28: the p129 monitor was killed without a
 # trace at 16:23). Processes are matched by their exact command line in /proc, never pgrep -f (it
-# matches this script's own shell).
+# matches this script's own shell). ONCE=1: one pass, then exit (the off-cluster watchdog,
+# pool_monitor_watchdog_remote.sh, runs it over ssh).
 R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
 POOLS=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
 SNAP=${SNAP:-$R/autoexp_p132}
@@ -27,5 +28,6 @@ while true; do
         --session-dir "$session" --poll-interval 30 --force)
     fi
   done
+  [ -n "${ONCE:-}" ] && exit 0
   sleep 300
 done
