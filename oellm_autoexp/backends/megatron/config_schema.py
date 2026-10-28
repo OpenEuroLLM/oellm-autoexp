@@ -2108,6 +2108,10 @@ class MegatronConfig(ConfigInterface):
     # Exponent for the poly U-decay schedule
     angular_muown_u_decay_p: float = 1.0
 
+    # angular_muown / muown_classical: pin every matrix row magnitude at this norm (weights
+    # rescaled at the first step, g not trained): nGPT-style normalized weights
+    angular_muown_fixed_row_norm: float | None = None
+
     # Steps before the AngularMuown U-decay schedule begins
     angular_muown_u_decay_warmup_steps: int = 0
 

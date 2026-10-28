@@ -210,6 +210,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "angular_muown_fixed_row_norm": MegatronArgMetadata(
+        arg_type=float,
+        default=None,
+        help="angular_muown / muown_classical: pin every matrix row magnitude at this norm (weights rescaled at the first step, g not trained): nGPT-style normalized weights",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "angular_muown_fp32_matmul_prec": MegatronArgMetadata(
         arg_type=str,
         default="medium",
@@ -8553,6 +8561,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "angular_muown_extra_scale_factor": MegatronActionSpec(
         option_strings=("--angular-muown-extra-scale-factor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "angular_muown_fixed_row_norm": MegatronActionSpec(
+        option_strings=("--angular-muown-fixed-row-norm",),
         action_type="store",
         nargs=None,
         const=None,

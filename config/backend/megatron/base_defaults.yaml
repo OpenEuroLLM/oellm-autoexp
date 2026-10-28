@@ -26,6 +26,7 @@ angular_muown_coefficient_type: simple  # Newton-Schulz coefficient type for Ang
 angular_muown_cooldown_end_ratio: 0.05  # Final angular rate / rate at cooldown start, in C/t mode. Default: 0.05.
 angular_muown_cooldown_fraction: 0.2  # Final fraction of the LR horizon for linear angular cooldown. Zero continues inverse-time decay. Default: 0.2, used only with --angular-muown-c.
 angular_muown_extra_scale_factor: null  # Extra factor for angular_muown and muown_classical; angular_muown_simplified fixes 1. The default 0.2 pairs with spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
+angular_muown_fixed_row_norm: null  # angular_muown / muown_classical: pin every matrix row magnitude at this norm (weights rescaled at the first step, g not trained): nGPT-style normalized weights
 angular_muown_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmul precision for the AngularMuown Newton-Schulz iteration
 angular_muown_momentum: 0.95  # Momentum coefficient for the U-gradient buffer in AngularMuown
 angular_muown_nesterov: true  # Disable Nesterov-style lookahead for the AngularMuown U update

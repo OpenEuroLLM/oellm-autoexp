@@ -1660,6 +1660,47 @@ def arms5ldmnorm2(size: str = "s3"):
     ]
 
 
+def arms5ngptopt(size: str = "s1"):
+    """nGPT as titan-sci trained it (canGPT_master product_4 / 5, 200Mw / 400Mw over 3.6T tokens;
+    user 2026-10-28), at s1 with several optimizers -- the residual-growth question. Residual:
+    the stream on the unit sphere, every sublayer output L2-normalized (post_layer_norm) and an
+    nGPT LERP step with the approx renormalization and alpha <= 0.5 (half_sigmoid), alpha 0.05 at
+    init. Weights normalized the way each optimizer allows:
+    - AdamW (canGPT's: wd 0, beta2 0.95, no warmup) + the weight normalizer (rows bounded to norm
+      <= 1, output projections column-normalized), lr 2e-3 / 4e-3;
+    - Muown (classical, angular p = 0 at step 0.2 / 0.05, angular p = 1) with the row magnitudes
+      pinned at 1 (angular_muown_fixed_row_norm, Megatron: Muown rebuilds W = g U / |U| from its
+      own g every step, so a weight normalizer on W is undone each step -- the divergence of the
+      s3 weight-normalizer runs).
+    References on the same s1 layout and batches: the rematch's plain / mHC-4 / LDM (classical
+    Muown), plus plain pre-norm under AdamW and under angular p = 0 (the optimizer alone)."""
+    base = dict((n, kv) for n, _, kv in arms5resgqa(size))["plain"]
+    lr = R4_SIZES[size][4]
+    ngpt = {B + "ngpt": True, B + "ngpt_lerp_normalization": "approx",
+            B + "ngpt_alpha_activation": "half_sigmoid", B + "fused_qk_norm_rope": False}
+    adamw = lambda a: {B + "optimizer": "adam", B + "lr": a, B + "min_lr": a / 10,  # noqa: E731
+                       B + "lr_warmup_iters": 0, B + "weight_decay": 0.0, B + "adam_beta2": 0.95,
+                       B + "weight_normalizer": True, B + "weight_normalizer_bounded": True}
+    pin = {B + "angular_muown_fixed_row_norm": 1.0}
+    am = lambda p, s=0.2: {B + "optimizer": "angular_muown", B + "angular_muown_u_decay_p": p,  # noqa: E731
+                           B + "angular_muown_extra_scale_factor": s}
+    pre_adamw = {B + "optimizer": "adam", B + "lr": lr / 2, B + "min_lr": lr / 20,
+                 B + "lr_warmup_iters": 1000, B + "weight_decay": 0.1}
+    return [(n, d, {**base, **kv}) for n, d, kv in (
+        ("ngpt_adamw_lr2e3", "nGPT (canGPT residual), AdamW + weight normalizer, lr 2e-3",
+         {**ngpt, **adamw(2e-3)}),
+        ("ngpt_adamw_lr4e3", "nGPT, AdamW + weight normalizer, lr 4e-3", {**ngpt, **adamw(4e-3)}),
+        ("ngpt_mcl", "nGPT, classical Muown, rows pinned at 1", {**ngpt, **pin}),
+        ("ngpt_am0", "nGPT, angular MuOwn p = 0 (constant rate), step 0.2, rows pinned",
+         {**ngpt, **am(0.0), **pin}),
+        ("ngpt_am0_s005", "nGPT, angular MuOwn p = 0, step 0.05, rows pinned",
+         {**ngpt, **am(0.0, 0.05), **pin}),
+        ("ngpt_am1", "nGPT, angular MuOwn p = 1, rows pinned", {**ngpt, **am(1.0), **pin}),
+        ("plain_adamw", "pre-norm plain, AdamW (lr 2e-3, 1000 warmup, wd 0.1)", pre_adamw),
+        ("plain_am0", "pre-norm plain, angular MuOwn p = 0, step 0.2", am(0.0)),
+    )]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -2016,6 +2057,7 @@ def write5():
             ("s2", "screen5ngptldm", arms5ngptldm("s2")),
             *[(z, "screen5ldmnorm", arms5ldmnorm(z)) for z in ("s2", "s3")],
             ("s3", "screen5ldmnorm2", arms5ldmnorm2("s3")),
+            ("s1", "screen5ngptopt", arms5ngptopt("s1")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
