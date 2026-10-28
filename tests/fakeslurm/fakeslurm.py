@@ -610,6 +610,13 @@ def cmd_scontrol(argv: list[str]) -> int:
         return 0
     if argv[:1] == ["update"]:
         return 0
+    if argv[:2] == ["show", "job"] and len(argv) > 2:
+        job = _job(argv[2])
+        if not job:
+            print(f"slurm_load_jobs error: Invalid job id specified {argv[2]}", file=sys.stderr)
+            return 1
+        print(f"JobId={argv[2]} JobName={job.get('name', '')} JobState={job.get('state')}")
+        return 0
     print(f"scontrol: unsupported {shlex.join(argv)}", file=sys.stderr)
     return 1
 
@@ -660,9 +667,19 @@ def cmd_crash(argv: list[str]) -> int:
     return 0
 
 
+def cmd_revoke(argv: list[str]) -> int:
+    """Test hook: the allocation is cancelled from outside (``scancel`` on JUPITER): the job
+    is no longer RUNNING and its steps get SIGTERM, while the batch shell lives on until
+    SLURM's kill (``_crash``)."""
+    _update(argv[0], state="CANCELLED")
+    _kill_steps(argv[0], signal.SIGTERM)
+    return 0
+
+
 COMMANDS = {
     "_killall": cmd_killall,
     "_crash": cmd_crash,
+    "_revoke": cmd_revoke,
     "sinfo": cmd_sinfo,
     "sbatch": cmd_sbatch,
     "_run": cmd_run,

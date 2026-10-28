@@ -219,7 +219,17 @@ ts=$t0"
   wait "$pid"
   local rc=$?
   if [ -z "$reason" ]; then
-    if [ "$rc" -eq 0 ]; then reason=completed; else reason=failed; fi
+    # The run ended without a stop of ours. If the ALLOCATION is going away (scancel, node
+    # failure), SLURM signalled the run's ranks directly: Megatron saves and exits 0, and
+    # the step's shell may report 0 even for a killed step. That is a preemption, never a
+    # completion (pool pilot 2026-10-28: a scancelled host's run read "completed" and its
+    # job ended for good at iteration 4641 of 20000). Ask SLURM about our own job.
+    local js
+    js=$(timeout 20 scontrol show job "$SLURM_JOB_ID" -o 2>/dev/null | grep -oE "JobState=[A-Z_]+" | cut -d= -f2)
+    if [ -n "$HOST_SIGNAL" ] || [ -e "$H/control/signal" ] || { [ -n "$js" ] && [ "$js" != RUNNING ]; }; then
+      reason=preempted
+      log "run $rid: ended while the allocation is ${js:-signalled}: preempted, not completed"
+    elif [ "$rc" -eq 0 ]; then reason=completed; else reason=failed; fi
   fi
   echo "[pool] $(date +%FT%T) run $rid ended: rc=$rc ($reason)" >>"$LOG"
   finish_run "$rid" "$rc" "$reason"

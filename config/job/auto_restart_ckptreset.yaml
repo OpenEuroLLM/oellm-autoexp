@@ -611,6 +611,19 @@ log_events:
       cancel_first: true
       reason: ""
 
+  # A task killed by a signal: srun reports "task N: Killed" (or Segmentation fault /
+  # Aborted / Bus error), never "Exited with exit code" (see auto_restart_ckptreset_faultscan).
+  - name: err_task_killed
+    pattern: "srun: error: \\S+: task [0-9]+: (Killed|Segmentation fault|Aborted|Bus error)"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      cancel_first: true
+      reason: "A task was killed by a signal — retrying"
+
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
   #
   # THE HOLE THESE CLOSE. Every event above waits for a STRING; `inactive` waits

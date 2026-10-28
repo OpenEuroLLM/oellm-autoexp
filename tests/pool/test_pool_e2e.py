@@ -747,6 +747,30 @@ def test_lost_host_requeues_from_the_last_checkpoint(pool):
     assert resumed is not None and resumed % 10 == 0 and resumed >= 20  # the last periodic save
 
 
+def test_a_cancelled_allocation_preempts_its_run_and_never_completes_the_job(pool):
+    # JUPITER pilot 2026-10-28: scancel of a host. SLURM sent the run's ranks SIGTERM before
+    # the supervisor heard of it; the trainer saved and exited 0, the run read "completed",
+    # and the job ended for good at iteration 4641 of 20000.
+    pool.create_pool(*FAST)
+    pool.enqueue("a", "aux.iters=200", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 25, 60, "25 iterations")
+    host_job = pool.run_state(first).started["job"]
+    pool.slurm("_revoke", host_job)  # cancelled from outside: steps get SIGTERM
+    pool.wait_for(lambda: pool.run_state(first).reason is not None, 60, "the run to end")
+    assert pool.run_state(first).status != "COMPLETED", pool.run_state(first)
+    pool.slurm("_crash", host_job)  # SLURM's kill of the batch shell
+    second = pool.wait_for(
+        lambda: [r for r in pool.runs_of("dummy_a") if r != first], 60, "requeue"
+    )[0]
+    pool.wait_for(
+        lambda: pool.run_state(second).status == "COMPLETED", 90, "the run to finish elsewhere"
+    )
+    resumed = _resumed_from(pool.run_log(second))
+    assert resumed is not None and resumed >= 20  # a checkpoint, not a fresh start
+
+
 def test_excluded_nodes_are_never_used(pool):
     pool.create_pool(*FAST)
     pool.ctl("exclude", "n1000-0")  # the first fake allocation is job 1000
