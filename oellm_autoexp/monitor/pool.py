@@ -176,6 +176,10 @@ class PoolHostConfig:
     # runs a host executes side by side on disjoint nodes (packing small jobs into one
     # allocation, e.g. three 8-node runs in a 33-node host); 1 = one run per host
     max_runs_per_host: int = 1
+    # one run per job across pools (job.metadata.pool_singleton): a run in a pool of higher
+    # priority supersedes the holder in a pool of lower priority, whatever their sizes (equal
+    # priority: the run on more nodes supersedes). E.g. the pool on the budget to use first.
+    singleton_priority: int = 0
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -1153,7 +1157,7 @@ class PoolManager:
                 _, _, rid, nodes, singleton, job_id = item
                 if nodes <= free and host.remaining_s(now) >= cfg.min_remaining_s:
                     if singleton and not self._claim_singleton(
-                        layout, singleton, rid, nodes, job_id
+                        layout, singleton, rid, nodes, job_id, int(cfg.singleton_priority)
                     ):
                         continue
                     self._assign(layout, rid, host.hid)
@@ -1394,13 +1398,13 @@ class PoolManager:
         return res
 
     def _claim_singleton(
-        self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str
+        self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str, priority: int = 0
     ) -> bool:
         """May run `rid` (`nodes` nodes) of the singleton job `key` start in this pool now?
 
         One run per key across every pool: the key is free (no holder, or its run ended, and no
-        reservation for a larger run), or held by this very run. A holder in ANOTHER pool on
-        fewer nodes is superseded -- its run is preempted there (graceful stop with a save, its
+        reservation for a larger run), or held by this very run. A holder in ANOTHER pool of
+        lower ``singleton_priority`` -- or of equal priority on fewer nodes -- is superseded -- its run is preempted there (graceful stop with a save, its
         job requeued in that pool) and the key reserved for this run, which starts once the
         holder's run has ended; on as many or more nodes the holder keeps it.
         Checked and claimed under a mkdir lock (atomic on GPFS), so two monitors never both
@@ -1422,30 +1426,46 @@ class PoolManager:
             holder = self._singleton_holder(d)
             me = {"pool": str(layout.root), "rid": rid}
             reserved = self._singleton_reservation(d)
+
+            def rank(entry: dict) -> tuple[int, int]:
+                return int(entry.get("priority", 0) or 0), int(entry.get("nodes", 0) or 0)
+
+            mine = (int(priority), int(nodes))
             if (
                 holder is None
                 and reserved is not None
                 and {k: reserved.get(k) for k in me} != me
-                and int(reserved.get("nodes", 0)) > nodes
+                and rank(reserved) > mine
             ):
                 return False  # the key is promised to a larger run that superseded the holder
             if holder is None or {k: holder.get(k) for k in me} == me:
                 _atomic_write(
                     d / "holder.json",
-                    json.dumps({**me, "nodes": nodes, "job_id": job_id, "ts": time.time()}),
+                    json.dumps(
+                        {
+                            **me,
+                            "nodes": nodes,
+                            "priority": priority,
+                            "job_id": job_id,
+                            "ts": time.time(),
+                        }
+                    ),
                 )
                 return True
-            if holder.get("pool") != str(layout.root) and nodes > int(holder.get("nodes", 0)):
+            if holder.get("pool") != str(layout.root) and mine > rank(holder):
                 if not holder.get("superseded"):
                     LOGGER.info(
-                        "[pool %s] singleton %s: superseding run %s in %s (%s nodes) with %s (%d nodes)",
+                        "[pool %s] singleton %s: superseding run %s in %s (%s nodes, priority %s)"
+                        " with %s (%d nodes, priority %d)",
                         layout.root.name,
                         key,
                         holder["rid"],
                         holder["pool"],
                         holder.get("nodes"),
+                        holder.get("priority", 0),
                         rid,
                         nodes,
+                        priority,
                     )
                     # PREEMPT, not cancel: the smaller pool's run saves and its job is requeued
                     # there; the reservation keeps the key for this run, so the requeued run waits.
@@ -1457,7 +1477,15 @@ class PoolManager:
                     _atomic_write(d / "holder.json", json.dumps(holder))
                     _atomic_write(
                         d / "reserved.json",
-                        json.dumps({**me, "nodes": nodes, "job_id": job_id, "ts": time.time()}),
+                        json.dumps(
+                            {
+                                **me,
+                                "nodes": nodes,
+                                "priority": priority,
+                                "job_id": job_id,
+                                "ts": time.time(),
+                            }
+                        ),
                     )
             return False
         finally:

@@ -47,3 +47,6 @@ pool_host:
   max_runs_per_host: 1
   # monitor stays up while the pool is open, also without work (pools used in bursts)
   keep_monitor: false
+  # job.metadata.pool_singleton across pools: a higher priority pool supersedes a lower one's
+  # run whatever the sizes (equal: more nodes wins), e.g. the budget to use first
+  singleton_priority: 0

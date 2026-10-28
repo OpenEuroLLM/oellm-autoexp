@@ -591,6 +591,89 @@ def test_a_singleton_job_moves_to_the_larger_pool_and_never_runs_twice(pool):
         mon.wait(timeout=20)
 
 
+def test_a_preferred_pool_takes_over_a_singleton_of_equal_size(pool):
+    """singleton_priority: the run moves to the preferred pool as soon as it has a host, although
+    both pools run the job on the same number of nodes (JUPITER 2026-10-28: the e-ext budget is
+    to be used whenever its host runs; by size alone neither pool would ever take over)."""
+    import json as _json
+    import subprocess
+    import sys
+
+    pref = pool.root / "pool_pref"
+    pool.create_pool(*FAST)
+    pool.autoexp(
+        "--no-monitor",
+        "--config-name",
+        "experiments/tests/pool_local_host",
+        *FAST,
+        "job.name=localpool_pref",
+        f"job.base_output_dir={pref}",
+        "slurm.sbatch.nodes=1",
+        "job.pool_host.singleton_priority=1",
+    )
+    single = "+job.metadata.pool_singleton=pjob"
+    pool.enqueue("p", "aux.iters=400", "aux.tick=0.1", "slurm.sbatch.nodes=1", single)
+    pool.autoexp(
+        "--no-monitor",
+        "--pool",
+        str(pref),
+        "--config-name",
+        "experiments/tests/pool_local_dummy",
+        "aux.tag=p",
+        "aux.iters=400",
+        "aux.tick=0.1",
+        "slurm.sbatch.nodes=1",
+        single,
+    )
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_p"), 30, "the first pool's run")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 20, 60, "20 iterations")
+    session = _json.loads((pref / "pool.json").read_text())["session_dir"]
+    mon = subprocess.Popen(
+        [sys.executable, "scripts/monitor_autoexp.py", "--session-dir", session,
+         "--poll-interval", "1", "--force"],
+        cwd=pool.env["PWD"],
+        env={**pool.env, "FAKESLURM_HOLD": "1"},
+        stdout=open(pool.root / "monitor_pref.out", "a"),
+        stderr=subprocess.STDOUT,
+    )  # fmt: skip
+    try:
+        pool.wait_for(
+            lambda: [j for j in pool.fake_jobs() if j["name"].startswith("localpool_pref")],
+            30,
+            "the preferred pool's host",
+        )
+        host = next(j for j in pool.fake_jobs() if j["name"].startswith("localpool_pref"))
+        pool.release(host["id"])
+
+        def running():
+            out = []
+            for root in (pool.pool_dir, pref):
+                for rd in (root / "runs").iterdir() if (root / "runs").exists() else []:
+                    if (rd / "started").exists() and not (rd / "rc").exists():
+                        out.append(rd)
+            return out
+
+        deadline, moved = time.time() + 120, None
+        while time.time() < deadline and moved is None:
+            assert len(running()) <= 1, f"two runs of the singleton at once: {running()}"
+            for rd in (pref / "runs").iterdir() if (pref / "runs").exists() else []:
+                if (rd / "started").exists():
+                    moved = rd
+            time.sleep(0.2)
+        assert moved, "the job never moved to the preferred pool"
+        assert pool.run_state(first).status == "PREEMPTED"
+        saved = max(_iterations(pool.run_log(first)))
+        log = Path(_json.loads((moved / "run.json").read_text())["log"])
+        pool.wait_for(
+            lambda: log.exists() and _resumed_from(log.read_text()) is not None, 60, "resume"
+        )
+        assert _resumed_from(log.read_text()) == saved
+    finally:
+        mon.terminate()
+        mon.wait(timeout=30)
+
+
 def test_packing_runs_side_by_side_on_disjoint_nodes(pool):
     """max_runs_per_host: several small jobs share one allocation at the same time, each on its
     own nodes; a run that does not fit waits for capacity; preempting one leaves the others."""
