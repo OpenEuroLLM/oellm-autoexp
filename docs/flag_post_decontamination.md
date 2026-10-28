@@ -471,6 +471,15 @@ the HumanEval+/MBPP+ test harness (`def is_floats(x)` ..., 470 + ~1,200 docs), S
 templates (>= 3,800 docs over the 13 SciRIFF items in the top 25), the MixEval `[asy]` item (457), an AlpacaEval loop snippet (984);
 MultiLoKo Marathi Wikipedia passages (901 + 249) are genuine copies of the source pages (by design).
 
+**GSM8K / MATH500 after either filter.** GSM8K: we drop 50 agenttrove documents for it, all 50 are also
+removed by them; none in openthoughts-3. MATH500: no full copies remain in either set. What our rule flags
+in their pure sets: openthoughts-3 544 documents, all one MATH500 solution matched only through its `[asy]`
+`rr_cartesian_axes` helper (runs 301-412 tokens; different problems -> our false positive); agenttrove 2
+documents, a modified MATH500 problem ("sin" for "cos") whose diagram code is 75 % of the item. Kept by us
+at 50-70 % coverage: 29 agenttrove pairs, modified problems (other vector / equation after the same
+instruction). Their pipeline has no fuzzy matching (no edit distance / MinHash / embeddings; exact
+normalised word n-grams only).
+
 Conclusions:
 - Our filter is **not** a superset of theirs: it is stricter per item (long verbatim runs only) and broader
   in benchmarks (5.9M items vs 98 tasks). Theirs removes 15x / 7x more documents here, mostly on one
