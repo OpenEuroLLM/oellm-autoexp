@@ -231,10 +231,6 @@ job:
   log_path_current: ${job.base_output_dir}/current_${job.name}.log
   config_path_current: ${job.base_output_dir}/current_${job.name}.yaml
   array_group: null
-  # one ambitious main run at a time across the pools (singleton guard): a larger allocation's
-  # enqueue of it preempts the smaller one and takes over (64 nodes now -> 128 later)
-  metadata:
-    pool_singleton: ambitious_main_ldm
   # gbs 4096 x 16k at 128 nodes: 67M tokens / (512 GPUs x ~7.5k tok/s) ~ 17.5 s per step
   est_step_time_s: 17.5
   est_startup_min: 15.0

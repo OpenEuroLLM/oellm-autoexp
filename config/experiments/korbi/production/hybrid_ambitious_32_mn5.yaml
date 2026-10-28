@@ -41,6 +41,9 @@ backend:
 
 job:
   name: ambitious_gqa_32n
+  # one ambitious main run at a time across the pools (singleton guard; hybrid_ambitious_64_mn5.yaml)
+  metadata:
+    pool_singleton: ambitious_main_ldm
   # measured: 87 s per step at 32 nodes (g32_fc: fused clamped SwiGLU, 6,035 tok/s/GPU)
   est_step_time_s: 87.0
 

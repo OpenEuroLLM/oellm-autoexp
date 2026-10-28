@@ -36,6 +36,11 @@ backend:
 
 job:
   name: ambitious_gqa_128n
+  # one ambitious main run at a time across the pools (singleton guard): a larger allocation's
+  # enqueue of it preempts the smaller one and takes over (64 nodes now -> 128 later). Here, not
+  # in hybrid_main_mn5.yaml: the speed / profile configs inherit that one
+  metadata:
+    pool_singleton: ambitious_main_ldm
   # estimate: ~1/4 of the 32-node step if the scale costs no more (to be measured)
   est_step_time_s: 25.0
 

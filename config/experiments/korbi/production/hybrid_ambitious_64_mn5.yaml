@@ -33,6 +33,11 @@ backend:
 
 job:
   name: ambitious_ldm_64n
+  # one ambitious main run at a time across the pools (singleton guard): a larger allocation's
+  # enqueue of it preempts the smaller one and takes over (64 nodes now -> 128 later). Here, not
+  # in hybrid_main_mn5.yaml: the speed / profile configs inherit that one
+  metadata:
+    pool_singleton: ambitious_main_ldm
   # measured (hybrid_ldm_speed_mn5 ldm_m4, 64 clean nodes): 48 s per step, 5,450 tok/s/GPU
   est_step_time_s: 48.0
 
