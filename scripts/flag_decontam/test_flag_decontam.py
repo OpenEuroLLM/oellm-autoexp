@@ -238,6 +238,14 @@ def test_compare_pure(tmp_path):
     assert np.flatnonzero(z["theirs"]).tolist() == [5, 6, 17] and np.flatnonzero(z["ours"]).tolist() == [17, 99]
 
 
+def test_multiset_match():
+    from compare_pure import multiset_match
+    a = np.array([5, 3, 5, 7], np.uint64)
+    assert multiset_match(a, np.array([5, 7, 9], np.uint64)).tolist() == [True, False, False, True]
+    assert multiset_match(a, np.zeros(0, np.uint64)).tolist() == [False] * 4      # every pure doc matched exactly
+    assert multiset_match(np.zeros(0, np.uint64), a).tolist() == []
+
+
 def test_resume_and_count(tmp_path):
     root, work, prefix, tmp = make_setup(tmp_path)
     units = scan.plan_units([prefix], 5000, 20000)

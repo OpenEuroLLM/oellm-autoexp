@@ -91,6 +91,8 @@ def hash_docs(prefix, pool, chunk=2000):
 
 def multiset_match(orig, pure):
     """Boolean per original element: matched against the pure multiset (one-to-one per value)."""
+    if len(orig) == 0 or len(pure) == 0:
+        return np.zeros(len(orig), bool)
     order = np.argsort(orig, kind="stable")
     so = orig[order]
     pv, pc = np.unique(pure, return_counts=True)
