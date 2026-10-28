@@ -54,6 +54,7 @@ def test_read_idx_header_counts_tokens(tmp_path) -> None:
 
 
 def test_read_idx_header_rejects_other_files(tmp_path) -> None:
+    pytest.importorskip("numpy")
     path = tmp_path / "bad.idx"
     path.write_bytes(b"NOTANIDX" + b"\x00" * 40)
     with pytest.raises(ValueError):
