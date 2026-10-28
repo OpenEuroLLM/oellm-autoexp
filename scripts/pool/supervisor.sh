@@ -46,6 +46,7 @@ ledger() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%FT%T)" "$HID" "${SLURM_JOB_ID
 load_cfg() {
   POOL_POLL_S=10 POOL_IDLE_EXIT_S=1200 POOL_MONITOR_DEAD_EXIT_S=1800
   POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900 POOL_MAX_RUNS_PER_HOST=1
+  POOL_PRECHECK_COMMAND="" POOL_PRECHECK_TIMEOUT_S=600 POOL_PRECHECK_SLOW_TOL=0.10
   POOL_RANK_PATTERN='^[^ ]*python[^ ]*( +-[A-Za-z]+)* +(-m +torch\.distributed\.run|[^ ]*/(torchrun|ft_launcher))( |$)'
   # shellcheck disable=SC1091
   [ -f "$POOL/pool.env" ] && . "$POOL/pool.env"
@@ -301,6 +302,33 @@ free_nodes() { # free_nodes <extra exclude>: usable nodes no running run holds
     usable_nodes "$1" | grep -vxF -f <(printf '%s\n' "$held")
   fi
 }
+
+# Pre-run node check (pool setting precheck_command; nothing happens when it is empty): one
+# task per usable node, then scripts/pool/precheck_verdict.py names the nodes to drop -- FAIL
+# or no report, then the slowest as far as the spare nodes allow -- and they are excluded for
+# the rest of this allocation (<host>/exclude_nodes). This is what overallocation is for: the
+# run starts on the healthy part. Never blocks a launch: a broken check excludes nothing.
+precheck() { # precheck <nodes the run needs> <extra exclude>
+  [ -n "${POOL_PRECHECK_COMMAND:-}" ] || return 0
+  local nodes n out excl
+  nodes=$(free_nodes "$2" | paste -sd, -)
+  n=$(printf '%s' "$nodes" | tr ',' '\n' | grep -c .)
+  [ "$n" -gt 0 ] || return 0
+  out="$H/precheck-$(now).log"
+  log "precheck on $n node(s) (run needs $1)"
+  timeout "${POOL_PRECHECK_TIMEOUT_S:-600}" srun --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$nodes" \
+    --nodes="$n" --ntasks="$n" --ntasks-per-node=1 --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" \
+    --kill-on-bad-exit=0 --job-name="precheck-$HID" bash -c "$POOL_PRECHECK_COMMAND" >"$out" 2>&1
+  excl=$(python3 "$REPO/scripts/pool/precheck_verdict.py" --log "$out" --nodes "$nodes" \
+    --need "$1" --slow-tolerance "${POOL_PRECHECK_SLOW_TOL:-0.10}" 2>>"$out") || excl=""
+  if [ -n "$excl" ]; then
+    printf '%s\n' "$excl" >>"$H/exclude_nodes"
+    log "precheck: excluded for this allocation: $(printf '%s' "$excl" | paste -sd' ' -) (see $out)"
+    ledger "-" "precheck excluded $(printf '%s' "$excl" | paste -sd, -)"
+  else
+    log "precheck: all $n node(s) passed"
+  fi
+}
 reap() {
   local rid
   for rid in "${!RUN_PID[@]}"; do
@@ -353,6 +381,8 @@ while true; do
     fi
     meta=$(. "$R/meta.env"; printf '%s|%s' "${NODES:-1}" "${EXCLUDE:-}")
     need=${meta%%|*}
+    # the node check runs on an idle host only (packed runs would share the probe's nodes)
+    [ "${#RUN_PID[@]}" -eq 0 ] && precheck "$need" "${meta#*|}"
     nl=$(free_nodes "${meta#*|}" | head -n "$need" | paste -sd, -)
     if [ "$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)" -lt "$need" ]; then
       if [ "${#RUN_PID[@]}" -eq 0 ]; then

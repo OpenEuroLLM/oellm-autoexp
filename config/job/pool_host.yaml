@@ -50,3 +50,8 @@ pool_host:
   # job.metadata.pool_singleton across pools: a higher priority pool supersedes a lower one's
   # run whatever the sizes (equal: more nodes wins), e.g. the budget to use first
   singleton_priority: 0
+  # pre-run node check, off when empty (see PoolHostConfig): e.g.
+  #   "bash scripts/nodecheck.sh; apptainer exec --nv <sif> python3 scripts/pool/gpu_gemm_probe.py"
+  precheck_command: ""
+  precheck_timeout_s: 600
+  precheck_slow_tolerance: 0.10

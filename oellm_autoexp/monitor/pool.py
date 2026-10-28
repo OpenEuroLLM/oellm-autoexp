@@ -180,6 +180,14 @@ class PoolHostConfig:
     # priority supersedes the holder in a pool of lower priority, whatever their sizes (equal
     # priority: the run on more nodes supersedes). E.g. the pool on the budget to use first.
     singleton_priority: int = 0
+    # pre-run node check (off when empty): run once per usable node, as one step, before a run
+    # starts on an idle host; output lines in scripts/nodecheck.sh's format. Nodes reporting
+    # FAIL or nothing, then -- as far as the spare nodes allow -- the slowest (gemm_tflops more
+    # than precheck_slow_tolerance below the median) are excluded for the rest of the
+    # allocation (scripts/pool/precheck_verdict.py).
+    precheck_command: str = ""
+    precheck_timeout_s: float = 600.0
+    precheck_slow_tolerance: float = 0.10
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -338,6 +346,9 @@ class PoolLayout:
                 "POOL_RANK_PATTERN": cfg.rank_pattern,
                 "POOL_ADOPT_STOP_MARGIN_S": int(round(cfg.adopt_stop_margin_s)),
                 "POOL_MAX_RUNS_PER_HOST": max(1, int(cfg.max_runs_per_host)),
+                "POOL_PRECHECK_COMMAND": cfg.precheck_command,
+                "POOL_PRECHECK_TIMEOUT_S": int(round(cfg.precheck_timeout_s)),
+                "POOL_PRECHECK_SLOW_TOL": cfg.precheck_slow_tolerance,
             },
         )
 

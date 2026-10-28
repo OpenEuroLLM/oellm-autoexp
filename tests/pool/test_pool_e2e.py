@@ -864,6 +864,33 @@ def test_excluded_nodes_are_never_used(pool):
     assert pool.run_state(rid).started["nodes"] == "n1000-1"
 
 
+def test_precheck_drops_failed_and_slow_nodes_before_the_run(pool, tmp_path):
+    """precheck_command: on an overallocated host the run starts on the healthy part. Node 0
+    reports FAIL, node 1 is slow (400 vs 900), so the 1-node run starts on node 2."""
+    check = tmp_path / "check.sh"
+    check.write_text(
+        "#!/bin/bash\n"
+        'case "$SLURM_NODEID" in\n'
+        '  0) echo "[nodecheck] FAIL $SLURMD_NODENAME: row remapping pending" ;;\n'
+        '  1) echo "[nodecheck] OK $SLURMD_NODENAME gemm_tflops=400" ;;\n'
+        '  *) echo "[nodecheck] OK $SLURMD_NODENAME gemm_tflops=900" ;;\n'
+        "esac\n"
+    )
+    check.chmod(0o755)
+    pool.create_pool(*FAST, "slurm.sbatch.nodes=4", f"job.pool_host.precheck_command='{check}'")
+    pool.enqueue("a")
+    pool.start_monitor()
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(rid).status == "COMPLETED", 60, "the run")
+    assert pool.run_state(rid).started["nodes"] == "n1000-2"
+    excluded = (pool.pool_dir / "hosts" / "host001" / "exclude_nodes").read_text().split()
+    assert excluded == ["n1000-0", "n1000-1"]
+    # only this allocation: the pool-wide list is untouched
+    assert not (pool.pool_dir / "exclude_nodes").exists() or not (
+        pool.pool_dir / "exclude_nodes"
+    ).read_text().strip()
+
+
 def test_two_node_job_gets_both_nodes_and_a_moving_port(pool):
     pool.create_pool(*FAST)
     for tag in ("a", "b"):
