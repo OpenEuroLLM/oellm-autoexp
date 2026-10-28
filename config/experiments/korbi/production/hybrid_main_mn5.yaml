@@ -27,8 +27,11 @@ aux:
   # main_gqa (2026-10-26): grouped-query attention. The runs of suite main trained MHA (16 KV
   # heads: num_query_groups was set without group_query_attention, which Megatron then ignores) and
   # keep restarting from their own rendered scripts in production/main; a re-render there would
-  # load MHA checkpoints into a GQA model
-  suite: main_gqa
+  # load MHA checkpoints into a GQA model.
+  # main_ldm (user 2026-10-28): the residual is LDM (mixer lr x1) instead of mHC-4 (the rematch
+  # screens: LDM ahead of mHC-4 at s2 and s3, nGPT / normalized streams behind); a fresh run --
+  # mHC-4 checkpoints do not load into it
+  suite: main_ldm
   family: hybrid
   arm: mhc4_eng40
   nodes: 128
@@ -91,10 +94,18 @@ backend:
     linear_gate_activation: signed_sigmoid2
     linear_gate_init_style: shipped
     linear_output_gate: lowrank
-    mhc: true
-    mhc_expansion_rate: 4
+    # residual: LDM (K 8, 16 groups, hidden 32) under full recompute with the CuTe kernels (Megatron
+    # a6ac93843 + cute_kernels c756eb0), as the speed-tested ldm_m4 arm (hybrid_ldm_speed_mn5.yaml:
+    # 5,450 tok/s/GPU at 64 nodes, 4,749 at 128) -- user 2026-10-28, replacing mHC-4
+    mhc: false
     mhc_routed_topk: 0
     mhc_routed_reversible: false
+    depth_memory: true
+    depth_memory_impl: cute
+    depth_memory_unwind: true
+    depth_memory_groups: 16
+    depth_memory_key_dim: 8
+    depth_memory_hidden_dim: 32
     num_experts: 112
     moe_ffn_hidden_size: ${aux.expert_ffn}
     # SwiGLU clamp (DeepSeek-V4.1 / gpt-oss, user 2026-10-24: adopt): honoured by the shared
@@ -159,15 +170,18 @@ backend:
     mmap_bin_files: false
     # ---- optimizer / schedule ----
     # user 2026-10-24: classical Muown, no weight decay; lr 8.5e-4 (the campaign's N^-0.417
-    # law at 3B active), constant (stable-only), no warmup; mixer x0.25, Engram x5, embedding /
-    # head at the shared lr (Sinkhorn x0.18 if screen5ds41 favours it)
+    # law at 3B active), constant (stable-only), no warmup; mixer x1 (LDM; it was x0.25 under
+    # mHC-4), Engram x5, embedding / head at the shared lr (Sinkhorn x0.18 if screen5ds41 favours it)
     optimizer: muown_classical
     # head-wise Q / K / V orthogonalization (user 2026-10-24: adopt; screen5ds41 -0.005 at the
     # same speed; works on Megatron-FSDP: the owner splits the gathered matrix per head)
     muon_qkv_headwise: true
     lr: 8.5e-4
     min_lr: 8.5e-4
-    residual_mixer_lr_mult: 0.25
+    # LDM's mixer at the shared lr, x1 (user 2026-10-28; GQA rematch screens: x1 vs x0.25 validation
+    # loss 2.1193 vs 2.1209 at s3, 2.1281 vs 2.1740 at s2; long context no consistent lr effect --
+    # 64-fact retrieval s3 0.61 vs 0.49, s2 0.39 vs 0.73)
+    residual_mixer_lr_mult: 1.0
     lr_warmup_iters: 0
     lr_decay_style: constant
     train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
@@ -213,6 +227,10 @@ job:
   log_path_current: ${job.base_output_dir}/current_${job.name}.log
   config_path_current: ${job.base_output_dir}/current_${job.name}.yaml
   array_group: null
+  # one ambitious main run at a time across the pools (singleton guard): a larger allocation's
+  # enqueue of it preempts the smaller one and takes over (64 nodes now -> 128 later)
+  metadata:
+    pool_singleton: ambitious_main_ldm
   # gbs 4096 x 16k at 128 nodes: 67M tokens / (512 GPUs x ~7.5k tok/s) ~ 17.5 s per step
   est_step_time_s: 17.5
   est_startup_min: 15.0

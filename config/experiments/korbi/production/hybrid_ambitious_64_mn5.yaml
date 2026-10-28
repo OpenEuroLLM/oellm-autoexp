@@ -1,0 +1,42 @@
+# @package _global_
+# The "ambitious" production run (LDM, suite main_ldm) at 64 nodes on cns144 / acc_xehpc (user
+# 2026-10-28): cns144 job 47998967 started with exactly 128 nodes and one dead-GPU node, so no
+# 128-node run fits; it runs in pool mn5_pool_p129 (host002) beside smaller packed jobs. Same
+# experiment group / suite / arm as hybrid_ambitious_128_mn5.yaml: the 128-node segment (pool
+# mn5_pool_p132, or the second cns144 job) resumes from this run's checkpoints, resharded, and as the
+# same pool singleton (ambitious_main_ldm) preempts this one when it is enqueued.
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool $HYBRID_OUTPUT_DIR/pools/mn5_pool_p129 \
+#       --config-name experiments/korbi/production/hybrid_ambitious_64_mn5 --yes
+defaults:
+  - hybrid_main_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e216_eng40
+  nodes: 64
+
+backend:
+  env:
+    # Engram step lookup: the 4 micro-batches per step (mbs 4 x 256 GPUs x 4 = 4096)
+    ENGRAM_STEP_GROUP: "4"
+  megatron:
+    num_experts: 216
+    # rolling checkpoints every 100 steps (~80 min at ~48 s / step); a divisor of 500: the
+    # equal-token eval marks at steps 500 * 2^n are hard-linked from complete checkpoints
+    non_persistent_save_interval: 100
+    save_interval: 1000
+    save_retain_interval: 10000
+    async_save: true
+    use_persistent_ckpt_worker: true
+    ckpt_assume_constant_structure: true
+
+job:
+  name: ambitious_ldm_64n
+  # measured (hybrid_ldm_speed_mn5 ldm_m4, 64 clean nodes): 48 s per step, 5,450 tok/s/GPU
+  est_step_time_s: 48.0
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
