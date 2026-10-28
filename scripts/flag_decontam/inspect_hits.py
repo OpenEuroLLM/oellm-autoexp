@@ -35,7 +35,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--work", default="/gpfs/scratch/ehpc533/users/korbip/flag_decon_v5")
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
-    ap.add_argument("--shard", required=True, help="substring of the shard key")
+    ap.add_argument("--shard", required=True, help="substring of the shard key, or a full shard prefix")
     ap.add_argument("--bench", default="", help="substring of the benchmark source (e.g. gsm8k, mmlu)")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--min-cov", type=float, default=0.0)
@@ -55,8 +55,12 @@ def main():
     prefixes = {shard_key(os.path.join(args.root, line.split()[1]), args.root): os.path.join(args.root, line.split()[1])
                 for line in open(os.path.join(args.root, "datamix.txt")) if line.strip()}
 
+    if os.path.exists(args.shard + ".idx"):        # a full prefix outside the mix (e.g. openthoughts-3)
+        prefixes[shard_key(args.shard, args.root)] = args.shard
     files = []
     for key in prefixes:
+        if os.path.exists(args.shard + ".idx") and prefixes[key] != args.shard:
+            continue
         if args.shard in key:
             files += [(key, f) for f in glob.glob(os.path.join(args.work, "hits", key, "*.npz"))]
     if not files:
