@@ -72,7 +72,11 @@ LM_EVAL_GROUPS = ["spanish_bench", "catalan_bench", "french_bench", "basque_benc
 URLS = ["https://raw.githubusercontent.com/deepseek-ai/DeepSeek-Coder/main/Evaluation/LeetCode/data/20240121-Jul.jsonl",
         "https://raw.githubusercontent.com/sierra-research/tau2-bench/main/data/tau2/domains/airline/tasks.json",
         "https://raw.githubusercontent.com/sierra-research/tau2-bench/main/data/tau2/domains/retail/tasks.json",
-        "https://raw.githubusercontent.com/sierra-research/tau2-bench/main/data/tau2/domains/telecom/tasks.json"]
+        "https://raw.githubusercontent.com/sierra-research/tau2-bench/main/data/tau2/domains/telecom/tasks.json",
+        "https://s3.amazonaws.com/my89public/quac/val_v0.2.json",                    # QuAC (script-based on HF)
+        "https://raw.githubusercontent.com/wilburOne/cosmosqa/master/data/valid.csv"]  # CosmosQA (script-based)
+URL_NAMES = {"https://s3.amazonaws.com/my89public/quac/val_v0.2.json": "quac_val_v0.2.json",
+             "https://raw.githubusercontent.com/wilburOne/cosmosqa/master/data/valid.csv": "cosmosqa_valid.csv"}
 # OpenAI simple-evals BrowseComp: problem / answer XOR-encrypted with the row's canary (v6)
 BROWSECOMP = "https://openaipublic.blob.core.windows.net/simple-evals/browse_comp_test_set.csv"
 EVAL_SET_MAX_BYTES = 4 * 2**30        # per dataset (largest eval split: OneRuler 3.2 GiB); larger ones reported, not fetched
@@ -106,9 +110,11 @@ def fetch_eval_set(path, report, token=None):
     """Eval splits of the CSV's datasets into the hub cache, as the dataset viewer's parquet files
     (config/split/xxxx.parquet: extract_refs.py reads the split from the path); script-based or
     unconverted datasets: the repo's data files whose path names an eval split."""
+    import urllib.parse
     import urllib.request
     from huggingface_hub import HfApi, hf_hub_download
     api = HfApi(token=token)
+    fdir = os.path.join(os.environ["HF_HOME"], "files")
     hdr = {"Authorization": f"Bearer {token}"} if token else {}
     for row in eval_set_rows(path):
         repo = row["hf_id"]
@@ -128,12 +134,12 @@ def fetch_eval_set(path, report, token=None):
                 if size > EVAL_SET_MAX_BYTES:
                     raise RuntimeError(f"too large: {size / 2**30:.1f} GiB")
                 for f in pick:
-                    hf_hub_download(repo, f"{f['config']}/{f['split']}/{f['filename']}", repo_type="dataset",
-                                    revision="refs/convert/parquet", token=token)
+                    rel = urllib.parse.unquote(f["url"].split("/resolve/", 1)[1]).split("refs/convert/parquet/", 1)[1]
+                    hf_hub_download(repo, rel, repo_type="dataset", revision="refs/convert/parquet", token=token)
                 report["hf_ok"].append(f"eval_set {repo} ({len(pick)} parquet, {size / 2**20:.0f} MiB)")
             else:                                         # raw data files of the main branch
                 info = api.dataset_info(repo, files_metadata=True)
-                data = [s for s in info.siblings if s.rfilename.lower().endswith(DATA_EXT_FETCH)
+                data = [s for s in info.siblings if s.rfilename.lower().endswith(DATA_EXT_FETCH + ARCHIVE_EXT)
                         and not MODEL_OUTPUTS.search(s.rfilename)]
                 splits = {}
                 for s in data:
@@ -145,12 +151,42 @@ def fetch_eval_set(path, report, token=None):
                 if size > EVAL_SET_MAX_BYTES:
                     raise RuntimeError(f"too large: {size / 2**30:.1f} GiB")
                 for s in pick:
-                    hf_hub_download(repo, s.rfilename, repo_type="dataset", token=token)
+                    p = hf_hub_download(repo, s.rfilename, repo_type="dataset", token=token)
+                    if s.rfilename.lower().endswith(ARCHIVE_EXT):
+                        unpack(p, fdir, repo.replace("/", "__") + "__" + s.rfilename.replace("/", "__"))
                 report["hf_ok"].append(f"eval_set {repo} ({len(pick)} raw files, {size / 2**20:.0f} MiB)")
             print(f"ok   eval_set {repo}", flush=True)
         except Exception as e:
             report["hf_failed"][f"eval_set {repo}"] = f"{type(e).__name__}: {str(e)[:200]}"
             print(f"FAIL eval_set {repo}: {type(e).__name__}: {str(e)[:160]}", flush=True)
+
+
+ARCHIVE_EXT = (".zip", ".tar.gz", ".tgz")
+# zip archives outside the Hub (script-based HF datasets download these): MLQA dev / test
+ARCHIVE_URLS = ["https://dl.fbaipublicfiles.com/MLQA/MLQA_V1.zip"]
+
+
+def unpack(path, fdir, prefix):
+    """The eval-split data files of an archive into $HF_HOME/files, flattened under `prefix`
+    (train members dropped when the archive has other splits)."""
+    import tarfile
+    import zipfile
+    if path.lower().endswith(".zip"):
+        z = zipfile.ZipFile(path)
+        members = [(m, lambda m=m: z.read(m)) for m in z.namelist() if m.lower().endswith(DATA_EXT_FETCH)]
+    else:
+        t = tarfile.open(path)
+        members = [(m.name, lambda m=m: t.extractfile(m).read()) for m in t.getmembers()
+                   if m.isfile() and m.name.lower().endswith(DATA_EXT_FETCH)]
+    splits = {_split_word(m) for m, _ in members}
+    n = 0
+    for m, read in members:
+        if _split_word(m) == "train" and splits - {"train"}:
+            continue
+        with open(os.path.join(fdir, prefix.rsplit(".", 1)[0] + "__" + m.replace("/", "__")), "wb") as f:
+            f.write(read())
+        n += 1
+    return n
 
 
 DATA_EXT_FETCH = (".parquet", ".arrow", ".json", ".jsonl", ".csv", ".tsv", ".json.gz", ".jsonl.gz")
@@ -343,6 +379,8 @@ def main():
 def url_name(u):
     """Local name of a fetched URL; names shared by several URLs (tau2's tasks.json) get the parent dir."""
     base = os.path.basename(u)
+    if u in URL_NAMES:
+        return URL_NAMES[u]
     if sum(os.path.basename(x) == base for x in URLS) > 1:
         return u.split("/")[-2] + "__" + base
     return base
@@ -359,6 +397,15 @@ def fetch_new(args, report):
         try:
             urllib.request.urlretrieve(u, os.path.join(fdir, url_name(u)))
             report["hf_ok"].append(u)
+        except Exception as e:
+            report["hf_failed"][u] = f"{type(e).__name__}: {str(e)[:200]}"
+    for u in ARCHIVE_URLS:
+        try:
+            p = os.path.join(fdir, "_" + os.path.basename(u))
+            urllib.request.urlretrieve(u, p)
+            k = unpack(p, fdir, os.path.basename(u))
+            os.remove(p)
+            report["hf_ok"].append(f"{u} ({k} files)")
         except Exception as e:
             report["hf_failed"][u] = f"{type(e).__name__}: {str(e)[:200]}"
     fetch_browsecomp(fdir, report)
