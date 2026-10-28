@@ -1,386 +1,386 @@
-benchmark,category,hf_id,config,eval_split,priority,in_refs_v5,covered_by,origin,used_by,alt_source,gated,hf_status,notes
-LiveCodeBench (all releases),code,livecodebench/code_generation_lite,release_v1..v6,test,high,yes,livecodebench/code_generation_lite,FLAG suite,near-universal,,no,ok,indexed; check that all release tags were extracted
-"SuperGLUE (rte, cb, multirc, record, wic, wsc)",nli,aps/super_glue,rte;cb;multirc;record;wic;wsc.fixed,validation,medium,partial,aps/super_glue,FLAG suite,NeMo-Curator; OLMo3; Dolma (detection),,no,ok,aps/super_glue indexed only for the FLAG configs (boolq / copa / ...); check the others
-20240121-Jul,,,,,,yes,file/20240121-Jul,external file (FLAG / extra),,,,"bundled file (eval image / GitHub), indexed",
-AdvBench,,walledai/AdvBench,,,,yes,walledai/AdvBench,fetch_extra (oellm-eval / external table / gated),,,auto,ok,
-agieval-lsat-ar,,hails/agieval-lsat-ar,,,,yes,hails/agieval-lsat-ar,FLAG suite,,,no,ok,
-ai2_arc,,allenai/ai2_arc,,,,yes,allenai/ai2_arc,FLAG suite,,,no,ok,
-AIME24,,,,,,yes,evalchemy/AIME24,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-AIME25,,,,,,yes,evalchemy/AIME25,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-AIW,,,,,,yes,evalchemy/AIW,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-alpaca_eval,,tatsu-lab/alpaca_eval,,,,yes,tatsu-lab/alpaca_eval,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-AMC23,,,,,,yes,evalchemy/AMC23,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-aqua_rat,,deepmind/aqua_rat,,,,yes,deepmind/aqua_rat,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-ARC-eu,,HiTZ/ARC-eu,,,,yes,HiTZ/ARC-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-arc_ca,,projecte-aina/arc_ca,,,,yes,projecte-aina/arc_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-arc_challenge_mt,,LumiOpen/arc_challenge_mt,,,,yes,LumiOpen/arc_challenge_mt,FLAG suite,,,no,ok,
-belebele,,facebook/belebele,,,,yes,facebook/belebele,FLAG suite,,,no,ok,
-bigbench,,hails/bigbench,,,,yes,hails/bigbench,FLAG suite,,,no,ok,
-BigCodeBench,,,,,,yes,evalchemy/BigCodeBench,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-CA-VA_alignment_test,,gplsi/CA-VA_alignment_test,,,,yes,gplsi/CA-VA_alignment_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-caBreu,,projecte-aina/caBreu,,,,yes,projecte-aina/caBreu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-catalanqa,,projecte-aina/catalanqa,,,,yes,projecte-aina/catalanqa,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-CatCoLA,,nbel/CatCoLA,,,,yes,nbel/CatCoLA,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-cocoteros,,gplsi/cocoteros,,,,yes,gplsi/cocoteros,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-cocoteros_va,,gplsi/cocoteros_va,,,,yes,gplsi/cocoteros_va,fetch_extra (oellm-eval / external table / gated),,,auto,ok,
-commonsense_qa,,tau/commonsense_qa,,,,yes,tau/commonsense_qa,FLAG suite,,,no,ok,
-COPA-ca,,projecte-aina/COPA-ca,,,,yes,projecte-aina/COPA-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-COPA-es,,BSC-LT/COPA-es,,,,yes,BSC-LT/COPA-es,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-coqa,,EleutherAI/coqa,,,,yes,EleutherAI/coqa,FLAG suite,,,no,ok,
-CoQCat,,projecte-aina/CoQCat,,,,yes,projecte-aina/CoQCat,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-CruxEval,,,,,,yes,evalchemy/CruxEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-EQ-bench_ca,,BSC-LT/EQ-bench_ca,,,,yes,BSC-LT/EQ-bench_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-ES-VA_translation_test,,gplsi/ES-VA_translation_test,,,,yes,gplsi/ES-VA_translation_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-EsCoLA,,nbel/EsCoLA,,,,yes,nbel/EsCoLA,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-EusExams,,HiTZ/EusExams,,,,yes,HiTZ/EusExams,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-EusProficiency,,HiTZ/EusProficiency,,,,yes,HiTZ/EusProficiency,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-EusReading,,HiTZ/EusReading,,,,yes,HiTZ/EusReading,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-EusTrivia,,HiTZ/EusTrivia,,,,yes,HiTZ/EusTrivia,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-flores,,facebook/flores,,,,yes,facebook/flores,FLAG suite,,,auto,ok,
-fquad2_test,,manu/fquad2_test,,,,yes,manu/fquad2_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-french-bench-grammar-vocab-reading,,manu/french-bench-grammar-vocab-reading,,,,yes,manu/french-bench-grammar-vocab-reading,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-french-trivia,,manu/french-trivia,,,,yes,manu/french-trivia,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-french_bench_arc_challenge,,manu/french_bench_arc_challenge,,,,yes,manu/french_bench_arc_challenge,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-french_bench_hellaswag,,manu/french_bench_hellaswag,,,,yes,manu/french_bench_hellaswag,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-french_boolq,,manu/french_boolq,,,,yes,manu/french_boolq,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-global-mgsm,,CohereLabs/global-mgsm,,,,yes,CohereLabs/global-mgsm,FLAG suite,,,no,ok,
-Global-MMLU,,CohereLabs/Global-MMLU,,,,yes,CohereForAI/Global-MMLU,FLAG suite,,,no,ok,renamed from CohereForAI/Global-MMLU
-global-piqa-nonparallel,,mrlbenchmarks/global-piqa-nonparallel,,,,yes,mrlbenchmarks/global-piqa-nonparallel,FLAG suite,,,no,ok,
-gpqa,,Idavidrein/gpqa,,,,yes,Idavidrein/gpqa,FLAG suite,,,auto,ok,
-gsm8k,,openai/gsm8k,,,,yes,openai/gsm8k,FLAG suite,,,no,ok,
-hellaswag,,Rowan/hellaswag,,,,yes,Rowan/hellaswag,FLAG suite,,,no,ok,
-human-eval,,,,,,yes,openai/human-eval,FLAG suite,,https://github.com/openai/human-eval (bundled in the eval image),,not on HF,
-HumanEval,,,,,,yes,evalchemy/HumanEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-HumanEvalPlus,,,,,,yes,evalchemy/HumanEvalPlus,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-icelandic-arc-challenge,,mideind/icelandic-arc-challenge,,,,yes,mideind/icelandic-arc-challenge,FLAG suite,,,no,ok,
-IFEval,,,,,,yes,evalchemy/IFEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-IFEval,,google/IFEval,,,,yes,google/IFEval,FLAG suite,,,no,ok,
-include-base-44,,CohereLabs/include-base-44,,,,yes,CohereForAI/include-base-44,FLAG suite,,,no,ok,renamed from CohereForAI/include-base-44
-jeebench,,daman1209arora/jeebench,,,,yes,daman1209arora/jeebench,FLAG suite,,,no,ok,
-jeopardy,,openeurollm/jeopardy,,,,yes,openeurollm/jeopardy,FLAG suite,,,no,ok,
-lambada_openai,,EleutherAI/lambada_openai,,,,yes,EleutherAI/lambada_openai,FLAG suite,,,no,ok,
-m_hellaswag,,alexandrainst/m_hellaswag,,,,yes,alexandrainst/m_hellaswag,FLAG suite,,,no,ok,
-MATH500,,,,,,yes,evalchemy/MATH500,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-math_qa,,allenai/math_qa,,,,yes,allenai/math_qa,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-MBPP,,,,,,yes,evalchemy/MBPP,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-mbpp,,google-research-datasets/mbpp,,,,yes,google-research-datasets/mbpp,FLAG suite,,,no,ok,
-MBPPPlus,,,,,,yes,evalchemy/MBPPPlus,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-medmcqa,,openlifescienceai/medmcqa,,,,yes,openlifescienceai/medmcqa,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-mgsm,,jbross-ibm-research/mgsm,,,,yes,jbross-ibm-research/mgsm,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-mgsm,,juletxara/mgsm,,,,yes,juletxara/mgsm,FLAG suite,,,no,ok,
-MGSM-eu,,HiTZ/MGSM-eu,,,,yes,HiTZ/MGSM-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-mgsm_ca,,projecte-aina/mgsm_ca,,,,yes,projecte-aina/mgsm_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-MixEval,,,,,,yes,evalchemy/MixEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-mmlu,,cais/mmlu,,,,yes,cais/mmlu,FLAG suite,,,no,ok,
-MMLU-Pro,,TIGER-Lab/MMLU-Pro,,,,yes,TIGER-Lab/MMLU-Pro,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-MMLU-ProX,,li-lab/MMLU-ProX,,,,yes,li-lab/MMLU-ProX,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-mmlu-redux-2.0,,edinburgh-dawg/mmlu-redux-2.0,,,,yes,edinburgh-dawg/mmlu-redux-2.0,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-MMMLU,,openai/MMMLU,,,,yes,openai/MMMLU,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-multiblimp,,jumelet/multiblimp,,,,yes,jumelet/multiblimp,FLAG suite,,,no,ok,
-multifquad_test,,manu/multifquad_test,,,,yes,manu/multifquad_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-multiloko,,facebook/multiloko,,,,yes,facebook/multiloko,fetch_extra (oellm-eval / external table / gated),,,auto,ok,
-MultiPLE,,,,,,yes,evalchemy/MultiPLE,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",
-noridiom,,mimir-project/noridiom,,,,yes,mimir-project/noridiom,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-Norwegian_idioms,,Sprakbanken/Norwegian_idioms,,,,yes,Sprakbanken/Norwegian_idioms,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-nq_open,,google-research-datasets/nq_open,,,,yes,google-research-datasets/nq_open,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-openbookqa,,allenai/openbookqa,,,,yes,allenai/openbookqa,FLAG suite,,,no,ok,
-openbookqa-es,,BSC-LT/openbookqa-es,,,,yes,BSC-LT/openbookqa-es,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-openbookqa_ca,,projecte-aina/openbookqa_ca,,,,yes,projecte-aina/openbookqa_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-OpenSubtitles2024-40-langs-15-movies,,Helsinki-NLP/OpenSubtitles2024-40-langs-15-movies,,,,yes,Helsinki-NLP/OpenSubtitles2024-40-langs-15-movies,FLAG suite,,,auto,ok,
-opus100-en-fr,,manu/opus100-en-fr,,,,yes,manu/opus100-en-fr,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-OrangeSum,,GEM/OrangeSum,,,,yes,GEM/OrangeSum,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-Parafraseja,,projecte-aina/Parafraseja,,,,yes,projecte-aina/Parafraseja,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-PAWS-ca,,projecte-aina/PAWS-ca,,,,yes,projecte-aina/PAWS-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-PAWS-eu,,HiTZ/PAWS-eu,,,,yes,HiTZ/PAWS-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-paws-x,,google-research-datasets/paws-x,,,,yes,google-research-datasets/paws-x,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-piqa,,baber/piqa,,,,yes,baber/piqa,FLAG suite,,,no,ok,
-PIQA-eu,,HiTZ/PIQA-eu,,,,yes,HiTZ/PIQA-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-piqa_ca,,projecte-aina/piqa_ca,,,,yes,projecte-aina/piqa_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-PolyMath,,Qwen/PolyMath,,,,yes,Qwen/PolyMath,FLAG suite,,,no,ok,
-PubMedQA,,qiaojin/PubMedQA,,,,yes,qiaojin/PubMedQA,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-race,,EleutherAI/race,,,,yes,EleutherAI/race,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-race,,ehovy/race,,,,yes,ehovy/race,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-sciq,,allenai/sciq,,,,yes,allenai/sciq,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-SciRIFF,,allenai/SciRIFF,,,,yes,allenai/SciRIFF,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-sib200,,Davlan/sib200,,,,yes,Davlan/sib200,FLAG suite,,,no,ok,
-siqa_ca,,projecte-aina/siqa_ca,,,,yes,projecte-aina/siqa_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-social_i_qa,,allenai/social_i_qa,,,,yes,allenai/social_i_qa,FLAG suite,,,no,ok,
-squad_v2,,lighteval/squad_v2,,,,yes,lighteval/squad_v2,FLAG suite,,,no,ok,
-squad_v2,,rajpurkar/squad_v2,,,,yes,rajpurkar/squad_v2,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-SVAMP,,ChilleD/SVAMP,,,,yes,ChilleD/SVAMP,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-tatoeba_mt,,Helsinki-NLP/tatoeba_mt,,,,yes,Helsinki-NLP/tatoeba_mt,fetch_extra (oellm-eval / external table / gated),,,auto,ok,
-tatsu-lab__alpaca_eval__alpaca_eval,,,,,,yes,file/tatsu-lab__alpaca_eval__alpaca_eval,external file (FLAG / extra),,,,"bundled file (eval image / GitHub), indexed",
-teca,,projecte-aina/teca,,,,yes,projecte-aina/teca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-topic_based_nli_test,,manu/topic_based_nli_test,,,,yes,manu/topic_based_nli_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-trivia_qa,,mandarjoshi/trivia_qa,,,,yes,mandarjoshi/trivia_qa,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-truthfulqa_va,,gplsi/truthfulqa_va,,,,yes,gplsi/truthfulqa_va,fetch_extra (oellm-eval / external table / gated),,,auto,ok,
-wikiann,,unimelb-nlp/wikiann,,,,yes,unimelb-nlp/wikiann,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-wikitext_fr,,asi/wikitext_fr,,,,yes,asi/wikitext_fr,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-winograd_wsc,,ErnestSDavis/winograd_wsc,,,,yes,winograd_wsc,FLAG suite,,,no,ok,renamed from winograd_wsc
-winogrande,,allenai/winogrande,,,,yes,allenai/winogrande,FLAG suite,,,no,ok,
-wnli-ca,,projecte-aina/wnli-ca,,,,yes,projecte-aina/wnli-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-wnli-es,,PlanTL-GOB-ES/wnli-es,,,,yes,PlanTL-GOB-ES/wnli-es,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-wnli-eu,,HiTZ/wnli-eu,,,,yes,HiTZ/wnli-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xcopa,,cambridgeltl/xcopa,,,,yes,cambridgeltl/xcopa,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-XCOPA-eu,,HiTZ/XCOPA-eu,,,,yes,HiTZ/XCOPA-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xcsr,,INK-USC/xcsr,,,,yes,INK-USC/xcsr,FLAG suite,,,no,ok,
-xlsum,,csebuetnlp/xlsum,,,,yes,csebuetnlp/xlsum,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xnli,,facebook/xnli,,,,yes,facebook/xnli,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xnli-ca,,projecte-aina/xnli-ca,,,,yes,projecte-aina/xnli-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xnli_va,,gplsi/xnli_va,,,,yes,gplsi/xnli_va,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xquad-ca,,projecte-aina/xquad-ca,,,,yes,projecte-aina/xquad-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xstory_cloze,,juletxara/xstory_cloze,,,,yes,juletxara/xstory_cloze,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xstorycloze_ca,,projecte-aina/xstorycloze_ca,,,,yes,projecte-aina/xstorycloze_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-xwinograd,,Muennighoff/xwinograd,,,,yes,Muennighoff/xwinograd,fetch_extra (oellm-eval / external table / gated),,,no,ok,
-BigCodeBench (bigcode),code,bigcode/bigcodebench,,v0.1.4,high,mirror,evalchemy/BigCodeBench,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen-Coder; DeepSeek-Coder; GLM; Tulu3; OLMo3; OELLM-pure,,no,ok,evalchemy/BigCodeBench indexed (check version)
-HumanEval (openai_humaneval),code,,,test,high,mirror,openai/human-eval,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),near-universal,https://github.com/openai/human-eval (bundled in the eval image),,not on HF,same items as openai/human-eval (indexed)
-HumanEval+ (EvalPlus),code,evalplus/humanevalplus,,test,high,mirror,evalchemy/HumanEvalPlus,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EvalPlus; OLMo3; OELLM-pure,,no,ok,evalchemy/HumanEvalPlus indexed
-MBPP+ (EvalPlus),code,evalplus/mbppplus,,test,high,mirror,evalchemy/MBPPPlus,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EvalPlus; OLMo3; OELLM-pure,,no,ok,evalchemy/MBPPPlus indexed
-AIME 2024 (math-ai),math,math-ai/aime24,,test,high,mirror,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; open-r1,,no,ok,evalchemy/AIME24 indexed; union all mirrors
-AIME 2024 (Maxwell-Jia),math,Maxwell-Jia/AIME_2024,,train,high,mirror,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),open-r1; OpenThoughts,,no,ok,
-AIME 2025 (math-ai),math,math-ai/aime25,,test,high,mirror,evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,evalchemy/AIME25 indexed
-"AIME 2025 (opencompass, I+II)",math,opencompass/AIME2025,AIME2025-I;AIME2025-II,test,high,mirror,evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-MATH-500 (H4),math,HuggingFaceH4/MATH-500,,test,high,mirror,evalchemy/MATH500,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),open-r1; OLMES; OELLM-pure; OpenThoughts,,no,ok,same items as evalchemy/MATH500 (indexed)
-MixEval (HF),chat,MixEval/MixEval,MixEval;MixEval_Hard,free_form;multiple_choice,medium,mirror,evalchemy/MixEval,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SmolLM3; Evalchemy,,no,ok,evalchemy/MixEval indexed
-CRUXEval (cruxeval-org),code,cruxeval-org/cruxeval,,test,medium,mirror,evalchemy/CruxEval,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-Coder-V2; Qwen3; Kimi K2; OELLM-pure,,no,ok,evalchemy/CruxEval indexed
-DeepSeek LeetCode,code,davidheineman/deepseek-leetcode,,test,medium,mirror,file/20240121-Jul,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,we index the DeepSeek-Coder GitHub file (file/20240121-Jul)
-AIME 2024 (H4),math,HuggingFaceH4/aime_2024,,train,medium,mirror,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval,,no,ok,
-AIME 2025 (yentinglin),math,yentinglin/aime_2025,,train,medium,mirror,evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),open-r1,,no,ok,
-AMC 2023 (math-ai),math,math-ai/amc23,,test,medium,mirror,evalchemy/AMC23,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts; MegaMath,,no,ok,evalchemy/AMC23 indexed
-GSM8K-Platinum,math,madrylab/gsm8k-platinum,,test,medium,mirror,openai/gsm8k,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; OELLM-pure; Apertus,,no,ok,re-labelled GSM8K test (indexed via openai/gsm8k)
-Global-MMLU Lite,multilingual,CohereLabs/Global-MMLU-Lite,all,test,medium,mirror,CohereForAI/Global-MMLU,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; Cohere,,no,ok,subset of Global-MMLU (indexed)
-FLORES-200 (Muennighoff mirror),multilingual,Muennighoff/flores200,,devtest,low,mirror,facebook/flores,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,same as facebook/flores
-PAWS-X (all),multilingual,maximedb/paws-x-all,,test,low,mirror,google-research-datasets/paws-x,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,google-research-datasets/paws-x indexed
-"AGIEval (English, all subjects)",exam,hails/agieval-sat-math,,test,high,partial,hails/agieval-lsat-ar,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek; Llama3.1; OLMo2/3; Kimi K2; Nemotron; OELLM-pure,https://github.com/ruixiangcui/AGIEval,no,ok,17 per-subject repos hails/agieval-*; only lsat-ar indexed
-"MATH (Hendrycks, full test)",math,EleutherAI/hendrycks_math,7 subjects,test,high,partial,evalchemy/MATH500,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),near-universal; OLLB-v2 (level 5); Tulu3; OLMES; OLMo3; OELLM-pure; Apertus,https://github.com/hendrycks/math,no,ok,MATH500 is a 500-problem subset; only MATH500 indexed
-EU20 GSM8K,multilingual,Eurolingua/gsm8kx,all,test,high,partial,openai/gsm8k,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,
-FLORES+,multilingual,openlanguagedata/flores_plus,all,devtest;dev,high,partial,facebook/flores,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EuroLLM; Gemma3; Llama4,,auto,ok,facebook/flores indexed; FLORES+ adds corrected / new languages
-Okapi HellaSwag,multilingual,jon-tow/okapi_hellaswag,all,validation,high,partial,alexandrainst/m_hellaswag,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same; OELLM-pure,,no,ok,
-XQuAD,multilingual,google/xquad,all,validation,high,partial,projecte-aina/xquad-ca,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; EuroLLM; Salamandra; OELLM-pure,,no,ok,only the Catalan xquad-ca indexed
-MultiPL-E (nuprl),code,nuprl/MultiPL-E,all languages,test,medium,partial,evalchemy/MultiPLE,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),StarCoder; CodeLlama; Qwen; DeepSeek; OELLM-pure,,no,ok,evalchemy/MultiPLE indexed (subset of languages?)
-AGIEval (lighteval mirror),exam,lighteval/agi_eval_en,,train,medium,partial,hails/agieval-lsat-ar,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3,,no,ok,
-Jeopardy (MosaicML gauntlet),factuality,soldni/jeopardy,all_questions,train,medium,partial,openeurollm/jeopardy,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure; DCLM,,no,ok,we index openeurollm/jeopardy (check same content)
-MMLU-Redux (v1),knowledge,edinburgh-dawg/mmlu-redux,all,test,medium,partial,edinburgh-dawg/mmlu-redux-2.0,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,we index mmlu-redux-2.0
-AIME 1983-2024,math,di-zhang-fdu/AIME_1983_2024,,train,medium,partial,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),math-reasoning data checks,,no,ok,all historical AIME problems
-AIME 2021-2025,math,allenai/aime-2022-2025,,test,medium,partial,evalchemy/AIME24;evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,renamed from allenai/aime-2021-2025
-MATH (lighteval mirror),math,DigitalLearningGmbH/MATH-lighteval,,test,medium,partial,evalchemy/MATH500,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; lighteval,,no,ok,
-BIG-bench (full),reasoning,google/bigbench,all,validation;train,medium,partial,hails/bigbench,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (disabled); NeMo-Curator,,no,ok,we index 6 tasks via hails/bigbench
-PubMedQA (bigbio),domain,bigbio/pubmed_qa,,validation;test,low,partial,qiaojin/PubMedQA,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; DCLM,,no,ok,we index qiaojin/PubMedQA pqa_labeled
-SciRIFF yes/no,reading,allenai/sciriff-yesno,,train;validation;test,low,partial,allenai/SciRIFF,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,full allenai/SciRIFF indexed
-BFCL,agentic,gorilla-llm/Berkeley-Function-Calling-Leaderboard,,,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),virtually all function-calling LLMs; OLMES,https://github.com/ShishirPatil/gorilla,no,ok,
-SWE-bench (full),agentic,princeton-nlp/SWE-bench,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Claude; GPT; Qwen3-Coder; Kimi K2; GLM-4.5,,no,ok,
-SWE-bench Verified,agentic,princeton-nlp/SWE-bench_Verified,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),near-universal agentic-coding 2025-26,,no,ok,also SWE-bench/SWE-bench_Verified
-tau-bench / tau2-bench,agentic,,,,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek; Kimi K2; GLM-4.5; MiniMax,https://github.com/sierra-research/tau2-bench,,not on HF,GitHub only
-Terminal-Bench,agentic,harborframework/terminal-bench,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Claude; Codex; Kimi K2; GLM-4.5; MiniMax; Nemotron; Artificial Analysis,https://github.com/harbor-framework/terminal-bench,no,ok,task files on GitHub
-Arena-Hard v0.1,chat,lmarena-ai/arena-hard-auto-v0.1,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),chat reports,https://github.com/lmarena/arena-hard-auto,no,ok,
-Arena-Hard v2,chat,lmarena-ai/arena-hard-auto,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3-Next; Apertus; Nemotron; OELLM Nemotron decon,,no,ok,
-MT-Bench,chat,HuggingFaceH4/mt_bench_prompts,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),chat reports; Evalchemy; OELLM-pure,https://github.com/lm-sys/FastChat,no,ok,80 prompts
-WildBench,chat,allenai/WildBench,v2,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),chat reports; Evalchemy,,no,ok,
-APPS,code,codeparrot/apps,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-Coder; Qwen-Coder; code-data decon,,no,ok,
-CodeContests,code,deepmind/code_contests,,test;valid,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),AlphaCode; DeepSeek-Coder,,no,ok,
-Codeforces (open-r1),code,open-r1/codeforces,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; OpenThoughts; Qwen3; DeepSeek; gpt-oss (Elo),https://codeforces.com,no,ok,labs' own sets mostly unreleased
-DS-1000,code,xlangai/DS-1000,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,
-AGIEval aqua-rat,exam,hails/agieval-aqua-rat,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-AGIEval gaokao-english,exam,hails/agieval-gaokao-english,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-AGIEval logiqa-en,exam,hails/agieval-logiqa-en,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-AGIEval lsat-lr,exam,hails/agieval-lsat-lr,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-AGIEval lsat-rc,exam,hails/agieval-lsat-rc,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-AGIEval math,exam,hails/agieval-math,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-AGIEval sat-en,exam,hails/agieval-sat-en,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,
-Humanity's Last Exam,exam,cais/hle,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; OpenThoughts; frontier reports,,auto,ok,
-SuperGPQA,exam,m-a-p/SuperGPQA,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3; Kimi K2; OLMo3; OELLM-pure,,no,ok,only split = eval set
-SimpleQA,factuality,basicv8vc/SimpleQA,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure; frontier reports,https://github.com/openai/simple-evals,no,ok,"also OpenEvals/SimpleQA, lighteval/SimpleQA"
-IFBench,instruction,allenai/IFBench_test,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; Tulu3; Qwen3.5; Nemotron; OLMES,,no,ok,
-TruthfulQA,knowledge,truthfulqa/truthful_qa,multiple_choice;generation,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLLB-v1; lighteval; Llama; Gemma; safety suites,,no,ok,only the Valencian / Galician / Norwegian translations were indexed
-LongBench v2,long-context,zai-org/LongBench-v2,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek; GLM; Kimi K2; MiniMax; OELLM-pure,,no,ok,only split = eval set
-RULER,long-context,,,,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemini; Llama4; Qwen3; GLM; Nemotron,https://github.com/NVIDIA/RULER,,not on HF,synthetic generator; nothing fixed to index
-AIME 2026 (math-ai),math,math-ai/aime26,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Qwen3.5,,no,ok,
-AIME 2026 (MathArena),math,MathArena/aime_2026,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; MathArena,https://matharena.ai,no,ok,
-GSM-Symbolic,math,apple/GSM-Symbolic,main;p1;p2,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,
-HMMT Feb 2025,math,MathArena/hmmt_feb_2025,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; Qwen3.5; DeepSeek-V3.1/3.2; Phi-4-reasoning,https://matharena.ai,no,ok,
-OlympiadBench,math,Hothan/OlympiadBench,all text configs,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval; Phi-4-reasoning; Qwen,,no,ok,only split = eval set
-EU20 ARC,multilingual,Eurolingua/arcx,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,
-EU20 HellaSwag,multilingual,Eurolingua/hellaswagx,all,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,
-EU20 MMLU (openGPT-X),multilingual,Eurolingua/mmlux,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Teuken; EuroLLM; Salamandra,,no,ok,
-EU20 TruthfulQA,multilingual,Eurolingua/truthfulqax,all,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,
-Okapi ARC-Challenge,multilingual,jon-tow/okapi_arc_challenge,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,
-Okapi MMLU (26 langs),multilingual,jon-tow/okapi_mmlu,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Occiglot; EuroLLM; Salamandra,https://github.com/nlp-uoregon/mlmm-evaluation,no,ok,
-Okapi TruthfulQA,multilingual,jon-tow/okapi_truthfulqa,all,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,
-WMT24++,multilingual,google/wmt24pp,all,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; EuroLLM; Qwen3.5; Nemotron,,no,ok,only split = eval set
-DROP,reading,EleutherAI/drop,,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3; OELLM-pure; Apertus; Evalchemy; Llama; DeepSeek,,no,ok,orig. ucinlp/drop
-BBH (BIG-Bench Hard),reasoning,lukaemon/bbh,all 27,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLLB-v2; Tulu3; OLMES; OLMo3; OELLM-pure; Apertus; lighteval,,no,ok,mirror SaylorTwift/bbh
-MuSR,reasoning,TAUR-Lab/MuSR,,murder_mysteries;object_placements;team_allocation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLLB-v2; EuroLLM,,no,ok,
-HarmBench,safety,walledai/HarmBench,standard;contextual;copyright,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma; Tulu3; OLMES; OLMo3; OELLM-pure; Apertus,https://github.com/centerforaisafety/HarmBench,auto,ok,
-ToxiGen,safety,toxigen/toxigen-data,annotated,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma; Phi-4; OELLM-pure; Apertus,,no,ok,
-XSTest,safety,walledai/XSTest,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma; Tulu3; OLMo3,,auto,ok,mirror natolambert/xstest-v2-copy
-Aider polyglot,agentic,,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Claude; DeepSeek; Qwen-Coder; gpt-oss,https://github.com/Aider-AI/polyglot-benchmark,,not on HF,Exercism problems; GitHub only
-BrowseComp,agentic,,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),frontier labs,https://github.com/openai/simple-evals,,not on HF,encrypted CSV
-GAIA,agentic,gaia-benchmark/GAIA,,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MiniMax-M2; agent evals,,auto,ok,
-SWE-bench Lite,agentic,princeton-nlp/SWE-bench_Lite,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),agentic coding,,no,ok,
-SWE-bench Multilingual,agentic,SWE-bench/SWE-bench_Multilingual,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek-V3.1/3.2; MiniMax-M2,,no,ok,
-LiveBench,chat,livebench/reasoning,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5/3; Kimi K2; Phi-4,https://github.com/LiveBench/LiveBench,no,ok,"also livebench/{math,coding,data_analysis,language,instruction_following}"
-LiveBench coding,chat,livebench/coding,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,
-LiveBench data_analysis,chat,livebench/data_analysis,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,
-LiveBench instruction_following,chat,livebench/instruction_following,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,
-LiveBench language,chat,livebench/language,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,
-LiveBench math,chat,livebench/math,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,
-m-ArenaHard,chat,CohereLabs/m-ArenaHard,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-m-ArenaHard v2.0,chat,CohereLabs/m-ArenaHard-v2.0,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,
-MultiChallenge,chat,ScaleAI/MultiChallenge,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; MiniMax; Nemotron; Qwen3.5,,no,ok,
-BigCodeBench-Hard,code,bigcode/bigcodebench-hard,,v0.1.4,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,
-CodeElo,code,Qwen/CodeElo,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts; QwQ; DeepSeek-R1,,no,ok,
-IOI,code,open-r1/ioi,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts,,no,ok,
-LBPP,code,CohereLabs/lbpp,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,OELLM uses ellamind/lbpp
-LBPP (ellamind),code,ellamind/lbpp,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-SciCode,code,SciCode1/SciCode,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM-4.5; Nemotron; DeepSeek; Artificial Analysis,,no,ok,
-MedQA (OELLM mirror),domain,davidheineman/medqa-en,,test;dev,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; OLMES,,no,ok,
-"MedQA (USMLE, English)",domain,GBaker/MedQA-USMLE-4-options,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,OELLM uses davidheineman/medqa-en
-FRAMES,factuality,google/frames-benchmark,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek; Kimi K2,,no,ok,
-PopQA,factuality,akariasai/PopQA,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3,,no,ok,
-Multi-IF,instruction,facebook/Multi-IF,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; Qwen3; OELLM-pure,,no,ok,
-MMLU-CF,knowledge,microsoft/MMLU-CF,,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SmolLM3; OELLM-pure (disabled),,no,ok,OELLM uses edinburgh-dawg/mmlu-cf
-HELMET,long-context,princeton-nlp/HELMET,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; OLMES; OELLM-pure (disabled),,no,ok,
-LongBench (v1),long-context,zai-org/LongBench,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM; Qwen; Apertus (hotpotqa),,no,ok,formerly THUDM/LongBench
-OpenAI MRCR,long-context,openai/mrcr,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemini; OpenAI; Gemma3; MiniMax-M1; OLMES,,no,ok,
-ZeroSCROLLS,long-context,tau/zero_scrolls,all,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,
-AIMO validation AIME,math,project-numina/aimo-validation-aime,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,renamed from AI-MO/aimo-validation-aime
-AIMO validation AMC,math,project-numina/aimo-validation-amc,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts,,no,ok,renamed from AI-MO/aimo-validation-amc
-BRUMO 2025,math,MathArena/brumo_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,
-CMIMC 2025,math,MathArena/cmimc_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,
-DeepMind Mathematics,math,deepmind/math_dataset,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMo3; OELLM-pure,,no,ok,large synthetic test set
-GSM-Plus,math,qintongli/GSM-Plus,,test;testmini,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SmolLM3; lighteval; OLMES; OLMo3,,no,ok,
-HMMT Feb 2026,math,MathArena/hmmt_feb_2026,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,
-HMMT Nov 2025,math,MathArena/hmmt_nov_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,
-IMO 2025,math,MathArena/imo_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-V3.2; Qwen3.5,,no,ok,
-mAIME 2025,math,LumiOpen/mAIME2025,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,AIME translated
-mAIME 2026,math,LumiOpen/mAIME2026,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-Omni-MATH,math,KbsdJames/Omni-MATH,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),reasoning-model reports,,no,ok,
-TheoremQA,math,TIGER-Lab/TheoremQA,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5,,no,ok,
-MLQA,multilingual,facebook/mlqa,all,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EuroLLM; XLM-R,,no,ok,
-TyDiQA,multilingual,google-research-datasets/tydiqa,secondary_task,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama4; PaLM,,no,ok,
-FinBench v2 ARC-C,multilingual-eu,TurkuNLP/finbenchv2-arc-c-fi-ht,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,+ belebele / goldenswag / truthfulqax / scandisent / sib-200 / fbv1
-FinBench v2 GoldenSwag,multilingual-eu,TurkuNLP/finbenchv2-goldenswag-fi-ht,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-FinBench v2 TruthfulQA-X,multilingual-eu,TurkuNLP/finbenchv2-opengpt-x_truthfulqax-fi-mt,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-GalicianBench,multilingual-eu,proxectonos/belebele_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (lm-eval galician_bench),,no,ok,"also proxectonos/{galcola,mgsm_gl,openbookqa_gl,parafrases_gl,PAWS-gl,summarization_gl,truthfulqa_gl,xnli_gl,xstorycloze_gl}"
-GalicianBench mgsm_gl,multilingual-eu,proxectonos/mgsm_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench openbookqa_gl,multilingual-eu,proxectonos/openbookqa_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench truthfulqa_gl,multilingual-eu,proxectonos/truthfulqa_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench xnli_gl,multilingual-eu,proxectonos/xnli_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench xstorycloze_gl,multilingual-eu,proxectonos/xstorycloze_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-NorEval NorCommonsenseQA,multilingual-eu,ltg/norcommonsenseqa,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorOpenBookQA,multilingual-eu,ltg/noropenbookqa,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorQuAD,multilingual-eu,ltg/norquad,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorTruthfulQA gen,multilingual-eu,ltg/nortruthfulqa_gen,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorTruthfulQA MC,multilingual-eu,ltg/nortruthfulqa_mc,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NRK quiz,multilingual-eu,ltg/nrk_quiz_qa,nb;nn,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval; OELLM-pure,,no,ok,"NorEval suite: also ltg/{noropenbookqa,norcommonsenseqa,nortruthfulqa_mc,nortruthfulqa_gen,norquad,ask-gec,norec_*,norrewrite-instruct,norsummarize-instruct}, hcfa/ncb, SamiaT/NorSumm"
-C-Eval,multilingual-other,ceval/ceval-exam,all,val,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen; Yi; DeepSeek; GLM,,no,ok,
-CMMLU,multilingual-other,lmlmcat/cmmlu,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen; DeepSeek; Yi,,no,ok,renamed from haonan-li/cmmlu
-ANLI,nli,facebook/anli,,test_r1;test_r2;test_r3,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NeMo-Curator; Llama; GPT-3,,no,ok,
-Paloma,perplexity,allenai/paloma,all,val;test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Dolma (removed from pretraining); OLMo,,auto,ok,if we report Paloma perplexities
-WikiText-103,perplexity,Salesforce/wikitext,wikitext-103-raw-v1,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),classic LM evals,,no,ok,test pages are Wikipedia (common in web data by design)
-SQuAD v1.1,reading,rajpurkar/squad,,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; DCLM; OELLM-pure (disabled),,no,ok,we index squad_v2 only
-BBEH (BIG-Bench Extra Hard),reasoning,BBEH/bbeh,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; OLMo3,https://github.com/google-deepmind/bbeh,no,ok,OLMo3 uses hubert233/BigBenchExtraHard
-LogiQA,reasoning,lucasmccabe/logiqa,,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure; DCLM; Apertus,,no,ok,
-ZebraLogic,reasoning,allenai/ZebraLogicBench,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3; Kimi K2; MiniMax-M1; OLMES; OLMo3,https://github.com/WildEval/ZeroEval,no,ok,private variant gated
-BBQ,safety,heegyu/bbq,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Mixtral; Apertus; gpt-oss; OELLM-pure; DCLM,,no,ok,"mirrors oskarvanderwal/bbq, lighteval/bbq_helm"
-Do-Not-Answer,safety,LibrAI/do-not-answer,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma; OLMo; OELLM-pure,,no,ok,
-JailbreakBench,safety,JailbreakBench/JBB-Behaviors,behaviors,harmful;benign,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama4; Gemma,,no,ok,
-RealToxicityPrompts,safety,allenai/real-toxicity-prompts,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; classic LM safety,,no,ok,
-StrongREJECT,safety,AlignmentResearch/StrongREJECT,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),red-teaming; gpt-oss,https://github.com/alexandrasouly/strongreject,no,ok,
-WildGuardTest,safety,allenai/wildguardmix,wildguardtest,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3,,auto,ok,
-WildJailbreak (eval),safety,allenai/wildjailbreak,eval,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3,,auto,ok,
-WMDP,safety,cais/wmdp,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; unlearning,,no,ok,
-API-Bank,agentic,liminghao1630/API-Bank,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama3.1,,no,ok,
-Multi-SWE-bench,agentic,ByteDance-Seed/Multi-SWE-bench,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; MiniMax-M2,,no,ok,
-Toolathlon,agentic,hkust-nlp/Toolathlon,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek-V3.2,,auto,ok,
-Aya evaluation suite,chat,CohereLabs/aya_evaluation_suite,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-Chatbot Arena conversations,chat,lmsys/chatbot_arena_conversations,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Mixtral; Gemma,,auto,ok,
-ComparIA FR,chat,ministere-culture/comparia-conversations,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,auto,ok,
-Creative Writing v3 / WritingBench / AlignBench,chat,,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3,https://github.com/EQ-bench/creative-writing-bench,,not on HF,GitHub only
-HREF,chat,allenai/href,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3,,no,ok,
-JudgeBench,chat,ScalerLab/JudgeBench,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama-Nemotron,,no,ok,
-LMArena human preference 55k/100k/140k,chat,lmarena-ai/arena-human-preference-140k,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (disabled),,no,ok,real user prompts; huge -> would remove generic text
-m-ArenaHard v2.1,chat,CohereLabs/m-ArenaHard-v2.1,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-mDolly MT,chat,CohereLabs/dolly-machine-translated-v2,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-Menlo,chat,facebook/menlo,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-MT-Eval,chat,wckwan/MT-Eval,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES,,no,ok,
-SysBench,chat,PKU-Baichuan-MLSystemLab/SysBench,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM-4.5,,no,ok,
-FullStackBench,code,ByteDance/FullStackBench,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MiniMax-M1,,no,ok,
-HumanEval infilling,code,loubnabnl/humaneval_infilling,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,
-HumanEval Pro / MBPP Pro,code,CodeEval-Pro/humaneval-pro,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,also CodeEval-Pro/mbpp-pro
-MBPP Pro,code,CodeEval-Pro/mbpp-pro,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,
-Multilingual MBPP,code,allenai/multilingual_mbpp,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,
-OJBench,code,He-Ren/OJBench_testdata,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; Qwen3.5,https://github.com/MoonshotAI/OJBench,no,ok,
-RepoBench,code,tianyang/repobench_python_v1.1,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; Evalchemy,,no,ok,also _java_v1.1
-Spider,code,xlangai/spider,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),text-to-SQL,,no,ok,
-SWAG,commonsense,allenai/swag,regular,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval,,no,ok,
-LAB-Bench,domain,futurehouse/lab-bench,all,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,includes LitQA2
-Chinese SimpleQA,factuality,OpenStellarTeam/Chinese-SimpleQA,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek; Kimi K2; GLM-4.5,,no,ok,
-HaluEval,factuality,pminervini/HaluEval,all,data,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),hallucination evals,https://github.com/RUCAIBox/HaluEval,no,ok,
-WebQuestions,factuality,stanfordnlp/web_questions,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NeMo-Curator,,no,ok,
-IFBench multi-turn,instruction,allenai/IFBench_multi-turn,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,
-AA-LCR,long-context,ArtificialAnalysis/AA-LCR,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Artificial Analysis,,no,ok,
-InfiniteBench,long-context,xinrongzhang2022/InfiniteBench,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM; Qwen; Llama3.1,,no,ok,
-OneRuler,long-context,starbix/oneruler,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,multilingual
-SCROLLS,long-context,tau/scrolls,all,validation;test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lm-eval,,no,ok,
-ASDiv,math,EleutherAI/asdiv,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval; MegaMath,,no,ok,
-CMath,math,weitianwen/cmath,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-V3; Kimi K2,,no,ok,
-FrontierMath,math,,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenAI; Epoch AI,https://epoch.ai/frontiermath,,not on HF,private; 12 public samples only
-MathOdyssey,math,MathOdyssey/MathOdyssey,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),reasoning comparisons,,no,ok,
-MiniF2F,math,project-numina/minif2f_test,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Nemotron 3 Nano,,no,ok,formal proofs; renamed from AI-MO/minif2f_test
-OMEGA,math,allenai/omega-explorative,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,"also allenai/omega-compositional, -transformative"
-OMEGA compositional,math,allenai/omega-compositional,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,
-OMEGA transformative,math,allenai/omega-transformative,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,
-AfriMMLU / AfriMGSM,multilingual,masakhane/afrimmlu,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Masakhane; Aya,,no,ok,also masakhane/afrimgsm
-BLEnD,multilingual,uilab/BLEnD,all,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus; Qwen2.5,,no,ok,renamed from nayeon212/BLEnD
-CaLMQA,multilingual,shanearora/CaLMQA,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,
-CulturalBench,multilingual,kellycyy/CulturalBench,CulturalBench-Easy;CulturalBench-Hard,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,
-M3Exam,multilingual,chiayewken/m3exam,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SeaLLM,,no,ok,
-P-MMEval,multilingual,Qwen/P-MMEval,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,
-XOR-TyDi QA,multilingual,akariasai/xor_tydi_qa,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3,,no,ok,
-BasqueBench XNLI-eu,multilingual-eu,HiTZ/xnli-eu,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (basque_bench),,no,ok,
-BasqueGLUE QNLI,multilingual-eu,orai-nlp/basqueGLUE,qnli,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-FinBench v2 belebele,multilingual-eu,TurkuNLP/finbenchv2-belebele-fi-og,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-FinBench v2 fbv1,multilingual-eu,TurkuNLP/finbenchv2-fbv1-stripped-fi-ht,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-FinBench v2 scandisent,multilingual-eu,TurkuNLP/finbenchv2-scandisent-fi-mini,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-FinBench v2 sib-200,multilingual-eu,TurkuNLP/finbenchv2-sib-200-fi-og,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-GalicianBench galcola,multilingual-eu,proxectonos/galcola,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench parafrases_gl,multilingual-eu,proxectonos/parafrases_gl,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench PAWS-gl,multilingual-eu,proxectonos/PAWS-gl,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-GalicianBench summarization_gl,multilingual-eu,proxectonos/summarization_gl,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,
-NorEval ASK-GEC,multilingual-eu,ltg/ask-gec,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NCB,multilingual-eu,hcfa/ncb,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NoReC document,multilingual-eu,ltg/norec_document,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NoReC sentence,multilingual-eu,ltg/norec_sentence,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorRewrite-instruct,multilingual-eu,ltg/norrewrite-instruct,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorSumm,multilingual-eu,SamiaT/NorSumm,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-NorEval NorSummarize-instruct,multilingual-eu,ltg/norsummarize-instruct,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,
-ArabicMMLU,multilingual-other,MBZUAI/ArabicMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Jais,,no,ok,
-"CLUE (WSC2020, C3, CMRC2018)",multilingual-other,clue/clue,cluewsc2020;c3;cmrc2018,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-V3; Qwen; GLM,,no,ok,
-IndoMMLU,multilingual-other,indolem/IndoMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5; SEA-LION,,no,ok,
-JMMLU,multilingual-other,nlp-waseda/JMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5,,no,ok,
-KMMLU,multilingual-other,HAERAE-HUB/KMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5; EXAONE,,no,ok,
-TurkishMMLU,multilingual-other,AYueksel/TurkishMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5,,no,ok,
-GLUE,nli,nyu-mll/glue,all,validation;test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Dolma (detection),,no,ok,
-SNLI,nli,stanfordnlp/snli,,test;validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Dolma (detection),,no,ok,
-LAMBADA (standard),perplexity,cimec/lambada,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),classic LM evals,,no,ok,lambada_openai indexed
-CosmosQA,reading,allenai/cosmos_qa,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES,,no,ok,
-Qasper yes/no,reading,allenai/qasper-yesno,,train;validation;test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,
-QuAC,reading,allenai/quac,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama3.1; Mistral; NeMo-Curator,,no,ok,mirror lighteval/quac_helm
-ACPBench,reasoning,ibm-research/acp_bench,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,
-AutoLogi,reasoning,qzhu/AutoLogi,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3; Kimi K2,,no,ok,
-Basic Skills,reasoning,allenai/basic-skills,all,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,OELLM uses ellamind/basic-skills
-Basic Skills (ellamind),reasoning,ellamind/basic-skills,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,
-SimpleToM,reasoning,allenai/SimpleToM,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,
-Aya red-teaming,safety,CohereLabs/aya_redteaming,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,
-BeaverTails,safety,PKU-Alignment/BeaverTails,,30k_test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),RLHF safety,,no,ok,
-BOLD,safety,AmazonScience/bold,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Mixtral,,no,ok,
-CatQA,safety,declare-lab/CategoricalHarmfulQA,,en,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma,,no,ok,
-Do-Anything-Now,safety,allenai/tulu-3-do-anything-now-eval,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES,,no,ok,
-MultiJail,safety,DAMO-NLP-SG/MultiJail,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,
-PolygloToxicityPrompts,safety,ToxicityPrompts/PolygloToxicityPrompts,all,full,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Teuken; Apertus,,no,ok,
-SafetyBench,safety,thu-coai/SafetyBench,test,en,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM-4.5,,no,ok,
-SALAD-Bench,safety,OpenSafetyLab/Salad-Data,base_set,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen; GLM; InternLM,,no,ok,
-SimpleSafetyTests,safety,Bertievidgen/SimpleSafetyTests,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),safety audits,,no,ok,
-TrustLLM jailbreak trigger,safety,allenai/tulu-3-trustllm-jailbreaktrigger-eval,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES,,no,ok,
-Winogender,safety,oskarvanderwal/winogender,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; DCLM,,no,ok,
+benchmark,category,hf_id,config,eval_split,priority,in_refs_v5,covered_by,origin,used_by,alt_source,gated,hf_status,fetch,notes
+LiveCodeBench (all releases),code,livecodebench/code_generation_lite,release_v1..v6,test,high,yes,livecodebench/code_generation_lite,FLAG suite,near-universal,,no,ok,hf,indexed; check that all release tags were extracted
+"SuperGLUE (rte, cb, multirc, record, wic, wsc)",nli,aps/super_glue,rte;cb;multirc;record;wic;wsc.fixed,validation,medium,partial,aps/super_glue,FLAG suite,NeMo-Curator; OLMo3; Dolma (detection),,no,ok,hf,aps/super_glue indexed only for the FLAG configs (boolq / copa / ...); check the others
+20240121-Jul,,,,,,yes,file/20240121-Jul,external file (FLAG / extra),,,,"bundled file (eval image / GitHub), indexed",,
+AdvBench,,walledai/AdvBench,,,,yes,walledai/AdvBench,fetch_extra (oellm-eval / external table / gated),,,auto,ok,,
+agieval-lsat-ar,,hails/agieval-lsat-ar,,,,yes,hails/agieval-lsat-ar,FLAG suite,,,no,ok,,
+ai2_arc,,allenai/ai2_arc,,,,yes,allenai/ai2_arc,FLAG suite,,,no,ok,,
+AIME24,,,,,,yes,evalchemy/AIME24,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+AIME25,,,,,,yes,evalchemy/AIME25,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+AIW,,,,,,yes,evalchemy/AIW,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+alpaca_eval,,tatsu-lab/alpaca_eval,,,,yes,tatsu-lab/alpaca_eval,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+AMC23,,,,,,yes,evalchemy/AMC23,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+aqua_rat,,deepmind/aqua_rat,,,,yes,deepmind/aqua_rat,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+ARC-eu,,HiTZ/ARC-eu,,,,yes,HiTZ/ARC-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+arc_ca,,projecte-aina/arc_ca,,,,yes,projecte-aina/arc_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+arc_challenge_mt,,LumiOpen/arc_challenge_mt,,,,yes,LumiOpen/arc_challenge_mt,FLAG suite,,,no,ok,,
+belebele,,facebook/belebele,,,,yes,facebook/belebele,FLAG suite,,,no,ok,,
+bigbench,,hails/bigbench,,,,yes,hails/bigbench,FLAG suite,,,no,ok,,
+BigCodeBench,,,,,,yes,evalchemy/BigCodeBench,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+CA-VA_alignment_test,,gplsi/CA-VA_alignment_test,,,,yes,gplsi/CA-VA_alignment_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+caBreu,,projecte-aina/caBreu,,,,yes,projecte-aina/caBreu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+catalanqa,,projecte-aina/catalanqa,,,,yes,projecte-aina/catalanqa,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+CatCoLA,,nbel/CatCoLA,,,,yes,nbel/CatCoLA,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+cocoteros,,gplsi/cocoteros,,,,yes,gplsi/cocoteros,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+cocoteros_va,,gplsi/cocoteros_va,,,,yes,gplsi/cocoteros_va,fetch_extra (oellm-eval / external table / gated),,,auto,ok,,
+commonsense_qa,,tau/commonsense_qa,,,,yes,tau/commonsense_qa,FLAG suite,,,no,ok,,
+COPA-ca,,projecte-aina/COPA-ca,,,,yes,projecte-aina/COPA-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+COPA-es,,BSC-LT/COPA-es,,,,yes,BSC-LT/COPA-es,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+coqa,,EleutherAI/coqa,,,,yes,EleutherAI/coqa,FLAG suite,,,no,ok,,
+CoQCat,,projecte-aina/CoQCat,,,,yes,projecte-aina/CoQCat,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+CruxEval,,,,,,yes,evalchemy/CruxEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+EQ-bench_ca,,BSC-LT/EQ-bench_ca,,,,yes,BSC-LT/EQ-bench_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+ES-VA_translation_test,,gplsi/ES-VA_translation_test,,,,yes,gplsi/ES-VA_translation_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+EsCoLA,,nbel/EsCoLA,,,,yes,nbel/EsCoLA,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+EusExams,,HiTZ/EusExams,,,,yes,HiTZ/EusExams,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+EusProficiency,,HiTZ/EusProficiency,,,,yes,HiTZ/EusProficiency,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+EusReading,,HiTZ/EusReading,,,,yes,HiTZ/EusReading,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+EusTrivia,,HiTZ/EusTrivia,,,,yes,HiTZ/EusTrivia,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+flores,,facebook/flores,,,,yes,facebook/flores,FLAG suite,,,auto,ok,,
+fquad2_test,,manu/fquad2_test,,,,yes,manu/fquad2_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+french-bench-grammar-vocab-reading,,manu/french-bench-grammar-vocab-reading,,,,yes,manu/french-bench-grammar-vocab-reading,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+french-trivia,,manu/french-trivia,,,,yes,manu/french-trivia,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+french_bench_arc_challenge,,manu/french_bench_arc_challenge,,,,yes,manu/french_bench_arc_challenge,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+french_bench_hellaswag,,manu/french_bench_hellaswag,,,,yes,manu/french_bench_hellaswag,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+french_boolq,,manu/french_boolq,,,,yes,manu/french_boolq,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+global-mgsm,,CohereLabs/global-mgsm,,,,yes,CohereLabs/global-mgsm,FLAG suite,,,no,ok,,
+Global-MMLU,,CohereLabs/Global-MMLU,,,,yes,CohereForAI/Global-MMLU,FLAG suite,,,no,ok,,renamed from CohereForAI/Global-MMLU
+global-piqa-nonparallel,,mrlbenchmarks/global-piqa-nonparallel,,,,yes,mrlbenchmarks/global-piqa-nonparallel,FLAG suite,,,no,ok,,
+gpqa,,Idavidrein/gpqa,,,,yes,Idavidrein/gpqa,FLAG suite,,,auto,ok,,
+gsm8k,,openai/gsm8k,,,,yes,openai/gsm8k,FLAG suite,,,no,ok,,
+hellaswag,,Rowan/hellaswag,,,,yes,Rowan/hellaswag,FLAG suite,,,no,ok,,
+human-eval,,,,,,yes,openai/human-eval,FLAG suite,,https://github.com/openai/human-eval (bundled in the eval image),,not on HF,,
+HumanEval,,,,,,yes,evalchemy/HumanEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+HumanEvalPlus,,,,,,yes,evalchemy/HumanEvalPlus,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+icelandic-arc-challenge,,mideind/icelandic-arc-challenge,,,,yes,mideind/icelandic-arc-challenge,FLAG suite,,,no,ok,,
+IFEval,,,,,,yes,evalchemy/IFEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+IFEval,,google/IFEval,,,,yes,google/IFEval,FLAG suite,,,no,ok,,
+include-base-44,,CohereLabs/include-base-44,,,,yes,CohereForAI/include-base-44,FLAG suite,,,no,ok,,renamed from CohereForAI/include-base-44
+jeebench,,daman1209arora/jeebench,,,,yes,daman1209arora/jeebench,FLAG suite,,,no,ok,,
+jeopardy,,openeurollm/jeopardy,,,,yes,openeurollm/jeopardy,FLAG suite,,,no,ok,,
+lambada_openai,,EleutherAI/lambada_openai,,,,yes,EleutherAI/lambada_openai,FLAG suite,,,no,ok,,
+m_hellaswag,,alexandrainst/m_hellaswag,,,,yes,alexandrainst/m_hellaswag,FLAG suite,,,no,ok,,
+MATH500,,,,,,yes,evalchemy/MATH500,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+math_qa,,allenai/math_qa,,,,yes,allenai/math_qa,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+MBPP,,,,,,yes,evalchemy/MBPP,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+mbpp,,google-research-datasets/mbpp,,,,yes,google-research-datasets/mbpp,FLAG suite,,,no,ok,,
+MBPPPlus,,,,,,yes,evalchemy/MBPPPlus,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+medmcqa,,openlifescienceai/medmcqa,,,,yes,openlifescienceai/medmcqa,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+mgsm,,jbross-ibm-research/mgsm,,,,yes,jbross-ibm-research/mgsm,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+mgsm,,juletxara/mgsm,,,,yes,juletxara/mgsm,FLAG suite,,,no,ok,,
+MGSM-eu,,HiTZ/MGSM-eu,,,,yes,HiTZ/MGSM-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+mgsm_ca,,projecte-aina/mgsm_ca,,,,yes,projecte-aina/mgsm_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+MixEval,,,,,,yes,evalchemy/MixEval,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+mmlu,,cais/mmlu,,,,yes,cais/mmlu,FLAG suite,,,no,ok,,
+MMLU-Pro,,TIGER-Lab/MMLU-Pro,,,,yes,TIGER-Lab/MMLU-Pro,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+MMLU-ProX,,li-lab/MMLU-ProX,,,,yes,li-lab/MMLU-ProX,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+mmlu-redux-2.0,,edinburgh-dawg/mmlu-redux-2.0,,,,yes,edinburgh-dawg/mmlu-redux-2.0,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+MMMLU,,openai/MMMLU,,,,yes,openai/MMMLU,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+multiblimp,,jumelet/multiblimp,,,,yes,jumelet/multiblimp,FLAG suite,,,no,ok,,
+multifquad_test,,manu/multifquad_test,,,,yes,manu/multifquad_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+multiloko,,facebook/multiloko,,,,yes,facebook/multiloko,fetch_extra (oellm-eval / external table / gated),,,auto,ok,,
+MultiPLE,,,,,,yes,evalchemy/MultiPLE,evalchemy (FLAG),,,,"bundled file (eval image / GitHub), indexed",,
+noridiom,,mimir-project/noridiom,,,,yes,mimir-project/noridiom,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+Norwegian_idioms,,Sprakbanken/Norwegian_idioms,,,,yes,Sprakbanken/Norwegian_idioms,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+nq_open,,google-research-datasets/nq_open,,,,yes,google-research-datasets/nq_open,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+openbookqa,,allenai/openbookqa,,,,yes,allenai/openbookqa,FLAG suite,,,no,ok,,
+openbookqa-es,,BSC-LT/openbookqa-es,,,,yes,BSC-LT/openbookqa-es,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+openbookqa_ca,,projecte-aina/openbookqa_ca,,,,yes,projecte-aina/openbookqa_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+OpenSubtitles2024-40-langs-15-movies,,Helsinki-NLP/OpenSubtitles2024-40-langs-15-movies,,,,yes,Helsinki-NLP/OpenSubtitles2024-40-langs-15-movies,FLAG suite,,,auto,ok,,
+opus100-en-fr,,manu/opus100-en-fr,,,,yes,manu/opus100-en-fr,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+OrangeSum,,GEM/OrangeSum,,,,yes,GEM/OrangeSum,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+Parafraseja,,projecte-aina/Parafraseja,,,,yes,projecte-aina/Parafraseja,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+PAWS-ca,,projecte-aina/PAWS-ca,,,,yes,projecte-aina/PAWS-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+PAWS-eu,,HiTZ/PAWS-eu,,,,yes,HiTZ/PAWS-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+paws-x,,google-research-datasets/paws-x,,,,yes,google-research-datasets/paws-x,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+piqa,,baber/piqa,,,,yes,baber/piqa,FLAG suite,,,no,ok,,
+PIQA-eu,,HiTZ/PIQA-eu,,,,yes,HiTZ/PIQA-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+piqa_ca,,projecte-aina/piqa_ca,,,,yes,projecte-aina/piqa_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+PolyMath,,Qwen/PolyMath,,,,yes,Qwen/PolyMath,FLAG suite,,,no,ok,,
+PubMedQA,,qiaojin/PubMedQA,,,,yes,qiaojin/PubMedQA,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+race,,EleutherAI/race,,,,yes,EleutherAI/race,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+race,,ehovy/race,,,,yes,ehovy/race,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+sciq,,allenai/sciq,,,,yes,allenai/sciq,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+SciRIFF,,allenai/SciRIFF,,,,yes,allenai/SciRIFF,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+sib200,,Davlan/sib200,,,,yes,Davlan/sib200,FLAG suite,,,no,ok,,
+siqa_ca,,projecte-aina/siqa_ca,,,,yes,projecte-aina/siqa_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+social_i_qa,,allenai/social_i_qa,,,,yes,allenai/social_i_qa,FLAG suite,,,no,ok,,
+squad_v2,,lighteval/squad_v2,,,,yes,lighteval/squad_v2,FLAG suite,,,no,ok,,
+squad_v2,,rajpurkar/squad_v2,,,,yes,rajpurkar/squad_v2,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+SVAMP,,ChilleD/SVAMP,,,,yes,ChilleD/SVAMP,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+tatoeba_mt,,Helsinki-NLP/tatoeba_mt,,,,yes,Helsinki-NLP/tatoeba_mt,fetch_extra (oellm-eval / external table / gated),,,auto,ok,,
+tatsu-lab__alpaca_eval__alpaca_eval,,,,,,yes,file/tatsu-lab__alpaca_eval__alpaca_eval,external file (FLAG / extra),,,,"bundled file (eval image / GitHub), indexed",,
+teca,,projecte-aina/teca,,,,yes,projecte-aina/teca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+topic_based_nli_test,,manu/topic_based_nli_test,,,,yes,manu/topic_based_nli_test,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+trivia_qa,,mandarjoshi/trivia_qa,,,,yes,mandarjoshi/trivia_qa,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+truthfulqa_va,,gplsi/truthfulqa_va,,,,yes,gplsi/truthfulqa_va,fetch_extra (oellm-eval / external table / gated),,,auto,ok,,
+wikiann,,unimelb-nlp/wikiann,,,,yes,unimelb-nlp/wikiann,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+wikitext_fr,,asi/wikitext_fr,,,,yes,asi/wikitext_fr,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+winograd_wsc,,ErnestSDavis/winograd_wsc,,,,yes,winograd_wsc,FLAG suite,,,no,ok,,renamed from winograd_wsc
+winogrande,,allenai/winogrande,,,,yes,allenai/winogrande,FLAG suite,,,no,ok,,
+wnli-ca,,projecte-aina/wnli-ca,,,,yes,projecte-aina/wnli-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+wnli-es,,PlanTL-GOB-ES/wnli-es,,,,yes,PlanTL-GOB-ES/wnli-es,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+wnli-eu,,HiTZ/wnli-eu,,,,yes,HiTZ/wnli-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xcopa,,cambridgeltl/xcopa,,,,yes,cambridgeltl/xcopa,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+XCOPA-eu,,HiTZ/XCOPA-eu,,,,yes,HiTZ/XCOPA-eu,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xcsr,,INK-USC/xcsr,,,,yes,INK-USC/xcsr,FLAG suite,,,no,ok,,
+xlsum,,csebuetnlp/xlsum,,,,yes,csebuetnlp/xlsum,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xnli,,facebook/xnli,,,,yes,facebook/xnli,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xnli-ca,,projecte-aina/xnli-ca,,,,yes,projecte-aina/xnli-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xnli_va,,gplsi/xnli_va,,,,yes,gplsi/xnli_va,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xquad-ca,,projecte-aina/xquad-ca,,,,yes,projecte-aina/xquad-ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xstory_cloze,,juletxara/xstory_cloze,,,,yes,juletxara/xstory_cloze,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xstorycloze_ca,,projecte-aina/xstorycloze_ca,,,,yes,projecte-aina/xstorycloze_ca,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+xwinograd,,Muennighoff/xwinograd,,,,yes,Muennighoff/xwinograd,fetch_extra (oellm-eval / external table / gated),,,no,ok,,
+BigCodeBench (bigcode),code,bigcode/bigcodebench,,v0.1.4,high,mirror,evalchemy/BigCodeBench,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen-Coder; DeepSeek-Coder; GLM; Tulu3; OLMo3; OELLM-pure,,no,ok,hf,evalchemy/BigCodeBench indexed (check version)
+HumanEval (openai_humaneval),code,,,test,high,mirror,openai/human-eval,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),near-universal,https://github.com/openai/human-eval (bundled in the eval image),,not on HF,skip: no public data / GitHub only,same items as openai/human-eval (indexed)
+HumanEval+ (EvalPlus),code,evalplus/humanevalplus,,test,high,mirror,evalchemy/HumanEvalPlus,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EvalPlus; OLMo3; OELLM-pure,,no,ok,hf,evalchemy/HumanEvalPlus indexed
+MBPP+ (EvalPlus),code,evalplus/mbppplus,,test,high,mirror,evalchemy/MBPPPlus,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EvalPlus; OLMo3; OELLM-pure,,no,ok,hf,evalchemy/MBPPPlus indexed
+AIME 2024 (math-ai),math,math-ai/aime24,,test,high,mirror,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; open-r1,,no,ok,hf,evalchemy/AIME24 indexed; union all mirrors
+AIME 2024 (Maxwell-Jia),math,Maxwell-Jia/AIME_2024,,train,high,mirror,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),open-r1; OpenThoughts,,no,ok,hf,
+AIME 2025 (math-ai),math,math-ai/aime25,,test,high,mirror,evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,evalchemy/AIME25 indexed
+"AIME 2025 (opencompass, I+II)",math,opencompass/AIME2025,AIME2025-I;AIME2025-II,test,high,mirror,evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+MATH-500 (H4),math,HuggingFaceH4/MATH-500,,test,high,mirror,evalchemy/MATH500,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),open-r1; OLMES; OELLM-pure; OpenThoughts,,no,ok,hf,same items as evalchemy/MATH500 (indexed)
+MixEval (HF),chat,MixEval/MixEval,MixEval;MixEval_Hard,free_form;multiple_choice,medium,mirror,evalchemy/MixEval,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SmolLM3; Evalchemy,,no,ok,hf,evalchemy/MixEval indexed
+CRUXEval (cruxeval-org),code,cruxeval-org/cruxeval,,test,medium,mirror,evalchemy/CruxEval,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-Coder-V2; Qwen3; Kimi K2; OELLM-pure,,no,ok,hf,evalchemy/CruxEval indexed
+DeepSeek LeetCode,code,davidheineman/deepseek-leetcode,,test,medium,mirror,file/20240121-Jul,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,we index the DeepSeek-Coder GitHub file (file/20240121-Jul)
+AIME 2024 (H4),math,HuggingFaceH4/aime_2024,,train,medium,mirror,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval,,no,ok,hf,
+AIME 2025 (yentinglin),math,yentinglin/aime_2025,,train,medium,mirror,evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),open-r1,,no,ok,hf,
+AMC 2023 (math-ai),math,math-ai/amc23,,test,medium,mirror,evalchemy/AMC23,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts; MegaMath,,no,ok,hf,evalchemy/AMC23 indexed
+GSM8K-Platinum,math,madrylab/gsm8k-platinum,,test,medium,mirror,openai/gsm8k,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; OELLM-pure; Apertus,,no,ok,hf,re-labelled GSM8K test (indexed via openai/gsm8k)
+Global-MMLU Lite,multilingual,CohereLabs/Global-MMLU-Lite,all,test,medium,mirror,CohereForAI/Global-MMLU,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; Cohere,,no,ok,hf,subset of Global-MMLU (indexed)
+FLORES-200 (Muennighoff mirror),multilingual,Muennighoff/flores200,,devtest,low,mirror,facebook/flores,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,same as facebook/flores
+PAWS-X (all),multilingual,maximedb/paws-x-all,,test,low,mirror,google-research-datasets/paws-x,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,google-research-datasets/paws-x indexed
+"AGIEval (English, all subjects)",exam,hails/agieval-sat-math,,test,high,partial,hails/agieval-lsat-ar,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek; Llama3.1; OLMo2/3; Kimi K2; Nemotron; OELLM-pure,https://github.com/ruixiangcui/AGIEval,no,ok,hf,17 per-subject repos hails/agieval-*; only lsat-ar indexed
+"MATH (Hendrycks, full test)",math,EleutherAI/hendrycks_math,7 subjects,test,high,partial,evalchemy/MATH500,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),near-universal; OLLB-v2 (level 5); Tulu3; OLMES; OLMo3; OELLM-pure; Apertus,https://github.com/hendrycks/math,no,ok,hf,MATH500 is a 500-problem subset; only MATH500 indexed
+EU20 GSM8K,multilingual,Eurolingua/gsm8kx,all,test,high,partial,openai/gsm8k,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,hf,
+FLORES+,multilingual,openlanguagedata/flores_plus,all,devtest;dev,high,partial,facebook/flores,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EuroLLM; Gemma3; Llama4,,auto,ok,hf,facebook/flores indexed; FLORES+ adds corrected / new languages
+Okapi HellaSwag,multilingual,jon-tow/okapi_hellaswag,all,validation,high,partial,alexandrainst/m_hellaswag,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same; OELLM-pure,,no,ok,hf,
+XQuAD,multilingual,google/xquad,all,validation,high,partial,projecte-aina/xquad-ca,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; EuroLLM; Salamandra; OELLM-pure,,no,ok,hf,only the Catalan xquad-ca indexed
+MultiPL-E (nuprl),code,nuprl/MultiPL-E,all languages,test,medium,partial,evalchemy/MultiPLE,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),StarCoder; CodeLlama; Qwen; DeepSeek; OELLM-pure,,no,ok,hf,evalchemy/MultiPLE indexed (subset of languages?)
+AGIEval (lighteval mirror),exam,lighteval/agi_eval_en,,train,medium,partial,hails/agieval-lsat-ar,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3,,no,ok,hf,
+Jeopardy (MosaicML gauntlet),factuality,soldni/jeopardy,all_questions,train,medium,partial,openeurollm/jeopardy,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure; DCLM,,no,ok,hf,we index openeurollm/jeopardy (check same content)
+MMLU-Redux (v1),knowledge,edinburgh-dawg/mmlu-redux,all,test,medium,partial,edinburgh-dawg/mmlu-redux-2.0,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,we index mmlu-redux-2.0
+AIME 1983-2024,math,di-zhang-fdu/AIME_1983_2024,,train,medium,partial,evalchemy/AIME24,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),math-reasoning data checks,,no,ok,hf,all historical AIME problems
+AIME 2021-2025,math,allenai/aime-2022-2025,,test,medium,partial,evalchemy/AIME24;evalchemy/AIME25,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,renamed from allenai/aime-2021-2025
+MATH (lighteval mirror),math,DigitalLearningGmbH/MATH-lighteval,,test,medium,partial,evalchemy/MATH500,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; lighteval,,no,ok,hf,
+BIG-bench (full),reasoning,google/bigbench,all,validation;train,medium,partial,hails/bigbench,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (disabled); NeMo-Curator,,no,ok,hf,we index 6 tasks via hails/bigbench
+PubMedQA (bigbio),domain,bigbio/pubmed_qa,,validation;test,low,partial,qiaojin/PubMedQA,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; DCLM,,no,ok,hf,we index qiaojin/PubMedQA pqa_labeled
+SciRIFF yes/no,reading,allenai/sciriff-yesno,,train;validation;test,low,partial,allenai/SciRIFF,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,full allenai/SciRIFF indexed
+BFCL,agentic,gorilla-llm/Berkeley-Function-Calling-Leaderboard,,,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),virtually all function-calling LLMs; OLMES,https://github.com/ShishirPatil/gorilla,no,ok,hf,
+SWE-bench (full),agentic,princeton-nlp/SWE-bench,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Claude; GPT; Qwen3-Coder; Kimi K2; GLM-4.5,,no,ok,hf,
+SWE-bench Verified,agentic,princeton-nlp/SWE-bench_Verified,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),near-universal agentic-coding 2025-26,,no,ok,hf,also SWE-bench/SWE-bench_Verified
+tau-bench / tau2-bench,agentic,,,,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek; Kimi K2; GLM-4.5; MiniMax,https://github.com/sierra-research/tau2-bench,,not on HF,url,GitHub only
+Terminal-Bench,agentic,harborframework/terminal-bench,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Claude; Codex; Kimi K2; GLM-4.5; MiniMax; Nemotron; Artificial Analysis,https://github.com/harbor-framework/terminal-bench,no,ok,hf,task files on GitHub
+Arena-Hard v0.1,chat,lmarena-ai/arena-hard-auto-v0.1,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),chat reports,https://github.com/lmarena/arena-hard-auto,no,ok,hf,
+Arena-Hard v2,chat,lmarena-ai/arena-hard-auto,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3-Next; Apertus; Nemotron; OELLM Nemotron decon,,no,ok,hf,
+MT-Bench,chat,HuggingFaceH4/mt_bench_prompts,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),chat reports; Evalchemy; OELLM-pure,https://github.com/lm-sys/FastChat,no,ok,hf,80 prompts
+WildBench,chat,allenai/WildBench,v2,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),chat reports; Evalchemy,,no,ok,hf,
+APPS,code,codeparrot/apps,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-Coder; Qwen-Coder; code-data decon,,no,ok,hf,
+CodeContests,code,deepmind/code_contests,,test;valid,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),AlphaCode; DeepSeek-Coder,,no,ok,hf,
+Codeforces (open-r1),code,open-r1/codeforces,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; OpenThoughts; Qwen3; DeepSeek; gpt-oss (Elo),https://codeforces.com,no,ok,hf,labs' own sets mostly unreleased
+DS-1000,code,xlangai/DS-1000,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,
+AGIEval aqua-rat,exam,hails/agieval-aqua-rat,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+AGIEval gaokao-english,exam,hails/agieval-gaokao-english,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+AGIEval logiqa-en,exam,hails/agieval-logiqa-en,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+AGIEval lsat-lr,exam,hails/agieval-lsat-lr,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+AGIEval lsat-rc,exam,hails/agieval-lsat-rc,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+AGIEval math,exam,hails/agieval-math,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+AGIEval sat-en,exam,hails/agieval-sat-en,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see AGIEval,,no,ok,hf,
+Humanity's Last Exam,exam,cais/hle,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; OpenThoughts; frontier reports,,auto,ok,hf,
+SuperGPQA,exam,m-a-p/SuperGPQA,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3; Kimi K2; OLMo3; OELLM-pure,,no,ok,hf,only split = eval set
+SimpleQA,factuality,basicv8vc/SimpleQA,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure; frontier reports,https://github.com/openai/simple-evals,no,ok,hf,"also OpenEvals/SimpleQA, lighteval/SimpleQA"
+IFBench,instruction,allenai/IFBench_test,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; Tulu3; Qwen3.5; Nemotron; OLMES,,no,ok,hf,
+TruthfulQA,knowledge,truthfulqa/truthful_qa,multiple_choice;generation,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLLB-v1; lighteval; Llama; Gemma; safety suites,,no,ok,hf,only the Valencian / Galician / Norwegian translations were indexed
+LongBench v2,long-context,zai-org/LongBench-v2,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek; GLM; Kimi K2; MiniMax; OELLM-pure,,no,ok,hf,only split = eval set
+RULER,long-context,,,,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemini; Llama4; Qwen3; GLM; Nemotron,https://github.com/NVIDIA/RULER,,not on HF,skip: no public data / GitHub only,synthetic generator; nothing fixed to index
+AIME 2026 (math-ai),math,math-ai/aime26,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Qwen3.5,,no,ok,hf,
+AIME 2026 (MathArena),math,MathArena/aime_2026,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; MathArena,https://matharena.ai,no,ok,hf,
+GSM-Symbolic,math,apple/GSM-Symbolic,main;p1;p2,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,
+HMMT Feb 2025,math,MathArena/hmmt_feb_2025,,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; Qwen3.5; DeepSeek-V3.1/3.2; Phi-4-reasoning,https://matharena.ai,no,ok,hf,
+OlympiadBench,math,Hothan/OlympiadBench,all text configs,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval; Phi-4-reasoning; Qwen,,no,ok,hf,only split = eval set
+EU20 ARC,multilingual,Eurolingua/arcx,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,hf,
+EU20 HellaSwag,multilingual,Eurolingua/hellaswagx,all,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,hf,
+EU20 MMLU (openGPT-X),multilingual,Eurolingua/mmlux,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Teuken; EuroLLM; Salamandra,,no,ok,hf,
+EU20 TruthfulQA,multilingual,Eurolingua/truthfulqax,all,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,hf,
+Okapi ARC-Challenge,multilingual,jon-tow/okapi_arc_challenge,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,hf,
+Okapi MMLU (26 langs),multilingual,jon-tow/okapi_mmlu,all,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Occiglot; EuroLLM; Salamandra,https://github.com/nlp-uoregon/mlmm-evaluation,no,ok,hf,
+Okapi TruthfulQA,multilingual,jon-tow/okapi_truthfulqa,all,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),same,,no,ok,hf,
+WMT24++,multilingual,google/wmt24pp,all,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; EuroLLM; Qwen3.5; Nemotron,,no,ok,hf,only split = eval set
+DROP,reading,EleutherAI/drop,,validation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3; OELLM-pure; Apertus; Evalchemy; Llama; DeepSeek,,no,ok,hf,orig. ucinlp/drop
+BBH (BIG-Bench Hard),reasoning,lukaemon/bbh,all 27,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLLB-v2; Tulu3; OLMES; OLMo3; OELLM-pure; Apertus; lighteval,,no,ok,hf,mirror SaylorTwift/bbh
+MuSR,reasoning,TAUR-Lab/MuSR,,murder_mysteries;object_placements;team_allocation,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLLB-v2; EuroLLM,,no,ok,hf,
+HarmBench,safety,walledai/HarmBench,standard;contextual;copyright,train,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma; Tulu3; OLMES; OLMo3; OELLM-pure; Apertus,https://github.com/centerforaisafety/HarmBench,auto,ok,hf,
+ToxiGen,safety,toxigen/toxigen-data,annotated,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma; Phi-4; OELLM-pure; Apertus,,no,ok,hf,
+XSTest,safety,walledai/XSTest,,test,high,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma; Tulu3; OLMo3,,auto,ok,hf,mirror natolambert/xstest-v2-copy
+Aider polyglot,agentic,,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Claude; DeepSeek; Qwen-Coder; gpt-oss,https://github.com/Aider-AI/polyglot-benchmark,,not on HF,skip: no public data / GitHub only,Exercism problems; GitHub only
+BrowseComp,agentic,,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),frontier labs,https://github.com/openai/simple-evals,,not on HF,url,encrypted CSV
+GAIA,agentic,gaia-benchmark/GAIA,,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MiniMax-M2; agent evals,,auto,ok,hf,
+SWE-bench Lite,agentic,princeton-nlp/SWE-bench_Lite,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),agentic coding,,no,ok,hf,
+SWE-bench Multilingual,agentic,SWE-bench/SWE-bench_Multilingual,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek-V3.1/3.2; MiniMax-M2,,no,ok,hf,
+LiveBench,chat,livebench/reasoning,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5/3; Kimi K2; Phi-4,https://github.com/LiveBench/LiveBench,no,ok,hf,"also livebench/{math,coding,data_analysis,language,instruction_following}"
+LiveBench coding,chat,livebench/coding,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,hf,
+LiveBench data_analysis,chat,livebench/data_analysis,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,hf,
+LiveBench instruction_following,chat,livebench/instruction_following,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,hf,
+LiveBench language,chat,livebench/language,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,hf,
+LiveBench math,chat,livebench/math,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see LiveBench,,no,ok,hf,
+m-ArenaHard,chat,CohereLabs/m-ArenaHard,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+m-ArenaHard v2.0,chat,CohereLabs/m-ArenaHard-v2.0,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,hf,
+MultiChallenge,chat,ScaleAI/MultiChallenge,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; MiniMax; Nemotron; Qwen3.5,,no,ok,hf,
+BigCodeBench-Hard,code,bigcode/bigcodebench-hard,,v0.1.4,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,
+CodeElo,code,Qwen/CodeElo,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts; QwQ; DeepSeek-R1,,no,ok,hf,
+IOI,code,open-r1/ioi,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts,,no,ok,hf,
+LBPP,code,CohereLabs/lbpp,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,OELLM uses ellamind/lbpp
+LBPP (ellamind),code,ellamind/lbpp,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+SciCode,code,SciCode1/SciCode,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM-4.5; Nemotron; DeepSeek; Artificial Analysis,,no,ok,hf,
+MedQA (OELLM mirror),domain,davidheineman/medqa-en,,test;dev,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; OLMES,,no,ok,hf,
+"MedQA (USMLE, English)",domain,GBaker/MedQA-USMLE-4-options,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,OELLM uses davidheineman/medqa-en
+FRAMES,factuality,google/frames-benchmark,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek; Kimi K2,,no,ok,hf,
+PopQA,factuality,akariasai/PopQA,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3,,no,ok,hf,
+Multi-IF,instruction,facebook/Multi-IF,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; Qwen3; OELLM-pure,,no,ok,hf,
+MMLU-CF,knowledge,microsoft/MMLU-CF,,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SmolLM3; OELLM-pure (disabled),,no,ok,hf,OELLM uses edinburgh-dawg/mmlu-cf
+HELMET,long-context,princeton-nlp/HELMET,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; OLMES; OELLM-pure (disabled),,no,ok,hf,
+LongBench (v1),long-context,zai-org/LongBench,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM; Qwen; Apertus (hotpotqa),,no,ok,hf,formerly THUDM/LongBench
+OpenAI MRCR,long-context,openai/mrcr,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemini; OpenAI; Gemma3; MiniMax-M1; OLMES,,no,ok,hf,
+ZeroSCROLLS,long-context,tau/zero_scrolls,all,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,
+AIMO validation AIME,math,project-numina/aimo-validation-aime,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,hf,renamed from AI-MO/aimo-validation-aime
+AIMO validation AMC,math,project-numina/aimo-validation-amc,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenThoughts,,no,ok,hf,renamed from AI-MO/aimo-validation-amc
+BRUMO 2025,math,MathArena/brumo_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,hf,
+CMIMC 2025,math,MathArena/cmimc_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,hf,
+DeepMind Mathematics,math,deepmind/math_dataset,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMo3; OELLM-pure,https://storage.googleapis.com/mathematics-dataset/mathematics_dataset-v1.0.tar.gz,no,ok,url,large synthetic test set; script-based on HF: test sets taken from the tarball (fetch_extra.fetch_deepmind_math)
+GSM-Plus,math,qintongli/GSM-Plus,,test;testmini,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SmolLM3; lighteval; OLMES; OLMo3,,no,ok,hf,
+HMMT Feb 2026,math,MathArena/hmmt_feb_2026,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,hf,
+HMMT Nov 2025,math,MathArena/hmmt_nov_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MathArena,,no,ok,hf,
+IMO 2025,math,MathArena/imo_2025,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-V3.2; Qwen3.5,,no,ok,hf,
+mAIME 2025,math,LumiOpen/mAIME2025,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,AIME translated
+mAIME 2026,math,LumiOpen/mAIME2026,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+Omni-MATH,math,KbsdJames/Omni-MATH,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),reasoning-model reports,,no,ok,hf,
+TheoremQA,math,TIGER-Lab/TheoremQA,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5,,no,ok,hf,
+MLQA,multilingual,facebook/mlqa,all,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),EuroLLM; XLM-R,,no,ok,hf,
+TyDiQA,multilingual,google-research-datasets/tydiqa,secondary_task,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama4; PaLM,,no,ok,hf,
+FinBench v2 ARC-C,multilingual-eu,TurkuNLP/finbenchv2-arc-c-fi-ht,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,+ belebele / goldenswag / truthfulqax / scandisent / sib-200 / fbv1
+FinBench v2 GoldenSwag,multilingual-eu,TurkuNLP/finbenchv2-goldenswag-fi-ht,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+FinBench v2 TruthfulQA-X,multilingual-eu,TurkuNLP/finbenchv2-opengpt-x_truthfulqax-fi-mt,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+GalicianBench,multilingual-eu,proxectonos/belebele_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (lm-eval galician_bench),,no,ok,hf,"also proxectonos/{galcola,mgsm_gl,openbookqa_gl,parafrases_gl,PAWS-gl,summarization_gl,truthfulqa_gl,xnli_gl,xstorycloze_gl}"
+GalicianBench mgsm_gl,multilingual-eu,proxectonos/mgsm_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench openbookqa_gl,multilingual-eu,proxectonos/openbookqa_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench truthfulqa_gl,multilingual-eu,proxectonos/truthfulqa_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench xnli_gl,multilingual-eu,proxectonos/xnli_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench xstorycloze_gl,multilingual-eu,proxectonos/xstorycloze_gl,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+NorEval NorCommonsenseQA,multilingual-eu,ltg/norcommonsenseqa,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorOpenBookQA,multilingual-eu,ltg/noropenbookqa,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorQuAD,multilingual-eu,ltg/norquad,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorTruthfulQA gen,multilingual-eu,ltg/nortruthfulqa_gen,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorTruthfulQA MC,multilingual-eu,ltg/nortruthfulqa_mc,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NRK quiz,multilingual-eu,ltg/nrk_quiz_qa,nb;nn,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval; OELLM-pure,,no,ok,hf,"NorEval suite: also ltg/{noropenbookqa,norcommonsenseqa,nortruthfulqa_mc,nortruthfulqa_gen,norquad,ask-gec,norec_*,norrewrite-instruct,norsummarize-instruct}, hcfa/ncb, SamiaT/NorSumm"
+C-Eval,multilingual-other,ceval/ceval-exam,all,val,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen; Yi; DeepSeek; GLM,,no,ok,hf,
+CMMLU,multilingual-other,lmlmcat/cmmlu,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen; DeepSeek; Yi,,no,ok,hf,renamed from haonan-li/cmmlu
+ANLI,nli,facebook/anli,,test_r1;test_r2;test_r3,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NeMo-Curator; Llama; GPT-3,,no,ok,hf,
+Paloma,perplexity,allenai/paloma,all,val;test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Dolma (removed from pretraining); OLMo,,auto,ok,"skip: perplexity corpus (web / wiki samples), not benchmark items",if we report Paloma perplexities
+WikiText-103,perplexity,Salesforce/wikitext,wikitext-103-raw-v1,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),classic LM evals,,no,ok,"skip: Wikipedia corpus, not benchmark items",test pages are Wikipedia (common in web data by design)
+SQuAD v1.1,reading,rajpurkar/squad,,validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; DCLM; OELLM-pure (disabled),,no,ok,hf,we index squad_v2 only
+BBEH (BIG-Bench Extra Hard),reasoning,BBEH/bbeh,,,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3; OLMo3,https://github.com/google-deepmind/bbeh,no,ok,hf,OLMo3 uses hubert233/BigBenchExtraHard
+LogiQA,reasoning,lucasmccabe/logiqa,,test;validation,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure; DCLM; Apertus,,no,ok,hf,
+ZebraLogic,reasoning,allenai/ZebraLogicBench,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3; Kimi K2; MiniMax-M1; OLMES; OLMo3,https://github.com/WildEval/ZeroEval,no,ok,hf,private variant gated
+BBQ,safety,heegyu/bbq,,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Mixtral; Apertus; gpt-oss; OELLM-pure; DCLM,,no,ok,hf,"mirrors oskarvanderwal/bbq, lighteval/bbq_helm"
+Do-Not-Answer,safety,LibrAI/do-not-answer,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma; OLMo; OELLM-pure,,no,ok,hf,
+JailbreakBench,safety,JailbreakBench/JBB-Behaviors,behaviors,harmful;benign,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama4; Gemma,,no,ok,hf,
+RealToxicityPrompts,safety,allenai/real-toxicity-prompts,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; classic LM safety,,no,ok,hf,
+StrongREJECT,safety,AlignmentResearch/StrongREJECT,,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),red-teaming; gpt-oss,https://github.com/alexandrasouly/strongreject,no,ok,hf,
+WildGuardTest,safety,allenai/wildguardmix,wildguardtest,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3,,auto,ok,hf,
+WildJailbreak (eval),safety,allenai/wildjailbreak,eval,train,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES; OLMo3,,auto,ok,hf,
+WMDP,safety,cais/wmdp,all,test,medium,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus; unlearning,,no,ok,hf,
+API-Bank,agentic,liminghao1630/API-Bank,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama3.1,,no,ok,hf,
+Multi-SWE-bench,agentic,ByteDance-Seed/Multi-SWE-bench,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; MiniMax-M2,,no,ok,hf,
+Toolathlon,agentic,hkust-nlp/Toolathlon,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3.5; DeepSeek-V3.2,,auto,ok,hf,
+Aya evaluation suite,chat,CohereLabs/aya_evaluation_suite,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+Chatbot Arena conversations,chat,lmsys/chatbot_arena_conversations,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Mixtral; Gemma,,auto,ok,skip: real user conversations (generic text),
+ComparIA FR,chat,ministere-culture/comparia-conversations,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,auto,ok,skip: real user conversations (generic text),
+Creative Writing v3 / WritingBench / AlignBench,chat,,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3,https://github.com/EQ-bench/creative-writing-bench,,not on HF,skip: no public data / GitHub only,GitHub only
+HREF,chat,allenai/href,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3,,no,ok,hf,
+JudgeBench,chat,ScalerLab/JudgeBench,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama-Nemotron,,no,ok,hf,
+LMArena human preference 55k/100k/140k,chat,lmarena-ai/arena-human-preference-140k,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (disabled),,no,ok,skip: real user conversations (generic text),real user prompts; huge -> would remove generic text
+m-ArenaHard v2.1,chat,CohereLabs/m-ArenaHard-v2.1,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+mDolly MT,chat,CohereLabs/dolly-machine-translated-v2,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+Menlo,chat,facebook/menlo,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+MT-Eval,chat,wckwan/MT-Eval,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES,,no,ok,hf,
+SysBench,chat,PKU-Baichuan-MLSystemLab/SysBench,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM-4.5,,no,ok,hf,
+FullStackBench,code,ByteDance/FullStackBench,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),MiniMax-M1,,no,ok,hf,
+HumanEval infilling,code,loubnabnl/humaneval_infilling,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,
+HumanEval Pro / MBPP Pro,code,CodeEval-Pro/humaneval-pro,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,also CodeEval-Pro/mbpp-pro
+MBPP Pro,code,CodeEval-Pro/mbpp-pro,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,
+Multilingual MBPP,code,allenai/multilingual_mbpp,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,
+OJBench,code,He-Ren/OJBench_testdata,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; Qwen3.5,https://github.com/MoonshotAI/OJBench,no,ok,hf,
+RepoBench,code,tianyang/repobench_python_v1.1,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; Evalchemy,,no,ok,skip: repository code contexts (GitHub code),also _java_v1.1
+Spider,code,xlangai/spider,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),text-to-SQL,,no,ok,hf,
+SWAG,commonsense,allenai/swag,regular,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval,,no,ok,hf,
+LAB-Bench,domain,futurehouse/lab-bench,all,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,includes LitQA2
+Chinese SimpleQA,factuality,OpenStellarTeam/Chinese-SimpleQA,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek; Kimi K2; GLM-4.5,,no,ok,hf,
+HaluEval,factuality,pminervini/HaluEval,all,data,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),hallucination evals,https://github.com/RUCAIBox/HaluEval,no,ok,hf,
+WebQuestions,factuality,stanfordnlp/web_questions,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NeMo-Curator,,no,ok,hf,
+IFBench multi-turn,instruction,allenai/IFBench_multi-turn,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,
+AA-LCR,long-context,ArtificialAnalysis/AA-LCR,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Artificial Analysis,,no,ok,hf,
+InfiniteBench,long-context,xinrongzhang2022/InfiniteBench,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM; Qwen; Llama3.1,,no,ok,hf,
+OneRuler,long-context,starbix/oneruler,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,multilingual
+SCROLLS,long-context,tau/scrolls,all,validation;test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lm-eval,,no,ok,hf,
+ASDiv,math,EleutherAI/asdiv,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval; MegaMath,,no,ok,hf,
+CMath,math,weitianwen/cmath,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-V3; Kimi K2,,no,ok,hf,
+FrontierMath,math,,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OpenAI; Epoch AI,https://epoch.ai/frontiermath,,not on HF,skip: no public data / GitHub only,private; 12 public samples only
+MathOdyssey,math,MathOdyssey/MathOdyssey,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),reasoning comparisons,,no,ok,hf,
+MiniF2F,math,project-numina/minif2f_test,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Nemotron 3 Nano,,no,ok,hf,formal proofs; renamed from AI-MO/minif2f_test
+OMEGA,math,allenai/omega-explorative,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,"also allenai/omega-compositional, -transformative"
+OMEGA compositional,math,allenai/omega-compositional,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,
+OMEGA transformative,math,allenai/omega-transformative,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,
+AfriMMLU / AfriMGSM,multilingual,masakhane/afrimmlu,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Masakhane; Aya,,no,ok,hf,also masakhane/afrimgsm
+BLEnD,multilingual,uilab/BLEnD,all,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus; Qwen2.5,,no,ok,hf,renamed from nayeon212/BLEnD
+CaLMQA,multilingual,shanearora/CaLMQA,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,hf,
+CulturalBench,multilingual,kellycyy/CulturalBench,CulturalBench-Easy;CulturalBench-Hard,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,hf,
+M3Exam,multilingual,chiayewken/m3exam,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),SeaLLM,,no,ok,hf,
+P-MMEval,multilingual,Qwen/P-MMEval,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,hf,
+XOR-TyDi QA,multilingual,akariasai/xor_tydi_qa,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Gemma3,,no,ok,hf,
+BasqueBench XNLI-eu,multilingual-eu,HiTZ/xnli-eu,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure (basque_bench),,no,ok,hf,
+BasqueGLUE QNLI,multilingual-eu,orai-nlp/basqueGLUE,qnli,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+FinBench v2 belebele,multilingual-eu,TurkuNLP/finbenchv2-belebele-fi-og,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+FinBench v2 fbv1,multilingual-eu,TurkuNLP/finbenchv2-fbv1-stripped-fi-ht,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+FinBench v2 scandisent,multilingual-eu,TurkuNLP/finbenchv2-scandisent-fi-mini,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+FinBench v2 sib-200,multilingual-eu,TurkuNLP/finbenchv2-sib-200-fi-og,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+GalicianBench galcola,multilingual-eu,proxectonos/galcola,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench parafrases_gl,multilingual-eu,proxectonos/parafrases_gl,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench PAWS-gl,multilingual-eu,proxectonos/PAWS-gl,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+GalicianBench summarization_gl,multilingual-eu,proxectonos/summarization_gl,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),see GalicianBench,,no,ok,hf,
+NorEval ASK-GEC,multilingual-eu,ltg/ask-gec,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NCB,multilingual-eu,hcfa/ncb,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NoReC document,multilingual-eu,ltg/norec_document,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NoReC sentence,multilingual-eu,ltg/norec_sentence,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorRewrite-instruct,multilingual-eu,ltg/norrewrite-instruct,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorSumm,multilingual-eu,SamiaT/NorSumm,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+NorEval NorSummarize-instruct,multilingual-eu,ltg/norsummarize-instruct,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),NorEval,,no,ok,hf,
+ArabicMMLU,multilingual-other,MBZUAI/ArabicMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Jais,,no,ok,hf,
+"CLUE (WSC2020, C3, CMRC2018)",multilingual-other,clue/clue,cluewsc2020;c3;cmrc2018,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),DeepSeek-V3; Qwen; GLM,,no,ok,hf,
+IndoMMLU,multilingual-other,indolem/IndoMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5; SEA-LION,,no,ok,hf,
+JMMLU,multilingual-other,nlp-waseda/JMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5,,no,ok,hf,
+KMMLU,multilingual-other,HAERAE-HUB/KMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5; EXAONE,,no,ok,hf,
+TurkishMMLU,multilingual-other,AYueksel/TurkishMMLU,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen2.5,,no,ok,hf,
+GLUE,nli,nyu-mll/glue,all,validation;test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Dolma (detection),,no,ok,hf,
+SNLI,nli,stanfordnlp/snli,,test;validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Dolma (detection),,no,ok,hf,
+LAMBADA (standard),perplexity,cimec/lambada,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),classic LM evals,,no,ok,hf,lambada_openai indexed
+CosmosQA,reading,allenai/cosmos_qa,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES,,no,ok,hf,
+Qasper yes/no,reading,allenai/qasper-yesno,,train;validation;test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,
+QuAC,reading,allenai/quac,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama3.1; Mistral; NeMo-Curator,,no,ok,hf,mirror lighteval/quac_helm
+ACPBench,reasoning,ibm-research/acp_bench,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Apertus,,no,ok,hf,
+AutoLogi,reasoning,qzhu/AutoLogi,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen3; Kimi K2,,no,ok,hf,
+Basic Skills,reasoning,allenai/basic-skills,all,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,OELLM uses ellamind/basic-skills
+Basic Skills (ellamind),reasoning,ellamind/basic-skills,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure,,no,ok,hf,
+SimpleToM,reasoning,allenai/SimpleToM,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,
+Aya red-teaming,safety,CohereLabs/aya_redteaming,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,hf,
+BeaverTails,safety,PKU-Alignment/BeaverTails,,30k_test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),RLHF safety,,no,ok,hf,
+BOLD,safety,AmazonScience/bold,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Mixtral,,no,ok,hf,
+CatQA,safety,declare-lab/CategoricalHarmfulQA,,en,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Llama; Gemma,,no,ok,hf,
+Do-Anything-Now,safety,allenai/tulu-3-do-anything-now-eval,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES,,no,ok,hf,
+MultiJail,safety,DAMO-NLP-SG/MultiJail,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; Apertus,,no,ok,hf,
+PolygloToxicityPrompts,safety,ToxicityPrompts/PolygloToxicityPrompts,all,full,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Teuken; Apertus,,no,ok,hf,
+SafetyBench,safety,thu-coai/SafetyBench,test,en,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),GLM-4.5,,no,ok,hf,
+SALAD-Bench,safety,OpenSafetyLab/Salad-Data,base_set,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Qwen; GLM; InternLM,,no,ok,hf,
+SimpleSafetyTests,safety,Bertievidgen/SimpleSafetyTests,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),safety audits,,no,ok,hf,
+TrustLLM jailbreak trigger,safety,allenai/tulu-3-trustllm-jailbreaktrigger-eval,,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Tulu3; OLMES,,no,ok,hf,
+Winogender,safety,oskarvanderwal/winogender,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OELLM-pure; DCLM,,no,ok,hf,
