@@ -457,7 +457,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         choices=(0, 1),
         default=None,
-        help="token shift (default dllm_token_shift, else 0)",
+        help="token shift (default dllm_token_shift; bd3 fails without one of the two)",
     )
     parser.add_argument(
         "--mask-token-id",

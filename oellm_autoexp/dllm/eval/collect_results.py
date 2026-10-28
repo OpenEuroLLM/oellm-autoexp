@@ -7,7 +7,8 @@ Metrics per run (see ``.claude/dllm/ABLATIONS.md``):
 * M2 static and M2 dyn@0.9 are the field ``accuracy`` (percent) of
   ``<run>.gsm8k_static.json`` and ``<run>.gsm8k_dynamic.json``.
 * M3 is the field ``mean_tpf_decode`` of ``<run>.gsm8k_dynamic.json``.
-* M4 is the median ``tokens/s/GPU`` of the ``bd throughput`` lines of the training log.
+* M4 is the median ``tokens/s/GPU`` of the ``bd throughput`` lines of the training log. A run
+  without a matching log keeps the M4 that the Tier 1 table of RESULTS.md already records.
 
 Run from the repository root::
 
@@ -622,6 +623,18 @@ def replace_table(markdown: str, heading: str, table: str) -> str:
         ValueError: If the heading does not occur exactly once, or no table follows it.
     """
     lines = markdown.splitlines(keepends=True)
+    first, last = _table_span(lines, heading)
+    new_lines = [row + "\n" for row in table.split("\n")]
+    return "".join(lines[:first] + new_lines + lines[last:])
+
+
+def _table_span(lines: Sequence[str], heading: str) -> tuple[int, int]:
+    """Return the line range ``[first, last)`` of the markdown table under one
+    heading (see :func:`replace_table`).
+
+    Raises:
+        ValueError: If the heading does not occur exactly once, or no table follows it.
+    """
     pattern = re.compile(re.escape(heading) + r"(?=\s|$)")
     found = [index for index, line in enumerate(lines) if pattern.match(line.rstrip("\r\n"))]
     if len(found) != 1:
@@ -640,8 +653,42 @@ def replace_table(markdown: str, heading: str, table: str) -> str:
     last = first
     while last < end and lines[last].lstrip().startswith("|"):
         last += 1
-    new_lines = [row + "\n" for row in table.split("\n")]
-    return "".join(lines[:first] + new_lines + lines[last:])
+    return first, last
+
+
+def recorded_m4(markdown: str) -> dict[str, float]:
+    """Return the M4 values recorded in the Tier 1 table of a results file, by
+    run.
+
+    Args:
+        markdown: Full text of the results file.
+
+    Returns:
+        Maps each run of the table to its M4. Rows whose M4 cell is "-" or not a number are
+        left out, and so is everything when the file has no Tier 1 table or no M4 column.
+    """
+    lines = markdown.splitlines()
+    try:
+        first, last = _table_span(lines, "## Tier 1")
+    except ValueError:
+        return {}
+    rows = [
+        [cell.strip() for cell in line.strip().strip("|").split("|")] for line in lines[first:last]
+    ]
+    if "M4" not in rows[0]:
+        return {}
+    column = rows[0].index("M4")
+    recorded: dict[str, float] = {}
+    for cells in rows[2:]:
+        if len(cells) <= column:
+            continue
+        try:
+            value = float(cells[column])
+        except ValueError:
+            continue
+        if math.isfinite(value):
+            recorded[cells[0]] = value
+    return recorded
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -661,7 +708,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         The exit status, 0 on success.
 
     Raises:
-        ValueError: If more than one Tier 1 base run has the picked LR.
+        ValueError: If more than one Tier 1 run has the R00 configuration.
     """
     parser = argparse.ArgumentParser(description="Build the RESULTS.md tier tables.")
     parser.add_argument(
@@ -708,6 +755,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(f"warning: {message}", file=sys.stderr)
     throughput = collect_throughput(args.logs_glob, runs)
+    # A run whose log is gone keeps the M4 that RESULTS.md already records, so --write does not
+    # replace it with "-" (the P7 guard above only covers the case where no log matches at all).
+    if args.results_md.is_file():
+        recorded = recorded_m4(args.results_md.read_text(encoding="utf-8"))
+        for run in runs:
+            if throughput[run] is None and run in recorded:
+                throughput[run] = recorded[run]
+                print(f"kept the recorded M4 of {run}: no training log matches it", file=sys.stderr)
     rows = [
         {**parse_run_name(run), "run": run, **eval_results[run], "m4": throughput[run]}
         for run in runs

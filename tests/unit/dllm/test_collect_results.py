@@ -392,6 +392,43 @@ def test_main_write_refuses_an_empty_collection(tmp_path: Path) -> None:
     assert results_md.read_text(encoding="utf-8") == RESULTS_MD
 
 
+def test_main_write_keeps_the_recorded_m4_of_a_run_without_a_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run whose log is gone keeps its M4, while the other runs still have
+    logs."""
+    eval_dir = _write_eval_dir(tmp_path)
+    logs = _write_logs(tmp_path)
+    b4_log = logs / f"{BD3_B4_NAME}_12346.out"
+    b4_log.write_text(_throughput_log([100.0, 200.0, 350.0, 350.0, 350.0]), encoding="utf-8")
+    results_md = tmp_path / "RESULTS.md"
+    results_md.write_text(RESULTS_MD, encoding="utf-8")
+    argv = [
+        "--eval-dir",
+        str(eval_dir),
+        "--logs-glob",
+        str(logs / "*.out"),
+        "--results-md",
+        str(results_md),
+        "--write",
+    ]
+    assert cr.main(argv) == 0
+    written = results_md.read_text(encoding="utf-8")
+    assert f"| {BD3_B4_NAME} | B = 4 | 1.2030 | +0.25 | 31.0 | 30.0 | 2.50 | 350 | tie |" in written
+    capsys.readouterr()
+
+    b4_log.unlink()
+    assert cr.main(argv) == 0
+    assert results_md.read_text(encoding="utf-8") == written
+    assert f"kept the recorded M4 of {BD3_B4_NAME}" in capsys.readouterr().err
+
+
+def test_recorded_m4_skips_missing_values_and_files_without_a_tier1_table() -> None:
+    table = "\n".join(["## Tier 1", HEADER_TIER1, SEP_TIER1, *EXPECTED_TIER1])
+    assert cr.recorded_m4(table) == {BD3_NAME: 400.0}
+    assert cr.recorded_m4("# Results\n") == {}
+
+
 def test_tier1_table_reports_dm1_ties_and_missing_values() -> None:
     rows = [
         {
