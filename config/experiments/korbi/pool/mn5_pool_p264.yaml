@@ -1,0 +1,47 @@
+# @package _global_
+# MareNostrum 5 pool, 264-node hosts on cns144 / acc_xehpc (user 2026-10-28: "maybe we are lucky", it
+# could massively accelerate the training): two 128-node main runs packed side by side, or one
+# 256-node run, with 8 spare nodes for bad ones (cns144 47998967 started with exactly 128 and one
+# dead-GPU node). One host submitted at once so it ages in the queue (min_hosts 1, no successor of its
+# own); the monitor stays up without work (keep_monitor). A main run moves here by `pool_ctl cancel`
+# in its pool and an enqueue of the same job.name here (the singleton guard spans pools).
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --config-name experiments/korbi/pool/mn5_pool_p264
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: mn5_pool_p264
+  base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
+  pool_host:
+    max_hosts_running: 1
+    max_own_hosts: 1
+    max_runs_per_host: 6
+    keep_pending: 0
+    min_hosts: 1
+    handover: false
+    idle_exit_s: 3600
+    monitor_dead_exit_s: 3600
+    min_remaining_s: 3600
+    stop_grace_s: 1800
+    preempt_grace_s: 2700
+    max_attempts: 20
+    host_stale_s: 1800
+    poll_s: 30
+    keep_monitor: true
+
+slurm:
+  sbatch:
+    nodes: 264
+    time: "3-00:00:00"
+    qos: acc_xehpc
+    account: cns144
+    signal: "B:USR1@2700"
+    no_kill: true
+
+index: 0
+stage: ""

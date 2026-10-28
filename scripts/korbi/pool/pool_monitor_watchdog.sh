@@ -17,7 +17,7 @@ running() { # running <session dir>: a monitor_autoexp.py process for it
   return 1
 }
 while true; do
-  for name in p129 p132; do
+  for name in p129 p132 p264; do
     alive=$POOLS/mn5_pool_$name/monitor.alive
     session=$R/pool_state/pool_mn5-pool-$name
     age=$(( $(date +%s) - $(stat -c %Y "$alive" 2>/dev/null || echo 0) ))
