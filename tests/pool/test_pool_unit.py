@@ -295,6 +295,31 @@ def test_work_creates_and_submits_a_host_then_assigns(env):
     assert env.rec("job_a").runtime.final_state == "finished"
 
 
+def test_a_squeue_timeout_keeps_states_and_still_starts_the_run(env, monkeypatch):
+    # JUPITER 2026-10-28: squeue took > 120 s for ~20 min. The poll aborted, the pool tick
+    # stopped, and a host that started meanwhile got no run and released itself.
+    import subprocess
+
+    env.add_run("job_a")
+    env.poll()
+    env.poll()  # host submitted
+    env.poll()  # host seen PENDING
+    rid = env.rec("job_a").runtime.runtime_job_id
+    host = env.hosts()[0]
+    hid = env.host_up(host)  # the allocation starts and its supervisor comes up
+
+    def slow():
+        raise subprocess.TimeoutExpired("squeue", 120)
+
+    monkeypatch.setattr(env.slurm, "squeue", slow)
+    before = time.time()
+    env.poll()  # must not raise
+    assert env.rec(host.job_id).runtime.last_status == "PENDING"  # no invented transition
+    assert env.rec("job_a").runtime.final_state is None
+    assert env.assigned(hid) == [rid]  # started on the supervisor's own heartbeat
+    assert env.layout.monitor_alive.stat().st_mtime >= before - 1  # the pool tick went on
+
+
 def test_no_work_no_host_and_min_hosts(env, tmp_path):
     env.poll(3)
     assert env.hosts() == []

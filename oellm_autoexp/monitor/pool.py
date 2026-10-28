@@ -770,8 +770,11 @@ class HostView:
             return 0.0
 
     def live(self, stale_s: float) -> bool:
+        # A supervisor only runs inside a started allocation, so its fresh heartbeat proves
+        # the host runs even while SLURM's view still says PENDING (a poll behind, or the
+        # monitor kept last known states because squeue timed out).
         return (
-            self.status == "RUNNING"
+            self.status in ("RUNNING", "PENDING", "CONFIGURING")
             and bool(self.info)
             and not self.exited
             and self.alive_age is not None

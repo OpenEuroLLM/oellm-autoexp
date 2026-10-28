@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import time
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
@@ -241,7 +242,21 @@ class MonitorLoop:
         # Query both clients and merge statuses
         statuses: dict[str, str] = {}
         if self._slurm_client:
-            statuses.update(self._slurm_client.squeue())
+            try:
+                statuses.update(self._slurm_client.squeue())
+            except subprocess.TimeoutExpired as exc:
+                # A slow controller (JUPITER 2026-10-28, squeue > 120 s for ~20 min) must not
+                # cost the poll: aborting it skipped the pool tick, so a host that started
+                # meanwhile was never given its run and released itself as "monitor dead".
+                # Keep every job's last known state (no transition this poll) and go on.
+                LOGGER.warning("SLURM query timed out (%s); keeping last known states", exc)
+                statuses.update(
+                    {
+                        r.runtime.runtime_job_id: r.runtime.last_status
+                        for r in self._store.load_all()
+                        if r.runtime.runtime_job_id and r.runtime.last_status
+                    }
+                )
         if self._local_client:
             statuses.update(self._local_client.squeue())
         records = self._store.load_all()
