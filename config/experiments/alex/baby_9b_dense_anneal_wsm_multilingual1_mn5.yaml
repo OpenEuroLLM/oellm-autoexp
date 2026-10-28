@@ -1,0 +1,121 @@
+# @package _global_
+
+# 9B dense Qwen3-like model: 100B-token anneal on the multilingual1 mix, MareNostrum 5.
+# MN5 port of baby_9b_dense_anneal100b_multilingual1_lumi.yaml; changes are marked "# MN5:".
+
+defaults:
+  - /backend: megatron_torchrun           # MN5: was megatron (1 task per node, torchrun starts the 4 GPU processes)
+  - /container: marenostrum_nemo260801    # MN5: was lumi
+  - /slurm: marenostrum                   # MN5: was lumi
+  - /job: auto_cancel
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_9b_v019   # MN5: v0.19 argument names (layernorm_epsilon)
+  - /backend/megatron/baby/data: oellm_256k_multilingual1_mn5_train   # MN5: was oellm_256k_multilingual1_lumi_train
+  # - /experiments/baby/lumi_laif_runtime  # MN5: LUMI only
+  - _self_
+
+job:
+  name: "baby_9b_dense_anneal100b_multilingual1"
+  base_output_dir: /gpfs/scratch/ehpc533/users/alekshve/oellm_output/runs/${job.name}   # MN5: was /scratch/project_465002891/prelude-mid/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+backend:
+  megatron:
+    wandb_project: baby_9b_dense_anneal
+    wandb_entity: openeurollm-project    # MN5: was ltg; compute nodes are offline, sync the run later
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    data_cache_path: /gpfs/scratch/ehpc533/users/alekshve/oellm_output/data_cache   # MN5: was /scratch/project_465002891/prelude-mid/cache
+
+    # MN5: the LUMI/ROCm fusion overrides are not needed on NVIDIA (model defaults apply)
+    # gradient_accumulation_fusion: false
+    # bias_dropout_fusion: false
+    # masked_softmax_fusion: false
+    # apply_rope_fusion: false
+    # tp_comm_overlap: false               # MN5: start safe; true needs UB_SKIPMC=1 (see irene/*_tp_sp.yaml)
+
+    # Padded vocab must match the converted checkpoint: tokenizer len 262145
+    # -> multiple 32*TP4 = 128 -> 262272 rows (= HF checkpoint).
+    make_vocab_size_divisible_by: 128
+
+    # MN5: kept from LUMI (mbs 4 crashed there); with DP64 this is 16 accum steps at GBS 2048.
+    # H100 64GB with recompute should fit mbs 4 as well -- try it for throughput.
+    micro_batch_size: 2
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # exit ~30 min before the 72h walltime
+    exit_duration_in_mins: 4290
+
+    # Annealing: branch off the 10T run at iter 953312 (7.997T tokens) and decay.
+    # MN5: the converted checkpoint is saved as iteration 0 (no optimizer/scheduler
+    # state), so all iteration counts are relative to the anneal window and data
+    # sampling starts at the beginning of the multilingual1 mix.
+    # Short re-warmup because Adam moments start cold.
+    override_opt_param_scheduler: true
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_warmup_iters: 150        # short re-warmup for cold optimizer state (NOT the original 4000)
+    lr: 0.00035
+    train_iters: 35762          # MN5: was 965232 (= 953312 + 11920); 11920 = 300e9 / (seq_len 4096 * gbs 2048)
+    lr_decay_iters: 35762
+
+    save: ${job.base_output_dir}/checkpoints
+    save_interval: 600
+    # First job: start from the converted pre-anneal checkpoint.
+    load: /gpfs/projects/ehpc533/annealing/models/baby_9b_dense_before-annealing/megatron/iter_0953312
+    no_load_optim: true
+    no_load_rng: true
+    exit_on_missing_checkpoint: true
+    # Restarts: resume from our own checkpoints.
+    # load: ${.save}
+    # no_load_optim: false
+    # no_load_rng: false
+
+    # MN5 additions
+    manual_gc: true
+    manual_gc_interval: 137 # as in 32B
+    yarn_correction_range_round_to_int: false   # the schema rejects its null default
+  env:                                           # MN5 additions: NeMo 26.08.01 container environment
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HOME: ${oc.env:HF_HOME}
+    HF_HUB_OFFLINE: "1"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"   # MANDATORY with TP>1
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    PATH: "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"   # NeMo env (TE 2.18), not the system python
+    PYTHONUNBUFFERED: "1"
+    OMP_NUM_THREADS: "1"
+    UB_SKIPMC: "1"
+  torchrun_args:                                 # MN5 addition
+    numa_binding: node
+
+# MN5: the LUMI ROCm image override is dropped; marenostrum_nemo260801 provides the image
+# container:
+#   image: /scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
+
+slurm:
+  # MN5: Slingshot/CXI rendezvous workaround, LUMI only
+  # srun_opts: "--network=disable_rdzv_get "
+  env:
+    HF_HOME: ${oc.env:HF_HOME}           # MN5: was /scratch/project_465002891/prelude-mid/hf_cache/${oc.env:USER}
+    NCCL_DEBUG: info
+    # MN5: LUMI/ROCm-specific settings removed (WANDB_MODE online, NVTE_USE_RMSNORM_TRITON,
+    # TRITON_CACHE_DIR, CC/CXX=gcc/g++); slurm/marenostrum.yaml sets WANDB_MODE offline and gcc-13
+    TRITON_HOME: /gpfs/scratch/ehpc533/users/alekshve/oellm_output/triton_cache
+    TORCHINDUCTOR_CACHE_DIR: "${oc.env:TORCHINDUCTOR_CACHE_DIR,${oc.env:OUTPUT_DIR}/torch_inductor_cache}"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  sbatch:
+    account: ehpc533                     # MN5: was project_465002891
+    qos: acc_ehpc                        # MN5: MN5 selects the queue by QoS (LUMI: partition standard-g)
+    nodes: 1                            # MN5: 256 H100 = TP4 x DP64 (LUMI: 512 GCDs, DP128)
+    time: "00:30:00"
+
+    # slurm signal to process to stop training and checkpoint right before time limit
+    # signal: "TERM@240"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"
