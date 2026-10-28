@@ -61,7 +61,7 @@ def main():
     for key in prefixes:
         if os.path.exists(args.shard + ".idx") and prefixes[key] != args.shard:
             continue
-        if args.shard in key:
+        if args.shard in key or prefixes[key] == args.shard:
             files += [(key, f) for f in glob.glob(os.path.join(args.work, "hits", key, "*.npz"))]
     if not files:
         sys.exit(f"no hit files for shards matching {args.shard!r}")
