@@ -61,7 +61,7 @@ backend:
     lr_wsd_decay_style: minus_sqrt
     lr_warmup_iters: 150        # short re-warmup for cold optimizer state (NOT the original 4000)
     lr: 0.00035
-    train_iters: 11920          # MN5: was 965232 (= 953312 + 11920); 11920 = 100e9 / (seq_len 4096 * gbs 2048)
+    train_iters: 965232          # 965232 (= 953312 + 11920); 11920 = 100e9 / (seq_len 4096 * gbs 2048)
     lr_decay_iters: 11920
     lr_wsd_decay_iters: 11770   # decay fills the window after warmup: 11920 - 150
 
