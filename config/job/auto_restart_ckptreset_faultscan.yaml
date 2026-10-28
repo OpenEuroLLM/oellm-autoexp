@@ -724,6 +724,26 @@ log_events:
       nccl_peer_scan: true
       reason: ""
 
+  # A task (a whole node's launcher) killed by a signal: srun reports it as "task N: Killed"
+  # (or Segmentation fault / Aborted / Bus error), never "Exited with exit code", and the
+  # other nodes' launchers only get SIGTERM -- so neither rule above matches and the job
+  # ended for good (pool pilot 2026-10-28, run pilot8.0002: `kill -9` on one node).
+  # "Terminated" is left out: srun prints it for the tasks it stops itself, and for a
+  # graceful stop.
+  - name: err_task_killed
+    pattern: "srun: error: \\S+: task [0-9]+: (Killed|Segmentation fault|Aborted|Bus error)"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      cancel_first: true
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
+      reason: "A task was killed by a signal — retrying"
+
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
   #
   # THE HOLE THESE CLOSE. Every event above waits for a STRING; `inactive` waits
