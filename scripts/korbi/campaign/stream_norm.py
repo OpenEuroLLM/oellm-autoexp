@@ -7,7 +7,8 @@ its input, and the RMS of the layer's update relative to it. The stream is x (pl
 streams (mHC), or slot 0 of LDM's [x, records...] stream. Run under torchrun on one node:
 
     torchrun --nproc-per-node 4 stream_norm.py --train-script <task.sh> --load <run>/ckpt \\
-        --datamix <datamix.txt> --out <out.json> [--ep 4] [--num-docs 32] [--seq-len 4096]
+        --datamix <datamix.txt> --out <out.json> [--ep 4] [--num-docs 32] [--seq-len 4096] \\
+        [--ckpt-step N]
 """
 
 from __future__ import annotations
@@ -110,12 +111,15 @@ def main():
     p.add_argument("--ep", type=int, default=4)
     p.add_argument("--num-docs", type=int, default=32)
     p.add_argument("--seq-len", type=int, default=4096)
+    p.add_argument("--ckpt-step", type=int, default=None, help="iteration to load (default: latest)")
     a = p.parse_args()
     launcher, margs = megatron_args(a.train_script)
     world = int(os.environ["WORLD_SIZE"])
     margs += ["--load", a.load, "--no-load-optim", "--no-load-rng", "--exit-on-missing-checkpoint",
               "--micro-batch-size", "1", "--global-batch-size", str(world), "--eval-iters", "0",
               "--expert-model-parallel-size", str(a.ep), "--train-iters", "1"]
+    if a.ckpt_step is not None:
+        margs += ["--ckpt-step", str(a.ckpt_step)]
     sys.argv = [launcher] + margs
     from megatron.core.enums import ModelType
     from megatron.training import get_tokenizer
