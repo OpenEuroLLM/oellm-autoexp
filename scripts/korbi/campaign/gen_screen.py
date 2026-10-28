@@ -1715,9 +1715,9 @@ def arms5ngptopt(size: str = "s1"):
          {**ngpt, B + "depth_memory_lerp": True, **adamw(4e-3)}),
     )] + [(n, d, {**(ldm_base if n.startswith("ldm") else base), **kv}) for n, d, kv in (
         # round 2 (user 2026-10-28): every nGPT arm had grad norms 1e3-1e4 from step 10, 66 % on
-        # layer-0 attention QKV and 34 % on the embedding: layer 0's output shrinks (its sigmoid
-        # output gate closes: the network turns off attention on the raw embeddings) and the
-        # normalized output a / |a| amplifies everything upstream by 1 / |a|. canGPT (200M / 400M):
+        # layer-0 attention QKV and 34 % on the embedding: the normalized output a / |a| amplifies
+        # a short sublayer output by 1 / |a| (suspected: the output gate closing layer 0 -- not so,
+        # its gate stays at 0.5 under nGPT; the floor (bound) fixes it, no gate is worse). canGPT (200M / 400M):
         # lr 1e-3..3e-3 (400Mw 2e-3), a scalar tanh^2 gate, learned FFN scaler (use_suv)
         ("ngpt_am0_nogate", "nGPT, angular p = 0, pinned rows, no attention output gate",
          {**ngpt, **am(0.0), **pin, **nogate}),
@@ -1730,6 +1730,13 @@ def arms5ngptopt(size: str = "s1"):
          {**ngpt, **adamw(2e-3), **nogate}),
         ("ldm_ngpt_am0_nogate_lr2e3", "LDM x1 + nGPT residual, angular p = 0, pinned, no gate, lr 2e-3",
          {**ngpt, B + "depth_memory_lerp": True, **am(0.0), **pin, **nogate, **lr2}),
+        # round 3 (user 2026-10-28): the floor removes the 1 / |a| blow-up (gn ~0.2 vs 1e3-1e5);
+        # under the production optimizer (classical Muown), on its own and with LDM, against the
+        # rematch's LDM x1 (classical) -- angular p = 0 trails classical by 0.25 at s1
+        ("ngpt_mcl_bound", "nGPT, classical Muown, pinned rows, output / max(|a|, 1)",
+         {**ngpt, **pin, B + "ngpt_post_layer_norm_floor": 1.0}),
+        ("ldm_ngpt_mcl_bound", "LDM x1 + nGPT residual, classical Muown, pinned rows, bound output",
+         {**ngpt, B + "depth_memory_lerp": True, **pin, B + "ngpt_post_layer_norm_floor": 1.0}),
     )]
 
 

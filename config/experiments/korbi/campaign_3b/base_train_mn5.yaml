@@ -61,6 +61,12 @@ backend:
     # every 250 steps (s1 ~13 min, s2 ~25 min): restarts / config switches lose little (user
     # 2026-10-18). Two rolling checkpoints on disk per run (~90 GB at s1); scratch quota 146 TB.
     non_persistent_save_interval: 250
+    # asynchronous saves, as the production runs (user 2026-10-28): a synchronous rolling save
+    # blocked training 17-77 s per 250 steps at s1 (3-9 %); the persistent worker keeps the
+    # writer process across saves, constant structure skips re-planning the save
+    async_save: true
+    use_persistent_ckpt_worker: true
+    ckpt_assume_constant_structure: true
     # one index cache for every run (user 2026-10-27): its entries are addressed by the hash of
     # the data settings (blend, seed, length, samples, split), so each data recipe is built once
     # and every later run, arm or restart loads it (cold build 14-25 min, warm load 3-4 min).
