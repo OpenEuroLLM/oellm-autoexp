@@ -1,7 +1,7 @@
 """Explain the differences between our decontamination and another pipeline's (after compare_pure.py).
 
     python scripts/flag_decontam/explain_pure.py --work $WORK --orig <flag prefix> --cmp <compare_pure out dir> \
-        [--control 5000] [--procs 64]
+        [--control 5000] [--procs 64] [--samples 8]
 
 The other pipeline (OpenEuroLLM pretraining-decontamination, NeMo Curator TaskDecontamination) removes
 a document when it contains ANY benchmark word n-gram (8-13 words) that occurs <= --match-threshold
@@ -13,12 +13,15 @@ requirement), the segments and benchmarks they belong to, and the largest number
 single segment. Documents of "theirs only" with no table n-gram at all were removed for a benchmark
 we do not have (or a variant we prune as common).
 
-Writes <cmp>/explain.json and prints it.
+Writes <cmp>/explain.json (printed), explain_docs.npz (per looked-up document: doc, n_grams, best_seg,
+best_seg_grams) and explain_samples.txt (--samples documents per group with >= 10 n-grams of one segment:
+the segment and the document span from its first to its last matched n-gram).
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
 import sys
@@ -61,6 +64,8 @@ def main():
     ap.add_argument("--cmp", required=True)
     ap.add_argument("--control", type=int, default=5000)
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
+    ap.add_argument("--samples", type=int, default=8)
+    ap.add_argument("--tokenizer", default="/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model")
     args = ap.parse_args()
     torch.set_num_threads(1)
 
@@ -89,22 +94,23 @@ def main():
             hits[d] = g
     print(f"{len(todo)} documents looked up", flush=True)
 
+    best = {}                                 # doc -> (segment with the most n-grams in it, their count)
+    for d, g in hits.items():
+        if not len(g):
+            best[d] = (-1, 0)
+            continue
+        k = csr_off[g + 1] - csr_off[g]
+        segl = csr_seg[np.repeat(csr_off[g], k) + np.arange(k.sum()) - np.repeat(np.cumsum(k) - k, k)]
+        sv, sc = np.unique(segl, return_counts=True)
+        best[d] = (int(sv[np.argmax(sc)]), int(sc.max()))
+    np.savez(os.path.join(args.cmp, "explain_docs.npz"), doc=todo, n_grams=np.array([len(hits[d]) for d in todo]),
+             best_seg=np.array([best[d][0] for d in todo]), best_seg_grams=np.array([best[d][1] for d in todo]))
+
     report = {}
     for name, ids in groups.items():
         n_grams = np.array([len(hits[d]) for d in ids])
-        best_seg_grams, benches = [], Counter()
-        for d in ids:
-            g = hits[d]
-            if not len(g):
-                best_seg_grams.append(0)
-                continue
-            k = csr_off[g + 1] - csr_off[g]
-            segl = csr_seg[np.repeat(csr_off[g], k) + np.arange(k.sum()) - np.repeat(np.cumsum(k) - k, k)]
-            sv, sc = np.unique(segl, return_counts=True)
-            best_seg_grams.append(int(sc.max()))
-            for b in attrib[int(sv[np.argmax(sc)])]:
-                benches[b] += 1
-        b = np.array(best_seg_grams)
+        benches = Counter(b for d in ids if best[d][0] >= 0 for b in attrib[best[d][0]])
+        b = np.array([best[d][1] for d in ids])
         report[name] = {
             "docs": int(len(ids)),
             "with_any_table_ngram_pct": round(100 * float((n_grams > 0).mean()), 2) if len(ids) else 0,
@@ -115,6 +121,42 @@ def main():
         }
     json.dump(report, open(os.path.join(args.cmp, "explain.json"), "w"), indent=1)
     print(json.dumps(report, indent=1))
+    if args.samples:
+        write_samples(args, groups, best, tab, segs, meta, attrib)
+
+
+def write_samples(args, groups, best, tab, segs, meta, attrib):
+    import sentencepiece as spm
+    sp = spm.SentencePieceProcessor(model_file=args.tokenizer)
+    rng = np.random.default_rng(1)
+    pick = {name: rng.permutation([d for d in ids if best[d][1] >= 10])[:args.samples] for name, ids in groups.items()}
+    want = {best[d][0] for p in pick.values() for d in p}
+    texts = {}
+    with gzip.open(meta["refs"], "rt", encoding="utf-8") as fh:
+        for i, line in enumerate(fh):
+            if i in want:
+                texts[i] = json.loads(line)["text"]
+    idx, lut, table = _G["idx"], _G["lut"], tab["hash"]
+    csr_off, csr_seg = tab["csr_off"], tab["csr_seg"]
+    with open(os.path.join(args.cmp, "explain_samples.txt"), "w") as out:
+        for name, p in pick.items():
+            for d in p:
+                s, ng = best[d]
+                a = int(idx.doc_idx[d])
+                t = np.fromfile(args.orig + ".bin", np.int32, count=int(idx.lengths[a:int(idx.doc_idx[d + 1])].sum()),
+                                offset=int(idx.pointers[a])).astype(np.int64)
+                c = lut[np.clip(t, 0, len(lut) - 1)]
+                keep = np.flatnonzero((c >= 0) & (t < len(lut)))
+                n = int(segs["n"][s])
+                h = ngram_hashes(torch.from_numpy(c[keep].astype(np.int64)), n).numpy()
+                j = np.clip(np.searchsorted(table, h), 0, len(table) - 1)
+                pos = [w for w in np.flatnonzero(table[j] == h)
+                       if s in csr_seg[csr_off[j[w]]:csr_off[j[w] + 1]]]
+                lo, hi = int(keep[pos[0]]), int(keep[min(pos[-1] + n - 1, len(keep) - 1)]) + 1
+                span = sp.decode(t[lo:min(hi, lo + 400)].tolist())
+                out.write(f"=== {name} | doc {d} ({len(t)} tokens) | {ng} n-grams (n={n}) of segment {s} "
+                          f"({int(segs['n_tokens'][s])} tokens; {', '.join(attrib[s][:3])}) | span {lo}-{hi}\n"
+                          f"--- segment:\n{texts[s][:700]}\n--- document span (<= 400 tokens):\n{span}\n\n")
 
 
 if __name__ == "__main__":
