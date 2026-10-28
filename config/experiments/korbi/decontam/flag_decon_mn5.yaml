@@ -22,12 +22,13 @@ aux:
   nodes: 1
   time: "00:30:00"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
-  # v5 (v3 matcher + benchmarks outside FLAG, the external table, and the gated sets incl. Tatoeba,
-  # 2026-10-24) -- the one written as flag-decon-v1; v1-v4 stay in flag_decon_v1 .. _v4
-  version: v5
+  # v6 (v5 + docs/decontamination_eval_set.csv: common benchmarks of model reports and other
+  # decontamination pipelines, 2026-10-29) -> flag-decon-v2. v5 = flag-decon-v1 (aux.version=v5
+  # aux.out=.../flag-decon-v1 for its steps); v1-v4 stay in flag_decon_v1 .. _v4
+  version: v6
   work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_${aux.version}
-  refs: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v5/refs/refs_v5.jsonl.gz
-  out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v1
+  refs: ${aux.work}/refs/refs_${aux.version}.jsonl.gz
+  out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v2
   root: /gpfs/projects/ehpc533/training-data-collection/flag
   # the NGC 26.09 training image: torch, sentencepiece, pytest
   sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif

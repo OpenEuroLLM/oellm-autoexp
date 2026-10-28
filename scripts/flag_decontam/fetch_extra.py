@@ -16,7 +16,7 @@ Two sources (docs/flag_post_decontamination.md, 2026-10-24):
      subtask by subtask; DeepSeek-Coder's LeetCode contest file from GitHub into $HF_HOME/files.
   3. (v6, 2026-10-29) `--eval-set docs/decontamination_eval_set.csv`: every row with fetch=hf, only its
      eval splits (the dataset viewer's parquet files; raw data files for unconverted datasets),
-     <= 3 GiB per dataset; the GitHub-only tau2-bench tasks, BrowseComp (decrypted) and the DeepMind
+     <= 4 GiB per dataset, model answers / judgments skipped; the GitHub-only tau2-bench tasks, BrowseComp (decrypted) and the DeepMind
      Mathematics test sets (from the tarball the script-based HF dataset downloads).
      `--only-eval-set` skips 1. and 2. (already in the cache).
 Every task / dataset is tried on its own; failures (gated, renamed, missing) are listed at the end
@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import traceback
 
@@ -74,7 +75,9 @@ URLS = ["https://raw.githubusercontent.com/deepseek-ai/DeepSeek-Coder/main/Evalu
         "https://raw.githubusercontent.com/sierra-research/tau2-bench/main/data/tau2/domains/telecom/tasks.json"]
 # OpenAI simple-evals BrowseComp: problem / answer XOR-encrypted with the row's canary (v6)
 BROWSECOMP = "https://openaipublic.blob.core.windows.net/simple-evals/browse_comp_test_set.csv"
-EVAL_SET_MAX_BYTES = 3 * 2**30        # per dataset; larger ones are reported, not fetched
+EVAL_SET_MAX_BYTES = 4 * 2**30        # per dataset (largest eval split: OneRuler 3.2 GiB); larger ones reported, not fetched
+# raw repo files that are model outputs, not benchmark items (Arena-Hard-Auto: 3.1 GiB of answers / judgments)
+MODEL_OUTPUTS = re.compile(r"model_answer|model_judg", re.I)
 
 
 def eval_set_rows(path):
@@ -130,7 +133,8 @@ def fetch_eval_set(path, report, token=None):
                 report["hf_ok"].append(f"eval_set {repo} ({len(pick)} parquet, {size / 2**20:.0f} MiB)")
             else:                                         # raw data files of the main branch
                 info = api.dataset_info(repo, files_metadata=True)
-                data = [s for s in info.siblings if s.rfilename.lower().endswith(DATA_EXT_FETCH)]
+                data = [s for s in info.siblings if s.rfilename.lower().endswith(DATA_EXT_FETCH)
+                        and not MODEL_OUTPUTS.search(s.rfilename)]
                 splits = {}
                 for s in data:
                     splits.setdefault(_split_word(s.rfilename), []).append(s)
