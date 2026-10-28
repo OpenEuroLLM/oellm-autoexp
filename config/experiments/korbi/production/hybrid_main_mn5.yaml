@@ -23,6 +23,10 @@ defaults:
   - _self_
 
 aux:
+  # the main runs' root, pinned (user 2026-10-28): every segment / pool move must resolve the SAME
+  # checkpoint directory, or Megatron does not find the latest checkpoint and starts over; never
+  # from OUTPUT_DIR, which differs between launches
+  main_root: /gpfs/scratch/ehpc533/hybrid_nucleus
   experiment_group: production
   # main_gqa (2026-10-26): grouped-query attention. The runs of suite main trained MHA (16 KV
   # heads: num_query_groups was set without group_query_attention, which Megatron then ignores) and
@@ -194,7 +198,7 @@ backend:
     dataloader_prefetch_factor: 4
     # the shared index cache (one entry per data recipe, Megatron >= 11bd4aab1; the runs of
     # suite main keep their rendered per-run cache)
-    data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_shared
+    data_cache_path: ${aux.main_root}/data_cache_shared
     # ---- logging / eval ----
     log_interval: 1                     # every step, as the conservative run
     eval_interval: 2000
@@ -221,7 +225,7 @@ backend:
 
 job:
   name: ${aux.suite}_${aux.arm}
-  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
+  base_output_dir: "${aux.main_root}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
   # per job name: the 32- and 128-node configs share base_output_dir (one checkpoint directory),
   # but not the rendered script a RestartAction resubmits, nor the monitors' current log / config
   log_path_current: ${job.base_output_dir}/current_${job.name}.log
