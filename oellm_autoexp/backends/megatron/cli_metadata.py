@@ -5806,6 +5806,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "ngpt_alpha_trainable": MegatronArgMetadata(
+        arg_type=bool,
+        default=True,
+        help="Learn the LERP step alpha. False fixes it at ngpt_alpha_init_value (e.g. ~1 / depth), so every layer's write stays in the normalized stream instead of decaying by (1 - alpha) per later layer.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "ngpt_base_scale": MegatronArgMetadata(
         arg_type=float,
         default=-1.0,
@@ -13297,6 +13305,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.05,
+    ),
+    "ngpt_alpha_trainable": MegatronActionSpec(
+        option_strings=("--no-ngpt-alpha-trainable", "--disable-ngpt-alpha-trainable"),
+        action_type="store_false",
+        nargs=0,
+        const=False,
+        default=True,
     ),
     "ngpt_base_scale": MegatronActionSpec(
         option_strings=("--ngpt-base-scale",),

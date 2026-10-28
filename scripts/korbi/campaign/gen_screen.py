@@ -1692,6 +1692,8 @@ def arms5ngptopt(size: str = "s1"):
     nogate = {B + "attention_output_gate": False}
     lr2 = {B + "lr": 2e-3, B + "min_lr": 2e-4}
     ckpt800 = {B + "save_interval": 800}
+    postnorm = {B + "post_sublayer_norm": True}
+    afix = {B + "ngpt_alpha_trainable": False, B + "ngpt_alpha_init_value": 0.04}
     pre_adamw = {B + "optimizer": "adam", B + "lr": lr / 2, B + "min_lr": lr / 20,
                  B + "lr_warmup_iters": 1000, B + "weight_decay": 0.1}
     return [(n, d, {**base, **kv}) for n, d, kv in (
@@ -1744,6 +1746,23 @@ def arms5ngptopt(size: str = "s1"):
         # lr 4e-3 references are the rematch's s1 plain / ldm
         ("plain_mcl_lr2e3", "pre-norm, classical Muown, lr 2e-3 (half)", {**lr2, **ckpt800}),
         ("ldm_mcl_lr2e3", "LDM x1, classical Muown, lr 2e-3 (half)", {**lr2, **ckpt800}),
+        # every layer writes the same amount (user 2026-10-28): the learned LERP step (alpha
+        # 0.2-0.4 at s1) leaves ~90 % of the nGPT stream to the last quarter of the layers, so
+        # (1) pre + post-norm (peri-LN, h + Norm(f(Norm(h))), learnable gain): the plain sum, every
+        # write of fixed size, at both lrs; (2) nGPT with the floor and alpha FIXED at 0.04
+        # (~1 / 24 layers), which keeps every write in the stream
+        ("plain_postnorm", "pre + post-norm (peri-LN), classical Muown",
+         {**postnorm, **ckpt800}),
+        ("ldm_postnorm", "LDM x1 + post-norm on every write, classical Muown",
+         {**postnorm, **ckpt800}),
+        ("plain_postnorm_lr2e3", "pre + post-norm (peri-LN), classical Muown, lr 2e-3",
+         {**postnorm, **lr2, **ckpt800}),
+        ("ldm_postnorm_lr2e3", "LDM x1 + post-norm on every write, classical Muown, lr 2e-3",
+         {**postnorm, **lr2, **ckpt800}),
+        ("ngpt_mcl_bound_afix", "nGPT, classical Muown, pinned rows, bound output, alpha fixed 0.04",
+         {**ngpt, **pin, B + "ngpt_post_layer_norm_floor": 1.0, **afix}),
+        ("ldm_ngpt_mcl_bound_afix", "LDM x1 + nGPT residual, classical, pinned, bound, alpha fixed 0.04",
+         {**ngpt, B + "depth_memory_lerp": True, **pin, B + "ngpt_post_layer_norm_floor": 1.0, **afix}),
     )]
 
 
