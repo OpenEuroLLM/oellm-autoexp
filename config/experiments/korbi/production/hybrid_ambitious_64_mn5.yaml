@@ -22,9 +22,10 @@ backend:
     ENGRAM_STEP_GROUP: "4"
   megatron:
     num_experts: 216
-    # rolling checkpoints every 100 steps (~80 min at ~48 s / step); a divisor of 500: the
-    # equal-token eval marks at steps 500 * 2^n are hard-linked from complete checkpoints
-    non_persistent_save_interval: 100
+    # rolling checkpoints every 50 steps (user 2026-10-28; ~40-55 min at 48-66 s / step), async; a
+    # divisor of 500: the equal-token eval marks at steps 500 * 2^n are hard-linked from complete
+    # checkpoints
+    non_persistent_save_interval: 50
     save_interval: 1000
     save_retain_interval: 10000
     async_save: true
