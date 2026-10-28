@@ -1,0 +1,64 @@
+# @package _global_
+# Evaluation of one model on one GPU (PLAN 6d): export -> M1 -> GSM8K, through
+# oellm_autoexp/dllm/eval/eval_chain.sh. The defaults evaluate the AR reference Qwen3-0.6B-Base
+# (M1 as exact NLL, GSM8K with AR greedy decoding). Results land in
+# $OUTPUT_DIR/dllm-ablations/eval as <run>.m1.json and <run>.gsm8k_<mode>.json.
+# Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/eval_qwen3 --dry-run
+# A trained bd3 run, for example R00 at its last checkpoint:
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/eval_qwen3 \
+#     --submit-and-exit backend.env.EVAL_RUN=R00 backend.env.EVAL_OBJECTIVE=bd3 \
+#     backend.env.EVAL_MODES=static,dynamic backend.env.EVAL_CKPT=<run dir>/checkpoints \
+#     backend.env.EVAL_BLOCK_SIZE=8 backend.env.EVAL_TOKEN_SHIFT=0
+# Env values must not contain spaces or single quotes (the job wraps the chain in bash -c '...').
+
+defaults:
+  - /backend: bash
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - /sweep: none
+  - _self_
+
+job:
+  name: "eval_${backend.env.EVAL_RUN}"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval_jobs/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  command: "./oellm_autoexp/dllm/eval/eval_chain.sh"
+  env:
+    # MegaDLMs on the path: the export unpickles Megatron objects of the torch checkpoint.
+    PYTHONPATH: ".:submodules/MegaDLMs"
+    HF_HUB_OFFLINE: "1"
+    HF_DATASETS_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    # Converted checkpoints are torch-format pickles (spec section 13).
+    TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+    EVAL_RUN: qwen3_0.6B_base_ar
+    EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"
+    EVAL_HF_BASE: Qwen/Qwen3-0.6B-Base
+    EVAL_CKPT: ""
+    EVAL_ITERATION: ""
+    EVAL_LAYOUT: te
+    EVAL_BLOCK_SIZE: "8"
+    EVAL_TOKEN_SHIFT: "0"
+    EVAL_MASK_ID: "151669"  # len(tokenizer) of Qwen3; spec section 12
+    EVAL_OBJECTIVE: ar
+    EVAL_DATA_PREFIX: "${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document"
+    EVAL_NUM_SEQS: "1000"
+    EVAL_MODES: ar
+    EVAL_GSM8K_N: "250"
+    EVAL_TAU: "0.9"
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    partition: gpu_h100
+    gpus_per_node: 1
+    cpus_per_task: 16
+    exclusive: null
+    time: "${oc.slurmtime:7200}"

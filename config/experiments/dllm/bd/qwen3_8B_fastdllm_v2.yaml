@@ -1,0 +1,57 @@
+# @package _global_
+# Qwen3-8B-Base with the fastdllm_v2 method preset (D-055): Fast-dLLM v2: block size 32, complementary masks, token shift 1 (AR next-token alignment).
+# 2B tokens = 3815 iterations of 256 sequences x L = 2048 on 8 node(s), TP 2, learning rate
+# 5e-5 (ABLATIONS.md: the tier 0 LR for 0.6B and 1.7B, half of it for 4B and 8B; the tier 1 LR and the tier 2 LR of the tier 0 rule, D-065 and D-066).
+# The job trains, reading the data from GPFS (D-061), and evaluates the last checkpoint.
+# Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_8B_fastdllm_v2 --dry-run
+# Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/qwen3_8B_fastdllm_v2 --submit-and-exit
+
+defaults:
+  - /backend: megadlm_bd_torchrun
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - /sweep: none
+  - /backend/megatron/dllm/bd/method/fastdllm_v2
+  - override /backend/megatron: dllm/bd/qwen3_8B_base
+  - _self_
+
+job:
+  name: "bd3-q3_8B-B32-sh1-cm1-welbo-t0_1-dm1-scnone-lr5e-5-T2B"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/runs/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  aux:
+    difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
+    dist_prefix: "./oellm_autoexp/dllm/train_then_eval.sh "
+  env:
+    EVAL_RUN: ${job.name}
+    EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"
+    EVAL_HF_BASE: ${backend.megatron.aux.hf_repo}
+    EVAL_DATA_PREFIX: "${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document"
+    EVAL_MODES: static,dynamic
+    EVAL_PARALLEL: "1"
+  megatron:
+    train_iters: 3815
+    lr: 5.0e-05
+    lr_warmup_iters: 50  # max(50, 1 percent of train_iters)
+    # Complementary masks: half global and micro batch, FLOPs per step as the base
+    # (D-020; a micro-batch of 1 stays 1).
+    global_batch_size: 128
+    micro_batch_size: 1
+    data_cache_path: ${job.base_output_dir}/data_cache
+    aux:
+      walltime_s: 86400
+    # Save and stop 60 min before the time limit (time for the evaluation); resubmit to resume.
+    exit_duration_in_mins: ${oc.subi:${oc.divi:${.aux.walltime_s},60},60}
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 8
+    partition: gpu_h100
+    time: "${oc.slurmtime:${backend.megatron.aux.walltime_s}}"

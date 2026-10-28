@@ -1,0 +1,6 @@
+# @package backend
+# Method preset bd3lm (D-055): BD3-LM: block size 4 with the clipped noise schedule t ~ U[0.45, 0.95] (BD3-LM's best setting for block 4).
+# Sets the --bd-* flags (backend.aux.bd_args); the other settings are the R00 base. Compose it
+# into an experiment's defaults list before its size override (see qwen3_<size>_bd3lm.yaml).
+aux:
+  bd_args: "--bd-objective bd3 --bd-block-size 4 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.45 --bd-t-max 0.95 --bd-doc-mask 1 --bd-val-seed 1234"

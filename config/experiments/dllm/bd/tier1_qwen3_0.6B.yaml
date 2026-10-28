@@ -1,0 +1,104 @@
+# @package _global_
+# Tier 1 (.claude/dllm/ABLATIONS.md): one factor at a time against R00 for Qwen3-0.6B-Base, 2B tokens
+# = 3815 iterations of 256 sequences x L = 2048, one node per run, learning rate 1e-4 (fixed for all 12 arms, D-065).
+# R05 (complementary masking) halves the global and micro batch, so its FLOPs per step match R00.
+# R08 writes its schedule 0:4,0.15:8 as 0-4_0.15-8 in the run name (D-044). R10 is the AR control.
+# R11 is the NLD-style hybrid (spec section 15, D-054): AR loss of a token-causal clean stream +
+# 0.3 x block diffusion with block size 32, the first 20 percent of the iterations AR-only.
+# Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier1_qwen3_0.6B --dry-run
+# Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier1_qwen3_0.6B \
+#   --submit-and-exit --array-subset <indices>  (0: R00 ... 11: R11; at most 6 jobs at a time)
+
+defaults:
+  - /backend: megadlm_bd_torchrun
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - override /backend/megatron: dllm/bd/qwen3_0.6B_base
+  - _self_
+
+job:
+  name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/runs/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  aux:
+    difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
+    bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+    # Train, reading the data from GPFS (D-061), then evaluate (M1, GSM8K static and
+    # dynamic@0.9) in the same job after the last iteration.
+    dist_prefix: "./oellm_autoexp/dllm/train_then_eval.sh "
+  env:
+    EVAL_RUN: ${job.name}
+    EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"
+    EVAL_HF_BASE: ${backend.megatron.aux.hf_repo}
+    EVAL_DATA_PREFIX: "${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document"
+    EVAL_MODES: static,dynamic
+    EVAL_PARALLEL: "1"
+  megatron:
+    train_iters: 3815
+    lr: 1.0e-04
+    lr_warmup_iters: 50  # max(50, 1 percent of train_iters)
+    micro_batch_size: 4
+    # One index cache per run: runs that start together never write the same cache files.
+    data_cache_path: ${job.base_output_dir}/data_cache
+    aux:
+      walltime_s: 28800
+    # Save and stop 60 min before the time limit (time for the evaluation); resubmit to resume.
+    exit_duration_in_mins: ${oc.subi:${oc.divi:${.aux.walltime_s},60},60}
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    partition: gpu_h100
+    time: "${oc.slurmtime:${backend.megatron.aux.walltime_s}}"
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        # R00
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R01
+        - job.name: "bd3-q3_0.6B-B4-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 4 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R02
+        - job.name: "bd3-q3_0.6B-B16-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 16 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R03
+        - job.name: "bd3-q3_0.6B-B32-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 32 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R04
+        - job.name: "bd3-q3_0.6B-B8-sh1-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 1 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R05
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm1-welbo-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 1 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+          # FLOP-matched (spec section 3, D-020): half global and micro batch
+          backend.megatron.global_batch_size: 128
+          backend.megatron.micro_batch_size: 2
+        # R06
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-wuniform-t0_1-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting uniform --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R07
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0.2_0.8-dm1-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.2 --bd-t-max 0.8 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R08
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-sc0-4_0.15-8-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule 0:4,0.15:8 --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R09
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm0-scnone-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 0 --bd-val-seed 1234"
+        # R10
+        - job.name: "ar-q3_0.6B-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective ar --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+        # R11
+        - job.name: "nld-q3_0.6B-B32-sh0-a0.3-ao0.2-lr1e-4-T2B"
+          backend.aux.bd_args: "--bd-objective nld --bd-block-size 32 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234 --bd-nld-ar-weight 1.0 --bd-nld-diffusion-weight 0.3 --bd-nld-ar-only-fraction 0.2"

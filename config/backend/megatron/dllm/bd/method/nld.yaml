@@ -1,0 +1,6 @@
+# @package backend
+# Method preset nld (D-055): NLD-style hybrid (spec section 15): AR cross entropy of the token-causal clean stream + 0.3 x block diffusion with block size 32, the first 20 percent of the iterations AR-only.
+# Sets the --bd-* flags (backend.aux.bd_args); the other settings are the R00 base. Compose it
+# into an experiment's defaults list before its size override (see qwen3_<size>_nld.yaml).
+aux:
+  bd_args: "--bd-objective nld --bd-block-size 32 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234 --bd-nld-ar-weight 1.0 --bd-nld-diffusion-weight 0.3 --bd-nld-ar-only-fraction 0.2"

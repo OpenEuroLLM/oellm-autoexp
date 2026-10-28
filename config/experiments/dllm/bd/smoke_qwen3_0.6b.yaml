@@ -1,0 +1,44 @@
+# @package _global_
+# 60-iteration block-diffusion (bd3) smoke run of Qwen3-0.6B-Base on one node (4 GPUs).
+# Render: python scripts/run_autoexp.py --config-name experiments/dllm/bd/smoke_qwen3_0.6b --dry-run
+# Submit: python scripts/run_autoexp.py --config-name experiments/dllm/bd/smoke_qwen3_0.6b --submit-and-exit
+
+defaults:
+  - /backend: megadlm_bd_torchrun
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: dllm/bd/qwen3_0.6B_base
+  - _self_
+
+job:
+  name: "smoke_qwen3_0.6b"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  # MegaDLMs flags (difflm_args) and bd3 launcher flags (bd_args) are appended verbatim.
+  # Spec section 2: --difflm-varilen-prob 0 turns off MegaDLMs variable-length truncation.
+  aux:
+    difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
+    bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+  megatron:
+    train_iters: 60
+    global_batch_size: 32
+    eval_interval: 30
+    eval_iters: 2
+    save_interval: 30
+    log_interval: 1
+    lr: 3.0e-5
+    lr_warmup_iters: 5
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    partition: gpu_h100
+    time: "${oc.slurmtime:1800}"

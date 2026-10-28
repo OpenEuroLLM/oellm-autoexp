@@ -1,0 +1,72 @@
+# @package _global_
+# Tier 0 (.claude/dllm/ABLATIONS.md): learning rate of the base configuration R00 for Qwen3-0.6B-Base,
+# 0.5B tokens = 954 iterations of 256 sequences x L = 2048, one node per run. Run names follow
+# bd3-q3_<size>-B<B>-sh<shift>-cm<comp>-w<weight>-t<tmin>_<tmax>-dm<doc>-sc<schedule>-lr<lr>-T<tokens>.
+# Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier0_qwen3_0.6B --dry-run
+# Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier0_qwen3_0.6B --submit-and-exit
+# One run: add --array-subset <index> (0: lr 1e-5, 1: lr 3e-5, 2: lr 1e-4, 3: lr 3e-4).
+# Index 3 is the edge step of the tier 0 rule (D-060): 1e-4 was best and beat 3e-5 by more than
+# 2 percent, so one run one step further. It has a 4 h limit (the first three took 1.4 h).
+
+defaults:
+  - /backend: megadlm_bd_torchrun
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - override /backend/megatron: dllm/bd/qwen3_0.6B_base
+  - _self_
+
+job:
+  name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-5-T0.5B"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/runs/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  aux:
+    difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
+    bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+    # Train, reading the data from GPFS (D-061), then evaluate (M1 only for tier 0) in the same
+    # job after the last iteration.
+    dist_prefix: "./oellm_autoexp/dllm/train_then_eval.sh "
+  env:
+    EVAL_RUN: ${job.name}
+    EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"
+    EVAL_HF_BASE: ${backend.megatron.aux.hf_repo}
+    EVAL_DATA_PREFIX: "${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document"
+    EVAL_MODES: none
+    EVAL_PARALLEL: "1"
+  megatron:
+    train_iters: 954
+    lr: 3.0e-5
+    lr_warmup_iters: 50  # max(50, 1 percent of train_iters)
+    # One index cache per run: runs that start together never write the same cache files.
+    data_cache_path: ${job.base_output_dir}/data_cache
+    aux:
+      walltime_s: 28800
+    # Save and stop 60 min before the time limit (time for the evaluation); resubmit to resume.
+    exit_duration_in_mins: ${oc.subi:${oc.divi:${.aux.walltime_s},60},60}
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    partition: gpu_h100
+    time: "${oc.slurmtime:${backend.megatron.aux.walltime_s}}"
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-5-T0.5B"
+          backend.megatron.lr: 1.0e-5
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-5-T0.5B"
+          backend.megatron.lr: 3.0e-5
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr1e-4-T0.5B"
+          backend.megatron.lr: 1.0e-4
+        - job.name: "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-scnone-lr3e-4-T0.5B"
+          backend.megatron.lr: 3.0e-4
+          backend.megatron.aux.walltime_s: 14400

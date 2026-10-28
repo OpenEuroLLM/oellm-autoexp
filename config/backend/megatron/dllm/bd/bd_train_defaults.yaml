@@ -1,0 +1,73 @@
+# Block-diffusion (bd3) training defaults for backend.megatron, shared by the bd configs.
+# Fragment without a package header: compose it with @_here_ (see qwen3_0.6B_base.yaml).
+# Values follow dllm-bd3-spec sections 2 (seq_length = L + 1) and 10 (PP 1, CP 1, no sequence
+# parallel) and .claude/dllm/PARAMS.yaml (training, bd3_defaults). job.* interpolations resolve
+# against the composing experiment. train_iters is the default that an experiment overrides.
+seq_length: 2049
+encoder_seq_length: null
+max_position_embeddings: 32768
+global_batch_size: 256
+micro_batch_size: 4
+
+optimizer: adam
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+weight_decay: 0.1
+clip_grad: 1.0
+init_method_std: 0.02
+
+lr: 3.0e-5
+min_lr: "${oc.mul:${.lr},0.1}"
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+lr_warmup_iters: 50
+lr_decay_iters: "${.train_iters}"
+lr_wsd_decay_iters: "${oc.mul_round_int:${.train_iters},0.2,1}"
+train_iters: 1000
+
+bf16: true
+attention_dropout: 0.0
+hidden_dropout: 0.0
+attention_softmax_in_fp32: true
+
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1
+context_parallel_size: 1
+sequence_parallel: false
+use_distributed_optimizer: true
+overlap_grad_reduce: true
+overlap_param_gather: true
+calculate_per_token_loss: true
+create_attention_mask_in_dataloader: false
+# Each sample is a random read from GPFS (median 140-300 ms cold, one read after another per
+# micro-batch in a worker); 8 workers per rank keep the GPUs fed (D-047).
+num_workers: 8
+seed: 1234
+
+# Disable fusions that conflict with diffusion or require TE >= 1.4 (same as qwen3_0.1B_ne_dlm.yaml).
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+gradient_accumulation_fusion: false
+use_flash_attn: false
+
+eval_interval: 250
+eval_iters: 10
+save_interval: 500
+log_interval: 10
+log_throughput: true
+log_timers_to_tensorboard: true
+log_validation_ppl_to_tensorboard: true
+
+ckpt_format: torch
+auto_detect_ckpt_format: false
+save: "${job.base_output_dir}/checkpoints"
+load: "${job.base_output_dir}/checkpoints"
+tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+wandb_project: dllm-ablations
+wandb_exp_name: "${job.name}"
+wandb_save_dir: "${job.base_output_dir}/wandb"
+data_cache_path: "${oc.env:OUTPUT_DIR}/dllm-ablations/data_cache"

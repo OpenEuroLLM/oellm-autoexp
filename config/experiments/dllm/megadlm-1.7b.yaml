@@ -3,8 +3,8 @@
 defaults:
   - /experiments/base
   - /backend: megadlm_torchrun
-  - /container: snellius
-  - /slurm: snellius
+  - /container: snellius_megadlm
+  - /slurm: snellius_megadlm
   - /backend/megatron: [base, dllm/megadlm-1.7b]
   - /sweep: none
   - _self_
@@ -13,6 +13,10 @@ aux:
   experiment_group: "megadlm-1.7b"
 
 backend:
+  # The MegaDLMs settings live in backend.megatron.aux (see the backend config); the
+  # megadlm_torchrun full_cmd only appends backend.aux.difflm_args, so pass them through.
+  aux:
+    difflm_args: "--model-running-mode ${backend.megatron.aux.model_running_mode} --base-model ${backend.megatron.aux.base_model} --attention-mask-type ${backend.megatron.aux.attention_mask_type} --mask-token ${backend.megatron.aux.mask_token}"
   megatron:
     # ── 10k-step stability run (same recipe as the 8B variant) ───────────────
     train_iters: 10000
@@ -59,4 +63,6 @@ job:
 slurm:
   sbatch:
     nodes: 1
-    time: "1:00:00"
+    # 10,000 iterations of 128 x 2048 tokens on 4 GPUs need about 5.5 h at the efficiency that
+    # megadlm-8b.yaml reports (~9.7 s/iter for 8B); 1 h ended in a timeout after ~1,800 steps.
+    time: "${oc.slurmtime:28800}"
