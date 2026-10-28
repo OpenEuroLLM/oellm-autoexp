@@ -115,6 +115,9 @@ image (`MegatronTraining-hybrid-ep_x86_64_202610161948.sif`).
 | `finalize.py` | drop decisions, tree, reports (--dry-run: several --frac values, reports only) |
 | `ngram_report.py` | per-benchmark n-gram hit rates (--by-config) |
 | `inspect_hits.py` | sample matches: benchmark segment vs. the document around its longest run |
+| `compare_pure.py` | our decisions vs an independently filtered shard (step `compare`; section 4.7) |
+| `explain_pure.py` | their any-n-gram rule on our table per compare group + samples (step `explain`) |
+| `abs_rule_report.py` | documents dropped only by the >= 200-token branch, by source and item (step `absrule`) |
 | `verify.py` | tree / roundtrip / audit checks |
 | `run_step.sh` | the step dispatcher used by the autoexp config |
 | `test_flag_decontam.py` | synthetic end-to-end test (runs without pytest; `CUDA_VISIBLE_DEVICES= python ...` locally) |
@@ -403,6 +406,82 @@ up, 0 errors), then swapped in for the first tree (v4 @ 0.9, never used, deleted
 weights identical to `flag_datamix_mn5.txt`; no broken symlinks; `flag/` untouched. Training config:
 `config/backend/megatron/data_flag_decon_v1_mn5.yaml`. Total decontamination cost: ~250 GPU-h on
 ehpc533 (v1-v5, mostly the 8-node scans, ~30 GPU-h each).
+
+### 4.7 Comparison with the OpenEuroLLM "-pure" sets of agenttrove and openthoughts-3 (2026-10-28)
+
+`flag/agenttrove-0.0-pure` and `flag/openthoughts-3-pure` were filtered independently by the
+OpenEuroLLM pretraining-decontamination pipeline (NeMo Curator TaskDecontamination, commit
+413335e): word n-grams of 98 English benchmark tasks (13 words, 8 for short tasks); a document is
+removed whole (`remove-split-docs`) when it contains **any one** benchmark n-gram that occurs <= 10
+times in the dataset (`--match-threshold 10`). They are re-tokenised twice (`openeurollm-256k-without-bos`,
+same tokenizer as `flag`, and `...-reason-without-bos`); the comparison uses the first. Steps
+(snapshots decon13-16): `compare` (compare_pure.py: document hashes, exact and canonical), `explain`
+(explain_pure.py: their any-n-gram rule on OUR table, for each group and a 5,000-document control kept
+by both), `absrule` (abs_rule_report.py: our documents dropped only by the >= 200-token branch).
+
+**Their pure sets are exact subsets**: every pure document matches an original document token for
+token (0 modified, 0 new). The `.bin` files compared are complete (size implied by `.idx`; fingerprint
+in the scratchpad); second copies (`*.partial`) by the maintainer stopped growing at 15:24 and are
+leftovers.
+
+| | agenttrove-0.0 (1.57M docs, 20.2B tok) | openthoughts-3 (1.20M docs, 20.2B tok) |
+|---|---|---|
+| removed by them | 4,192 docs / 52.4M tok (0.26 %) | 5,013 / 84.2M (0.42 %) |
+| removed by us (v5 @ 0.7, no hold-back) | 265 / 3.0M (0.015 %) | 746 / 12.3M (0.061 %) |
+| both | 130 / 0.87M | 132 / 1.86M |
+| theirs only | 4,062 / 51.5M | 4,881 / 82.3M |
+| ours only | 135 / 2.2M | 614 / 10.5M |
+
+Agreement: they also remove 49 % (agenttrove) / 18 % (openthoughts) of our removals; we remove 3.1 % /
+2.6 % of theirs.
+Both catch the GSM8K/MGSM/PolyMath and MMLU(-Pro) copies (the "both" groups: 74 / 81 of 130 / 132
+contain >= 70 % of an item's n-grams).
+
+**Theirs only: mostly the single-n-gram rule, partly benchmarks we lack.** With our table:
+
+| theirs-only docs | agenttrove | openthoughts | control (kept by both) |
+|---|---|---|---|
+| contain any table n-gram | 75 % | 40 % | 7.5 % |
+| >= 10 n-grams of one item | 37 % | 6.5 % | 1.2 / 0.1 % |
+| >= 30 % of one item's n-grams | 67 docs | 49 docs | - |
+
+- agenttrove: the matched items are mostly LiveCodeBench (2,117 docs), BigCodeBench (454), HumanEval(+)
+  (230), AlpacaEval (125). Samples: generic code (`is_prime`, sklearn imports, number-to-words arrays,
+  days-per-month lists matching LCB stdin test cases) and Codeforces boilerplate ("You can output the
+  answer in any case ..."): one rare n-gram suffices for them. A minority are real copies we miss:
+  e.g. an LCB/Codeforces problem copied with `$$$` math and its "Note" section moved into the middle;
+  the reordering splits the copy into runs < 70 % each (our rule takes the longest run only).
+- openthoughts-3: 60 % contain no n-gram of our 5.9M items, so their trigger is a benchmark we do not
+  index (their list has full Hendrycks MATH, GSM-Symbolic, GSM8K-Platinum, DeepMind Math, DS-1000,
+  LBPP, MedQA, LogiQA, BBH, SimpleQA, SuperGPQA, HLE, MT-Bench, ...) or an 8-word match below our
+  20-token minimum. The rest are partial phrases (AIME tail "where m and n are positive integers ...
+  Find m+n", power-of-two tables); none hold >= 50 % of one of our items.
+
+**Ours only:** 135 / 614 documents holding >= 70 % of an item or a >= 200-token run that their
+threshold misses because the n-gram is common in the dataset (> 10 occurrences: repeated items count
+against themselves) or the benchmark is not in their list (AlpacaEval, BigCodeBench, SciRIFF, MBPP
+partly, MixEval). openthoughts' 496 MixEval documents are a **false positive of ours**: one MixEval
+free-form item (515 tokens) whose `[asy]` block (`rr_cartesian_axes` plotting helper) recurs in many
+MATH-style problems gives a 401-token run -> the absolute branch.
+
+**The absolute branch over the whole mix** (abs_rule_report.py, `_report_abs_rule.json`): 183,888
+documents / 3.49B tokens of the 18.0B are dropped only by `run >= 200` (megamath 1.19B, stack-v2 0.89B,
+nemotron-cc 0.45B, dclm 0.33B, hplt 0.32B). Its top items are long ones whose boilerplate is shared:
+the HumanEval+/MBPP+ test harness (`def is_floats(x)` ..., 470 + ~1,200 docs), SciRIFF instruction
+templates (>= 3,800 docs over the 13 SciRIFF items in the top 25), the MixEval `[asy]` item (457), an AlpacaEval loop snippet (984);
+MultiLoKo Marathi Wikipedia passages (901 + 249) are genuine copies of the source pages (by design).
+
+Conclusions:
+- Our filter is **not** a superset of theirs: it is stricter per item (long verbatim runs only) and broader
+  in benchmarks (5.9M items vs 98 tasks). Theirs removes 15x / 7x more documents here, mostly on one
+  rare n-gram (high recall, many false positives on generic code / math phrases), and covers benchmarks
+  we lack.
+- Possible v6 improvements (none applied; flag-decon-v1 is unchanged): (1) add their extra benchmarks to the
+  references; (2) a union-coverage criterion (sum of an item's runs >= 70 %) for reordered copies;
+  (3) list boilerplate items (test harnesses, prompt templates, `[asy]` helpers) as generic or apply
+  the absolute branch only to the item's non-template part; (4) for agenttrove/openthoughts, the
+  pure sets can be combined with ours (keep a document only if both keep it) at a cost of 0.27 % /
+  0.47 % of the tokens.
 
 ## 5. Caveats
 
