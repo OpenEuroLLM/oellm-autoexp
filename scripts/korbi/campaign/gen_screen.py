@@ -1691,6 +1691,7 @@ def arms5ngptopt(size: str = "s1"):
                            B + "angular_muown_extra_scale_factor": s}
     nogate = {B + "attention_output_gate": False}
     lr2 = {B + "lr": 2e-3, B + "min_lr": 2e-4}
+    ckpt800 = {B + "save_interval": 800}
     pre_adamw = {B + "optimizer": "adam", B + "lr": lr / 2, B + "min_lr": lr / 20,
                  B + "lr_warmup_iters": 1000, B + "weight_decay": 0.1}
     return [(n, d, {**base, **kv}) for n, d, kv in (
@@ -1737,6 +1738,12 @@ def arms5ngptopt(size: str = "s1"):
          {**ngpt, **pin, B + "ngpt_post_layer_norm_floor": 1.0}),
         ("ldm_ngpt_mcl_bound", "LDM x1 + nGPT residual, classical Muown, pinned rows, bound output",
          {**ngpt, B + "depth_memory_lerp": True, **pin, B + "ngpt_post_layer_norm_floor": 1.0}),
+        # lower lr against the residual growth (suggested 2026-10-28): the production pair (plain /
+        # LDM x1, classical Muown) at half the lr, persistent checkpoints every 800 steps (3200 is
+        # the last before the cooldown) for the stream norm at equal step and at equal loss; the
+        # lr 4e-3 references are the rematch's s1 plain / ldm
+        ("plain_mcl_lr2e3", "pre-norm, classical Muown, lr 2e-3 (half)", {**lr2, **ckpt800}),
+        ("ldm_mcl_lr2e3", "LDM x1, classical Muown, lr 2e-3 (half)", {**lr2, **ckpt800}),
     )]
 
 
