@@ -1673,8 +1673,13 @@ def arms5ngptopt(size: str = "s1"):
       own g every step, so a weight normalizer on W is undone each step -- the divergence of the
       s3 weight-normalizer runs).
     References on the same s1 layout and batches: the rematch's plain / mHC-4 / LDM (classical
-    Muown), plus plain pre-norm under AdamW and under angular p = 0 (the optimizer alone)."""
-    base = dict((n, kv) for n, _, kv in arms5resgqa(size))["plain"]
+    Muown), plus plain pre-norm under AdamW and under angular p = 0 (the optimizer alone).
+    LDM (user 2026-10-28): LDM x1 under angular p = 0 (the optimizer on LDM's stream), and LDM with
+    the same nGPT residual (its writes as LERP steps, depth_memory_lerp) under classical / angular
+    p = 0 Muown with pinned rows and under AdamW + the weight normalizer; the rematch's LDM x1
+    (classical Muown) is the reference."""
+    arms = dict((n, kv) for n, _, kv in arms5resgqa(size))
+    base, ldm_base = arms["plain"], arms["ldm"]
     lr = R4_SIZES[size][4]
     ngpt = {B + "ngpt": True, B + "ngpt_lerp_normalization": "approx",
             B + "ngpt_alpha_activation": "half_sigmoid", B + "fused_qk_norm_rope": False}
@@ -1698,6 +1703,14 @@ def arms5ngptopt(size: str = "s1"):
         ("ngpt_am1", "nGPT, angular MuOwn p = 1, rows pinned", {**ngpt, **am(1.0), **pin}),
         ("plain_adamw", "pre-norm plain, AdamW (lr 2e-3, 1000 warmup, wd 0.1)", pre_adamw),
         ("plain_am0", "pre-norm plain, angular MuOwn p = 0, step 0.2", am(0.0)),
+    )] + [(n, d, {**ldm_base, **kv}) for n, d, kv in (
+        ("ldm_am0", "LDM x1, angular MuOwn p = 0, step 0.2", am(0.0)),
+        ("ldm_ngpt_mcl", "LDM x1 + nGPT residual (LERP writes), classical Muown, rows pinned",
+         {**ngpt, B + "depth_memory_lerp": True, **pin}),
+        ("ldm_ngpt_am0", "LDM x1 + nGPT residual, angular MuOwn p = 0, rows pinned",
+         {**ngpt, B + "depth_memory_lerp": True, **am(0.0), **pin}),
+        ("ldm_ngpt_adamw", "LDM x1 + nGPT residual, AdamW + weight normalizer, lr 4e-3",
+         {**ngpt, B + "depth_memory_lerp": True, **adamw(4e-3)}),
     )]
 
 
