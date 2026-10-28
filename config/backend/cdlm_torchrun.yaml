@@ -1,0 +1,35 @@
+defaults:
+  - megatron: base
+  - _self_
+
+class_name: MegatronBackend
+
+python_cmd: "python"  # not used anyways
+full_schema_validation: false
+launcher_script: "./submodules/Megatron-LM/pretrain_cdlm.py"
+dist_cmd: "torchrun ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+ ${oc.cliargs:${.torchrun_args}}}}\\\n   ${.launcher_script}"
+torchrun_args:
+  nproc_per_node: ${slurm.sbatch.gpus_per_node}
+  nnodes: ${slurm.sbatch.nodes}
+  max_restarts: 0
+  tee: 3
+  rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+  rdzv_backend: "static"
+  node_rank: "$SLURM_NODEID"
+  master_addr: "$MASTER_ADDR"
+  master_port: "$MASTER_PORT"
+env:
+  PYTHONPATH: ".:submodules/Megatron-LM"
+  RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM
+  PROJECT_DIR: ${oc.env:PROJECT_DIR,.}
+  HF_HOME: ${oc.env:HF_HOME}
+
+# Continuous diffusion (Plaid) flags of pretrain_cdlm.py (--cdlm-*), appended verbatim to
+# full_cmd. They are not in the generated Megatron arg metadata, so the backend.megatron
+# mapping would drop them. Override per experiment via  backend: {aux: {cdlm_args: "..."}}
+aux:
+  cdlm_args: ""
+
+# map megatron command to
+full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}} ${.aux.cdlm_args}"

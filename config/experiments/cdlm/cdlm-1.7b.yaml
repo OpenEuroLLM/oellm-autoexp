@@ -1,0 +1,57 @@
+# @package _global_
+# 1.7B continuous diffusion LM (Plaid): twin of the masked diffusion experiments/dllm/megadlm-1.7b
+# on feat/megadlm (10k-step run, warmup then constant lr).
+# python scripts/run_autoexp.py --config-name experiments/cdlm/cdlm-1.7b
+
+defaults:
+  - /experiments/base
+  - /backend: cdlm_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /backend/megatron: [base, cdlm/cdlm-1.7b]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "cdlm-1.7b"
+
+backend:
+  # Plaid flags of pretrain_cdlm.py (see add_cdlm_args there). The output-prior warm-up is ~5% of
+  # training, as in Plaid (5000 of 92000 steps).
+  aux:
+    cdlm_args: "--cdlm-embed-dim 16 --cdlm-gamma-0 -3 --cdlm-gamma-1 6 --cdlm-selfcond --cdlm-bias-warmup-steps 500 --cdlm-reconst-bs-ema 0.997 --cdlm-aux-lr 1e-2 --cdlm-varilen-prob 0.01"
+  megatron:
+    train_iters: 10000
+    lr_warmup_iters: 2000            # linear warmup 0 → lr over the first 2000 steps
+    lr_wsd_decay_iters: 0            # no decay: lr held at peak after warmup
+    log_interval: 10
+    eval_interval: 1000
+    distributed_timeout_minutes: 60  # avoid NCCL watchdog timeouts on a long run
+
+    # Resubmitting the same job resumes from the latest checkpoint (load == save).
+    save_interval: 1000
+    log_throughput: true
+
+    global_batch_size: 128
+    micro_batch_size: 4
+    tensor_model_parallel_size: 1    # CDLM supports TP = PP = CP = 1 only
+
+    data_cache_path: /scratch-shared/${oc.env:USER}/cache
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+job:
+  name: cdlm-1.7b_n${slurm.sbatch.nodes}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_seq${backend.megatron.seq_length}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  env:
+    # Megatron's checkpoint loaders call torch.load() without weights_only=False; since torch 2.6
+    # that rejects Megatron's own checkpoints when resuming.
+    TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+  sbatch:
+    nodes: 1
+    time: "1:00:00"

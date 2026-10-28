@@ -1,0 +1,45 @@
+# @package _global_
+# ~21M non-embedding Qwen3-style continuous diffusion LM (Plaid) on 1 H100: twin of the masked
+# diffusion experiments/dllm/qwen3_20m_dlm on feat/megadlm.
+# python scripts/run_autoexp.py --config-name experiments/cdlm/qwen3_20m_cdlm
+
+defaults:
+  - /backend: cdlm_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: cdlm/qwen3_20m_cdlm
+  - _self_
+
+job:
+  name: "qwen3_20m_cdlm"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${job.name}"
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+backend:
+  # Plaid flags of pretrain_cdlm.py (see add_cdlm_args there). The output-prior warm-up is ~5% of
+  # training, as in Plaid (5000 of 92000 steps).
+  aux:
+    cdlm_args: "--cdlm-embed-dim 16 --cdlm-gamma-0 -3 --cdlm-gamma-1 6 --cdlm-selfcond --cdlm-bias-warmup-steps 400 --cdlm-reconst-bs-ema 0.997 --cdlm-aux-lr 1e-2 --cdlm-varilen-prob 0.01"
+  megatron:
+    wandb_project: "autoresearch-dlm"
+    wandb_exp_name: ${job.name}
+
+slurm:
+  env:
+    # Megatron's checkpoint loaders call torch.load() without weights_only=False; since torch 2.6
+    # that rejects Megatron's own checkpoints when resuming.
+    TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    ntasks: 1
+    gpus_per_node: 1
+    cpus_per_task: 16
+    exclusive: false
+    partition: gpu_h100
+    time: "00:59:00"

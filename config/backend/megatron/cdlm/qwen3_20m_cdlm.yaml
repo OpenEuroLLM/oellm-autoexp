@@ -1,0 +1,60 @@
+# Continuous diffusion (Plaid, pretrain_cdlm.py) twin of the masked-diffusion qwen3_20m_dlm
+# (feat/megadlm: config/backend/megatron/dllm/qwen3_20m_dlm.yaml). Architecture, data, tokenizer
+# and optimisation are copied from it; only the diffusion objective differs.
+defaults:
+ - /backend/megatron/qwen3_base@_here_
+
+num_layers: 12
+hidden_size: 384
+ffn_hidden_size: 1152
+num_attention_heads: 6
+num_query_groups: 2
+kv_channels: 64
+untie_embeddings_and_output_weights: False  # unused: CDLM has its own 16-d input embeddings
+
+# The first token is dropped as in the discrete twin (noshift): 513 -> 512 positions.
+seq_length: 513
+max_position_embeddings: 513
+
+# 8000 x 128 x 512 = 524M tokens
+train_iters: 8000
+micro_batch_size: 64
+global_batch_size: 128
+lr: 2.0e-3
+min_lr: 2.0e-4
+lr_warmup_iters: 400
+lr_decay_style: cosine
+weight_decay: 0.1
+adam_beta2: 0.95
+clip_grad: 1.0
+
+# Disable fusions that conflict with diffusion or require TE >= 1.4
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+# Attention is bidirectional; the dataloader's causal mask would be ignored.
+create_attention_mask_in_dataloader: false
+
+aux:
+  model_name: "cdlm-qwen3-20m"
+
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: gpt2
+make_vocab_size_divisible_by: 128
+
+data_path:
+  - /projects/2/managed_datasets/FineWeb/10BT/fineweb-10BT_text_document
+split: "998,2,0"
+data_cache_path: /scratch-shared/${oc.env:USER}/autoresearch/megatron_data_cache
+
+ckpt_format: torch
+save: ${job.base_output_dir}/checkpoints
+wandb_save_dir: ${job.base_output_dir}/wandb
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+save_interval: 500
+eval_interval: 500
+eval_iters: 10
+log_interval: 20
+log_throughput: true
+use_flash_attn: true

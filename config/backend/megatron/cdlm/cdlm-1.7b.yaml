@@ -1,0 +1,95 @@
+# @package backend.megatron
+# Continuous diffusion (Plaid, pretrain_cdlm.py) twin of the 1.7B masked-diffusion model
+# (feat/megadlm: config/backend/megatron/dllm/megadlm-1.7b.yaml): gpt-neox-tokenized, MHA,
+# rotary_base 1e4. seq_length is 2049: the first token is dropped (noshift), leaving 2048.
+
+# ── Architecture ────────────────────────────────────────────────────────────────
+num_layers: 28
+hidden_size: 2048
+num_attention_heads: 16
+ffn_hidden_size: 6144
+swiglu: true
+normalization: RMSNorm
+norm_epsilon: 1.0e-6
+rotary_base: 10000
+add_bias_linear: false
+position_embedding_type: rope
+qk_layernorm: true
+untie_embeddings_and_output_weights: true
+
+# ── Sequence ─────────────────────────────────────────────────────────────────────
+seq_length: 2049
+max_position_embeddings: 2049
+
+# ── Attention ────────────────────────────────────────────────────────────────────
+attention_backend: auto
+attention_softmax_in_fp32: true
+attention_dropout: 0.0
+hidden_dropout: 0.0
+# Disable fusions that conflict with the diffusion forward pass.
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+# Attention is bidirectional; the dataloader's causal mask would be ignored.
+create_attention_mask_in_dataloader: false
+
+# ── Precision ───────────────────────────────────────────────────────────────────
+bf16: true
+use_flash_attn: true
+
+# ── Optimizer ───────────────────────────────────────────────────────────────────
+use_distributed_optimizer: true
+overlap_param_gather: true
+overlap_grad_reduce: true
+weight_decay: 0.1
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+init_method_std: 0.02
+clip_grad: 1.0
+
+# ── Learning rate (WSD schedule) ────────────────────────────────────────────────
+lr: 0.0002
+min_lr: 0.00002
+lr_decay_style: WSD
+lr_warmup_iters: 0
+lr_decay_iters: ${backend.megatron.train_iters}  # keeps WSD schedule aligned with training length
+lr_wsd_decay_style: exponential
+lr_wsd_decay_iters: 0
+
+# ── Training ────────────────────────────────────────────────────────────────────
+train_iters: 10
+micro_batch_size: 1
+global_batch_size: 64     # override per experiment: MBS × DP × GAS
+eval_iters: 0
+eval_interval: 10
+
+# ── Data ────────────────────────────────────────────────────────────────────────
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: EleutherAI/gpt-neox-20b
+data_path:
+  - /projects/2/managed_datasets/FineWeb/10BT/fineweb-10BT_text_document
+num_workers: 8
+dataloader_type: cyclic
+
+# ── Checkpointing ───────────────────────────────────────────────────────────────
+ckpt_format: torch_dist
+auto_detect_ckpt_format: true
+ckpt_fully_parallel_load: true
+save_interval: 10
+save: "${job.base_output_dir}/checkpoints"
+load: "${job.base_output_dir}/checkpoints"
+
+# ── Logging ─────────────────────────────────────────────────────────────────────
+log_interval: 1
+log_throughput: true
+log_params_norm: true
+log_num_zeros_in_grad: true
+log_timers_to_tensorboard: true
+log_validation_ppl_to_tensorboard: true
+log_memory_to_tensorboard: true
+wandb_project: "megadlm-jupiter"
+wandb_save_dir: "${job.base_output_dir}/wandb"
+
+aux:
+  model_name: "cdlm-1.7b"

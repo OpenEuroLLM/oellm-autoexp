@@ -1,0 +1,49 @@
+# Continuous diffusion (Plaid, pretrain_cdlm.py) twin of the masked-diffusion qwen3_125M_dlm
+# (feat/megadlm: config/backend/megatron/dllm/qwen3_125M_dlm.yaml). Architecture, data, tokenizer
+# and optimisation are copied from it; only the diffusion objective differs.
+defaults:
+ - /backend/megatron/qwen3_base@_here_
+
+num_layers: 16
+hidden_size: 512
+ffn_hidden_size: 2048
+num_attention_heads: 4
+num_query_groups: 4
+kv_channels: 128
+untie_embeddings_and_output_weights: False  # unused: CDLM has its own 16-d input embeddings
+
+# The first token is dropped as in the discrete twin (noshift): 4097 -> 4096 positions.
+seq_length: 4097
+max_position_embeddings: 4097
+
+train_iters: 9536
+micro_batch_size: 8
+lr: 6.0e-4
+
+# Disable fusions that conflict with diffusion or require TE >= 1.4
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+# Attention is bidirectional; the dataloader's causal mask would be ignored.
+create_attention_mask_in_dataloader: false
+
+aux:
+  model_name: "cdlm-125m"
+
+tokenizer_type: SentencePieceTokenizer
+tokenizer_model: /projects/0/prjs2013/oellm/tokenizer/oellm-tokenizer-128k-v2/tokenizer.model
+
+data_path:
+  - /projects/0/prjs2013/preprocessed/oellm-tokenizer-128k-v2/HPLT/HPLT2.0_cleaned/eng_Latn_67/eng_Latn_67_text_document
+
+save: ${job.base_output_dir}/checkpoints
+wandb_save_dir: ${job.base_output_dir}/wandb
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+save_interval: 1000
+eval_interval: 1001
+eval_iters: 101
+log_interval: 10
+log_throughput: true
+log_timers_to_tensorboard: true
+use_flash_attn: true

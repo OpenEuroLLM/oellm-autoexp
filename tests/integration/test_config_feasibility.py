@@ -28,6 +28,9 @@ _EXPERIMENTS_DIR = _CONFIG_DIR / "experiments"
 # Top-level files that are base fragments, not standalone runnable experiments.
 _EXCLUDED_FILES: frozenset[str] = frozenset({"base.yaml"})
 
+# Subdirectories of canonical (non-personal) experiments.
+_CANONICAL_SUBDIRS: tuple[str, ...] = ("cdlm",)
+
 
 def _discover_experiment_configs() -> list[pytest.param]:
     params = []
@@ -36,6 +39,10 @@ def _discover_experiment_configs() -> list[pytest.param]:
             continue
         config_name = f"experiments/{yaml_file.stem}"
         params.append(pytest.param(config_name, id=yaml_file.stem))
+    for subdir in _CANONICAL_SUBDIRS:
+        for yaml_file in sorted((_EXPERIMENTS_DIR / subdir).glob("*.yaml")):
+            config_name = f"experiments/{subdir}/{yaml_file.stem}"
+            params.append(pytest.param(config_name, id=f"{subdir}/{yaml_file.stem}"))
     return params
 
 
