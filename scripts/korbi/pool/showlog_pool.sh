@@ -62,7 +62,10 @@ run_log() { # run_log <pool dir> <rid> -> the run's log, as the pool's named sym
   job=$(sed -n 's/^job=//p' "$started" 2>/dev/null)
   step=$(sed -n 's/^step_index=//p' "$started" 2>/dev/null)
   if [ -n "$job" ] && [ -n "$step" ]; then
-    link=$(ls "$1"/slurm-"$job"."$step"-*.log 2>/dev/null | head -n 1)
+    # the run's own name: a replaced supervisor restarts its step indices, so <job>.<step> alone
+    # can also name an earlier run's link
+    link=$(ls "$1"/slurm-"$job"."$step"-"$(run_name "$1" "$2")".log 2>/dev/null | head -n 1)
+    [ -n "$link" ] || link=$(ls "$1"/slurm-"$job"."$step"-*.log 2>/dev/null | head -n 1)
     if [ -n "$link" ]; then
       echo "$link"
       return
@@ -98,7 +101,8 @@ for rd in sorted(glob.glob(f"{pool}/runs/*/")):
     started, rc = env(rd + "started"), read(rd + "rc")
     link = ""
     if started.get("job") and started.get("step_index"):
-        hits = glob.glob(f"{pool}/slurm-{started['job']}.{started['step_index']}-*.log")
+        hits = glob.glob(f"{pool}/slurm-{started['job']}.{started['step_index']}-{meta.get('name', '*')}.log") \
+            or glob.glob(f"{pool}/slurm-{started['job']}.{started['step_index']}-*.log")
         link = os.path.basename(hits[0]) if hits else ""
     state = ("done " + rc) if rc else ("RUNNING" if started else ("assigned" if read(rd + "assigned") else "queued"))
     runs.append(dict(rid=os.path.basename(rd.rstrip("/")), name=meta.get("name", "?"), nodes=meta.get("nodes", "?"),

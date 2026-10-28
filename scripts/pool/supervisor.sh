@@ -151,7 +151,10 @@ finish_run() { # finish_run <rid> <code> <reason>
   log "run $1 ended: rc=$2 ($3)"
 }
 
-STEP_INDEX=0
+# continue the step numbering of an earlier supervisor of this allocation (a replaced adopted
+# supervisor): its <pool>/slurm-<job>.<step>-<name>.log links must stay unique
+STEP_INDEX=$(ls "$POOL"/slurm-"${SLURM_JOB_ID:-x}".*-*.log 2>/dev/null | sed -n "s#.*/slurm-${SLURM_JOB_ID:-x}\.\([0-9][0-9]*\)-.*#\1#p" | sort -n | tail -n 1)
+STEP_INDEX=${STEP_INDEX:-0}
 # run_one <rid> <nodelist> <step index>: one run on the nodes the main loop picked for it, in the
 # background (several runs side by side on disjoint nodes when POOL_MAX_RUNS_PER_HOST > 1). The
 # main loop owns the host state; a host-wide stop reaches the run through $H/control/signal.
