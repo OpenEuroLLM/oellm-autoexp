@@ -1631,6 +1631,35 @@ def arms5ldmnorm(size: str):
              {**ldm, **norm})]
 
 
+def arms5ldmnorm2(size: str = "s3"):
+    """Round 2 of the normalized LDM stream (user 2026-10-28: does a normalized LDM model -- nGPT-like
+    stream, normalized weights, angular MuOwn -- give a normalized residual and a more even weight
+    impact over depth: update / weight ratio and stream norm constant across depth?). Paired with
+    s3 LDM x1 (8 nodes, same batches). screen5ldmnorm_s3 (lr 1.8e-3) trailed LDM x1 by 0.11-0.14
+    at steps 100-1000 while s2 (lr 2.5e-3) led: normalized streams may want a larger lr.
+    A1 / A2: the normalized stream at lr x2 / x4 (min lr = lr / 10 as the rematch). B1: + the weight
+    normalizer (unit-norm weight rows / embedding; the head stays unconstrained). B2: faithful
+    nGPT residual on top of B1 -- normalized sublayer output + exact LERP (pinned weight norms
+    keep the output from collapsing, the cause of screen5ngptldm's 1e5 gradients). C2: LDM x1
+    with the PLAIN stream under angular MuOwn (direction decay p = 1): the optimizer half alone."""
+    base = dict((n, kv) for n, _, kv in arms5resgqa(size))["ldm"]
+    norm = arms5ldmnorm(size)[0][2]
+    lr = R4_SIZES[size][4]
+    lrx = lambda m: {B + "lr": lr * m, B + "min_lr": lr * m / 10}  # noqa: E731
+    wn = {B + "weight_normalizer": True}
+    faithful = {B + "ngpt_lerp_normalization": "analytic", B + "ngpt_post_layer_norm_attn": True,
+                B + "ngpt_post_layer_norm_ffn": True}
+    am = {B + "optimizer": "angular_muown", B + "angular_muown_u_decay_p": 1.0}
+    return [
+        ("norm_lr2", "normalized LDM stream, lr x2", {**norm, **lrx(2)}),
+        ("norm_lr4", "normalized LDM stream, lr x4", {**norm, **lrx(4)}),
+        ("norm_wn", "normalized LDM stream + weight normalizer", {**norm, **wn}),
+        ("ngpt_wn", "faithful nGPT residual (normalized output, exact LERP) + weight normalizer",
+         {**norm, **wn, **faithful}),
+        ("ldm_am", "LDM x1, plain stream, angular MuOwn p = 1", {**base, **am}),
+    ]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -1986,6 +2015,7 @@ def write5():
             *[(z, "screen5resgqa", arms5resgqa(z)) for z in ("s1", "s2", "s3")],
             ("s2", "screen5ngptldm", arms5ngptldm("s2")),
             *[(z, "screen5ldmnorm", arms5ldmnorm(z)) for z in ("s2", "s3")],
+            ("s3", "screen5ldmnorm2", arms5ldmnorm2("s3")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
@@ -2089,6 +2119,12 @@ def write5():
                                                  **extra})
                  for n, _, kv in arms5ldmnorm(z)], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
               for z in ("s2", "s3")
+              for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
+                                                     B + "attention_length_scaling_base": 8192}))],
+            # round 2 of the normalized LDM stream (s3, 4 nodes as the s3 rematch's)
+            *[("s3", f"ds5lcldmnorm2{tag}", arms5downstream_any(
+                [(n, "screen5ldmnorm2_s3", n, {**kv, "slurm.sbatch.nodes": 4, **extra})
+                 for n, _, kv in arms5ldmnorm2("s3")], requests=LONGCTX, runs_root=RUNS_NUCLEUS))
               for tag, extra in (("", {}), ("logn", {B + "attention_length_scaling": "logn",
                                                      B + "attention_length_scaling_base": 8192}))],
             # nGPT + MuOwn + LDM (screen5ngptldm_s2): the same long-context set, 1 node each
