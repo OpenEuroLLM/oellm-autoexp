@@ -1763,6 +1763,15 @@ def arms5ngptopt(size: str = "s1"):
          {**ngpt, **pin, B + "ngpt_post_layer_norm_floor": 1.0, **afix}),
         ("ldm_ngpt_mcl_bound_afix", "LDM x1 + nGPT residual, classical, pinned, bound, alpha fixed 0.04",
          {**ngpt, B + "depth_memory_lerp": True, **pin, B + "ngpt_post_layer_norm_floor": 1.0, **afix}),
+        # the ambitious run's experts look unstable (user 2026-10-28), suspected: Muown's v (the
+        # unnormalized directions) growing without weight decay; the current setting (LDM x1,
+        # classical Muown, lr 4e-3) with decoupled weight decay on v, against the rematch's ldm
+        ("ldm_vwd01", "LDM x1, classical Muown, v weight decay 0.1",
+         {B + "muown_classical_v_weight_decay": 0.1, **ckpt800}),
+        ("ldm_vwd001", "LDM x1, classical Muown, v weight decay 0.01",
+         {B + "muown_classical_v_weight_decay": 0.01, **ckpt800}),
+        ("ldm_vwd0001", "LDM x1, classical Muown, v weight decay 0.001",
+         {B + "muown_classical_v_weight_decay": 0.001, **ckpt800}),
     )]
 
 
