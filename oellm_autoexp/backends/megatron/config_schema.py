@@ -1551,6 +1551,12 @@ class MegatronConfig(ConfigInterface):
     # L2-normalize the MLP output before the LERP residual update.
     ngpt_post_layer_norm_ffn: bool = True
 
+    # Floor of the sublayer output's norm in the post-layer normalization, a / max(|a|, floor)
+    # (anGPT's "bound"; ngpt.NGPTResidual): outputs shorter than the floor are not stretched
+    # onto the sphere, so a sublayer can switch itself off without a 1 / |a| gradient. 0:
+    # plain L2 norm.
+    ngpt_post_layer_norm_floor: float = 0.0
+
     # Learnable per-channel scalers on Q and K (nGPT's s_qk). Once Q/K are L2-normalized their
     # dot product is a cosine, so the attention logits lose all scale; s_qk puts it back as a
     # learned quantity. Pair with qk_l2_norm.

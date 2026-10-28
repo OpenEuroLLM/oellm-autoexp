@@ -1689,6 +1689,8 @@ def arms5ngptopt(size: str = "s1"):
     pin = {B + "angular_muown_fixed_row_norm": 1.0}
     am = lambda p, s=0.2: {B + "optimizer": "angular_muown", B + "angular_muown_u_decay_p": p,  # noqa: E731
                            B + "angular_muown_extra_scale_factor": s}
+    nogate = {B + "attention_output_gate": False}
+    lr2 = {B + "lr": 2e-3, B + "min_lr": 2e-4}
     pre_adamw = {B + "optimizer": "adam", B + "lr": lr / 2, B + "min_lr": lr / 20,
                  B + "lr_warmup_iters": 1000, B + "weight_decay": 0.1}
     return [(n, d, {**base, **kv}) for n, d, kv in (
@@ -1711,6 +1713,23 @@ def arms5ngptopt(size: str = "s1"):
          {**ngpt, B + "depth_memory_lerp": True, **am(0.0), **pin}),
         ("ldm_ngpt_adamw", "LDM x1 + nGPT residual, AdamW + weight normalizer, lr 4e-3",
          {**ngpt, B + "depth_memory_lerp": True, **adamw(4e-3)}),
+    )] + [(n, d, {**(ldm_base if n.startswith("ldm") else base), **kv}) for n, d, kv in (
+        # round 2 (user 2026-10-28): every nGPT arm had grad norms 1e3-1e4 from step 10, 66 % on
+        # layer-0 attention QKV and 34 % on the embedding: layer 0's output shrinks (its sigmoid
+        # output gate closes: the network turns off attention on the raw embeddings) and the
+        # normalized output a / |a| amplifies everything upstream by 1 / |a|. canGPT (200M / 400M):
+        # lr 1e-3..3e-3 (400Mw 2e-3), a scalar tanh^2 gate, learned FFN scaler (use_suv)
+        ("ngpt_am0_nogate", "nGPT, angular p = 0, pinned rows, no attention output gate",
+         {**ngpt, **am(0.0), **pin, **nogate}),
+        ("ngpt_am0_bound", "nGPT, angular p = 0, pinned rows, output / max(|a|, 1) (anGPT bound)",
+         {**ngpt, **am(0.0), **pin, B + "ngpt_post_layer_norm_floor": 1.0}),
+        ("ngpt_am0_lr2e3", "nGPT, angular p = 0, pinned rows, lr 2e-3", {**ngpt, **am(0.0), **pin, **lr2}),
+        ("ngpt_am0_nogate_lr2e3_suv", "nGPT, angular p = 0, pinned rows, no gate, lr 2e-3, FFN scaler",
+         {**ngpt, **am(0.0), **pin, **nogate, **lr2, B + "ngpt_use_suv": True}),
+        ("ngpt_adamw_nogate_lr2e3", "nGPT, AdamW + weight normalizer, no gate, lr 2e-3",
+         {**ngpt, **adamw(2e-3), **nogate}),
+        ("ldm_ngpt_am0_nogate_lr2e3", "LDM x1 + nGPT residual, angular p = 0, pinned, no gate, lr 2e-3",
+         {**ngpt, B + "depth_memory_lerp": True, **am(0.0), **pin, **nogate, **lr2}),
     )]
 
 

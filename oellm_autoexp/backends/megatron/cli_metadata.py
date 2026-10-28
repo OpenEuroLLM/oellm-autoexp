@@ -5854,6 +5854,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "ngpt_post_layer_norm_floor": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="Floor of the sublayer output's norm in the post-layer normalization, a / max(|a|, floor) (anGPT's \"bound\"; ngpt.NGPTResidual): outputs shorter than the floor are not stretched onto the sphere, so a sublayer can switch itself off without a 1 / |a| gradient. 0: plain L2 norm.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "ngpt_scaler_base_scale": MegatronArgMetadata(
         arg_type=float,
         default=-1.0,
@@ -13331,6 +13339,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "ngpt_post_layer_norm_floor": MegatronActionSpec(
+        option_strings=("--ngpt-post-layer-norm-floor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "ngpt_scaler_base_scale": MegatronActionSpec(
         option_strings=("--ngpt-scaler-base-scale",),

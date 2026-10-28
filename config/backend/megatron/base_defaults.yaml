@@ -728,6 +728,7 @@ ngpt_lerp_normalization_attn: ''  # Overrides ngpt_lerp_normalization for the at
 ngpt_lerp_normalization_ffn: ''  # Overrides ngpt_lerp_normalization for the MLP residual when non-empty.
 ngpt_post_layer_norm_attn: true  # L2-normalize the attention output before the LERP residual update.
 ngpt_post_layer_norm_ffn: true  # L2-normalize the MLP output before the LERP residual update.
+ngpt_post_layer_norm_floor: 0.0  # Floor of the sublayer output's norm in the post-layer normalization, a / max(|a|, floor) (anGPT's "bound"; ngpt.NGPTResidual): outputs shorter than the floor are not stretched onto the sphere, so a sublayer can switch itself off without a 1 / |a| gradient. 0: plain L2 norm.
 ngpt_scaler_base_scale: -1.0  # Raw-parameter init for the scaler eigen-LR reparameterization; -1 selects 1/sqrt(hidden_size). The optimizer sees a parameter of this scale while the effective value starts at ngpt_scaler_init, decoupling the two.
 ngpt_scaler_init: 1.0  # Effective value of the nGPT scalers at initialization.
 ngpt_scaler_lr_mult: 1.0  # Learning-rate multiplier for nGPT scaler parameters (LERP alphas, s_qk, s_uv). On a normalized architecture these carry all the magnitude information, so they often want a larger step than the direction-carrying weight matrices.
