@@ -3209,3 +3209,52 @@ fixed sets (the long-context set).
 3. Running: `screen5ldmnorm_s{2,3}`. LDM x1, LERP toward the RAW output with an exact
    renormalization, x' = Norm((1 - alpha) x + alpha a). A vanishing output then switches its
    sublayer off, with no 1/|a| amplification. Paired with LDM x1 (s2 on 2 nodes, s3 on 8).
+
+### Normalized LDM, round 2, and the depth profiles (2026-10-28)
+
+**s3 training** (8 nodes, same batches as s3 LDM x1; val gap at step 4000):
+
+| run | vs LDM x1 | vs mHC-4 x0.25 |
+|---|---:|---:|
+| LDM x0.25 | +0.0017 | -0.006 |
+| LDM x0.125 | +0.0115 | +0.004 |
+| LDM x1, angular MuOwn (p = 1) | +0.0135 | +0.006 |
+| normalized stream (direct LERP), lr 1.8e-3 | +0.145 | +0.138 |
+| normalized stream, lr x2 | +0.361 | +0.354 |
+| normalized stream, lr x4 / + weight normalizer / faithful nGPT + weight normalizer | diverged at steps 20-30 (grad norm 2e4-4e5) | |
+
+- s2 normalized stream (2 nodes, same batches as LDM x1): -0.10 early, +0.025 at step 4000.
+- Angular MuOwn tracks classical through the stable phase (+0.0005 at 3000-3200), then loses +0.012
+  in the cooldown: its direction decay acts as annealing.
+
+**Long context** (plain eval, log-n in brackets):
+
+| | NLL 32-64k | 64-fact 16-64k | 16-fact @64k |
+|---|---:|---:|---:|
+| s3 LDM x1 | 2.223 (2.185) | 0.61 (0.83) | 0.32 (0.80) |
+| s3 LDM x0.25 | 2.217 (2.177) | 0.49 (0.56) | 0.58 (0.74) |
+| s3 LDM x0.125 | 2.247 (2.195) | 0.43 (0.58) | 0.52 (0.70) |
+| s3 LDM x1, angular MuOwn | 2.241 (2.191) | 0.29 (0.39) | 0.38 (0.54) |
+| s3 normalized stream | 2.399 (2.352) | 0.23 (0.55) | 0.32 (0.42) |
+| s2 normalized stream | 2.277 (2.250) | 0.23 (0.36) | 0.36 (0.58) |
+
+**Depth profiles** (`depth_profile.py`, `stream_norm.py`):
+- **Update / weight ratio** |dW|/|W| over steps 3500-3750: nearly constant across depth for every
+  residual (plain, mHC-4, LDM), within ~1.3x per matrix type. That is Muown's doing (orthogonalized,
+  shape-scaled steps).
+  - The exception: the output side of the first layers. Layer 0's attention output projection is ~5x
+    smaller (weight RMS 0.002 vs 0.010-0.015), and the same projection collapsed under nGPT's
+    normalized output.
+- **Gradient share:** spread over all matrix types (4-9 % each) for plain / mHC-4 / LDM. The
+  output-normalized nGPT + LDM put ~28 % on layer-0 QKV and the rest on the embedding.
+- **Stream RMS across depth**, first -> last layer:
+  - s3: plain 0.060 -> 1.59 (x27), mHC-4 0.064 -> 0.94 (x15), LDM 0.070 -> 1.30 (x18).
+  - s2: plain x20, mHC-4 x13. (s2 LDM: NaN, under investigation.)
+  - Update / stream: LDM 0.15-0.17, plain 0.19-0.24, mHC-4 0.29-0.31.
+
+**Verdict:**
+- **The normalized stream is clearly worse** in loss (+0.145 at s3) and in long context.
+- **Weight normalization with Muown diverges at s3.**
+- **The update ratio is already even across depth without normalization.** The stream growth
+  (x18-27) remains, but at this scale it does not show up as a training problem.
+- **Production keeps plain LDM at mixer lr x1 with classical Muown** (the user's rule).
