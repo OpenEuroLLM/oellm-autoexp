@@ -137,6 +137,9 @@ def main():
     hybrid = net.module if hasattr(net, "module") else net
     cfg = hybrid.config
     ldm = bool(getattr(cfg, "depth_memory", False))
+    # depth_memory_unwind with the CuTe kernels: the record stream is slot first, [slots, s, b, h]
+    # (depth_memory_state.StreamX); the stream form otherwise is [s, b, 2, h] (x, read)
+    slot_first = ldm and bool(getattr(cfg, "depth_memory_unwind", False))
     kinds = list(hybrid.decoder.layer_type_list)
     n = len(kinds)
     dev = torch.cuda.current_device()
@@ -145,6 +148,8 @@ def main():
 
     def stream(t):
         if t.dim() == 4:
+            if slot_first:
+                return t[0]
             return t[..., 0, :] if ldm else t
         return t
 
