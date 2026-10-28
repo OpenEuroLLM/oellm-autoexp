@@ -170,7 +170,8 @@ backend:
     recompute_num_layers: 2
     liger_fused_linear_cross_entropy_chunk_size: 2048
     manual_gc: true
-    manual_gc_interval: 10
+    # every 100 steps (2026-10-28): ~1.3 s per collection, measured +1.3 s on every 10th step at 64 nodes
+    manual_gc_interval: 100
     mmap_bin_files: false
     # ---- optimizer / schedule ----
     # user 2026-10-24: classical Muown, no weight decay; lr 8.5e-4 (the campaign's N^-0.417
