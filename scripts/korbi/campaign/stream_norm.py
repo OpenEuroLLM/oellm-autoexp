@@ -119,6 +119,7 @@ def main():
     sys.argv = [launcher] + margs
     from megatron.core.enums import ModelType
     from megatron.training import get_tokenizer
+    from megatron.training.arguments import parse_and_validate_args
     from megatron.training.checkpointing import load_checkpoint
     from megatron.training.initialize import initialize_megatron
     from megatron.training.training import get_model
@@ -126,6 +127,7 @@ def main():
     from hybrid_builders import hybrid_builder as builder
     from pretrain_hybrid import model_provider
 
+    parse_and_validate_args(args_defaults={"tokenizer_type": "GPT2BPETokenizer"})
     initialize_megatron(allow_no_cuda=False)
     model = get_model(partial(model_provider, builder), ModelType.encoder_or_decoder,
                       wrap_with_ddp=False)
