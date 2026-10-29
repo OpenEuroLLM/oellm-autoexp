@@ -7,6 +7,10 @@
 #   nohup setsid scripts/korbi/wandb_sync/sync_loop.sh >> ~/wandb_sync_mn5.log 2>&1 &
 #   stop it with: kill "$(cat ~/wandb_sync_mn5.pid)"   (never pkill -f: it matches the calling shell)
 #   ONCE=1 scripts/korbi/wandb_sync/sync_loop.sh        # a single pass
+# The campaign's setup experiments (screens, the reproducer) go to flag_hybrid_experimental:
+#   RUNS=scripts/korbi/wandb_sync/runs_experimental.tsv PROJECT=flag_hybrid_experimental \
+#   MIRROR=~/wandb_mirror_mn5_exp PIDFILE=~/wandb_sync_exp.pid SKIP_MARKS=1 INTERVAL=1800 \
+#   nohup setsid scripts/korbi/wandb_sync/sync_loop.sh >> ~/wandb_sync_exp.log 2>&1 &
 set -u
 [ -z "${ONCE:-}" ] && echo $$ > "${PIDFILE:-$HOME/wandb_sync_mn5.pid}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +24,7 @@ WANDB="${WANDB:-$HOME/.miniconda3/envs/oellm/bin/wandb}"
 while true; do
     echo "=== $(date -Is) sync pass"
     # keep the equal-token checkpoints first (the rolling ones are deleted ~2 saves later)
-    "$HERE/../eval_marks/link_marks.sh"
+    [ -z "${SKIP_MARKS:-}" ] && "$HERE/../eval_marks/link_marks.sh"
     grep -v '^\s*#' "$RUNS" | while IFS=$'\t' read -r id dir; do
         [ -z "${id:-}" ] && continue
         dest="$MIRROR/$id"
