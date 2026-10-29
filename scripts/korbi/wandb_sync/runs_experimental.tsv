@@ -88,3 +88,8 @@ x_screen5stab_s3__ldm_sc5	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/scree
 x_ambrepro__sc3	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambrepro/sc3
 x_screen5stab_s3__ldm_orth	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5stab_s3/ldm_orth
 x_ambrepro__orth	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambrepro/orth
+x_screen5stab_s3__ldm_sc2	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5stab_s3/ldm_sc2
+x_screen5stab_s3__ldm_pab_sc3	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5stab_s3/ldm_pab_sc3
+x_screen5stab_s2__ldm_sc3	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5stab_s2/ldm_sc3
+x_screen5stab_s2__ldm_sc2	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5stab_s2/ldm_sc2
+x_screen5stab_s2__ldm_pab_sc3	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5stab_s2/ldm_pab_sc3

@@ -1824,6 +1824,12 @@ def arms5stab(size: str):
                     {B + "muown_expert_spectral_cap": 3.0}),
         "ldm_sc5": ("LDM x1, expert spectral cap 5 x init sigma_max",
                     {B + "muown_expert_spectral_cap": 5.0}),
+        # the cap acts early (it led pab by 0.014 at steps 200-400, then binds < 1 % of fc2 and
+        # fades): kappa 2 keeps it binding; pab + kappa 3 combines the early and the steady gain
+        "ldm_sc2": ("LDM x1, expert spectral cap 2 x init sigma_max",
+                    {B + "muown_expert_spectral_cap": 2.0}),
+        "ldm_pab_sc3": ("A + B bounded at rms 1 + expert spectral cap 3",
+                        {**pan, B + "post_act_norm_floor": 1.0, B + "muown_expert_spectral_cap": 3.0}),
         "ldm_orth": ("LDM x1, expert directions orthogonal (Muon-like weight balancing)",
                      {B + "muown_expert_orthogonal": True}),
         "ldm_gwd1": ("LDM x1, g weight decay 1 (cap ~1)", {B + "muown_classical_g_weight_decay": 1.0}),
@@ -1833,9 +1839,9 @@ def arms5stab(size: str):
     keep = {"s1": ("ldm_pa", "ldm_pan", "ldm_pan_wu", "ldm_wu", "ldm_pan_lr2", "ldm_clamp5",
                    "ldm_gwd1", "ldm_gwd03", "ldm_pab"),
             "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pab_lr2", "ldm_periln",
-                   "ldm_srf50"),
+                   "ldm_srf50", "ldm_sc3", "ldm_sc2", "ldm_pab_sc3"),
             "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pa", "ldm_pab_lr2",
-                   "ldm_periln", "ldm_srf50", "ldm_srf25", "ldm_srf100", "ldm_sc3", "ldm_sc5", "ldm_orth")}[size]
+                   "ldm_periln", "ldm_srf50", "ldm_srf25", "ldm_srf100", "ldm_sc3", "ldm_sc5", "ldm_orth", "ldm_sc2", "ldm_pab_sc3")}[size]
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
 
 
