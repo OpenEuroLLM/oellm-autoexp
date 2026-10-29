@@ -61,6 +61,15 @@ sweep:
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.mlp_post_act_norm: true
           backend.megatron.post_act_norm_floor: 1.0
+        # cheaper bounded variants (the bounded A + B cost ~+0.012 here, ~0 at s1-s3): a higher
+        # floor (acts only at 2x rms), and the bound on the routed experts alone
+        - aux.arm: pab2
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 2.0
+        - aux.arm: pab_r
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
         # peri-LN (pre + post-norm): every sublayer output normalized (learnable gain) before it
         # enters the residual -- bounds each layer's write, not the experts inside it
         - aux.arm: periln
