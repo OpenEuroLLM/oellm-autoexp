@@ -22,3 +22,7 @@
 [submodule "submodules/torchtitan"]
 	path = submodules/torchtitan
 	url = https://github.com/pytorch/torchtitan.git
+[submodule "submodules/MoonEP"]
+	path = submodules/MoonEP
+	url = git@github.com:OpenEuroLLM/MoonEP.git
+	branch = oellm/main

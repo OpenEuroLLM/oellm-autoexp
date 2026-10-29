@@ -27,6 +27,10 @@ defaults:
   - _self_
 
 aux:
+  # MoonEP built from submodules/MoonEP (OpenEuroLLM fork, branch oellm/main) by
+  # scripts/korbi/build_moonep.sh into $HYBRID_ENV/pylibs_moonep_<commit>; ec3eb8b = upstream
+  # d86fda4 + the no-multicast fallback + the barrier timeout (= the old pylibs_moonep2)
+  moonep_lib: pylibs_moonep_ec3eb8b
   # the main runs' root, pinned (user 2026-10-28): every segment / pool move must resolve the SAME
   # checkpoint directory, or Megatron does not find the latest checkpoint and starts over; never
   # from OUTPUT_DIR, which differs between launches
@@ -59,7 +63,7 @@ aux:
 
 backend:
   env:
-    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+    PYTHONPATH: "${aux.hybrid_env}/${aux.moonep_lib}:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     CUDA_DEVICE_MAX_CONNECTIONS: "8"
     FLA_TENSOR_CACHE_SIZE: "64"

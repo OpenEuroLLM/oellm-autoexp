@@ -16,7 +16,7 @@ DEST=$R/autoexp${1:+_$1}
 cd "$(dirname "$0")"
 
 stamp() {
-    for repo in . submodules/Megatron-LM flash-linear-attention submodules/cute_kernels; do
+    for repo in . submodules/Megatron-LM flash-linear-attention submodules/cute_kernels submodules/MoonEP; do
         printf '%-28s %s %s dirty=%s\n' "$repo" \
             "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" \
             "$(git -C "$repo" rev-parse --short HEAD)" \
