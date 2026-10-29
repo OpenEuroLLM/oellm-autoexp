@@ -180,6 +180,14 @@ def test_end_to_end(tmp_path):
     assert roles["question"] == "1" and roles["context"] == "1" and roles["answer"] == "0"   # doc 17: seg 0, doc 99: seg 1
     for fr in ("0.7", "0.9"):
         assert json.load(open(work / "_report" / f"frac_{fr}" / "report.json"))["docs_dropped"] == 2
+    # --exclude-src: segment 0 is also in "alias" (still flags), segment 1 only in bench1 (no longer flags)
+    subprocess.run(fin + ["--dry-run", "--frac", "0.7", "--exclude-src", "bench0,bench1"], check=True)
+    assert json.load(open(work / "_report" / "frac_0.7" / "report.json"))["docs_dropped"] == 1
+    subprocess.run(fin + ["--dry-run", "--frac", "0.7", "--exclude-src", "bench0,alias,bench1"], check=True)
+    assert json.load(open(work / "_report" / "frac_0.7" / "report.json"))["docs_dropped"] == 0
+    from common import excluded_segments
+    refs = json.load(open(work / "table" / "sources.json"))["refs"]
+    assert excluded_segments(refs, ["bench0", "bench1", "bench2"], ["bench0", "bench2"]).tolist() == [False, False, True]
     subprocess.run(fin, check=True)
     removed = np.load(str(out / "src" / "shard_0000_text_document.removed.npz"))
     assert sorted(set(removed["doc"].tolist())) == [17, 99]

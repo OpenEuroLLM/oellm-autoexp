@@ -309,8 +309,8 @@ FullStackBench,code,ByteDance/FullStackBench,,test,low,no,,survey 2026-10-28 (re
 HumanEval infilling,code,loubnabnl/humaneval_infilling,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3,,no,ok,hf,
 HumanEval Pro / MBPP Pro,code,CodeEval-Pro/humaneval-pro,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,also CodeEval-Pro/mbpp-pro
 MBPP Pro,code,CodeEval-Pro/mbpp-pro,,train,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3,,no,ok,hf,
-Multilingual MBPP,code,allenai/multilingual_mbpp,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,hf,
-OJBench,code,He-Ren/OJBench_testdata,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; Qwen3.5,https://github.com/MoonshotAI/OJBench,no,ok,hf,
+Multilingual MBPP,code,allenai/multilingual_mbpp,all,test,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMES; OLMo3; OELLM-pure,,no,ok,"failed: parquet listing 404 (2026-10-29, low priority)",
+OJBench,code,He-Ren/OJBench_testdata,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),Kimi K2; Qwen3.5,https://github.com/MoonshotAI/OJBench,no,ok,hf,v6: plain data files fetched; 7.3 GiB of test-case archives skipped
 RepoBench,code,tianyang/repobench_python_v1.1,,,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),OLMo3; Evalchemy,,no,ok,skip: repository code contexts (GitHub code),also _java_v1.1
 Spider,code,xlangai/spider,,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),text-to-SQL,,no,ok,hf,
 SWAG,commonsense,allenai/swag,regular,validation,low,no,,survey 2026-10-28 (reports + decon pipelines + OELLM-pure list),lighteval,,no,ok,hf,

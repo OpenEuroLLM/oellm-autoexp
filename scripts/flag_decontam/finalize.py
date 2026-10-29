@@ -40,7 +40,7 @@ from collections import defaultdict
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import Index, filter_index, write_index  # noqa: E402
+from common import Index, excluded_segments, filter_index, write_index  # noqa: E402
 from scan import shard_key  # noqa: E402
 
 
@@ -168,6 +168,8 @@ def decide(shards, segs, frac, args):
     n_tok = segs["n_tokens"].astype(np.int64)
     need = np.maximum(args.min_run, np.minimum(np.ceil(frac * n_tok), args.abs_run)).astype(np.int64)
     need[segs["n"] == 0] = np.iinfo(np.int64).max         # unmatchable segments never flag
+    if getattr(args, "excluded", None) is not None:
+        need[args.excluded] = np.iinfo(np.int64).max      # --exclude-src
     S, max_docs = len(n_tok), args.max_docs
     flagged, seg_docs = {}, np.zeros(S, np.int64)
     for rel, (idx, hits, seq2doc) in shards.items():
@@ -270,7 +272,8 @@ def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, s
     rep = {"frac": frac, "abs_run": args.abs_run, "min_run": args.min_run, "max_docs": args.max_docs, "shards": len(rows),
            "docs": total[0], "tokens": total[1], "docs_dropped": total[2], "tokens_dropped": total[3],
            "token_pct_dropped": 100 * total[3] / max(total[1], 1), "segments_found": int((applied > 0).sum()),
-           "generic_segments_skipped": len(generic), "dry_run": args.dry_run}
+           "generic_segments_skipped": len(generic), "dry_run": args.dry_run,
+           "exclude_src": args.exclude_src}
     with open(os.path.join(rdir, "report.json"), "w") as fh:
         json.dump(rep, fh, indent=1)
     print(json.dumps(rep), flush=True)
@@ -324,6 +327,8 @@ def main():
     ap.add_argument("--max-docs", type=int, default=20000)
     ap.add_argument("--dry-run", action="store_true", help="reports only ($WORK/_report/frac_<f>), no tree")
     ap.add_argument("--hits-dir", default="hits")
+    ap.add_argument("--exclude-src", default=[], type=lambda x: [s for s in x.split(",") if s],
+                    help="comma-separated benchmark sources that do not flag (a text also in a kept source still does)")
     ap.add_argument("--fixes", default="", help="recheck.py's corrections (recheck_fixes.npz), applied to the hits")
     args = ap.parse_args()
     if not args.dry_run and len(args.frac) != 1:
@@ -333,6 +338,11 @@ def main():
     segs = np.load(os.path.join(tdir, "segments.npz"))
     meta = json.load(open(os.path.join(tdir, "sources.json")))
     src_names = meta["sources"]
+    args.excluded = None
+    if args.exclude_src:
+        args.excluded = np.flatnonzero(excluded_segments(meta["refs"], [src_names[i] for i in segs["src"]],
+                                                         args.exclude_src))
+        print(f"--exclude-src: {len(args.excluded)} segments do not flag", flush=True)
     rows = []
     for line in open(os.path.join(args.root, "datamix.txt")):
         if line.strip():

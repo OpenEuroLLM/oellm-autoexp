@@ -35,7 +35,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import MIN_GRAM_CHARS, MIN_SEG_CHARS, MIN_SEG_TOKENS, NGRAM_SIZES, build_lut, key_chars, ngram_hashes  # noqa: E402
+from common import excluded_segments, MIN_GRAM_CHARS, MIN_SEG_CHARS, MIN_SEG_TOKENS, NGRAM_SIZES, build_lut, key_chars, ngram_hashes  # noqa: E402
 
 TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
 _sp = _lut = _chars = None
@@ -143,6 +143,12 @@ def build(args):
             src_of.append(srcs.setdefault(r["src"], len(srcs)))
             split_of.append(splits.setdefault(r["split"], len(splits)))
     print(f"{len(texts)} segments from {len(srcs)} sources", flush=True)
+    names = list(srcs)
+    excl = excluded_segments(args.refs, [names[i] for i in src_of], args.exclude_src)
+    for i in np.flatnonzero(excl):
+        texts[i] = ""                       # kept as an (unmatchable) segment: ids stay those of the refs
+    if args.exclude_src:
+        print(f"{int(excl.sum())} segments excluded (sources {args.exclude_src})", flush=True)
 
     B = 2000
     batches = [texts[i:i + B] for i in range(0, len(texts), B)]
@@ -165,7 +171,7 @@ def build(args):
         **{f"n{n}_segments": int((nsz == n).sum()) for n in NGRAM_SIZES},
         "min_seg_tokens": MIN_SEG_TOKENS, "min_seg_chars": MIN_SEG_CHARS, "min_gram_chars": MIN_GRAM_CHARS,
         "unique_ngrams": int(len(uniq)), "template_ngrams_dropped": int(common.sum()),
-        "max_segments": args.max_segments,
+        "max_segments": args.max_segments, "exclude_src": args.exclude_src, "excluded_segments": int(excl.sum()),
         "too_short_by_source": dict(Counter(list(srcs)[s] for s, n in zip(src_of, nsz) if n == 0).most_common()),
     }
     with open(os.path.join(tdir, "build_report.json"), "w") as f:
@@ -211,6 +217,8 @@ def main():
     ap.add_argument("--tokenizer", default=TOKENIZER)
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
     ap.add_argument("--max-segments", type=int, default=10)
+    ap.add_argument("--exclude-src", default=[], type=lambda x: [s for s in x.split(",") if s],
+                    help="comma-separated sources not indexed (segments kept as unmatchable; v6: starbix/oneruler)")
     ap.add_argument("--prune", action="store_true")
     ap.add_argument("--max-count", type=int, default=50)
     args = ap.parse_args()
