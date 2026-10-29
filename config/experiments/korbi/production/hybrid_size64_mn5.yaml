@@ -71,3 +71,16 @@ sweep:
         - aux.arm: e360_eng80
           backend.megatron.num_experts: 360
           backend.megatron.engram_table_size: 38960768
+        # the restart's likely expert stabilization (user / stabilization session 2026-10-29:
+        # routed-expert outputs grew ~100x in layers 55-73 of main_ldm): bounded post-act norm on
+        # the routed + shared experts (Megatron >= b257e7af6; no parameters), its memory / speed cost
+        - aux.arm: e360_pab
+          backend.megatron.num_experts: 360
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
+        - aux.arm: e432_pab
+          backend.megatron.num_experts: 432
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
