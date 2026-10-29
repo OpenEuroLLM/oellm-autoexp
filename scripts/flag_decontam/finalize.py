@@ -205,7 +205,10 @@ def marginal_report(rdir, args, rows, shards, flagged, segs, src_names, attrib, 
     pos[segs_f] = np.arange(len(segs_f))
     off, ids = np.array(off, np.int64), np.array(ids, np.int64)
     groups = []
-    for g in [x for x in (args.whatif or "").split(";") if x.strip()]:
+    spec = args.whatif or ""
+    if spec.startswith("@"):                           # a file: one group per line, '#' comments
+        spec = ";".join(l.strip() for l in open(spec[1:]) if l.strip() and not l.startswith("#"))
+    for g in [x for x in spec.split(";") if x.strip()]:
         lab, srcs = g.split("=", 1)
         import fnmatch                                  # "file/MLQA_V1__*": every unpacked file of an archive
         pats = [x for x in srcs.split(",") if x]

@@ -1,0 +1,11 @@
+# finalize.py --whatif @scripts/flag_decontam/whatif_v6.txt: one group per line, "label=pattern,pattern" (fnmatch);
+# docs / tokens a group would save if excluded (v6 dry run, 2026-10-29)
+toolathlon=hkust-nlp/Toolathlon,file/hkust-nlp__Toolathlon__*
+toxic_web_prompts=ToxicityPrompts/PolygloToxicityPrompts,allenai/real-toxicity-prompts
+wiki_contexts=file/MLQA_V1__*,file/quac_val*,rajpurkar/squad,google-research-datasets/tydiqa,pminervini/HaluEval,AmazonScience/bold,file/tau__zero_scrolls__*,file/zai-org__LongBench__*,file/cosmosqa_valid
+glue=nyu-mll/glue
+bigbench_full=hails/bigbench
+jeopardy=soldni/jeopardy
+apps=codeparrot/apps
+math_new=EleutherAI/hendrycks_math,DigitalLearningGmbH/MATH-lighteval,di-zhang-fdu/AIME_1983_2024,KbsdJames/Omni-MATH,Hothan/OlympiadBench,file/deepmind_math_*
+all_but_math=hkust-nlp/Toolathlon,file/hkust-nlp__Toolathlon__*,ToxicityPrompts/PolygloToxicityPrompts,allenai/real-toxicity-prompts,file/MLQA_V1__*,file/quac_val*,rajpurkar/squad,google-research-datasets/tydiqa,pminervini/HaluEval,AmazonScience/bold,file/tau__zero_scrolls__*,file/zai-org__LongBench__*,file/cosmosqa_valid,nyu-mll/glue,soldni/jeopardy
