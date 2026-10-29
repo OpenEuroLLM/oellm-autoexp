@@ -1,0 +1,71 @@
+# @package _global_
+# How large can the ambitious model be on 64 nodes? (user 2026-10-29: maximize the model size --
+# more routed experts, possibly more Engram -- on 64 nodes of the cns144 pool host.) Memory and
+# speed at the production recipe (hybrid_main_mn5: LDM, 7:1 attention first, CKDA, muown_classical,
+# Megatron-FSDP + MoonEP EP 4, mbs 4, gbs 4096 x 16k, full recompute with host offload), 12 steps,
+# no saves, no eval (hybrid_ldm_speed_mn5).
+#
+# Expert width stays 768 and top-k 5 (whole experts only: narrower experts make the grouped GEMMs
+# worse; widths must be multiples of 128 for the FSDP prefetch -- ldm_size_AB at 576 asserted).
+# Expert counts are multiples of the EP size 4.
+#
+# Before (32 nodes, 2026-10-28, suites ldm_size_*): 144 x 768 fits (max allocated 44.7 GB, mem 0.93),
+# 216 x 768 runs out of GPU memory. Production 64 nodes, 216 x 768: allocated 18.7 GB, max
+# allocated 42.4 GB, reserved 46.1 GB, mem 0.89 (~12 GB outside the torch allocator). Fitted to
+# these: ~23 MB per added routed expert per GPU at 64 nodes (12 MB sharded state, ~11 MB of the
+# per-layer FSDP buffers of the local experts), Engram 40B -> 80B ~ +0.9 GB; the limit is ~430-450
+# experts at mbs 4.
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p129 \
+#       --config-name experiments/korbi/production/hybrid_size64_mn5 "aux.only=[e432]" --yes
+defaults:
+  - hybrid_ldm_speed_mn5
+  - _self_
+
+aux:
+  suite: size64
+  arm: e216
+  nodes: 64
+  only: []
+
+backend:
+  megatron:
+    num_experts: 216
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  # pools: no array, and NOT the main run's singleton key (hybrid_ambitious_32_mn5 sets it)
+  array_group: null
+  metadata:
+    pool_singleton: null
+    pool_priority: 45
+  # 64 nodes, 216 experts: ~48-50 s per step
+  est_step_time_s: 60.0
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # production (reference, same day)
+        - aux.arm: e216
+          backend.megatron.num_experts: 216
+        - aux.arm: e288
+          backend.megatron.num_experts: 288
+        - aux.arm: e360
+          backend.megatron.num_experts: 360
+        # the predicted edge
+        - aux.arm: e432
+          backend.megatron.num_experts: 432
+        # Engram 40B -> 80B (2 layers x 40B: twice the rows per (order, head)), paired with e360
+        - aux.arm: e360_eng80
+          backend.megatron.num_experts: 360
+          backend.megatron.engram_table_size: 38960768
