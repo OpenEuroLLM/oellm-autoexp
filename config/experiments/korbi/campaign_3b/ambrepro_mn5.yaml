@@ -84,6 +84,10 @@ sweep:
         # (scaled down when above; per shape from the init weights), no norm
         - aux.arm: sc3
           backend.megatron.muown_expert_spectral_cap: 3.0
+        # Muon-like weight balancing: every routed-expert matrix's direction part (row-normalized
+        # weight) replaced by its polar factor after each step, row norms kept
+        - aux.arm: orth
+          backend.megatron.muown_expert_orthogonal: true
         # peri-LN (pre + post-norm): every sublayer output normalized (learnable gain) before it
         # enters the residual -- bounds each layer's write, not the experts inside it
         - aux.arm: periln

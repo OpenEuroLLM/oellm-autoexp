@@ -1824,6 +1824,8 @@ def arms5stab(size: str):
                     {B + "muown_expert_spectral_cap": 3.0}),
         "ldm_sc5": ("LDM x1, expert spectral cap 5 x init sigma_max",
                     {B + "muown_expert_spectral_cap": 5.0}),
+        "ldm_orth": ("LDM x1, expert directions orthogonal (Muon-like weight balancing)",
+                     {B + "muown_expert_orthogonal": True}),
         "ldm_gwd1": ("LDM x1, g weight decay 1 (cap ~1)", {B + "muown_classical_g_weight_decay": 1.0}),
         "ldm_gwd03": ("LDM x1, g weight decay 0.3 (cap ~3)",
                       {B + "muown_classical_g_weight_decay": 0.3}),
@@ -1833,7 +1835,7 @@ def arms5stab(size: str):
             "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pab_lr2", "ldm_periln",
                    "ldm_srf50"),
             "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pa", "ldm_pab_lr2",
-                   "ldm_periln", "ldm_srf50", "ldm_srf25", "ldm_srf100", "ldm_sc3", "ldm_sc5")}[size]
+                   "ldm_periln", "ldm_srf50", "ldm_srf25", "ldm_srf100", "ldm_sc3", "ldm_sc5", "ldm_orth")}[size]
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
 
 

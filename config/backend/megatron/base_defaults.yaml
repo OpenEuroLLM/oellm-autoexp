@@ -707,6 +707,7 @@ muon_tp_mode: blockwise  # choices: ['blockwise', 'duplicated', 'distributed'] |
 muown_classical_g_weight_decay: 0.0  # muown_classical: decoupled weight decay on the row magnitudes g, g <- g (1 - lr lambda): a soft cap at |g| ~ 1 / lambda against the Adam drift of g.
 muown_classical_v_weight_decay: 0.0  # muown_classical: decoupled weight decay on the unnormalized direction vectors v (not in the Muown paper): the rotation rate settles at about sqrt(2 lr lambda) instead of annealing as t^-1/2.
 muown_cpu_offload: false  # Keep the Muown momentum in pinned host memory, streamed through the optimizer step (transfers overlapped with Newton-Schulz).
+muown_expert_orthogonal: false  # muown_classical: after each step, replace every routed-expert matrix's direction part by its polar factor at kept row norms (Muon-like weight balancing).
 muown_expert_spectral_cap: 0.0  # muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init sigma_max (per shape) after each step (deflation of the top singular directions; 0 = off).
 muown_expert_stable_rank_floor: 0.0  # muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >= this value after each step (rank-1 deflation of the top singular direction at fixed row norms; 0 = off).
 muown_extra_scale_factor: 1.0  # Additional multiplier on the Muown direction update.

@@ -2085,6 +2085,10 @@ class MegatronConfig(ConfigInterface):
     # annealing as t^-1/2.
     muown_classical_v_weight_decay: float = 0.0
 
+    # muown_classical: after each step, replace every routed-expert matrix's direction part by
+    # its polar factor at kept row norms (Muon-like weight balancing).
+    muown_expert_orthogonal: bool = False
+
     # muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init
     # sigma_max (per shape) after each step (deflation of the top singular directions; 0 =
     # off).

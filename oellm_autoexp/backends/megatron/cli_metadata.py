@@ -5686,6 +5686,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "muown_expert_orthogonal": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="muown_classical: after each step, replace every routed-expert matrix's direction part by its polar factor at kept row norms (Muon-like weight balancing).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "muown_expert_spectral_cap": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -13264,6 +13272,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "muown_cpu_offload": MegatronActionSpec(
         option_strings=("--muown-cpu-offload",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "muown_expert_orthogonal": MegatronActionSpec(
+        option_strings=("--muown-expert-orthogonal",),
         action_type="store_true",
         nargs=0,
         const=True,
