@@ -7,7 +7,7 @@
 R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
 POOLS=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
 SNAP=${SNAP:-$R/autoexp_p132}
-STALE_S=${STALE_S:-900}
+STALE_S=${STALE_S:-300}
 log() { echo "$(date '+%F %T') $*"; }
 running() { # running <session dir>: a monitor_autoexp.py process for it
   for c in /proc/[0-9]*/cmdline; do
