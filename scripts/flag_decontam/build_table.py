@@ -213,6 +213,13 @@ def prune(args):
     print(json.dumps(rep), flush=True)
 
 
+def src_list(x):
+    """Comma-separated sources / fnmatch patterns, or @file (one per line, '#' comments)."""
+    if x.startswith("@"):
+        return [l.split("#")[0].strip() for l in open(x[1:]) if l.split("#")[0].strip()]
+    return [s for s in x.split(",") if s]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--work", required=True)
@@ -220,7 +227,7 @@ def main():
     ap.add_argument("--tokenizer", default=TOKENIZER)
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
     ap.add_argument("--max-segments", type=int, default=10)
-    ap.add_argument("--exclude-src", default=[], type=lambda x: [s for s in x.split(",") if s],
+    ap.add_argument("--exclude-src", default=[], type=src_list,
                     help="comma-separated sources not indexed (segments kept as unmatchable; v6: starbix/oneruler)")
     ap.add_argument("--prune", action="store_true")
     ap.add_argument("--max-count", type=int, default=50)

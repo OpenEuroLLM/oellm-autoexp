@@ -1,0 +1,22 @@
+# flag-decon-v2 (v6 references), 2026-10-29: sources that do not flag (finalize.py --exclude-src @...).
+# A segment still flags when any other, kept benchmark holds the same text (attribution).
+# Agent task fixtures (code / CSV / workspace files), not benchmark items:
+hkust-nlp/Toolathlon
+file/hkust-nlp__Toolathlon__*
+# Prompts excerpted from web text (their source pages, not the benchmark):
+ToxicityPrompts/PolygloToxicityPrompts
+allenai/real-toxicity-prompts
+# Context passages from Wikipedia / the web (reading comprehension, long context, BOLD's Wikipedia prompts):
+file/MLQA_V1__*
+file/quac_val*
+rajpurkar/squad
+google-research-datasets/tydiqa
+pminervini/HaluEval
+AmazonScience/bold
+file/tau__zero_scrolls__*
+file/zai-org__LongBench__*
+file/cosmosqa_valid
+# Sentences from web / news text:
+nyu-mll/glue
+# Trivia questions (MosaicML gauntlet copy; openeurollm/jeopardy from v1 stays):
+soldni/jeopardy

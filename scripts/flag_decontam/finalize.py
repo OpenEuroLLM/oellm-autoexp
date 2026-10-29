@@ -379,6 +379,13 @@ def write_tree(args, rows, shards, flagged, segs):
     shutil.copy(os.path.join(args.root, "datamix.txt"), os.path.join(args.out, "datamix.txt"))
 
 
+def src_list(x):
+    """Comma-separated sources / fnmatch patterns, or @file (one per line, '#' comments)."""
+    if x.startswith("@"):
+        return [l.split("#")[0].strip() for l in open(x[1:]) if l.split("#")[0].strip()]
+    return [s for s in x.split(",") if s]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--work", required=True)
@@ -391,7 +398,7 @@ def main():
     ap.add_argument("--max-docs", type=int, default=20000)
     ap.add_argument("--dry-run", action="store_true", help="reports only ($WORK/_report/frac_<f>), no tree")
     ap.add_argument("--hits-dir", default="hits")
-    ap.add_argument("--exclude-src", default=[], type=lambda x: [s for s in x.split(",") if s],
+    ap.add_argument("--exclude-src", default=[], type=src_list,
                     help="comma-separated benchmark sources that do not flag (a text also in a kept source still does)")
     ap.add_argument("--whatif", default="", help='"label=src,src;label2=src": docs / tokens each group would save')
     ap.add_argument("--fixes", default="", help="recheck.py's corrections (recheck_fixes.npz), applied to the hits")

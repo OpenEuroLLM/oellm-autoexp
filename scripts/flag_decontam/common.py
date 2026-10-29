@@ -192,16 +192,21 @@ def excluded_segments(refs_path, primary_src, exclude):
     """Boolean mask of the segments whose every source is in `exclude` (source names): from the
     attribution file next to the refs (refs.attrib.jsonl.gz: all benchmarks holding the exact text),
     else from each segment's primary source. A text shared with a kept benchmark stays."""
+    import fnmatch
     import gzip
-    exclude = set(exclude)
-    mask = np.array([s in exclude for s in primary_src], bool)
+    pats = list(exclude)
+
+    def hit(name):                            # exact names or fnmatch patterns ("file/MLQA_V1__*")
+        return any(name == q or fnmatch.fnmatchcase(name, q) for q in pats)
+    cache = {}
+    mask = np.array([cache.setdefault(s, hit(s)) for s in primary_src], bool)
     p = refs_path.replace(".jsonl.gz", ".attrib.jsonl.gz")
-    if not exclude or not os.path.exists(p):
+    if not pats or not os.path.exists(p):
         return mask
     with gzip.open(p, "rt", encoding="utf-8") as fh:
         for i, line in enumerate(fh):
             if mask[i]:
                 srcs = {a[0] for a in json.loads(line)["also_in"] if a[3]}
-                mask[i] = srcs <= exclude
+                mask[i] = all(cache.setdefault(x, hit(x)) for x in srcs)
     return mask
 
