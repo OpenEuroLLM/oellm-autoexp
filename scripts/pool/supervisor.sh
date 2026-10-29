@@ -294,6 +294,32 @@ free_nodes() { # free_nodes <extra exclude>: usable nodes no running run holds
     usable_nodes "$1" | grep -vxF -f <(printf '%s\n' "$held")
   fi
 }
+
+# A run with USE_EXCLUDED_NODES=1 (job.metadata.pool_use_excluded_nodes, e.g. CPU-only work) may
+# also use the nodes the pool excludes for bad GPUs / NICs -- those first, so it takes no healthy
+# GPU node it does not need. Nodes SLURM reports sick and the run's own EXCLUDE stay off-limits.
+excluded_ok_nodes() { # excluded_ok_nodes <extra exclude>: pool-excluded, healthy to SLURM, free
+  local listed off held
+  listed=$(cat "$POOL/exclude_nodes" "$H/exclude_nodes" 2>/dev/null | tr ', ' '\n\n' | grep -v '^$' |
+    while read -r e; do expand_hosts "$e"; done | sort -u)
+  [ -n "$listed" ] || return 0
+  off=$(
+    printf '%s\n' "$1" | tr ', ' '\n\n' | grep -v '^$' | while read -r e; do expand_hosts "$e"; done
+    sick_nodes
+    cat "$H"/inuse/* 2>/dev/null | tr ',' '\n'
+  )
+  off=$(printf '%s\n' "$off" | grep -v '^$' | sort -u)
+  printf '%s\n' "$ALL_NODES" | grep -xF -f <(printf '%s\n' "$listed") |
+    { if [ -n "$off" ]; then grep -vxF -f <(printf '%s\n' "$off"); else cat; fi; }
+}
+
+run_free_nodes() { # run_free_nodes <extra exclude> <use excluded (1 / empty)>: candidates in order
+  if [ -n "$2" ]; then
+    { excluded_ok_nodes "$1"; free_nodes "$1"; } | grep -v '^$' | awk '!seen[$0]++'
+  else
+    free_nodes "$1"
+  fi
+}
 reap() {
   local rid
   for rid in "${!RUN_PID[@]}"; do
@@ -344,12 +370,15 @@ while true; do
       finish_run "$rid" 0 cancelled
       continue
     fi
-    meta=$(. "$R/meta.env"; printf '%s|%s' "${NODES:-1}" "${EXCLUDE:-}")
+    meta=$(. "$R/meta.env"; printf '%s|%s|%s' "${NODES:-1}" "${USE_EXCLUDED_NODES:-}" "${EXCLUDE:-}")
     need=${meta%%|*}
-    nl=$(free_nodes "${meta#*|}" | head -n "$need" | paste -sd, -)
+    rest=${meta#*|}
+    use_excl=${rest%%|*}
+    run_excl=${rest#*|}
+    nl=$(run_free_nodes "$run_excl" "$use_excl" | head -n "$need" | paste -sd, -)
     if [ "$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)" -lt "$need" ]; then
       if [ "${#RUN_PID[@]}" -eq 0 ]; then
-        log "run $rid needs $need node(s), only $(free_nodes "${meta#*|}" | grep -c .) usable"
+        log "run $rid needs $need node(s), only $(run_free_nodes "$run_excl" "$use_excl" | grep -c .) usable"
         finish_run "$rid" -1 insufficient_nodes
       fi
       continue  # (packed: it starts once another run frees its nodes)

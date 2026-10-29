@@ -640,6 +640,38 @@ def test_packing_runs_side_by_side_on_disjoint_nodes(pool):
     assert len(pool.fake_jobs()) == 1, "all of it in ONE allocation"
 
 
+def test_cpu_runs_may_use_the_excluded_nodes_first(pool):
+    """job.metadata.pool_use_excluded_nodes: a run (CPU-only work) may be placed on the pool's
+    excluded nodes, those first, so a GPU run beside it keeps the healthy ones; a run without
+    the flag never gets an excluded node."""
+    pool.create_pool(*FAST, "job.pool_host.max_runs_per_host=2", "slurm.sbatch.nodes=3")
+    pool.ctl("exclude", "n1000-2")  # the first host is fake job 1000: nodes n1000-0 .. n1000-2
+    pool.enqueue("gpu", "aux.iters=150", "aux.tick=0.1", "slurm.sbatch.nodes=2")
+    pool.enqueue(
+        "cpu",
+        "aux.iters=150",
+        "aux.tick=0.1",
+        "slurm.sbatch.nodes=1",
+        "+job.metadata.pool_use_excluded_nodes=true",
+    )
+    pool.start_monitor()
+
+    def started(name):
+        rids = pool.runs_of(name)
+        st = pool.run_state(rids[0]).started if rids else None
+        return st or None
+
+    gpu = pool.wait_for(lambda: started("dummy_gpu"), 60, "the GPU run starts")
+    cpu = pool.wait_for(lambda: started("dummy_cpu"), 60, "the CPU run starts beside it")
+    assert gpu["job"] == cpu["job"], "packed into the same allocation"
+    assert cpu["nodes"] == "n1000-2", f"the CPU run takes the excluded node: {cpu['nodes']}"
+    assert "n1000-2" not in gpu["nodes"].split(","), f"the GPU run never does: {gpu['nodes']}"
+    for name in ("dummy_gpu", "dummy_cpu"):
+        pool.wait_for(
+            lambda n=name: pool.record(n)["runtime"]["final_state"] == "finished", 120, name
+        )
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,

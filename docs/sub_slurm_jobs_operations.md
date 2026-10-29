@@ -147,6 +147,14 @@ environment has the run's `AUTOEXP_RUN_ID`. Host-wide stops (wall clock, handove
 stop all of them, and the host releases itself once the last run has ended. Set it live with
 `pool_ctl <pool> set max_runs_per_host=3`.
 
+**CPU-only runs on excluded nodes (`job.metadata.pool_use_excluded_nodes: true`).** A node the pool
+excludes for a bad GPU or NIC is often fine for CPU work, such as data preparation or
+decontamination steps. A run with this flag may be placed on the host's excluded nodes, and takes
+them first, so it leaves the healthy GPU nodes to the others. Nodes SLURM reports as down, drained
+or unresponsive stay off-limits, and so does the run's own exclude list. Runs without the flag are
+unchanged. It needs a supervisor from 2026-10-29 or later; an older one places such a run like any
+other.
+
 **Attaching to a running allocation (`pool_ctl <pool> attach <jobid>`).** A host started with old
 supervisor code cannot pack. A second pool with packing can take over its allocation while it is
 idle: `attach` registers the RUNNING job like an adopted one, but without a hook. The monitor starts

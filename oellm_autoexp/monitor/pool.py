@@ -670,6 +670,13 @@ def register_pool_in_session(session_dir: str | Path, pool_dir: str | Path) -> N
         _atomic_write(path, "\n".join(sorted(pools)) + "\n")
 
 
+def _truthy(value: Any) -> bool:
+    """A metadata flag given as a bool, a number or a string ("true", "yes", "1")."""
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def submit_request(pool_dir: str | Path, op: str, **payload: Any) -> Path:
     layout = PoolLayout(pool_dir)
     path = layout.requests_dir / f"{time.time():.6f}-{uuid.uuid4().hex[:6]}.json"
@@ -852,6 +859,10 @@ class PoolManager:
                 "LOG": log_path,
                 "NAME": _sanitize(job.name),
                 "EXCLUDE": _exclude_list(job.slurm),
+                # CPU-only work may also use the pool's excluded (bad GPU / NIC) nodes, those first
+                "USE_EXCLUDED_NODES": "1"
+                if _truthy(metadata.get("pool_use_excluded_nodes"))
+                else "",
             },
         )
         _atomic_write(
@@ -1129,26 +1140,44 @@ class PoolManager:
                 )
         queued.sort()
 
-        def fits(host: HostView, nodes: int) -> bool:
-            return nodes <= host.usable_nodes and host.remaining_s(now) >= cfg.min_remaining_s
+        def run_meta(rid: str) -> tuple[int, bool]:
+            """(nodes, may it use the pool's excluded nodes) of a run, from its meta.env."""
+            meta = read_env_file(layout.run_dir(rid) / "meta.env")
+            try:
+                n = int(meta.get("NODES", "1") or 1)
+            except ValueError:
+                n = 1
+            return n, bool(meta.get("USE_EXCLUDED_NODES"))
+
+        def host_total(host: HostView) -> int:
+            try:
+                return int(host.info.get("NUM_NODES") or host.nodes)
+            except (TypeError, ValueError):
+                return host.nodes
+
+        def fits(host: HostView, nodes: int, rid: str | None = None) -> bool:
+            cap = host_total(host) if rid is not None and run_meta(rid)[1] else host.usable_nodes
+            return nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s
 
         # 4. assign: newest host first (after a handover that is the new one), as many runs
         #    as its free nodes and max_runs_per_host allow (packing; default one per host)
-        def run_nodes(rid: str) -> int:
-            try:
-                return int(read_env_file(layout.run_dir(rid) / "meta.env").get("NODES", "1") or 1)
-            except ValueError:
-                return 1
-
         max_runs = max(1, int(cfg.max_runs_per_host))
         for host in sorted(live, key=lambda h: -h.start_ts):
             active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
-            free = host.usable_nodes - sum(run_nodes(r) for r in active)
+            # the supervisor puts a USE_EXCLUDED_NODES run on the excluded nodes first: free
+            # healthy nodes, and free excluded ones only such runs may take
+            excluded = max(0, host_total(host) - host.usable_nodes)
+            n_plain = sum(run_meta(r)[0] for r in active if not run_meta(r)[1])
+            n_excl = sum(run_meta(r)[0] for r in active if run_meta(r)[1])
+            free_excl = excluded - min(n_excl, excluded)
+            free = host.usable_nodes - n_plain - max(0, n_excl - excluded)
             for item in list(queued):
                 if len(active) >= max_runs:
                     break
                 _, _, rid, nodes, singleton, job_id = item
-                if nodes <= free and host.remaining_s(now) >= cfg.min_remaining_s:
+                use_excl = run_meta(rid)[1]
+                cap = free + (free_excl if use_excl else 0)
+                if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
                     if singleton and not self._claim_singleton(
                         layout, singleton, rid, nodes, job_id
                     ):
@@ -1156,7 +1185,12 @@ class PoolManager:
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
                     active.append(rid)
-                    free -= nodes
+                    if use_excl:
+                        take = min(nodes, free_excl)
+                        free_excl -= take
+                        free -= nodes - take
+                    else:
+                        free -= nodes
                     queued.remove(item)
                     LOGGER.info(
                         "[pool %s] assigned %s to %s (job %s)",
@@ -1174,7 +1208,7 @@ class PoolManager:
         for host in live:
             if host.hid in busy or handover_in_progress:
                 continue
-            if any(fits(host, item[3]) for item in queued):
+            if any(fits(host, item[3], item[2]) for item in queued):
                 continue
             # only if a FRESH host would do better: a job bigger than every host of
             # this pool (host definition changed after enqueue) must not turn into
