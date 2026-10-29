@@ -194,6 +194,34 @@ def _encode_unit(job):
     return rel, s, changed, not_identity, skipped
 
 
+def assembled(src, dst):
+    """The shard's new .bin is final: a file (not the source link), no .bin.tmp, its .idx describes it
+    (size = 4 x tokens) and keeps the source's documents."""
+    if not os.path.isfile(dst + ".bin") or os.path.islink(dst + ".bin") or os.path.exists(dst + ".bin.tmp"):
+        return False
+    if not os.path.exists(dst + ".idx") or os.path.islink(dst + ".idx"):
+        return False
+    a, b = Index(src + ".idx"), Index(dst + ".idx")
+    return (a.doc_count == b.doc_count and a.seq_count == b.seq_count
+            and os.path.getsize(dst + ".bin") == 4 * int(b.lengths.astype(np.int64).sum()))
+
+
+def write_info(src, dst, counts):
+    a, b = Index(src + ".idx"), Index(dst + ".idx")
+    info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
+    lengths = b.lengths.astype(np.int64)
+    info.setdefault("idx", {}).update(size=os.path.getsize(dst + ".idx"), md5sum=md5(dst + ".idx"),
+                                      sequence_count=int(b.seq_count), document_count=int(b.doc_count),
+                                      total_tokens=int(lengths.sum()))
+    info.setdefault("bin", {}).update(size=os.path.getsize(dst + ".bin"), md5sum=md5(dst + ".bin"))
+    info["retokenization"] = {"tokenizer": "tokenizer-256k-agent", "source_prefix": src,
+                              "sequences_changed": int((lengths != a.lengths).sum()),
+                              "tokens_before": int(a.lengths.astype(np.int64).sum()),
+                              "tokens_after": int(lengths.sum()),
+                              "delimiter_counts": {d: int(c) for d, c in zip(DELIMS, counts) if c}}
+    json.dump(info, open(info_path(dst), "w"), indent=2)
+
+
 def _assemble_shard(job):
     """<dst>.bin in sequence order: the re-encoded units from their part files, the others copied from the
     source; .idx (same doc_idx), info.json."""
@@ -224,18 +252,8 @@ def _assemble_shard(job):
     if os.path.lexists(dst + ".idx"):
         os.remove(dst + ".idx")
     write_index(dst + ".idx", idx.dtype_code, lengths.astype(np.int32), pointers, np.asarray(idx.doc_idx))
+    write_info(src, dst, counts)              # before the parts go: a crash in between stays recoverable
     shutil.rmtree(pdir)
-    info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
-    info.setdefault("idx", {}).update(size=os.path.getsize(dst + ".idx"), md5sum=md5(dst + ".idx"),
-                                      sequence_count=int(idx.seq_count), document_count=int(idx.doc_count),
-                                      total_tokens=int(lengths.sum()))
-    info.setdefault("bin", {}).update(size=os.path.getsize(dst + ".bin"), md5sum=md5(dst + ".bin"))
-    info["retokenization"] = {"tokenizer": "tokenizer-256k-agent", "source_prefix": src,
-                              "sequences_changed": int((lengths != idx.lengths).sum()),
-                              "tokens_before": int(idx.lengths.astype(np.int64).sum()),
-                              "tokens_after": int(lengths.sum()),
-                              "delimiter_counts": {d: int(c) for d, c in zip(DELIMS, counts) if c}}
-    json.dump(info, open(info_path(dst), "w"), indent=2)
     return rel, stats, int(idx.lengths.astype(np.int64).sum()), int(lengths.sum())
 
 
@@ -271,6 +289,8 @@ def plan_write(a):
         hit = found[0]
         us = [(s, e) for _, s, e in units_of(a.root, [rel])]
         shards[rel] = (us, found[1])
+        if assembled(src, dst):
+            continue
         os.makedirs(dst + ".parts", exist_ok=True)
         for s, e in us:
             h = hit[(hit >= s) & (hit < e)]
@@ -305,10 +325,18 @@ def cmd_write(a):
 def cmd_assemble(a):
     """Per shard with delimiters (split over the nodes): the new .bin / .idx / info.json from the part files."""
     shards, jobs = plan_write(a)
-    missing = [(j[0], j[1]) for j in jobs if not part_done(a.out, j[0], j[1])]
-    assert not missing, f"{len(missing)} units not re-encoded yet, e.g. {missing[:3]}"
+    mine = []
+    for rel in sorted(shards)[a.part::a.nparts]:       # each node checks and assembles its own shards only
+        src, dst = os.path.join(a.root, rel), os.path.join(a.out, rel)
+        if assembled(src, dst):
+            if "retokenization" not in (json.load(open(info_path(dst))) if os.path.exists(info_path(dst)) else {}):
+                write_info(src, dst, shards[rel][1])
+            print(f"[assemble {a.part}] already assembled: {rel}", flush=True)
+            continue
+        missing = [j[1] for j in jobs if j[0] == rel and not part_done(a.out, rel, j[1])]
+        assert not missing, f"{rel}: {len(missing)} units not re-encoded yet, e.g. {missing[:3]}"
+        mine.append(rel)
     stats = {r: [0, 0, 0] for r in shards}
-    mine = sorted(shards)[a.part::a.nparts]
     t0 = time.time()
     with Pool(min(a.procs, max(len(mine), 1)), initializer=_init, initargs=(a.base_tok, a.agent_tok)) as pool:
         for rel, st, t_before, t_after in pool.imap_unordered(

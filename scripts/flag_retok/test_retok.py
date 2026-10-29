@@ -97,6 +97,14 @@ def main():
         subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)
         subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)    # resume: nothing left
         subprocess.run(run + ["assemble", "--out", out, "--sources", "a"] + common, check=True)
+        # a crash between the parts' removal and info.json, then a rerun: nothing redone, info.json restored
+        ia = os.path.join(out, "a/shard_0000.info.json")
+        os.remove(ia)
+        r = subprocess.run(run + ["assemble", "--out", out, "--sources", "a"] + common, check=True,
+                           capture_output=True, text=True)
+        assert "already assembled" in r.stdout and "retokenization" in json.load(open(ia))
+        subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)   # no parts recreated
+        assert not os.path.exists(os.path.join(out, "a/shard_0000_text_document.parts"))
         subprocess.run(run + ["decon", "--out", out, "--decon", os.path.join(d, "flag-decon-v2"),
                               "--decon-out", os.path.join(d, "flag-decon-v2-agenttok")] + common, check=True)
         subprocess.run(run + ["verify", "--out", out, "--sources", "a"] + common, check=True)
