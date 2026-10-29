@@ -42,6 +42,9 @@ sweep:
       configs:
         - aux.arm: e216
         - aux.arm: e216_nccl16
+          # both levels: the slurm config exports 4 and passes it to the container as --env
+          slurm.env.NCCL_MIN_NCHANNELS: "16"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "16"
           backend.env.NCCL_MIN_NCHANNELS: "16"
           backend.env.NCCL_NCHANNELS_PER_PEER: "16"
         - aux.arm: e216_rsbf16
