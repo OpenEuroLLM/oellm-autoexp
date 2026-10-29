@@ -206,6 +206,9 @@ backend:
     eval_iters: 10
     arch_metrics_interval: 100          # gates, residual streams (per layer with the flag below)
     moe_per_layer_logging: true         # per-layer router / load metrics (router health)
+    # the sequence-level balancing loss as a metric only (user 2026-10-29: the conservative run
+    # trains with seq_aux_loss and logs it; this run balances with aux_loss + the expert bias)
+    moe_log_seq_aux_loss: true
     moe_expert_viability_metrics: true  # routed-expert viability (needs moe_per_layer_logging)
     wandb_project: ${aux.wandb_project}
     wandb_entity: openeurollm-project

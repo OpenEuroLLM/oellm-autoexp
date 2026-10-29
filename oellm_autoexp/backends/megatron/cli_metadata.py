@@ -5079,6 +5079,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "moe_log_seq_aux_loss": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Record the sequence-level load-balancing loss (seq_load_balancing_loss, the seq_aux_loss of DeepSeek-V3 at coefficient 1) as a metric without adding it to the objective -- for runs balancing with the batch-level aux_loss / the expert bias.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "moe_masked_layer_eval_iters": MegatronArgMetadata(
         arg_type=int,
         default=8,
@@ -12711,6 +12719,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "moe_layer_recompute": MegatronActionSpec(
         option_strings=("--moe-layer-recompute",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "moe_log_seq_aux_loss": MegatronActionSpec(
+        option_strings=("--moe-log-seq-aux-loss",),
         action_type="store_true",
         nargs=0,
         const=True,

@@ -320,6 +320,11 @@ class MegatronConfig(ConfigInterface):
     # kernel, TE's fused ScaledSwiGLU op raises.
     activation_func_clamp_value: float | None = None
 
+    # Record the sequence-level load-balancing loss (seq_load_balancing_loss, the seq_aux_loss
+    # of DeepSeek-V3 at coefficient 1) as a metric without adding it to the objective -- for
+    # runs balancing with the batch-level aux_loss / the expert bias.
+    moe_log_seq_aux_loss: bool = False
+
     # Routed experts: normalize the activation (SwiGLU output) per token over the hidden units
     # before the router weight and fc2, a = p * h / rms(h), without a scale vector (anGPT's
     # post_act_norm; fc2's rows carry the magnitude). Bounds an expert's output by its fc2 row
