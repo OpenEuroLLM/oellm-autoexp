@@ -45,7 +45,9 @@ job:
 
 slurm:
   sbatch:
-    account: cns144
+    # the pool's host definition (p129: ehpc533 / acc_xehpc); the run executes inside whichever host
+    # has 64 free nodes -- the adopted cns144 job (host002) -- whose own account is not checked
+    account: ehpc533
     qos: acc_xehpc
 
 sweep:
