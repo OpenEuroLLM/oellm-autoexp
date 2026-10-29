@@ -564,7 +564,9 @@ Training-weighted (datamix shares; stack-v2, megamath, agenttrove, the math sets
 **flag-decon-v2** = v6 at 0.7 with `--exclude-src @scripts/flag_decontam/exclude_v6.txt` (the five
 groups; a segment whose text is also in a kept benchmark still flags): **2,495,222 docs / 31.71B
 tokens dropped (0.234 % of 13.5T)**, 443 of 452 shards rewritten; written to `flag-decon-v2.new` in the
-pool (CPU-only run), verified (8 nodes), then renamed. v6 vs the OpenEuroLLM -pure sets (decisions
+pool (CPU-only run), verified (8 nodes), then renamed and moved to
+**`/gpfs/projects/ehpc533/users/korbip/data/flag-decon-v2`** (user: new data trees live under
+`/gpfs/projects/ehpc533/users/korbip/data/`; flag-decon-v1 stays in training-data-collection/). v6 vs the OpenEuroLLM -pure sets (decisions
 without exclusions): agenttrove ours-only 11,638 (APPS / Codeforces statements, Toolathlon, SWE-bench),
 openthoughts-3 ours-only 32,257 (Toolathlon files that embed math problems, APPS, all AIME problems;
 openthoughts-3 is not in the mix).

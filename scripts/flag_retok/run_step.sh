@@ -13,7 +13,7 @@ step=$1; shift || true
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=${ROOT:-/gpfs/projects/ehpc533/training-data-collection/flag}
 WORK=${WORK:-/gpfs/scratch/ehpc533/users/korbip/flag_retok}
-OUT=${OUT:-/gpfs/projects/ehpc533/training-data-collection/flag-agenttok}
+OUT=${OUT:-/gpfs/projects/ehpc533/users/korbip/data/flag-agenttok}
 mkdir -p "$WORK"
 cd "$HERE/../.."
 awk -v r="$ROOT" 'NF {print r "/" $2}' "$ROOT/datamix.txt" > "$WORK/shards_all.txt.${SLURM_NODEID:-0}.$$"

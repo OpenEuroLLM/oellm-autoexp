@@ -1,6 +1,6 @@
 # @package backend.megatron
 # The decontaminated "flag" mix, v2 (docs/flag_post_decontamination.md 4.9): flag-decon-v2 =
-# /gpfs/projects/ehpc533/training-data-collection/flag-decon-v2 -- the same 452 shards (symlinked .bin)
+# /gpfs/projects/ehpc533/users/korbip/data/flag-decon-v2 -- the same 452 shards (symlinked .bin)
 # with rewritten .idx files that leave out every document holding a benchmark item verbatim (longest
 # run >= 70 % of the item or >= 200 tokens; v6 references = v5 + docs/decontamination_eval_set.csv,
 # minus scripts/flag_decontam/exclude_v6.txt; 2.50M docs / 31.7B tokens, 2026-10-29). Weights unchanged.

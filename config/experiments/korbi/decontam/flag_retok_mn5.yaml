@@ -23,7 +23,7 @@ aux:
   time: "00:30:00"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
   work: /gpfs/scratch/ehpc533/users/korbip/flag_retok
-  out: /gpfs/projects/ehpc533/training-data-collection/flag-agenttok
+  out: /gpfs/projects/ehpc533/users/korbip/data/flag-agenttok
   root: /gpfs/projects/ehpc533/training-data-collection/flag
   sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
   dev_queue: true

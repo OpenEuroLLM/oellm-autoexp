@@ -4,6 +4,10 @@ Goal (user, 2026-10-29): chat / agent delimiters such as `<|im_start|>`, `<|im_e
 are not tokens of our tokenizer; the data holds them as 3-11 ordinary pieces. Extend the tokenizer and
 re-tokenize the mix, on top of the decontaminated `flag-decon-v2`; never write `flag/`.
 
+Location (user, 2026-10-29): new data trees live under **`/gpfs/projects/ehpc533/users/korbip/data/`**
+(`flag-decon-v2`, `flag-agenttok`, `flag-decon-v2-agenttok`); `flag-decon-v1` stays in
+`/gpfs/projects/ehpc533/training-data-collection/`, next to the original `flag/`.
+
 ## Tokenizer
 
 `openeurollm/tokenizer-256k` (SentencePiece BPE, 262,144 pieces) reserves ids 0..112 as special pieces:

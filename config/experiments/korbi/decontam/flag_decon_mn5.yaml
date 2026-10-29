@@ -28,7 +28,7 @@ aux:
   version: v6
   work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_${aux.version}
   refs: ${aux.work}/refs/refs_${aux.version}.jsonl.gz
-  out: /gpfs/projects/ehpc533/training-data-collection/flag-decon-v2
+  out: /gpfs/projects/ehpc533/users/korbip/data/flag-decon-v2
   root: /gpfs/projects/ehpc533/training-data-collection/flag
   # the NGC 26.09 training image: torch, sentencepiece, pytest
   sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
