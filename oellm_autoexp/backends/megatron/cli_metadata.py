@@ -5686,6 +5686,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "muown_expert_stable_rank_floor": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >= this value after each step (rank-1 deflation of the top singular direction at fixed row norms; 0 = off).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "muown_extra_scale_factor": MegatronArgMetadata(
         arg_type=float,
         default=1.0,
@@ -13252,6 +13260,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "muown_expert_stable_rank_floor": MegatronActionSpec(
+        option_strings=("--muown-expert-stable-rank-floor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "muown_extra_scale_factor": MegatronActionSpec(
         option_strings=("--muown-extra-scale-factor",),

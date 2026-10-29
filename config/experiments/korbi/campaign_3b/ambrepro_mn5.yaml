@@ -76,6 +76,10 @@ sweep:
           backend.megatron.mlp_post_act_norm: true
           backend.megatron.post_act_norm_floor: 1.0
           backend.megatron.post_act_norm_smooth: true
+        # stable-rank floor 50 on the routed-expert matrices (no norm): the runaway experts'
+        # spectra collapse at flat norms (one expert per layer, stable rank -> single digits)
+        - aux.arm: srf50
+          backend.megatron.muown_expert_stable_rank_floor: 50.0
         # peri-LN (pre + post-norm): every sublayer output normalized (learnable gain) before it
         # enters the residual -- bounds each layer's write, not the experts inside it
         - aux.arm: periln

@@ -1811,15 +1811,21 @@ def arms5stab(size: str):
         "ldm_periln": ("LDM x1 + peri-LN (post_sublayer_norm)",
                        {B + "post_sublayer_norm": True,
                         "slurm.sbatch.nodes": {"s1": 2, "s2": 8, "s3": 16}[size]}),
+        # the runaway experts collapse their fc1 / fc2 spectra at flat norms (stable rank from
+        # ~200-300 to single digits, one expert per layer); a stable-rank floor of 50 on the
+        # routed-expert matrices never touches a normal expert (user 2026-10-29: no lr changes)
+        "ldm_srf50": ("LDM x1, expert stable-rank floor 50",
+                      {B + "muown_expert_stable_rank_floor": 50.0}),
         "ldm_gwd1": ("LDM x1, g weight decay 1 (cap ~1)", {B + "muown_classical_g_weight_decay": 1.0}),
         "ldm_gwd03": ("LDM x1, g weight decay 0.3 (cap ~3)",
                       {B + "muown_classical_g_weight_decay": 0.3}),
     }
     keep = {"s1": ("ldm_pa", "ldm_pan", "ldm_pan_wu", "ldm_wu", "ldm_pan_lr2", "ldm_clamp5",
                    "ldm_gwd1", "ldm_gwd03", "ldm_pab"),
-            "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pab_lr2", "ldm_periln"),
+            "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pab_lr2", "ldm_periln",
+                   "ldm_srf50"),
             "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pa", "ldm_pab_lr2",
-                   "ldm_periln")}[size]
+                   "ldm_periln", "ldm_srf50")}[size]
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
 
 
