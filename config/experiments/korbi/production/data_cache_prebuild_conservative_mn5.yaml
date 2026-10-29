@@ -1,0 +1,59 @@
+# @package _global_
+# Build the Megatron dataset index of the conservative main run's data recipe on ONE rank, before a large
+# job needs it (docs/flag_retokenization.md; the 32B pattern: oellm_32b_dense/data_cache_prebuild.yaml).
+# The cache key is the data / schedule only -- blend, split, seq, seed, tokenizer, train and eval
+# samples (gbs x train_iters, eval_iters x eval_interval) -- all inherited unchanged from
+# q35_conservative_128_mn5; the model is a 2-layer stand-in (not part of the key), skip_train stops after the build.
+# Never touches the main run: no load / save, own output dir, no pool singleton, W&B off.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh prebuild_conservative scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/data_cache_prebuild_conservative_mn5 --yes
+# Afterwards: python scripts/check_data_cache.py /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/data_cache
+defaults:
+  - q35_conservative_128_mn5
+  - _self_
+
+aux:
+  nodes: 1
+  ep: 1
+  topk: 2
+  expert_ffn: 256
+  pattern: "*E"
+  suite: data_cache_prebuild
+  arm: conservative
+
+backend:
+  torchrun_args:
+    nproc_per_node: 1
+  env:
+    WANDB_MODE: disabled
+  megatron:
+    skip_train: true
+    # the cache this recipe's runs read (literal: independent of suite / group names)
+    data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/data_cache
+    distributed_timeout_minutes: 180
+    # --- stand-in model (not part of the cache key) ---
+    hidden_size: 256
+    ffn_hidden_size: 512
+    kv_channels: 64
+    num_attention_heads: 4
+    num_query_groups: 2
+    num_experts: 4
+    # --- never the main run's checkpoints ---
+    load: null
+    save: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: data_cache_prebuild_conservative
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/conservative
+  metadata:
+    pool_singleton: null
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_debug
+    time: "02:00:00"
