@@ -46,10 +46,14 @@ def scan(path: str, layers: set) -> dict:
             found.setdefault(int(m.group(1)), {})[(m.group(2), int(m.group(3)), m.group(4) or "")] = k
     out = {}
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+    # one load for all selected layers: every dcp.load call reads the storage files it touches,
+    # so one call per layer re-reads a large checkpoint's files once per layer (~30 min / layer)
+    allkeys = [k for L in found for k in found[L].values()]
+    sd = {k: torch.empty(md[k].size, dtype=md[k].properties.dtype) for k in allkeys}
+    dcp.load(sd, storage_reader=FileSystemReader(path), no_dist=True)
+    print(f"{path}: loaded {len(sd)} tensors", flush=True)
     for L in sorted(found):
         keys = found[L]
-        sd = {k: torch.empty(md[k].size, dtype=md[k].properties.dtype) for k in keys.values()}
-        dcp.load(sd, storage_reader=FileSystemReader(path), no_dist=True)
         experts = sorted({e for (_, e, _) in keys})
         def get(fc, e, part):
             return sd[keys[(fc, e, part)]]
@@ -76,7 +80,8 @@ def scan(path: str, layers: set) -> dict:
         out[L] = res
         print(f"{path} L{L}: gain med/max {res['e2e_gain'][0]:.3f}/{res['e2e_gain'][2]:.3f} "
               f"fc2 srank med {res['fc2']['srank'][0]:.1f}", flush=True)
-        del sd, gate, up, fc2
+        del gate, up, fc2
+    del sd
     return out
 
 
