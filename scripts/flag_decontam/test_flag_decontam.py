@@ -180,6 +180,12 @@ def test_end_to_end(tmp_path):
     assert roles["question"] == "1" and roles["context"] == "1" and roles["answer"] == "0"   # doc 17: seg 0, doc 99: seg 1
     for fr in ("0.7", "0.9"):
         assert json.load(open(work / "_report" / f"frac_{fr}" / "report.json"))["docs_dropped"] == 2
+    # marginal / whatif: doc 17 is flagged by segment 0 (bench0 + alias), doc 99 by segment 1 (bench1 only)
+    subprocess.run(fin + ["--dry-run", "--frac", "0.7", "--whatif", "g01=bench0,alias;g0=bench0;g1=bench1"], check=True)
+    mg = {l.split("\t")[0]: l.split("\t")[1:] for l in open(work / "_report" / "frac_0.7" / "marginal.tsv").read().splitlines()[1:]}
+    assert mg["bench0"][0] == "1" and mg["bench0"][2] == "0" and mg["bench1"][2] == "1"
+    wi = {l.split("\t")[0]: l.split("\t")[1] for l in open(work / "_report" / "frac_0.7" / "whatif.tsv").read().splitlines()[1:]}
+    assert wi == {"g01": "1", "g0": "0", "g1": "1"}
     # --exclude-src: segment 0 is also in "alias" (still flags), segment 1 only in bench1 (no longer flags)
     subprocess.run(fin + ["--dry-run", "--frac", "0.7", "--exclude-src", "bench0,bench1"], check=True)
     assert json.load(open(work / "_report" / "frac_0.7" / "report.json"))["docs_dropped"] == 1

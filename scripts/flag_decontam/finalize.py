@@ -187,6 +187,65 @@ def decide(shards, segs, frac, args):
     return flagged, set(generic.tolist()), seg_docs
 
 
+def marginal_report(rdir, args, rows, shards, flagged, segs, src_names, attrib, found):
+    """marginal.tsv: per benchmark (every attribution), the dropped docs / tokens it flags and those
+    flagged ONLY by it (no flagged segment of the doc belongs to another benchmark); whatif.tsv: the
+    docs / tokens a group of sources would save if excluded (--whatif "label=src,src;label2=...")."""
+    S = len(segs["n"])
+    segs_f = np.flatnonzero(found)
+    names, nid, off, ids = [], {}, [0], []
+    for sg in segs_f:                                  # benchmark CSR of the flagged segments
+        L = attrib[sg] or [src_names[segs["src"][sg]]]
+        for a in L:
+            ids.append(nid.setdefault(a, len(nid)))
+        off.append(len(ids))
+    names = list(nid)
+    B = len(names)
+    pos = np.full(S, -1, np.int64)
+    pos[segs_f] = np.arange(len(segs_f))
+    off, ids = np.array(off, np.int64), np.array(ids, np.int64)
+    groups = []
+    for g in [x for x in (args.whatif or "").split(";") if x.strip()]:
+        lab, srcs = g.split("=", 1)
+        import fnmatch                                  # "file/MLQA_V1__*": every unpacked file of an archive
+        pats = [x for x in srcs.split(",") if x]
+        groups.append((lab.strip(), np.array([any(fnmatch.fnmatchcase(n, q) for q in pats) for n in names], bool)))
+    any_d, any_t, only_d, only_t = (np.zeros(B, np.int64) for _ in range(4))
+    saved = np.zeros((len(groups), 2), np.int64)
+    for _, rel in rows:
+        idx = shards[rel][0]
+        f, d = flagged[rel]
+        if not len(f):
+            continue
+        pr = np.unique(d * S + f[:, 1])
+        doc, sg = pr // S, pr % S
+        p = pos[sg]
+        k = off[p + 1] - off[p]
+        rep = np.repeat(np.arange(len(p)), k)
+        b = ids[np.repeat(off[p], k) + np.arange(k.sum()) - np.repeat(np.cumsum(k) - k, k)]
+        db = np.unique(doc[rep] * B + b)
+        dd, bb = db // B, db % B
+        udoc, inv, cnt = np.unique(dd, return_inverse=True, return_counts=True)
+        tok = doc_tokens(idx, udoc).astype(np.int64)
+        np.add.at(any_d, bb, 1)
+        np.add.at(any_t, bb, tok[inv])
+        one = cnt[inv] == 1
+        np.add.at(only_d, bb[one], 1)
+        np.add.at(only_t, bb[one], tok[inv][one])
+        for gi, (_, mask) in enumerate(groups):
+            out_g = np.bincount(inv, weights=~mask[bb], minlength=len(udoc)) == 0   # every benchmark in the group
+            saved[gi] += [int(out_g.sum()), int(tok[out_g].sum())]
+    with open(os.path.join(rdir, "marginal.tsv"), "w") as fh:
+        fh.write("benchmark_source	docs_flagged	tokens_flagged	docs_only_this	tokens_only_this\n")
+        for i in np.argsort(-only_t):
+            fh.write(f"{names[i]}\t{any_d[i]}\t{any_t[i]}\t{only_d[i]}\t{only_t[i]}\n")
+    if groups:
+        with open(os.path.join(rdir, "whatif.tsv"), "w") as fh:
+            fh.write("group\tdocs_saved\ttokens_saved\n")
+            for (lab, _), (n, t) in zip(groups, saved):
+                fh.write(f"{lab}\t{n}\t{t}\n")
+
+
 def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, refs_text, attrib=None,
            roles=None):
     os.makedirs(rdir, exist_ok=True)
@@ -258,6 +317,8 @@ def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, s
             fh.write("benchmark_source\tsegments_matchable\tsegments_found\tpct_found\tdoc_segment_pairs\n")
             for k in sorted(allp, key=lambda x: -allp[x]):
                 fh.write(f"{k}\t{allm[k]}\t{allf[k]}\t{100 * allf[k] / max(allm[k], 1):.2f}\t{allp[k]}\n")
+    if attrib is not None:
+        marginal_report(rdir, args, rows, shards, flagged, segs, src_names, attrib, found)
     applied = seg_docs.copy()
     applied[list(generic)] = 0
     top = np.argsort(-applied)[:300]
@@ -329,6 +390,7 @@ def main():
     ap.add_argument("--hits-dir", default="hits")
     ap.add_argument("--exclude-src", default=[], type=lambda x: [s for s in x.split(",") if s],
                     help="comma-separated benchmark sources that do not flag (a text also in a kept source still does)")
+    ap.add_argument("--whatif", default="", help='"label=src,src;label2=src": docs / tokens each group would save')
     ap.add_argument("--fixes", default="", help="recheck.py's corrections (recheck_fixes.npz), applied to the hits")
     args = ap.parse_args()
     if not args.dry_run and len(args.frac) != 1:
