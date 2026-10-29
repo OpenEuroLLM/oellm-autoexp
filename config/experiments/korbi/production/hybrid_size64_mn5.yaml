@@ -137,3 +137,15 @@ sweep:
           backend.megatron.num_experts: 384
           backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
           backend.env.MEM_BREAKDOWN: "1"
+        # Engram 80B at the cap (user 2026-10-29): +40B of tables ~ +1 GiB peak, no non-PyTorch growth
+        # (e256_eng60); e360_eng80 OOM'd uncapped in NCCL while PyTorch held its cache
+        - aux.arm: e360_eng80_cap80
+          backend.megatron.num_experts: 360
+          backend.megatron.engram_table_size: 38960768
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          backend.env.MEM_BREAKDOWN: "1"
+        - aux.arm: e384_eng80_cap80
+          backend.megatron.num_experts: 384
+          backend.megatron.engram_table_size: 38960768
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          backend.env.MEM_BREAKDOWN: "1"
