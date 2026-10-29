@@ -92,6 +92,7 @@ def main():
         common = ["--root", root, "--work", os.path.join(d, "work"), "--base-tok", base, "--agent-tok", agent,
                   "--part", "0", "--nparts", "1", "--procs", "2"]
         out = os.path.join(d, "flag-agenttok")
+        os.environ["RETOK_UNIT_TOKENS"] = "20"     # several units per shard: re-encoded and copied ones interleave
         subprocess.run(run + ["find", "--shards", os.path.join(d, "shards.txt")] + common, check=True)
         subprocess.run(run + ["write", "--out", out] + common, check=True)
         subprocess.run(run + ["decon", "--out", out, "--decon", os.path.join(d, "flag-decon-v2"),

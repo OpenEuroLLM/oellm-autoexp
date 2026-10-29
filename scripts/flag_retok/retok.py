@@ -38,7 +38,7 @@ from delimiters import AGENT_TOKENS  # noqa: E402
 BASE_TOK = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
 AGENT_TOK = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k-agent/tokenizer.model"
 CONTROL = (1, 2)                       # <bos>, <eos>: decode drops them; re-appended where they were
-UNIT_TOKENS = 1 << 26
+UNIT_TOKENS = int(os.environ.get("RETOK_UNIT_TOKENS", 1 << 26))   # tests: tiny units (mixed copy / re-encode)
 DELIMS = [t for _, t in AGENT_TOKENS]
 RX = re.compile("|".join(re.escape(d) for d in sorted(DELIMS, key=len, reverse=True)))
 
@@ -161,64 +161,81 @@ def info_path(prefix):
     return prefix.removesuffix("_text_document") + ".info.json"
 
 
-def _write_shard(job):
-    rel, root, out, work = job
+def _encode_unit(job):
+    """Re-encode the sequences with delimiters of one unit: <dst>.parts/<s>.bin + lengths of s..e."""
+    rel, s, e, root, out, hit = job
     src, dst = os.path.join(root, rel), os.path.join(out, rel)
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    found = load_find(work, rel)
-    info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
-    if found is None or not len(found[0]):
-        link(src + ".bin", dst + ".bin")
-        link(src + ".idx", dst + ".idx")
-        json.dump(info, open(info_path(dst), "w"), indent=2)
-        return rel, 0, 0, 0, 0
-    hit = found[0]
+    idx = Index(src + ".idx")
+    lengths = idx.lengths[s:e].astype(np.int64).copy()
+    hit = set(hit)
+    changed = not_identity = skipped = 0
+    part = os.path.join(dst + ".parts", f"{s:012d}.bin")
+    with open(part + ".tmp", "wb") as fo:
+        for k, t in enumerate(read_seqs(src, idx, s, e)):
+            if s + k not in hit:
+                fo.write(t.tobytes())
+                continue
+            body, tail = split_body(t)
+            text, odd = decode(t)
+            if odd:                             # ids outside the vocabulary (<pad>): leave the sequence as it is
+                skipped += 1
+                fo.write(t.tobytes())
+                continue
+            if _G["base"].encode(text) != body.tolist():
+                not_identity += 1               # the original was not plain encode(text); re-encoded anyway
+            new = np.array(_G["agent"].encode(text) + tail.tolist(), np.int32)
+            fo.write(new.tobytes())
+            lengths[k] = len(new)
+            changed += 1
+    os.replace(part + ".tmp", part)
+    np.save(os.path.join(dst + ".parts", f"{s:012d}.len.npy"), lengths)
+    return rel, s, changed, not_identity, skipped
+
+
+def _assemble_shard(job):
+    """<dst>.bin in sequence order: the re-encoded units from their part files, the others copied from the
+    source; .idx (same doc_idx), info.json."""
+    rel, root, out, units, stats, counts = job
+    src, dst = os.path.join(root, rel), os.path.join(out, rel)
     idx = Index(src + ".idx")
     assert idx.dtype == np.int32, idx.dtype
     lengths = idx.lengths.astype(np.int64).copy()
-    changed = not_identity = skipped = 0
-    tmp = dst + ".bin.tmp"
-    is_hit = np.zeros(idx.seq_count, bool)
-    is_hit[hit] = True
-    with open(tmp, "wb") as fo:
-        for rel_, s, e in units_of(root, [rel]):
-            seqs = read_seqs(src, idx, s, e)
-            if not is_hit[s:e].any():           # whole unit unchanged: one write
-                for t in seqs:
-                    fo.write(t.tobytes())
-                continue
-            for k, t in enumerate(seqs):
-                if not is_hit[s + k]:
-                    fo.write(t.tobytes())
-                    continue
-                body, tail = split_body(t)
-                text, odd = decode(t)
-                if odd:                         # ids outside the vocabulary (<pad>): leave the sequence as it is
-                    skipped += 1
-                    fo.write(t.tobytes())
-                    continue
-                if _G["base"].encode(text) != body.tolist():
-                    not_identity += 1           # the original was not plain encode(text); re-encoded anyway
-                new = np.array(_G["agent"].encode(text) + tail.tolist(), np.int32)
-                fo.write(new.tobytes())
-                lengths[s + k] = len(new)
-                changed += 1
+    pdir = dst + ".parts"
+    with open(dst + ".bin.tmp", "wb") as fo, open(src + ".bin", "rb") as fi:
+        for s, e in units:
+            part = os.path.join(pdir, f"{s:012d}.bin")
+            if os.path.exists(part):
+                with open(part, "rb") as fp:
+                    shutil.copyfileobj(fp, fo, 1 << 24)
+                lengths[s:e] = np.load(os.path.join(pdir, f"{s:012d}.len.npy"))
+            else:
+                a, b = int(idx.pointers[s]), int(idx.pointers[e - 1]) + 4 * int(idx.lengths[e - 1])
+                fi.seek(a)
+                left = b - a
+                while left:
+                    buf = fi.read(min(left, 1 << 24))
+                    fo.write(buf)
+                    left -= len(buf)
     pointers = np.concatenate([[0], np.cumsum(lengths[:-1] * 4)]).astype(np.int64)
-    os.replace(tmp, dst + ".bin")
-    assert os.path.getsize(dst + ".bin") == 4 * int(lengths.sum())
+    os.replace(dst + ".bin.tmp", dst + ".bin")
+    assert os.path.getsize(dst + ".bin") == 4 * int(lengths.sum()), rel
+    if os.path.lexists(dst + ".idx"):
+        os.remove(dst + ".idx")
     write_index(dst + ".idx", idx.dtype_code, lengths.astype(np.int32), pointers, np.asarray(idx.doc_idx))
+    shutil.rmtree(pdir)
+    info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
     info.setdefault("idx", {}).update(size=os.path.getsize(dst + ".idx"), md5sum=md5(dst + ".idx"),
                                       sequence_count=int(idx.seq_count), document_count=int(idx.doc_count),
                                       total_tokens=int(lengths.sum()))
     info.setdefault("bin", {}).update(size=os.path.getsize(dst + ".bin"), md5sum=md5(dst + ".bin"))
     info["retokenization"] = {"tokenizer": "tokenizer-256k-agent", "source_prefix": src,
-                              "sequences_reencoded": changed, "sequences_skipped_pad": skipped,
-                              "reencoded_not_identity_under_base": not_identity,
+                              "sequences_reencoded": stats[0], "reencoded_not_identity_under_base": stats[1],
+                              "sequences_skipped_pad": stats[2],
                               "tokens_before": int(idx.lengths.astype(np.int64).sum()),
                               "tokens_after": int(lengths.sum()),
-                              "delimiter_counts": {d: int(c) for d, c in zip(DELIMS, found[1]) if c}}
+                              "delimiter_counts": {d: int(c) for d, c in zip(DELIMS, counts) if c}}
     json.dump(info, open(info_path(dst), "w"), indent=2)
-    return rel, changed, not_identity, int(idx.lengths.astype(np.int64).sum()), int(lengths.sum())
+    return rel, stats, int(idx.lengths.astype(np.int64).sum()), int(lengths.sum())
 
 
 def mix_rels(root):
@@ -226,15 +243,45 @@ def mix_rels(root):
 
 
 def cmd_write(a):
+    """One node: every shard of the mix; units with delimiters re-encoded in parallel, then per shard one
+    writer (in parallel over shards). Shards without delimiters: symlinks."""
     assert os.path.realpath(a.out) != os.path.realpath(a.root)
-    rels = mix_rels(a.root)[a.part::a.nparts]
+    rels = mix_rels(a.root)
+    jobs, shards = [], {}
+    for rel in rels:
+        src, dst = os.path.join(a.root, rel), os.path.join(a.out, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        found = load_find(a.work, rel)
+        if found is None or not len(found[0]):
+            link(src + ".bin", dst + ".bin")
+            link(src + ".idx", dst + ".idx")
+            info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
+            json.dump(info, open(info_path(dst), "w"), indent=2)
+            continue
+        hit = found[0]
+        us = [(s, e) for _, s, e in units_of(a.root, [rel])]
+        shards[rel] = (us, found[1])
+        os.makedirs(dst + ".parts", exist_ok=True)
+        for s, e in us:
+            h = hit[(hit >= s) & (hit < e)]
+            if len(h):
+                jobs.append((rel, s, e, a.root, a.out, h.tolist()))
+    print(f"[write] {len(shards)} shards with delimiters ({len(jobs)} units to re-encode), "
+          f"{len(rels) - len(shards)} linked", flush=True)
+    stats = {r: [0, 0, 0] for r in shards}
+    t0 = time.time()
     with Pool(a.procs, initializer=_init, initargs=(a.base_tok, a.agent_tok)) as pool:
-        for rel, ch, ni, t0, t1 in pool.imap_unordered(_write_shard, [(r, a.root, a.out, a.work) for r in rels]):
-            print(f"[write {a.part}] {'rewrote' if ch else 'linked '} {rel}: {ch} seqs re-encoded"
-                  f"{f' ({ni} not identity)' if ni else ''}, tokens {t0} -> {t1}", flush=True)
-    if a.part == 0:
-        shutil.copy(os.path.join(a.root, "datamix.txt"), os.path.join(a.out, "datamix.txt"))
-    print(f"[write {a.part}] done", flush=True)
+        for i, (rel, s, ch, ni, sk) in enumerate(pool.imap_unordered(_encode_unit, jobs, chunksize=1)):
+            st = stats[rel]
+            st[0] += ch; st[1] += ni; st[2] += sk
+            if i % 50 == 0:
+                print(f"[write] {i + 1}/{len(jobs)} units re-encoded, {time.time() - t0:.0f}s", flush=True)
+        for rel, st, t_before, t_after in pool.imap_unordered(
+                _assemble_shard, [(r, a.root, a.out, shards[r][0], stats[r], shards[r][1]) for r in shards]):
+            print(f"[write] rewrote {rel}: {st[0]} seqs re-encoded ({st[1]} not identity, {st[2]} skipped), "
+                  f"tokens {t_before} -> {t_after} ({t_after - t_before:+d})", flush=True)
+    shutil.copy(os.path.join(a.root, "datamix.txt"), os.path.join(a.out, "datamix.txt"))
+    print(f"[write] done in {time.time() - t0:.0f}s", flush=True)
 
 
 def cmd_decon(a):
