@@ -61,6 +61,10 @@ sweep:
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.mlp_post_act_norm: true
           backend.megatron.post_act_norm_floor: 1.0
+        # peri-LN (pre + post-norm): every sublayer output normalized (learnable gain) before it
+        # enters the residual -- bounds each layer's write, not the experts inside it
+        - aux.arm: periln
+          backend.megatron.post_sublayer_norm: true
         # + F: 200-step linear warmup to the constant lr
         - aux.arm: pan_wu
           backend.megatron.moe_expert_post_act_norm: true
