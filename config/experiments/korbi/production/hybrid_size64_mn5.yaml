@@ -121,3 +121,19 @@ sweep:
           backend.megatron.num_experts: 256
           backend.megatron.engram_table_size: 29220576
           backend.env.MEM_BREAKDOWN: "1"
+        # 2026-10-29 13:15: e360_cap fits (max allocated 45.3 GiB, mem 0.92) but at 3,273 tok/s/GPU: the
+        # 0.75 cap (48 GiB) sits right above the peak, the allocator frees / re-maps every step. Measured
+        # non-PyTorch memory is 11.5 GiB (MoonEP pools 2.4, buffer 1.6, context 0.5, NCCL < 1): cap 0.80
+        # (51.2 GiB) leaves ~6 GiB slack above the peak and ~1.3 GiB for NCCL's lazy allocations
+        - aux.arm: e288_cap80
+          backend.megatron.num_experts: 288
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          backend.env.MEM_BREAKDOWN: "1"
+        - aux.arm: e360_cap80
+          backend.megatron.num_experts: 360
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          backend.env.MEM_BREAKDOWN: "1"
+        - aux.arm: e384_cap80
+          backend.megatron.num_experts: 384
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          backend.env.MEM_BREAKDOWN: "1"
