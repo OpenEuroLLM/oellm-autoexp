@@ -1806,14 +1806,20 @@ def arms5stab(size: str):
         "ldm_pab": ("A + B bounded at rms 1", {**pan, B + "post_act_norm_floor": 1.0}),
         "ldm_pab_lr2": ("A + B bounded at rms 1, half the lr",
                         {**pan, B + "post_act_norm_floor": 1.0, **half}),
+        # peri-LN (pre + post-norm on every sublayer) on LDM at s2 / s3 (user 2026-10-29): on 8 / 16
+        # nodes for speed -- other batches than the 2 / 8-node rematch, so compared by fitted curves
+        "ldm_periln": ("LDM x1 + peri-LN (post_sublayer_norm)",
+                       {B + "post_sublayer_norm": True,
+                        "slurm.sbatch.nodes": {"s1": 2, "s2": 8, "s3": 16}[size]}),
         "ldm_gwd1": ("LDM x1, g weight decay 1 (cap ~1)", {B + "muown_classical_g_weight_decay": 1.0}),
         "ldm_gwd03": ("LDM x1, g weight decay 0.3 (cap ~3)",
                       {B + "muown_classical_g_weight_decay": 0.3}),
     }
     keep = {"s1": ("ldm_pa", "ldm_pan", "ldm_pan_wu", "ldm_wu", "ldm_pan_lr2", "ldm_clamp5",
                    "ldm_gwd1", "ldm_gwd03", "ldm_pab"),
-            "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pab_lr2"),
-            "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pa", "ldm_pab_lr2")}[size]
+            "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pab_lr2", "ldm_periln"),
+            "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2", "ldm_pab", "ldm_pa", "ldm_pab_lr2",
+                   "ldm_periln")}[size]
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
 
 
