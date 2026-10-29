@@ -320,6 +320,30 @@ def test_a_squeue_timeout_keeps_states_and_still_starts_the_run(env, monkeypatch
     assert env.layout.monitor_alive.stat().st_mtime >= before - 1  # the pool tick went on
 
 
+def test_a_dying_host_does_not_cost_the_queued_successor(env):
+    # JUPITER 2026-10-29 04:09: a node failure ended the running host (SLURM: COMPLETING, the
+    # supervisor gone). successor_delay_s then wanted no successor, the dying host still counted,
+    # and the monitor cancelled the queued successor -- 6 h of queue age lost.
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=1, successor_delay_s=600, host_stale_s=60)
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(3)
+    old = env.host_up(env.hosts()[0], start_ts=time.time() - 900)  # past successor_delay_s
+    env.poll()
+    rid = env.rec("train").runtime.runtime_job_id
+    env.start_run(rid, old)
+    env.poll(3)
+    hosts = env.hosts()
+    assert len(hosts) == 2 and hosts[1].runtime.submitted  # the successor waits in the queue
+    successor = hosts[1].job_id
+    # the node fails: the allocation is going away, its supervisor is gone
+    env.fake.set_state(hosts[0].runtime.runtime_job_id, "COMPLETING")
+    (env.layout.host_dir(old) / "alive").unlink()
+    env.poll(2)
+    assert env.rec(successor).runtime.final_state is None, "the queued successor was cancelled"
+
+
 def test_no_work_no_host_and_min_hosts(env, tmp_path):
     env.poll(3)
     assert env.hosts() == []

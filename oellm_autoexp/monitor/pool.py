@@ -1250,9 +1250,17 @@ class PoolManager:
                     # still waiting in the queue: it would only start to sit idle
                     self._cancel_host_record(loop, host)
                 host.retiring = True
-        # adopted jobs still in their queue are not the pool's to count or cancel
+        # adopted jobs still in their queue are not the pool's to count or cancel. Count only
+        # hosts that are live or still queued: an allocation that is going away (a node failed,
+        # SLURM shows COMPLETING, its supervisor is gone) is no host any more -- counting it made
+        # the queued successor look surplus, and it was cancelled (JUPITER 2026-10-29 04:09).
         current = [
-            h for h in hosts if not h.retiring and not h.dead and not (h.adopted and not h.info)
+            h
+            for h in hosts
+            if not h.retiring
+            and not h.dead
+            and not (h.adopted and not h.info)
+            and (not h.info or h.live(cfg.host_stale_s))
         ]
         accounts = host_accounts(cfg)
         create_account: str | None = None
