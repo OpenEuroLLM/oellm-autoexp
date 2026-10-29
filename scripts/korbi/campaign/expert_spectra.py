@@ -23,12 +23,24 @@ Q = (0.5, 0.9, 1.0)
 
 
 def stats(w: torch.Tensor) -> dict:
-    """[E, m, n] -> per-expert sigma_max, Frobenius, stable rank, top-5 share."""
-    s = torch.linalg.svdvals(w.float())
-    s2 = s.square()
+    """[E, m, n] -> per-expert sigma_max, Frobenius, stable rank, top-5 share, from the eigenvalues
+    of the smaller Gram matrix (batched eigvalsh; batched SVDs of these sizes run one by one)."""
+    w = w.float()
+    gram = w @ w.transpose(1, 2) if w.shape[1] <= w.shape[2] else w.transpose(1, 2) @ w
+    s2 = torch.linalg.eigvalsh(gram.double()).flip(-1).clamp_min(0)  # descending sigma^2
     tot = s2.sum(-1)
-    return {"smax": s[:, 0], "fro": tot.sqrt(), "srank": tot / s2[:, 0],
-            "top5": s2[:, :5].sum(-1) / tot}
+    return {"smax": s2[:, 0].sqrt().float(), "fro": tot.sqrt().float(),
+            "srank": (tot / s2[:, 0]).float(), "top5": (s2[:, :5].sum(-1) / tot).float()}
+
+
+def smax_product(a: torch.Tensor, b: torch.Tensor, iters: int = 60) -> torch.Tensor:
+    """sigma_max(a @ b) for [E, m, k] @ [E, k, n] by batched power iteration (no m x n SVD)."""
+    v = torch.randn(b.shape[0], b.shape[2], 1, device=b.device, dtype=torch.float32)
+    for _ in range(iters):
+        u = a @ (b @ v)
+        v = b.transpose(1, 2) @ (a.transpose(1, 2) @ u)
+        v = v / v.norm(dim=1, keepdim=True).clamp_min(1e-30)
+    return (a @ (b @ v)).norm(dim=1).squeeze(-1)
 
 
 def quant(x: torch.Tensor) -> list:
@@ -69,7 +81,7 @@ def scan(path: str, layers: set) -> dict:
             st = stats(w)
             res[name] = {k: quant(v) for k, v in st.items()}
             res[name]["_smax"] = st["smax"]
-        prod = torch.linalg.matrix_norm(torch.bmm(fc2.float(), up.float()), ord=2)  # [E]
+        prod = smax_product(fc2.float(), up.float())  # [E]
         align = prod / (res["fc2"].pop("_smax") * res["up"]["_smax"])
         res["up"].pop("_smax"), res["gate"].pop("_smax")
         res["e2e_gain"] = quant(prod)
