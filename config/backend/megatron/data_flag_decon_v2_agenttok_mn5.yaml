@@ -4,6 +4,8 @@
 # unchanged) are single tokens in mixture-vitae, dolmino, agenttrove, nemotron-pretraining-specialized
 # (14 shards rewritten, -0.79B tokens); every other shard and every other token as in flag-decon-v2.
 # Evaluation / HF export of models trained on it must use the agent tokenizer too.
+# Plus openthoughts-3 (weight 0.0054, as agenttrove) and, for agenttrove / openthoughts-3, the OpenEuroLLM
+# -pure removals on top of ours ("double decontamination", 2026-10-29): 453 shards.
 #
 # The decontaminated "flag" mix, v2 (docs/flag_post_decontamination.md 4.9): flag-decon-v2 =
 # /gpfs/projects/ehpc533/users/korbip/data/flag-decon-v2 -- the same 452 shards (symlinked .bin)

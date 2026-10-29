@@ -77,3 +77,25 @@ datamix `$HYBRID_ENV/data/flag_decon_v2_agenttok_datamix_mn5.txt`, same weights 
 `tokenizers/tokenizer-256k-agent`. Lessons: write the `find` results as one file per node, not per
 shard (16 nodes creating ~6k files in one GPFS directory took 6 min); assembly must check only the
 node's own shards and write info.json before deleting the parts.
+
+### openthoughts-3 and the -pure removals ("double decontamination", user 2026-10-29)
+
+- **openthoughts-3 added** (not in flag/datamix.txt; `scripts/flag_retok/extra_openthoughts.txt`, weight
+  **0.0054** = agenttrove's: ~0.54 % of training, ~3.6 epochs, as the collection's usage 4.0 for the
+  synthetic reasoning / math / agent sets). Our v2 rule on its v6 hits (`finalize.py --datamix`, same
+  exclusions): 16,410 documents dropped -> `flag-decon-v2/openthoughts-3` (+ datamix line); re-tokenized
+  (`retok_sources.txt` + `--extra-rels`).
+- **The OpenEuroLLM -pure removals on top** (`retok.py decon --extra-drop`, their decision from
+  compare_pure's exact document match; their reason-tokenized bins are not used -- tokenizer-256k-reason
+  puts ChatML at ids 3 / 4, ours at 19 / 20), recorded as `external_decontamination` in info.json and
+  `<prefix>.removed_external.npy`:
+
+| | documents | v2 drops | they drop | only they drop | kept |
+|---|---:|---:|---:|---:|---:|
+| agenttrove-0.0 | 1,568,412 | 10,148 | 4,192 | 3,604 | 1,554,660 |
+| openthoughts-3 | 1,200,000 | 16,410 | 5,013 | 4,645 | 1,178,945 |
+
+- Verify: 453 shards, 92,889 sequences, 0 mismatches. Training datamix files regenerated (453 shards):
+  `$HYBRID_ENV/data/flag_decon_v2_datamix_mn5.txt` (old tokenizer, v2 only) and
+  `flag_decon_v2_agenttok_datamix_mn5.txt` (**the final clean dataset**: v2 + openthoughts-3 + -pure
+  removals + agent tokens; config `data_flag_decon_v2_agenttok_mn5`).

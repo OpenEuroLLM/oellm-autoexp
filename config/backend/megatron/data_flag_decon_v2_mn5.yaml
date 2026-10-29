@@ -3,7 +3,8 @@
 # /gpfs/projects/ehpc533/users/korbip/data/flag-decon-v2 -- the same 452 shards (symlinked .bin)
 # with rewritten .idx files that leave out every document holding a benchmark item verbatim (longest
 # run >= 70 % of the item or >= 200 tokens; v6 references = v5 + docs/decontamination_eval_set.csv,
-# minus scripts/flag_decontam/exclude_v6.txt; 2.50M docs / 31.7B tokens, 2026-10-29). Weights unchanged.
+# minus scripts/flag_decontam/exclude_v6.txt; 2.50M docs / 31.7B tokens, 2026-10-29). Weights unchanged,
+# plus openthoughts-3 (weight 0.0054, v2 rule: 16,410 docs dropped): 453 shards.
 # Everything else as data_flag_mn5.yaml. NOTE: a different document count -> a different data order and
 # validation split than "flag": switch at a clean boundary, never inside a comparison.
 # Datamix file: python3 scripts/korbi/flag_datamix_mn5.py --root .../flag-decon-v2 \
