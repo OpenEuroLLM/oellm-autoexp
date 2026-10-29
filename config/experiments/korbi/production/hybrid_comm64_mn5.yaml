@@ -1,0 +1,53 @@
+# @package _global_
+# Levers on the exposed FSDP communication at 64 nodes (2026-10-30, from the size64prof traces).
+#
+# Findings (per step, rank 0, one profiled step; scripts/korbi/ep_speed/trace_breakdown.py):
+# - Going 216 -> 384 experts adds +10.8 s per step; +9.6 s of it is exposed FSDP communication.
+# - Without counting the offload memcpys as compute, e384 exposes 26.3 s (38 % of the step):
+#   AllGather 16.8 s, fp32 ReduceScatter 12.8 s.
+# - The collectives run at ~62 % of the 25 GB/s NIC line rate.
+# - 9.8 s of the exposed time coincides with the activation-offload memcpys (PCIe shared with the
+#   NICs).
+# - Prefetch depth is capped by fsdp_double_buffer (current + next unit).
+#
+# Arms, at the production size (216 experts) against a same-day reference, 12 steps:
+#   e216            reference
+#   e216_nccl16     16 NCCL channels (slurm config forces 4: a memory saving for PP layouts)
+#   e216_rsbf16     gradient reduce-scatter in bf16 (SPEED ONLY: production keeps fp32, user
+#                   decision; MoonEP's wgrad still accumulates into fp32 main grads)
+#   e216_nooffload  RECOMPUTE_OFFLOAD=0: recompute-chunk inputs stay on the GPU (PCIe contention)
+#   e216_nodb       no double buffer + 2e9-element communication unit: deeper all-gather prefetch
+#
+#   enqueue with the size64 data (warm index): ... --config-name experiments/korbi/production/hybrid_comm64_mn5 "backend/megatron=[data_flag_decon_v1_mn5]"
+defaults:
+  - hybrid_size64_mn5
+  - _self_
+
+aux:
+  suite: comm64
+  arm: e216
+
+backend:
+  env:
+    MEM_BREAKDOWN: "1"
+  megatron:
+    num_experts: 216
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: e216
+        - aux.arm: e216_nccl16
+          backend.env.NCCL_MIN_NCHANNELS: "16"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "16"
+        - aux.arm: e216_rsbf16
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+        - aux.arm: e216_nooffload
+          backend.env.RECOMPUTE_OFFLOAD: "0"
+        - aux.arm: e216_nodb
+          backend.megatron.fsdp_double_buffer: false
+          backend.megatron.suggested_communication_unit_size: 2000000000
