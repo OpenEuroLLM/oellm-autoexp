@@ -1,8 +1,10 @@
 # @package _global_
 # Reproducer of the ambitious run's expert blow-up (user 2026-10-29): the production ambitious
-# config (LDM, classical Muown, lr 8.5e-4 constant, no warmup, 216 experts top-5, MoonEP) on 8
-# nodes at gbs 512 x 16k -- the same 4 micro-batches of 4 per GPU per step as the 64-node run
-# (512 = 4 x 32 GPUs x 4), so the same step time, one eighth of the tokens per step. In the main
+# config (LDM, classical Muown, lr 8.5e-4 constant, no warmup, 216 experts top-5, MoonEP) on 16
+# nodes at gbs 512 x 16k with micro-batch 2 (512 = 2 x 64 GPUs x 4 micro-batches, as
+# ENGRAM_STEP_GROUP): one eighth of the tokens per step. 8 nodes at micro-batch 4 ran out of GPU
+# memory in the first backward (the FSDP-sharded state per GPU grows 8x at DP 32 while the 64-node
+# run already uses 90 %); micro-batch 2 halves the activations / MoonEP buffers. In the main
 # run the routed-expert output RMS of layers 55-73 rose from ~0.05 to 1.5-7 (steps 400-870, the
 # routed share of the MoE output 0.99, grad norm 12 at 869) while the expert row norms g stayed
 # within 5 % (scripts/korbi/campaign/muown_g_stats.py). Arms: the unchanged config (must
@@ -19,7 +21,7 @@ aux:
   experiment_group: campaign_3b
   suite: ambrepro
   arm: base
-  nodes: 8
+  nodes: 16
   gbs: 512
   only: []
 
@@ -29,6 +31,7 @@ backend:
   megatron:
     # 900 steps (the main run's first episode began by step ~400, the second by ~750); the
     # schedule is constant, so train_iters only fixes the data order (equal in every arm)
+    micro_batch_size: 2
     exit_interval: 900
     non_persistent_save_interval: 250
     save_interval: 900
@@ -38,7 +41,8 @@ job:
   name: ambrepro_${aux.arm}
   metadata:
     pool_singleton: null
-  est_step_time_s: 50.0
+    pool_priority: 10
+  est_step_time_s: 30.0
 
 sweep:
   type: product
