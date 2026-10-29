@@ -2085,6 +2085,11 @@ class MegatronConfig(ConfigInterface):
     # annealing as t^-1/2.
     muown_classical_v_weight_decay: float = 0.0
 
+    # muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init
+    # sigma_max (per shape) after each step (deflation of the top singular directions; 0 =
+    # off).
+    muown_expert_spectral_cap: float = 0.0
+
     # muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >=
     # this value after each step (rank-1 deflation of the top singular direction at fixed row
     # norms; 0 = off).

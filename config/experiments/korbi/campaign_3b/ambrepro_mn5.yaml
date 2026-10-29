@@ -80,6 +80,10 @@ sweep:
         # spectra collapse at flat norms (one expert per layer, stable rank -> single digits)
         - aux.arm: srf50
           backend.megatron.muown_expert_stable_rank_floor: 50.0
+        # spectral-norm cap: every routed-expert matrix at sigma_max <= 3 x its init sigma_max
+        # (scaled down when above; per shape from the init weights), no norm
+        - aux.arm: sc3
+          backend.megatron.muown_expert_spectral_cap: 3.0
         # peri-LN (pre + post-norm): every sublayer output normalized (learnable gain) before it
         # enters the residual -- bounds each layer's write, not the experts inside it
         - aux.arm: periln

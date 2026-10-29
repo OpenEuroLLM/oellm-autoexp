@@ -5686,6 +5686,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "muown_expert_spectral_cap": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init sigma_max (per shape) after each step (deflation of the top singular directions; 0 = off).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "muown_expert_stable_rank_floor": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -13260,6 +13268,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "muown_expert_spectral_cap": MegatronActionSpec(
+        option_strings=("--muown-expert-spectral-cap",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "muown_expert_stable_rank_floor": MegatronActionSpec(
         option_strings=("--muown-expert-stable-rank-floor",),
