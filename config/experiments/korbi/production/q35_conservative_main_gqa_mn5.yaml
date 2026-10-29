@@ -1,0 +1,16 @@
+# @package _global_
+# The running conservative main run (q35c_main_gqa, suite main_gqa, since 2026-10-26) pinned to the
+# data it trains on: flag-decon-v1 with tokenizer-256k (user 2026-10-29: the production default moved
+# to data_flag_decon_v2_agenttok_mn5 for NEW runs; switching a running run mid-way changes the data
+# order, the validation pairing and the delimiter token ids). Enqueue every segment / pool move of
+# this run from here. GC every 100 steps and the rest come from q35_conservative_mn5.yaml.
+defaults:
+  - q35_conservative_mn5
+  - override /backend/megatron: [data_flag_decon_v1_mn5]
+  - _self_
+
+job:
+  # the running run's name and pool singleton (it was enqueued with these as overrides)
+  name: q35c_main_gqa
+  metadata:
+    pool_singleton: q35c_main_gqa
