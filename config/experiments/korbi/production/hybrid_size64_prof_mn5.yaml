@@ -1,0 +1,44 @@
+# @package _global_
+# Where does the per-expert step cost go at 64 nodes? (user 2026-10-29, after the size64 sweep:
+# step ~ 33 s + 0.081 s x routed experts.) The +33 GB of expert-weight FSDP traffic per micro-batch
+# for +72 experts at ~25 GB/s per GPU is ~5.2 s per step, close to the measured +5.8 s, so the
+# expert gathers / reduce-scatters look exposed rather than hidden behind compute. Torch profiles of
+# the production recipe at 216 and 384 experts; exposed communication by kind with
+# scripts/korbi/ep_speed/trace_breakdown.py.
+#
+#   python3 scripts/korbi/ep_speed/trace_breakdown.py <base>/torch_profile/rank-0.json.gz
+#
+# Traces: /gpfs/scratch/ehpc533/hybrid_nucleus/production/size64prof/<arm>/torch_profile/rank-{0,255}.json.gz
+defaults:
+  - hybrid_size64_mn5
+  - _self_
+
+aux:
+  suite: size64prof
+  arm: e216
+
+backend:
+  megatron:
+    train_iters: 10
+    log_interval: 1
+    profile: true
+    use_pytorch_profiler: true
+    # rank 0 (first node) and 255 (last node): MoonEP / FSDP behaviour at both ends
+    profile_ranks: [0, 255]
+    profile_step_start: 8
+    profile_step_end: 9
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # production size (size64 e216: 5,200 tok/s/GPU)
+        - aux.arm: e216
+          backend.megatron.num_experts: 216
+        # the cap-0.80 large arm (size64 e384_cap80: 3,871)
+        - aux.arm: e384_cap80
+          backend.megatron.num_experts: 384
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
