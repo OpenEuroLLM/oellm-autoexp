@@ -268,14 +268,29 @@ def selected(a, rel):
     return not a.sources or rel.split("/")[0] in a.sources
 
 
-def mix_rels(root):
-    return [l.split()[1] for l in open(os.path.join(root, "datamix.txt")) if l.strip()]
+def mix_lines(a, root=None):
+    """'weight prefix' lines: <root>/datamix.txt plus --extra-rels (sources outside the flag mix)."""
+    lines = [l.strip() for l in open(os.path.join(root or a.root, "datamix.txt")) if l.strip()]
+    if getattr(a, "extra_rels", ""):
+        have = {l.split()[1] for l in lines}
+        lines += [l.split("#")[0].strip() for l in open(a.extra_rels)
+                  if l.split("#")[0].strip() and l.split()[1] not in have]
+    return lines
+
+
+def mix_rels(a, root=None):
+    return [l.split()[1] for l in mix_lines(a, root)]
+
+
+def write_datamix(a, out, root=None):
+    with open(os.path.join(out, "datamix.txt"), "w") as f:
+        f.write("\n".join(mix_lines(a, root)) + "\n")
 
 
 def plan_write(a):
     """(shards with delimiters -> (units, delimiter counts), encode jobs); links the other shards (part 0)."""
     jobs, shards = [], {}
-    for rel in mix_rels(a.root):
+    for rel in mix_rels(a):
         src, dst = os.path.join(a.root, rel), os.path.join(a.out, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         found = load_find(a.work, rel) if selected(a, rel) else None
@@ -344,37 +359,64 @@ def cmd_assemble(a):
             print(f"[assemble {a.part}] rewrote {rel}: tokens {t_before} -> {t_after} ({t_after - t_before:+d})",
                   flush=True)
     if a.part == 0:
-        shutil.copy(os.path.join(a.root, "datamix.txt"), os.path.join(a.out, "datamix.txt"))
+        write_datamix(a, a.out)
     print(f"[assemble {a.part}] done in {time.time() - t0:.0f}s", flush=True)
 
 
+def extra_drops(a):
+    """--extra-drop rel=path: documents another pipeline removed (compare_pure.py docs.npz, mask 'theirs'
+    over the original documents), dropped on top of flag-decon-v2's."""
+    out = {}
+    for spec in a.extra_drop:
+        rel, path = spec.split("=", 1)
+        out[rel] = np.load(path)["theirs"].astype(bool)
+    return out
+
+
 def cmd_decon(a):
-    """flag-decon-v2-agenttok: flag-agenttok with flag-decon-v2's dropped documents (same document ids)."""
-    for rel in mix_rels(a.out):
+    """flag-decon-v2-agenttok: flag-agenttok with flag-decon-v2's dropped documents (same document ids),
+    plus --extra-drop (another pipeline's removals: 'double decontamination')."""
+    extra = extra_drops(a)
+    for rel in mix_rels(a, a.out):
         tok, dec, dst = (os.path.join(x, rel) for x in (a.out, a.decon, a.decon_out))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         link(tok + ".bin", dst + ".bin")
         info = json.load(open(info_path(tok)))
         rem = dec + ".removed.npz"
-        if os.path.exists(rem):
+        if os.path.exists(rem) or rel in extra:
             idx = Index(tok + ".idx")
             old = Index(dec + ".idx")
             drop = np.zeros(idx.doc_count - 1, bool)
-            drop[np.unique(np.load(rem)["doc"])] = True
+            if os.path.exists(rem):
+                drop[np.unique(np.load(rem)["doc"])] = True
+            n_ours = int(drop.sum())
+            assert old.doc_count - 1 == idx.doc_count - 1 - n_ours, rel           # same documents as v2
+            if rel in extra:
+                assert len(extra[rel]) == len(drop), (rel, len(extra[rel]), len(drop))
+                drop |= extra[rel]
             lengths, pointers, doc_idx = filter_index(idx, ~drop)
-            assert len(doc_idx) == old.doc_count and len(lengths) == old.seq_count, rel   # same documents kept
             if os.path.lexists(dst + ".idx"):
                 os.remove(dst + ".idx")
             write_index(dst + ".idx", idx.dtype_code, lengths, pointers, doc_idx)
-            shutil.copy(rem, dst + ".removed.npz")
+            if os.path.exists(rem):
+                shutil.copy(rem, dst + ".removed.npz")
             info["idx"].update(size=os.path.getsize(dst + ".idx"), md5sum=md5(dst + ".idx"),
                                sequence_count=int(len(lengths)), document_count=int(len(doc_idx)),
                                total_tokens=int(lengths.astype(np.int64).sum()))
-            info["decontamination"] = json.load(open(info_path(dec))).get("decontamination", {})
+            info["decontamination"] = (json.load(open(info_path(dec))).get("decontamination", {})
+                                       if os.path.exists(info_path(dec)) else {})
+            if rel in extra:
+                np.save(dst + ".removed_external.npy", np.flatnonzero(extra[rel]))
+                info["external_decontamination"] = {
+                    "source": "OpenEuroLLM pretraining-decontamination (NeMo Curator TaskDecontamination, "
+                              "commit 413335e), the -pure release of this dataset",
+                    "removed_by_them": int(extra[rel].sum()),
+                    "removed_only_by_them": int(drop.sum()) - n_ours,
+                    "documents_kept": int(len(doc_idx) - 1)}
         else:
             link(tok + ".idx", dst + ".idx")
         json.dump(info, open(info_path(dst), "w"), indent=2)
-    shutil.copy(os.path.join(a.out, "datamix.txt"), os.path.join(a.decon_out, "datamix.txt"))
+    write_datamix(a, a.decon_out, a.out)
     print("[decon] done", flush=True)
 
 
@@ -408,7 +450,7 @@ def _verify_shard(job):
 
 
 def cmd_verify(a):
-    rels = mix_rels(a.root)[a.part::a.nparts]
+    rels = mix_rels(a)[a.part::a.nparts]
     tot = bad = 0
     with Pool(a.procs, initializer=_init, initargs=(a.base_tok, a.agent_tok)) as pool:
         for rel, n, b in pool.imap_unordered(_verify_shard, [(r, a.root, a.out, a.work, a.samples, selected(a, r)) for r in rels]):
@@ -435,6 +477,9 @@ def main():
     ap.add_argument("--nparts", type=int, default=int(os.environ.get("SLURM_NNODES", 1)))
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 72))
     ap.add_argument("--samples", type=int, default=200)
+    ap.add_argument("--extra-rels", default="", help="'weight prefix' lines outside <root>/datamix.txt (openthoughts-3)")
+    ap.add_argument("--extra-drop", action="append", default=[],
+                    help="rel=compare_pure docs.npz: their removals on top of flag-decon-v2's (repeatable)")
     ap.add_argument("--sources", type=source_list, default=[],
                     help="re-tokenize only these sources (default: all), e.g. @scripts/flag_retok/retok_sources.txt")
     a = ap.parse_args()

@@ -4,3 +4,4 @@ mixture-vitae-1.0
 dolmino-mix-100b-1125
 agenttrove-0.0
 nemotron-pretraining-specialized-1.0
+openthoughts-3

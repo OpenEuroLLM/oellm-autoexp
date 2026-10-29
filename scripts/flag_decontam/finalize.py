@@ -376,7 +376,7 @@ def write_tree(args, rows, shards, flagged, segs):
         with open(dst_p.removesuffix("_text_document") + ".info.json", "w") as fh:
             json.dump(info, fh, indent=2)
         print(f"{'rewrote' if drop.any() else 'linked '} {rel}: -{int(drop.sum())} docs", flush=True)
-    shutil.copy(os.path.join(args.root, "datamix.txt"), os.path.join(args.out, "datamix.txt"))
+    shutil.copy(args.datamix or os.path.join(args.root, "datamix.txt"), os.path.join(args.out, "datamix.txt"))
 
 
 def src_list(x):
@@ -396,6 +396,8 @@ def main():
     ap.add_argument("--abs-run", type=int, default=200, help="a run this long flags whatever the segment length")
     ap.add_argument("--min-run", type=int, default=20)
     ap.add_argument("--max-docs", type=int, default=20000)
+    ap.add_argument("--datamix", default="", help="shard list ('weight prefix' lines, prefixes relative to --root); "
+                    "default <root>/datamix.txt (openthoughts-3, outside the mix: its own list)")
     ap.add_argument("--dry-run", action="store_true", help="reports only ($WORK/_report/frac_<f>), no tree")
     ap.add_argument("--hits-dir", default="hits")
     ap.add_argument("--exclude-src", default=[], type=src_list,
@@ -416,7 +418,7 @@ def main():
                                                          args.exclude_src))
         print(f"--exclude-src: {len(args.excluded)} segments do not flag", flush=True)
     rows = []
-    for line in open(os.path.join(args.root, "datamix.txt")):
+    for line in open(args.datamix or os.path.join(args.root, "datamix.txt")):
         if line.strip():
             w, prefix = line.split()
             rows.append((float(w), prefix))

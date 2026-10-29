@@ -76,7 +76,18 @@ def main():
         write_dataset(os.path.join(root, "a/shard_0000_text_document"), docs_a)
         write_dataset(os.path.join(root, "b/shard_0000_text_document"), [enc(t) for t in texts_b])
         open(os.path.join(root, "datamix.txt"), "w").write("0.5 a/shard_0000_text_document\n0.5 b/shard_0000_text_document\n")
-        open(os.path.join(d, "shards.txt"), "w").write(f"{root}/a/shard_0000_text_document\n{root}/b/shard_0000_text_document\n")
+        # c: a source outside the mix (openthoughts-3 style), added with --extra-rels
+        write_dataset(os.path.join(root, "c/shard_0000_text_document"),
+                      [enc("<|im_start|>user\nq<|im_end|>"), enc("plain c"), enc("<think>t</think> a")])
+        extra = os.path.join(d, "extra.txt")
+        open(extra, "w").write("0.25 c/shard_0000_text_document\n")
+        # their removals (compare_pure docs.npz): docs 1 (also v2's) and 2 of shard a, doc 1 of c
+        th_a = np.zeros(len(texts_a) + 1, bool); th_a[[1, 2]] = True
+        np.savez(os.path.join(d, "theirs_a.npz"), theirs=th_a)
+        th_c = np.zeros(3, bool); th_c[1] = True
+        np.savez(os.path.join(d, "theirs_c.npz"), theirs=th_c)
+        open(os.path.join(d, "shards.txt"), "w").write(f"{root}/a/shard_0000_text_document\n{root}/b/shard_0000_text_document\n"
+                                                       f"{root}/c/shard_0000_text_document\n")
         # v2-like decontamination tree: drop doc 1 of shard a
         dec = os.path.join(d, "flag-decon-v2", "a/shard_0000_text_document")
         os.makedirs(os.path.dirname(dec), exist_ok=True)
@@ -90,6 +101,9 @@ def main():
         decb = os.path.join(d, "flag-decon-v2", "b/shard_0000_text_document")
         os.makedirs(os.path.dirname(decb), exist_ok=True)
         os.symlink(os.path.join(root, "b/shard_0000_text_document.idx"), decb + ".idx")
+        decc = os.path.join(d, "flag-decon-v2", "c/shard_0000_text_document")    # v2 dropped nothing in c
+        os.makedirs(os.path.dirname(decc), exist_ok=True)
+        os.symlink(os.path.join(root, "c/shard_0000_text_document.idx"), decc + ".idx")
 
         run = [sys.executable, os.path.join(HERE, "retok.py")]
         common = ["--root", root, "--work", os.path.join(d, "work"), "--base-tok", base, "--agent-tok", agent,
@@ -97,20 +111,23 @@ def main():
         out = os.path.join(d, "flag-agenttok")
         os.environ["RETOK_UNIT_TOKENS"] = "20"     # several units per shard: re-encoded and copied ones interleave
         subprocess.run(run + ["find", "--shards", os.path.join(d, "shards.txt")] + common, check=True)
-        subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)
-        subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)    # resume: nothing left
-        subprocess.run(run + ["assemble", "--out", out, "--sources", "a"] + common, check=True)
+        X = ["--extra-rels", extra]
+        subprocess.run(run + ["write", "--out", out, "--sources", "a,c"] + X + common, check=True)
+        subprocess.run(run + ["write", "--out", out, "--sources", "a,c"] + X + common, check=True)  # resume: nothing left
+        subprocess.run(run + ["assemble", "--out", out, "--sources", "a,c"] + X + common, check=True)
         # a crash between the parts' removal and info.json, then a rerun: nothing redone, info.json restored
         ia = os.path.join(out, "a/shard_0000.info.json")
         os.remove(ia)
-        r = subprocess.run(run + ["assemble", "--out", out, "--sources", "a"] + common, check=True,
+        r = subprocess.run(run + ["assemble", "--out", out, "--sources", "a,c"] + X + common, check=True,
                            capture_output=True, text=True)
         assert "already assembled" in r.stdout and "retokenization" in json.load(open(ia))
-        subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)   # no parts recreated
+        subprocess.run(run + ["write", "--out", out, "--sources", "a,c"] + X + common, check=True)   # no parts recreated
         assert not os.path.exists(os.path.join(out, "a/shard_0000_text_document.parts"))
         subprocess.run(run + ["decon", "--out", out, "--decon", os.path.join(d, "flag-decon-v2"),
-                              "--decon-out", os.path.join(d, "flag-decon-v2-agenttok")] + common, check=True)
-        subprocess.run(run + ["verify", "--out", out, "--sources", "a"] + common, check=True)
+                              "--decon-out", os.path.join(d, "flag-decon-v2-agenttok"),
+                              "--extra-drop", f"a/shard_0000_text_document={d}/theirs_a.npz",
+                              "--extra-drop", f"c/shard_0000_text_document={d}/theirs_c.npz"] + X + common, check=True)
+        subprocess.run(run + ["verify", "--out", out, "--sources", "a,c"] + X + common, check=True)
         # a source outside --sources is linked even with delimiters
         out2 = os.path.join(d, "flag-agenttok-b")
         subprocess.run(run + ["write", "--out", out2, "--sources", "b"] + common, check=True)
@@ -132,9 +149,17 @@ def main():
         assert info["retokenization"]["sequences_changed"] == 2             # the <pad> sequence is not one
         assert info["retokenization"]["delimiter_counts"]["<|im_start|>"] == 3   # find counts the <pad> one too
         dv = Index(os.path.join(d, "flag-decon-v2-agenttok", "a/shard_0000_text_document.idx"))
-        assert dv.doc_count - 1 == 6 and dv.lengths[1] == ix.lengths[2]       # doc 1 dropped, the rest shifted
+        assert dv.doc_count - 1 == 5 and dv.lengths[1] == ix.lengths[3]       # docs 1 (v2 + theirs), 2 (theirs) dropped
         assert docs[6].tolist() == docs_a[6].tolist()                       # the <pad> sequence: unchanged
         assert os.path.realpath(os.path.join(d, "flag-decon-v2-agenttok", "a/shard_0000_text_document.bin")) == os.path.realpath(a + ".bin")
+        ia_info = json.load(open(os.path.join(d, "flag-decon-v2-agenttok", "a/shard_0000.info.json")))
+        assert ia_info["external_decontamination"]["removed_only_by_them"] == 1
+        dc = Index(os.path.join(d, "flag-decon-v2-agenttok", "c/shard_0000_text_document.idx"))
+        assert dc.doc_count - 1 == 2                                          # c: their doc 1 dropped
+        c_new = os.path.join(out, "c/shard_0000_text_document")
+        assert not os.path.islink(c_new + ".bin")                             # c re-tokenized
+        for t in (out, os.path.join(d, "flag-decon-v2-agenttok")):
+            assert "0.25 c/shard_0000_text_document" in open(os.path.join(t, "datamix.txt")).read()
         # nothing under flag/ changed
         assert Index(os.path.join(root, "a/shard_0000_text_document.idx")).lengths.tolist() == [len(x) for x in docs_a]
     print("all passed")

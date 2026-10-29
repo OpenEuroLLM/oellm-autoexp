@@ -1,0 +1,4 @@
+# Sources outside flag/datamix.txt added to the clean dataset ('weight prefix', prefixes relative to flag/;
+# retok.py --extra-rels / finalize.py --datamix). openthoughts-3 (user 2026-10-29): weight as agenttrove
+# (0.0054: ~0.54 % of training, ~3.6 epochs, like the collection's usage 4.0 for synthetic reasoning sets).
+0.0054 openthoughts-3/megatron-lm/data/shard_0000_text_document
