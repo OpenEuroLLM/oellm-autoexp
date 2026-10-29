@@ -342,6 +342,11 @@ class MegatronConfig(ConfigInterface):
     # activations that leaves normal operation unchanged.
     post_act_norm_floor: float = 0.0
 
+    # The smooth bounded post-activation norm h / sqrt(1 + mean(h^2) / floor^2): the identity
+    # for small activations and rms floor for large ones, without the kink of the max (needs
+    # post_act_norm_floor > 0).
+    post_act_norm_smooth: bool = False
+
     # True is rotate pairs of even and odd dimensions (RoFormer style), False is rotate pairs
     # of first half and second half (LLaMa style). Default to False.
     rotary_interleaved: bool = False

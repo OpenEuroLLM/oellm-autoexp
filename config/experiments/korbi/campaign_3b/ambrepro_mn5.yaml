@@ -70,6 +70,12 @@ sweep:
         - aux.arm: pab_r
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.post_act_norm_floor: 1.0
+        # the smooth cap h / sqrt(1 + mean(h^2)): identity below rms 1, rms 1 above, no kink
+        - aux.arm: pabs
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
+          backend.megatron.post_act_norm_smooth: true
         # peri-LN (pre + post-norm): every sublayer output normalized (learnable gain) before it
         # enters the residual -- bounds each layer's write, not the experts inside it
         - aux.arm: periln

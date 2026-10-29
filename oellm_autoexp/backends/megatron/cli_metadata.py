@@ -6618,6 +6618,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "post_act_norm_smooth": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="The smooth bounded post-activation norm h / sqrt(1 + mean(h^2) / floor^2): the identity for small activations and rms floor for large ones, without the kink of the max (needs post_act_norm_floor > 0).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "post_sublayer_norm": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -13997,6 +14005,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.0,
+    ),
+    "post_act_norm_smooth": MegatronActionSpec(
+        option_strings=("--post-act-norm-smooth",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "post_sublayer_norm": MegatronActionSpec(
         option_strings=("--post-sublayer-norm",),
