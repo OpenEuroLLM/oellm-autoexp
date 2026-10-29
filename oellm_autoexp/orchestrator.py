@@ -356,12 +356,35 @@ def _sleep_interruptibly(seconds: float) -> None:
         time.sleep(min(1.0, remaining))
 
 
-def run_loop(controller: MonitorLoop) -> str:
+def cpu_seconds_used() -> float:
+    """CPU time (user + system) this process has used so far."""
+    import resource
+
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return float(usage.ru_utime + usage.ru_stime)
+
+
+def cpu_budget_from_rlimit(fraction: float = 0.9) -> float | None:
+    """``fraction`` of the process's soft CPU-time limit, or None without one. Login nodes
+    may cap CPU time per process (MareNostrum 5 alogin2: ``ulimit -t 300``) and SIGKILL a
+    process at the limit -- for a monitor that polls for days that is a silent death."""
+    import resource
+
+    soft, _hard = resource.getrlimit(resource.RLIMIT_CPU)
+    if soft == resource.RLIM_INFINITY or soft <= 0:
+        return None
+    return fraction * float(soft)
+
+
+def run_loop(controller: MonitorLoop, cpu_budget_s: float | None = None) -> str:
     """Poll until every job is finished, or until asked to stop.
 
     Returns one of ``"completed"``, ``"stopped"`` (``.monitor.stop`` appeared),
-    ``"signal"`` (SIGINT/SIGTERM) or ``"failed"`` (too many consecutive bad
-    polls). Post-job commands run only on a genuine completion.
+    ``"signal"`` (SIGINT/SIGTERM), ``"failed"`` (too many consecutive bad
+    polls) or ``"cpu_budget"`` (this process used ``cpu_budget_s`` seconds of CPU:
+    leave cleanly, between two polls, before a CPU-time limit kills it; the caller
+    restarts a fresh process, which rehydrates from the session). Post-job commands
+    run only on a genuine completion.
     """
     global _STOP_SIGNAL_RECEIVED
     _STOP_SIGNAL_RECEIVED = None
@@ -404,6 +427,13 @@ def run_loop(controller: MonitorLoop) -> str:
             if _STOP_SIGNAL_RECEIVED is not None:
                 outcome = "signal"
                 break
+            if cpu_budget_s is not None and cpu_seconds_used() >= cpu_budget_s:
+                LOGGER.info(
+                    "CPU budget reached (%.0f s of %.0f s): exiting for a fresh process.",
+                    cpu_seconds_used(),
+                    cpu_budget_s,
+                )
+                return "cpu_budget"
             # Back off on repeated failures so a wedged controller is not hammered.
             delay = loop.poll_interval_seconds * (2**failures if failures else 1)
             _sleep_interruptibly(min(delay, 600.0))

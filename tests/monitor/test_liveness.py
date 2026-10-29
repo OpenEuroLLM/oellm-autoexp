@@ -255,3 +255,100 @@ def test_tmp_files_are_not_loaded_as_jobs(tmp_path: Path):
     store.upsert(_record(tmp_path))
     (tmp_path / "state" / "j.job.tmp").write_text("{ truncated")
     assert [j.job_id for j in store.load_all()] == ["j"]
+
+
+# --- CPU budget (login-node CPU-time limit) ----------------------------------
+
+
+def test_cpu_budget_ends_the_loop_after_a_poll(tmp_path: Path):
+    """A monitor near a login node's CPU-time limit (alogin2: SIGKILL at 300 s) leaves cleanly
+    between two polls, for a fresh process to take over -- instead of dying mid-poll."""
+    from oellm_autoexp.orchestrator import run_loop
+    from oellm_autoexp.monitor.loop import MonitorLoop
+
+    store = JobFileStore(tmp_path / "state")
+    store.upsert(_record(tmp_path))
+    polled = []
+    loop = MonitorLoop(store, local_client=_NoopClient(), poll_interval_seconds=0.05)
+    loop.observe_once = lambda: polled.append(1)  # type: ignore[method-assign]
+
+    assert run_loop(loop, cpu_budget_s=0.0) == "cpu_budget"
+    assert polled == [1], "exactly one poll, then out"
+    assert stop_requested(store.root) is None, "a budget exit must not block the restart"
+
+
+def test_no_cpu_budget_keeps_polling(tmp_path: Path):
+    from oellm_autoexp.orchestrator import run_loop
+    from oellm_autoexp.monitor.loop import MonitorLoop
+
+    store = JobFileStore(tmp_path / "state")
+    store.upsert(_record(tmp_path))
+    polled = []
+    loop = MonitorLoop(store, local_client=_NoopClient(), poll_interval_seconds=0.01)
+
+    def observe():
+        polled.append(1)
+        if len(polled) == 3:
+            request_stop(store.root, "test")
+
+    loop.observe_once = observe  # type: ignore[method-assign]
+    assert run_loop(loop, cpu_budget_s=None) == "stopped"
+    assert len(polled) == 3
+
+
+def test_cpu_budget_from_rlimit(monkeypatch):
+    import resource
+
+    from oellm_autoexp.orchestrator import cpu_budget_from_rlimit
+
+    monkeypatch.setattr(resource, "getrlimit", lambda _k: (300, 300))
+    assert cpu_budget_from_rlimit() == 270.0
+    monkeypatch.setattr(
+        resource, "getrlimit", lambda _k: (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
+    )
+    assert cpu_budget_from_rlimit() is None
+
+
+def test_mn5_launcher_restarts_on_cpu_budget_and_forwards_term(tmp_path: Path):
+    """scripts/korbi/mn5_autoexp.sh: status 75 -> a fresh process with the same arguments; any
+    other status ends the loop; TERM to the wrapper reaches the child and ends the loop."""
+    import subprocess
+    import time
+
+    repo = Path(__file__).resolve().parents[2]
+    fake = tmp_path / "autoexp_env" / "bin"
+    fake.mkdir(parents=True)
+    count = tmp_path / "count"
+    (fake / "python").write_text(
+        "#!/bin/bash\n"
+        f"n=$(( $(cat {count} 2>/dev/null || echo 0) + 1 )); echo $n > {count}\n"
+        'if [ "$1" = sleep ]; then trap "exit 75" TERM; sleep 30 & wait; exit 75; fi\n'
+        "[ $n -lt 3 ] && exit 75\nexit 0\n"
+    )
+    (fake / "python").chmod(0o755)
+    env = {**os.environ, "R": str(tmp_path)}
+    r = subprocess.run(
+        ["bash", str(repo / "scripts/korbi/mn5_autoexp.sh"), "x"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.returncode == 0, r.stderr
+    assert count.read_text().strip() == "3", "restarted twice on status 75"
+    assert r.stderr.count("CPU budget reached") == 2
+
+    count.write_text("0")
+    p = subprocess.Popen(
+        ["bash", str(repo / "scripts/korbi/mn5_autoexp.sh"), "sleep"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(1.5)
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=20)
+    assert count.read_text().strip() == "1", (
+        "a TERM must end the loop, even when the child exits 75"
+    )

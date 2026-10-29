@@ -16,15 +16,19 @@ from uuid import uuid4
 from oellm_autoexp.orchestrator import (
     DEFAULT_STALE_AFTER_S,
     ensure_no_live_monitor,
+    cpu_budget_from_rlimit,
     run_loop,
     stop_path,
 )
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.loop import JobFileStore, MonitorLoop
+
 from oellm_autoexp.utils.logging_config import configure_logging
 
 
+# exit status of a monitor that left at its CPU budget; scripts/korbi/mn5_autoexp.sh restarts it
+EXIT_CPU_BUDGET = 75
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -180,7 +184,11 @@ def main(argv: list[str] | None = None) -> None:
     # Without this the monitor runs forever without ever seeing a job status.
     loop.rehydrate()
 
-    outcome = run_loop(loop)
+    outcome = run_loop(loop, cpu_budget_s=cpu_budget_from_rlimit())
+    if outcome == "cpu_budget":
+        # a login-node CPU-time limit is near: exit cleanly; the launcher (scripts/korbi/
+        # mn5_autoexp.sh) starts a fresh process, which rehydrates this session
+        raise SystemExit(EXIT_CPU_BUDGET)
     if outcome == "signal":
         print("\n[interrupted] Jobs were NOT cancelled -- they keep running in SLURM.")
         print(
