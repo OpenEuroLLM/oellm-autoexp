@@ -320,6 +320,17 @@ class MegatronConfig(ConfigInterface):
     # kernel, TE's fused ScaledSwiGLU op raises.
     activation_func_clamp_value: float | None = None
 
+    # Routed experts: normalize the activation (SwiGLU output) per token over the hidden units
+    # before the router weight and fc2, a = p * h / rms(h), without a scale vector (anGPT's
+    # post_act_norm; fc2's rows carry the magnitude). Bounds an expert's output by its fc2 row
+    # norms whatever its input or alignment does. TEGroupedMLP (fused SwiGLU kernel, or
+    # unfused), MoonEP, SequentialMLP; not with the TE op fuser or TE activation modules;
+    # expert TP 1.
+    moe_expert_post_act_norm: bool = False
+
+    # The same post-activation norm in the dense MLPs and the shared experts (TP 1).
+    mlp_post_act_norm: bool = False
+
     # True is rotate pairs of even and odd dimensions (RoFormer style), False is rotate pairs
     # of first half and second half (LLaMa style). Default to False.
     rotary_interleaved: bool = False

@@ -601,6 +601,7 @@ mla_down_proj_fusion: false  # Enable fused q/kv down-projection and fused input
 mla_num_query_groups: null  # Grouped-query MLA: key/value heads up-projected from the KV latent (None = one per query head). --qk-pos-emb-head-dim 0 makes MLA NoPE.
 mlp_chunks_for_prefill: 1  # The number of chunks along the sequence dimension to use for MLP computation during prefill.
 mlp_chunks_for_training: 1  # The number of chunks along the sequence dimension to use for MLP computation during training.
+mlp_post_act_norm: false  # The same post-activation norm in the dense MLPs and the shared experts (TP 1).
 mlstm_backend: chunkwise--triton_xl_chunk  # mlstm_kernels sequence kernel used by the mLSTM attention variant.
 mlstm_chunk_size: 128  # Chunk size of the chunkwise-parallel mLSTM kernel. 128 is the fastest on H100/H200.
 mlstm_conv1d: false  # Apply a short depthwise causal conv over q,k,v before the mLSTM cell (xLSTM conv branch / GatedDeltaNet-style, via FLA causal_conv1d). Kernel width is taken from ``linear_conv_kernel_dim``.
@@ -615,6 +616,7 @@ moe_deepep_num_sms: null  # DEPRECATED: use moe_flex_dispatcher_num_sms. Number 
 moe_enable_deepep: false  # [Experimental] Enable DeepEP for efficient token dispatching and combine in MoE models.
 moe_enable_routing_replay: false  # If True, enable the routing replay feature for MoE layers.
 moe_expert_capacity_factor: null  # moe_expert_capacity_factor (float): The capacity factor for each expert, None means no token will be dropped. The default is None.
+moe_expert_post_act_norm: false  # Routed experts: normalize the activation (SwiGLU output) per token over the hidden units before the router weight and fc2, a = p * h / rms(h), without a scale vector (anGPT's post_act_norm; fc2's rows carry the magnitude). Bounds an expert's output by its fc2 row norms whatever its input or alignment does. TEGroupedMLP (fused SwiGLU kernel, or unfused), MoonEP, SequentialMLP; not with the TE op fuser or TE activation modules; expert TP 1.
 moe_expert_rank_capacity_factor: null  # moe_expert_rank_capacity_factor (float): The capacity factor for each expert rank, i.e. the per-rank token budget. None means no token will be dropped. The default is None. With the 'hybridep' backend, tokens exceeding this budget are dropped. With the 'ncclep' backend, exceeding the budget is a hard error (TransformerEngine/NCCL traps) — set it generously.
 moe_expert_viability_metrics: false  # Enable opt-in per-layer routed-expert viability diagnostics. Requires ``moe_per_layer_logging`` because the diagnostics are emitted per MoE layer.
 moe_ffn_hidden_size: null  # MoE Feed-Forward Network hidden size. If not specified, defaults to the ffn_hidden_size.

@@ -4831,6 +4831,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mlp_post_act_norm": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="The same post-activation norm in the dense MLPs and the shared experts (TP 1).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "mlstm_backend": MegatronArgMetadata(
         arg_type=str,
         default="chunkwise--triton_xl_chunk",
@@ -4941,6 +4949,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="moe_expert_capacity_factor (float): The capacity factor for each expert, None means no token will be dropped. The default is None.",
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "moe_expert_post_act_norm": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Routed experts: normalize the activation (SwiGLU output) per token over the hidden units before the router weight and fc2, a = p * h / rms(h), without a scale vector (anGPT's post_act_norm; fc2's rows carry the magnitude). Bounds an expert's output by its fc2 row norms whatever its input or alignment does. TEGroupedMLP (fused SwiGLU kernel, or unfused), MoonEP, SequentialMLP; not with the TE op fuser or TE activation modules; expert TP 1.",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "moe_expert_rank_capacity_factor": MegatronArgMetadata(
@@ -12471,6 +12487,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=1,
     ),
+    "mlp_post_act_norm": MegatronActionSpec(
+        option_strings=("--mlp-post-act-norm",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "mlstm_backend": MegatronActionSpec(
         option_strings=("--mlstm-backend",),
         action_type="store",
@@ -12568,6 +12591,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "moe_expert_post_act_norm": MegatronActionSpec(
+        option_strings=("--moe-expert-post-act-norm",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "moe_expert_rank_capacity_factor": MegatronActionSpec(
         option_strings=("--moe-expert-rank-capacity-factor",),

@@ -1,0 +1,59 @@
+# @package _global_
+# Reproducer of the ambitious run's expert blow-up (user 2026-10-29): the production ambitious
+# config (LDM, classical Muown, lr 8.5e-4 constant, no warmup, 216 experts top-5, MoonEP) on 8
+# nodes at gbs 512 x 16k -- the same 4 micro-batches of 4 per GPU per step as the 64-node run
+# (512 = 4 x 32 GPUs x 4), so the same step time, one eighth of the tokens per step. In the main
+# run the routed-expert output RMS of layers 55-73 rose from ~0.05 to 1.5-7 (steps 400-870, the
+# routed share of the MoE output 0.99, grad norm 12 at 869) while the expert row norms g stayed
+# within 5 % (scripts/korbi/campaign/muown_g_stats.py). Arms: the unchanged config (must
+# reproduce), the post-activation norm in the routed and shared experts, and that plus a warmup.
+# Own experiment group / suite: never the main run's checkpoint dir or its pool singleton.
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool $HYBRID_OUTPUT_DIR/pools/mn5_pool_p129 --config-name experiments/korbi/campaign_3b/ambrepro_mn5 \
+#       job.array_group=null --yes
+defaults:
+  - ../production/hybrid_ambitious_64_mn5
+  - _self_
+
+aux:
+  experiment_group: campaign_3b
+  suite: ambrepro
+  arm: base
+  nodes: 8
+  gbs: 512
+  only: []
+
+backend:
+  env:
+    ENGRAM_STEP_GROUP: "4"
+  megatron:
+    # 900 steps (the main run's first episode began by step ~400, the second by ~750); the
+    # schedule is constant, so train_iters only fixes the data order (equal in every arm)
+    exit_interval: 900
+    non_persistent_save_interval: 250
+    save_interval: 900
+    save_retain_interval: null
+
+job:
+  name: ambrepro_${aux.arm}
+  metadata:
+    pool_singleton: null
+  est_step_time_s: 50.0
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        # A + B: SwiGLU output normalized per token before the router weight and fc2, routed and
+        # shared experts (no scale vector)
+        - aux.arm: pan
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+        # + F: 200-step linear warmup to the constant lr
+        - aux.arm: pan_wu
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.lr_warmup_iters: 200

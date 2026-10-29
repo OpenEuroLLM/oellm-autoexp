@@ -1775,6 +1775,36 @@ def arms5ngptopt(size: str = "s1"):
     )]
 
 
+def arms5stab(size: str):
+    """Expert stabilization (user 2026-10-29): the ambitious run's routed-expert outputs grew
+    ~100x in layers 55-73 (steps 400-870) with the expert row norms g within 5 %, so the growth is
+    in the activations. Fixes on the production setting (LDM x1, classical Muown), against the
+    rematch's ldm on the same layout and batches (s1 / s2: 2 nodes, s3: 8): A = post-activation
+    RMS norm of the routed experts' SwiGLU output (moe_expert_post_act_norm, no scale vector),
+    B = the same in the shared expert (mlp_post_act_norm), F = a 200-step warmup (the rematch
+    ran none), E = activation clamp 5 (instead of 10), and half the lr (s1: 2e-3 beat 4e-3).
+    s2 / s3: the candidates only."""
+    base = dict((n, kv) for n, _, kv in arms5resgqa(size))["ldm"]
+    lr = R4_SIZES[size][4]
+    pa = {B + "moe_expert_post_act_norm": True}
+    pan = {**pa, B + "mlp_post_act_norm": True}
+    wu = {B + "lr_warmup_iters": 200}
+    half = {B + "lr": lr / 2, B + "min_lr": lr / 20}
+    arms = {
+        "ldm_pa": ("LDM x1, routed-expert post-act norm (A)", pa),
+        "ldm_pan": ("LDM x1, post-act norm in routed + shared experts (A + B)", pan),
+        "ldm_pan_wu": ("A + B + 200-step warmup (F)", {**pan, **wu}),
+        "ldm_wu": ("LDM x1, 200-step warmup (F)", wu),
+        "ldm_pan_lr2": ("A + B at half the lr", {**pan, **half}),
+        "ldm_clamp5": ("LDM x1, activation clamp 5 (E)", {B + "activation_func_clamp_value": 5.0}),
+        "ldm_lr2": ("LDM x1 at half the lr (reference for the half-lr arms)", half),
+    }
+    keep = {"s1": ("ldm_pa", "ldm_pan", "ldm_pan_wu", "ldm_wu", "ldm_pan_lr2", "ldm_clamp5"),
+            "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2"),
+            "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2")}[size]
+    return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -2132,6 +2162,7 @@ def write5():
             *[(z, "screen5ldmnorm", arms5ldmnorm(z)) for z in ("s2", "s3")],
             ("s3", "screen5ldmnorm2", arms5ldmnorm2("s3")),
             ("s1", "screen5ngptopt", arms5ngptopt("s1")),
+            *[(z, "screen5stab", arms5stab(z)) for z in ("s1", "s2", "s3")],
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
