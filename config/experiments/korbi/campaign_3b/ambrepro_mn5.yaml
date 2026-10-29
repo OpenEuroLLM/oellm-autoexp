@@ -85,3 +85,15 @@ sweep:
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.mlp_post_act_norm: true
           backend.megatron.lr_warmup_iters: 200
+        # quantile balancing (user 2026-10-29) in place of the expert bias + aux loss: each step the
+        # per-expert bias is the global batch's column quantile (dual coordinate descent, EMA 0, the
+        # upstream default); needs Megatron >= 81b6d4c58 (216 experts do not divide 32k x top-5)
+        # and the unfused router. Launched as its own suite (aux.suite=ambreproqb): the other arms'
+        # relaunches cannot overwrite its task script. No load_balancing_loss is logged under QB
+        # (the aux-loss block is skipped): compare balance through the router health metrics.
+        - aux.arm: qb
+          backend.megatron.moe_router_load_balancing_type: quantile_balancing
+          backend.megatron.moe_router_quantile_balancing_ema: 0.0
+          backend.megatron.moe_router_enable_expert_bias: false
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.moe_router_fusion: false
