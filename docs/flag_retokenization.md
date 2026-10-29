@@ -50,6 +50,30 @@ Test: `scripts/flag_retok/test_retok.py` (tiny SentencePiece model with the same
 find -> write -> decon -> verify). Runs: `config/experiments/korbi/decontam/flag_retok_mn5.yaml`
 (`scripts/flag_retok/run_step.sh <step>`), work `/gpfs/scratch/ehpc533/users/korbip/flag_retok`.
 
-## Results
+## Results (2026-10-29)
 
-(filled in as the steps finish)
+`find` (16 nodes of pool p129, 13.5T tokens, ~410M tok/s per node, 38 min): 51.3M sequences hold a
+delimiter, ~190M occurrences (`</think>` 48.2M, `<think>` 45.7M, `<|im_start|>` 42.0M, `<|im_end|>` 42.0M,
+the three `<|fim_*|>` 7.5M each, `<|fim_pad|>` 0.8M, `<|endoftext|>` 68k, `[INST]` 13k, ...). By source:
+mixture-vitae 40.7M sequences (12.3 %), dolmino 7.9M (13.4 %, FIM), agenttrove 1.57M (100 %),
+nemotron-pretraining-specialized 1.17M (1.9 %); 18 more sources only mention delimiters as text
+(~25k sequences: code, docs, PDFs), but in 246 shards (11.6T tokens).
+
+**Scope (user: option B):** only the four sources above (`scripts/flag_retok/retok_sources.txt`); the
+literal mentions elsewhere stay text -- re-tokenizing them would mean copying 49 TB for 0.0003 % of
+their sequences (one changed sequence rewrites a whole .bin).
+
+`write` (re-encode, 8 nodes; the first single-node try was CPU-bound and was resumed from its part
+files) + `assemble` (8 nodes): **14 shards rewritten, 0.79B tokens fewer** (agenttrove 20.22B ->
+19.88B, -1.7 %; mixture-vitae shard 3 -284M; dolmino stack_edu-fim -129M); 6 of ~800k sampled
+re-encoded sequences were not `encode(decode(seq))` under the base tokenizer (their text is unchanged;
+only the split is the standard one now). `decon`: flag-decon-v2's dropped documents applied (same
+document and sequence counts as flag-decon-v2 per shard). `verify` (4 nodes): 452 shards, 92,889
+sequences checked, 0 mismatches.
+
+Trees (under `/gpfs/projects/ehpc533/users/korbip/data/`): `flag-agenttok` (full mix, 14 new shards,
+symlinks for the rest), **`flag-decon-v2-agenttok`** (training: `data_flag_decon_v2_agenttok_mn5`,
+datamix `$HYBRID_ENV/data/flag_decon_v2_agenttok_datamix_mn5.txt`, same weights as v2), tokenizer
+`tokenizers/tokenizer-256k-agent`. Lessons: write the `find` results as one file per node, not per
+shard (16 nodes creating ~6k files in one GPFS directory took 6 min); assembly must check only the
+node's own shards and write info.json before deleting the parts.
