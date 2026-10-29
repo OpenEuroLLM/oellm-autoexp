@@ -44,6 +44,7 @@ backend:
     OUT: ${aux.out}
     ROOT: ${aux.root}
     OMP_NUM_THREADS: "8"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
 
 job:
   name: flag_decon_${aux.step}

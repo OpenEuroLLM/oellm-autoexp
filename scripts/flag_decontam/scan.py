@@ -116,16 +116,19 @@ def process(toks, lengths, s0, lut, table, csr_off, csr_seg, n_of_seg, dev, mode
         return None
     hp, hg = torch.cat(hit_pos), torch.cat(hit_gram)
     if mode == "count":
-        counts += torch.bincount(hg, minlength=counts.shape[0])
+        counts.scatter_add_(0, hg, torch.ones_like(hg, dtype=torch.int32))   # no table-sized temporary
         return None
     grams_hit = torch.unique(hg).to(torch.int32).cpu().numpy()        # for the per-benchmark n-gram hit rates
     if hp.numel() == 0:
         return np.zeros((0, 5), dtype=np.int64), grams_hit
-    # every matching window -> each segment its n-gram belongs to (an n-gram has one n)
-    k = csr_off[hg + 1] - csr_off[hg]
-    rep = torch.repeat_interleave(torch.arange(hg.numel(), device=dev), k)
+    # every matching window -> each segment its n-gram belongs to (an n-gram has one n); the CSR
+    # lives in host memory (v6: 1.8B n-grams, 22 GB): only the few matching windows look it up
+    hgc = hg.cpu()
+    k = csr_off[hgc + 1] - csr_off[hgc]
+    rep = torch.repeat_interleave(torch.arange(hgc.numel()), k)
     excl = torch.cumsum(k, 0) - k
-    seg = csr_seg[csr_off[hg][rep] + torch.arange(rep.numel(), device=dev) - excl[rep]].long()
+    seg = csr_seg[csr_off[hgc][rep] + torch.arange(rep.numel()) - excl[rep]].long().to(dev)
+    rep = rep.to(dev)
     pos = hp[rep]
     r_seq, r_seg, r_start, r_end, r_win = runs(pos, seg, seq[pos], n_of_seg)
     # per (sequence, segment): the longest run, all matching windows, the number of runs
@@ -144,10 +147,12 @@ def worker(rank, ngpu, units, args):
     dev = torch.device(f"cuda:{rank % ngpu}") if torch.cuda.is_available() else torch.device("cpu")
     tab = np.load(os.path.join(args.work, "table", "table.npz"))
     table = torch.from_numpy(tab["hash"]).to(dev)
-    csr_off, csr_seg = torch.from_numpy(tab["csr_off"]).to(dev), torch.from_numpy(tab["csr_seg"]).to(dev)
+    # host memory; count mode does not need it
+    csr_off, csr_seg = ((torch.from_numpy(tab["csr_off"]), torch.from_numpy(tab["csr_seg"]))
+                        if args.mode == "scan" else (None, None))
     n_of_seg = torch.from_numpy(np.load(os.path.join(args.work, "table", "segments.npz"))["n"].astype(np.int64)).to(dev)
     lut = torch.from_numpy(np.load(os.path.join(args.work, "table", "lut.npy"))).to(dev)
-    counts = torch.zeros(table.shape[0], dtype=torch.int64, device=dev) if args.mode == "count" else None
+    counts = torch.zeros(table.shape[0], dtype=torch.int32, device=dev) if args.mode == "count" else None
     mine = units[rank::ngpu]
     todo = []
     for u in mine:

@@ -184,7 +184,10 @@ def prune(args):
     files = sorted(glob.glob(os.path.join(args.work, "counts", "*.npy")))
     assert files, "no counts: run scan.py --mode count first"
     tab = dict(np.load(os.path.join(tdir, "table.npz")))
-    counts = sum(np.load(f) for f in files)
+    counts = np.zeros(0, np.int64)
+    for f in files:                       # int32 per GPU (scan.py); summed in int64
+        c = np.load(f)
+        counts = c.astype(np.int64) if not len(counts) else counts + c
     assert len(counts) == len(tab["hash"]), "counts were made with another table"
     drop = counts > args.max_count
     nseg = np.diff(tab["csr_off"])
