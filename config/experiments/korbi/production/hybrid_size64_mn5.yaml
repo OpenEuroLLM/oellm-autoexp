@@ -84,3 +84,15 @@ sweep:
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.mlp_post_act_norm: true
           backend.megatron.post_act_norm_floor: 1.0
+        # 2026-10-29 11:20: e288 fits at mem 0.977 (e360 + Engram 80B out of GPU memory in step 1):
+        # the post-act norm's cost where it fits, against the same-day e216 / e288
+        - aux.arm: e216_pab
+          backend.megatron.num_experts: 216
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
+        - aux.arm: e288_pab
+          backend.megatron.num_experts: 288
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
