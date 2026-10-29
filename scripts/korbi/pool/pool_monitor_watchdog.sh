@@ -12,7 +12,7 @@ log() { echo "$(date '+%F %T') $*"; }
 running() { # running <session dir>: a monitor_autoexp.py process for it
   for c in /proc/[0-9]*/cmdline; do
     [ "${c#/proc/}" = "$$/cmdline" ] && continue
-    tr '\0' ' ' <"$c" 2>/dev/null | grep -q "scripts/monitor_autoexp.py --session-dir $1 " && return 0
+    { tr '\0' ' ' <"$c"; } 2>/dev/null | grep -q "scripts/monitor_autoexp.py --session-dir $1 " && return 0
   done
   return 1
 }

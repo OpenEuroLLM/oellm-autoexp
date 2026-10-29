@@ -15,7 +15,7 @@ while true; do
   out=$(timeout 240 ssh -o BatchMode=yes -o ConnectTimeout=30 "$HOST" "
     ONCE=1 $W 2>&1
     for c in /proc/[0-9]*/cmdline; do
-      tr '\\0' ' ' < \$c 2>/dev/null | grep -q '^/bin/bash $W' && { echo WATCHDOG_ALIVE; break; }
+      { tr '\\0' ' ' < \$c; } 2>/dev/null | grep -q '^/bin/bash $W' && { echo WATCHDOG_ALIVE; break; }
     done
   " 2>&1 | grep -v '^load \|^CPLUS\|CUDA_HOME\|CUDNN_LIB')
   rc=$?
