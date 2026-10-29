@@ -19,9 +19,11 @@ job:
   base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
   pool_host:
     max_hosts_running: 1
-    max_own_hosts: 1
+    max_own_hosts: 2
     max_runs_per_host: 6
-    keep_pending: 0
+    # one successor, queued a day after the host starts (a staggered ladder of 128+ node hosts)
+    keep_pending: 1
+    successor_delay_s: 86400
     min_hosts: 1
     handover: false
     idle_exit_s: 3600
