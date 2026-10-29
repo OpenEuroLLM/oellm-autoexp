@@ -23,6 +23,9 @@ while true; do
     age=$(( $(date +%s) - $(stat -c %Y "$alive" 2>/dev/null || echo 0) ))
     if [ "$age" -gt "$STALE_S" ] && ! running "$session"; then
       log "pool $name: heartbeat ${age}s old and no monitor: restarting from $SNAP"
+      # keep the dead monitor's log (mn5_autoexp_bg.sh truncates <name>.log): the moment it died
+      old=$R/monitor_logs/pool_${name}_mon.log
+      [ -s "$old" ] && mv "$old" "$R/monitor_logs/pool_${name}_mon.died-$(date +%Y%m%d-%H%M%S).log"
       (cd "$SNAP" && PYTHONPATH=. HYBRID_OUTPUT_DIR=/gpfs/scratch/ehpc533/hybrid_nucleus \
         scripts/korbi/mn5_autoexp_bg.sh "pool_${name}_mon" scripts/monitor_autoexp.py \
         --session-dir "$session" --poll-interval 30 --force)
