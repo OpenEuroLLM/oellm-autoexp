@@ -68,7 +68,9 @@ def main():
         ev = json.load(f)
     ev = ev["traceEvents"] if isinstance(ev, dict) else ev
     kern = [e for e in ev if e.get("ph") == "X" and e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")]
-    steps = [e for e in ev if e.get("ph") == "X" and str(e.get("name", "")).startswith("ProfilerStep")]
+    # each ProfilerStep#N appears twice (a CPU user_annotation and a gpu_user_annotation): count
+    # the step names once
+    steps = {e["name"] for e in ev if e.get("ph") == "X" and str(e.get("name", "")).startswith("ProfilerStep")}
     t0 = min(e["ts"] for e in kern)
     t1 = max(e["ts"] + e["dur"] for e in kern)
     nsteps = max(1, len(steps))
