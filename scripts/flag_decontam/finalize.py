@@ -376,7 +376,9 @@ def write_tree(args, rows, shards, flagged, segs):
         with open(dst_p.removesuffix("_text_document") + ".info.json", "w") as fh:
             json.dump(info, fh, indent=2)
         print(f"{'rewrote' if drop.any() else 'linked '} {rel}: -{int(drop.sum())} docs", flush=True)
-    shutil.copy(args.datamix or os.path.join(args.root, "datamix.txt"), os.path.join(args.out, "datamix.txt"))
+    with open(args.datamix or os.path.join(args.root, "datamix.txt")) as fi, \
+            open(os.path.join(args.out, "datamix.txt"), "w") as fo:
+        fo.write("".join(l.split("#")[0].strip() + "\n" for l in fi if l.split("#")[0].strip()))
 
 
 def src_list(x):
@@ -419,7 +421,8 @@ def main():
         print(f"--exclude-src: {len(args.excluded)} segments do not flag", flush=True)
     rows = []
     for line in open(args.datamix or os.path.join(args.root, "datamix.txt")):
-        if line.strip():
+        line = line.split("#")[0].strip()       # '#' comments (the --datamix lists)
+        if line:
             w, prefix = line.split()
             rows.append((float(w), prefix))
 
