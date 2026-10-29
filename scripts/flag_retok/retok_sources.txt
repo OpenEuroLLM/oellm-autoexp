@@ -1,0 +1,6 @@
+# Sources whose chat / agent / FIM formatting is re-tokenized (user 2026-10-29: option B). Elsewhere the
+# delimiters are literal mentions in web text / code / PDFs (~25k sequences over 18 sources) and stay text.
+mixture-vitae-1.0
+dolmino-mix-100b-1125
+agenttrove-0.0
+nemotron-pretraining-specialized-1.0

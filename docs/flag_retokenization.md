@@ -15,7 +15,7 @@ Location (user, 2026-10-29): new data trees live under **`/gpfs/projects/ehpc533
 <fim_suffix>`, `<tool_call> </tool_call>` (ids 0..12) and `<unused_0..99>` (ids 13..112, `USER_DEFINED`:
 SentencePiece matches such a piece in raw text as one token). `openeurollm/tokenizer-256k-reason` renames
 ids 3 / 4 (ChatML) and 13-18. **tokenizer-256k-agent** (`scripts/flag_retok/make_tokenizer.py`,
-`delimiters.py`; `/gpfs/projects/ehpc533/tokenizers/tokenizer-256k-agent`) renames free slots only:
+`delimiters.py`; `/gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent`) renames free slots only:
 
 - ids 0..12 unchanged (the data may hold them: agenttrove uses `<tool_call>` / `</tool_call>` already);
 - 13..18 as tokenizer-256k-reason: `<tools> </tools> <tool_response> </tool_response> </think> <think>`;

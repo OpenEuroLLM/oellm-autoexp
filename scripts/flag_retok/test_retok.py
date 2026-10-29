@@ -94,10 +94,14 @@ def main():
         out = os.path.join(d, "flag-agenttok")
         os.environ["RETOK_UNIT_TOKENS"] = "20"     # several units per shard: re-encoded and copied ones interleave
         subprocess.run(run + ["find", "--shards", os.path.join(d, "shards.txt")] + common, check=True)
-        subprocess.run(run + ["write", "--out", out] + common, check=True)
+        subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)
         subprocess.run(run + ["decon", "--out", out, "--decon", os.path.join(d, "flag-decon-v2"),
                               "--decon-out", os.path.join(d, "flag-decon-v2-agenttok")] + common, check=True)
-        subprocess.run(run + ["verify", "--out", out] + common, check=True)
+        subprocess.run(run + ["verify", "--out", out, "--sources", "a"] + common, check=True)
+        # a source outside --sources is linked even with delimiters
+        out2 = os.path.join(d, "flag-agenttok-b")
+        subprocess.run(run + ["write", "--out", out2, "--sources", "b"] + common, check=True)
+        assert os.path.islink(os.path.join(out2, "a/shard_0000_text_document.bin"))
 
         a = os.path.join(out, "a/shard_0000_text_document")
         assert not os.path.islink(a + ".bin") and os.path.islink(os.path.join(out, "b/shard_0000_text_document.bin"))

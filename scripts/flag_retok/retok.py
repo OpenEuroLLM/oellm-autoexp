@@ -9,8 +9,8 @@ The agent tokenizer equals the base one except for renamed <unused_N> slots, so 
 holds a delimiter change. find: decode every sequence (base model), count the delimiters, keep the ids of the
 sequences that hold one ($W/find/<shard key>.npz). write: per shard with hits, a new .bin / .idx in which
 those sequences are encode_agent(decode_base(sequence)) (trailing <bos> / <eos> kept) and every other
-sequence is copied byte for byte; document boundaries and order are unchanged. Shards without hits are
-symlinked (.bin, .idx -> flag/). decon: the decontaminated tree on top -- every document flag-decon-v2
+sequence is copied byte for byte; document boundaries and order are unchanged. Shards without hits, and
+shards of sources outside --sources, are symlinked (.bin, .idx -> flag/). decon: the decontaminated tree on top -- every document flag-decon-v2
 dropped is dropped again (same document ids). verify: decoded text identical, untouched sequences
 token-identical, counts equal. Nothing under --root is ever written.
 """
@@ -36,7 +36,7 @@ from common import Index, filter_index, write_index  # noqa: E402
 from delimiters import AGENT_TOKENS  # noqa: E402
 
 BASE_TOK = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
-AGENT_TOK = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k-agent/tokenizer.model"
+AGENT_TOK = "/gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent/tokenizer.model"
 CONTROL = (1, 2)                       # <bos>, <eos>: decode drops them; re-appended where they were
 UNIT_TOKENS = int(os.environ.get("RETOK_UNIT_TOKENS", 1 << 26))   # tests: tiny units (mixed copy / re-encode)
 DELIMS = [t for _, t in AGENT_TOKENS]
@@ -238,6 +238,17 @@ def _assemble_shard(job):
     return rel, stats, int(idx.lengths.astype(np.int64).sum()), int(lengths.sum())
 
 
+def source_list(x):
+    """Comma-separated source names (first path component of a shard), or @file ('#' comments)."""
+    if x.startswith("@"):
+        return [l.split("#")[0].strip() for l in open(x[1:]) if l.split("#")[0].strip()]
+    return [v for v in x.split(",") if v]
+
+
+def selected(a, rel):
+    return not a.sources or rel.split("/")[0] in a.sources
+
+
 def mix_rels(root):
     return [l.split()[1] for l in open(os.path.join(root, "datamix.txt")) if l.strip()]
 
@@ -251,7 +262,7 @@ def cmd_write(a):
     for rel in rels:
         src, dst = os.path.join(a.root, rel), os.path.join(a.out, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        found = load_find(a.work, rel)
+        found = load_find(a.work, rel) if selected(a, rel) else None
         if found is None or not len(found[0]):
             link(src + ".bin", dst + ".bin")
             link(src + ".idx", dst + ".idx")
@@ -315,12 +326,12 @@ def cmd_decon(a):
 
 
 def _verify_shard(job):
-    rel, root, out, work, n = job
+    rel, root, out, work, n, sel = job
     src, dst = os.path.join(root, rel), os.path.join(out, rel)
     a, b = Index(src + ".idx"), Index(dst + ".idx")
     assert a.doc_count == b.doc_count and a.seq_count == b.seq_count and np.array_equal(a.doc_idx, b.doc_idx), rel
     assert os.path.getsize(dst + ".bin") == 4 * int(b.lengths.astype(np.int64).sum()), rel
-    found = load_find(work, rel)
+    found = load_find(work, rel) if sel else None
     hit = set(found[0].tolist()) if found is not None else set()
     rng = np.random.default_rng(0)
     pick = list(rng.choice(a.seq_count, size=min(n, a.seq_count), replace=False)) + sorted(hit)[:n]
@@ -345,7 +356,7 @@ def cmd_verify(a):
     rels = mix_rels(a.root)[a.part::a.nparts]
     tot = bad = 0
     with Pool(a.procs, initializer=_init, initargs=(a.base_tok, a.agent_tok)) as pool:
-        for rel, n, b in pool.imap_unordered(_verify_shard, [(r, a.root, a.out, a.work, a.samples) for r in rels]):
+        for rel, n, b in pool.imap_unordered(_verify_shard, [(r, a.root, a.out, a.work, a.samples, selected(a, r)) for r in rels]):
             tot += n
             bad += b
             if b:
@@ -369,6 +380,8 @@ def main():
     ap.add_argument("--nparts", type=int, default=int(os.environ.get("SLURM_NNODES", 1)))
     ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 72))
     ap.add_argument("--samples", type=int, default=200)
+    ap.add_argument("--sources", type=source_list, default=[],
+                    help="re-tokenize only these sources (default: all), e.g. @scripts/flag_retok/retok_sources.txt")
     a = ap.parse_args()
     if a.mode != "find":
         _init(a.base_tok, a.agent_tok)
