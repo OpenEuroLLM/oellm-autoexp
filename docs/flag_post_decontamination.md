@@ -523,6 +523,52 @@ a new reference version (v6) all `high` and `medium` rows that are `no` / `parti
 (`fetch_extra.py`, on JUPITER; gated ones need the terms accepted first) and the CSV's `in_refs`
 column is updated from the new refs' attribution.
 
+### 4.9 v6 references and flag-decon-v2 (user, 2026-10-29: "pull all these eval datasets ... full deduplication again")
+
+**References.** `fetch_extra.py --eval-set docs/decontamination_eval_set.csv --only-eval-set` on JUPITER
+(two passes: before / after the gated sets' terms were accepted): every `fetch=hf` row, eval splits only
+(the dataset viewer's parquet files; raw data files for unconverted datasets; zip / tar archives
+unpacked to their eval-split files; model answers / judgments skipped; <= 4 GiB per dataset), plus
+tau2-bench tasks, BrowseComp (decrypted), DeepMind Mathematics (the tarball), MLQA / QuAC / CosmosQA
+(their source URLs), the full BIG-bench as `hails/bigbench`. Not fetched (CSV `fetch` column): corpora
+(Paloma, WikiText-103, LMArena / Chatbot Arena / ComparIA conversations, RepoBench), HELMET / SCROLLS
+(book-length archives), script-only mirrors, multilingual MBPP (404), OJBench test archives (7.3 GiB).
+`extract_refs.py --append-to refs_v5` (segment ids kept) + `--attribute`: **refs_v6 = 18,579,888
+segments** (+12.7M; 12.2 G new characters, 6.5 G of them OneRuler haystacks), sha256 in `refs_v6.sha256`,
+copied JUPITER -> MN5 by the user.
+
+**Table / scan** (work `flag_decon_v6`, snapshots decon17-21). `build_table.py --exclude-src
+starbix/oneruler` (360k long-context haystacks: book text with a needle, not benchmark items): 10.3M
+matchable segments, **1.82B n-grams** (v5: 385M). The first count OOMed an H100 (table + CSR + int64
+counts = 52 GB per GPU): the CSR now lives in host memory and counts are int32 (`scan.py`). Prune: 128k
+n-grams > 50 in the background sample. Scan: 16 nodes of the cns144 pool host (pool p129, priority 50),
+13.5T tokens in 41 min.
+
+**Dry run** at 0.7 (no exclusions): 7.29M docs / 52.7B tokens (0.389 %; v1: 1.47M / 18.0B / 0.133 %).
+Training-weighted (datamix shares; stack-v2, megamath, agenttrove, the math sets are read 3-4x):
+0.843 % (v1: 0.290 %). `finalize.py --whatif @scripts/flag_decontam/whatif_v6.txt` / `marginal.tsv`
+(docs / tokens only that benchmark flags):
+
+| excluded group | docs saved | tokens saved |
+|---|---:|---:|
+| Toolathlon (agent task fixtures) | 2.45M | 2.43B |
+| toxicity prompts (web-text excerpts) | 0.59M | 7.98B |
+| Wikipedia / web context passages (MLQA, QuAC, SQuAD v1, TyDiQA, HaluEval, BOLD, ZeroSCROLLS, LongBench, CosmosQA) | 1.20M | 7.36B |
+| GLUE | 0.37M | 1.52B |
+| Jeopardy (MosaicML) | 0.18M | 1.43B |
+| **the five together** | **4.79M** | **20.98B** |
+| APPS (kept: genuine Codeforces statements; long solution strings partly generic) | 0.32M | 3.25B |
+| full BIG-bench (kept; BBH: 564 of 5,460 items found, copies of the BIG-bench repo's task.json in stack-v2) | 0.19M | 2.54B |
+| new competition math (kept) | 0.01M | 0.10B |
+
+**flag-decon-v2** = v6 at 0.7 with `--exclude-src @scripts/flag_decontam/exclude_v6.txt` (the five
+groups; a segment whose text is also in a kept benchmark still flags): **2,495,222 docs / 31.71B
+tokens dropped (0.234 % of 13.5T)**, 443 of 452 shards rewritten; written to `flag-decon-v2.new` in the
+pool (CPU-only run), verified (8 nodes), then renamed. v6 vs the OpenEuroLLM -pure sets (decisions
+without exclusions): agenttrove ours-only 11,638 (APPS / Codeforces statements, Toolathlon, SWE-bench),
+openthoughts-3 ours-only 32,257 (Toolathlon files that embed math problems, APPS, all AIME problems;
+openthoughts-3 is not in the mix).
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
