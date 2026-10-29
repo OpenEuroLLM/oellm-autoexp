@@ -1833,6 +1833,26 @@ def arms5stab(size: str):
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
 
 
+def arms5qb(size: str):
+    """Quantile balancing (user 2026-10-29) in place of the expert bias + aux loss 1e-4, on the
+    production setting (the rematch's ldm: LDM x1, classical Muown) and its layout / batches
+    (s1: 2 nodes, s3: 8), so screen5resgqa's ldm is the bias reference. qb: QB alone (EMA 0, the
+    upstream default; Megatron >= 81b6d4c58 for expert counts that do not divide tokens x top-k);
+    qbseq: QB + DeepSeek-V3's sequence-level aux loss 1e-4 (Megatron >= aa422264b). Both need the
+    unfused router and no expert bias."""
+    base = dict((n, kv) for n, _, kv in arms5resgqa(size))["ldm"]
+    qb = {B + "moe_router_quantile_balancing_ema": 0.0, B + "moe_router_enable_expert_bias": False,
+          B + "moe_router_fusion": False}
+    return [
+        ("ldm_qb", "LDM x1, quantile balancing (no aux loss, no expert bias)",
+         {**base, **qb, B + "moe_router_load_balancing_type": "quantile_balancing",
+          B + "moe_aux_loss_coeff": 0.0}),
+        ("ldm_qbseq", "LDM x1, quantile balancing + sequence aux loss 1e-4",
+         {**base, **qb, B + "moe_router_load_balancing_type": ["quantile_balancing", "seq_aux_loss"],
+          B + "moe_aux_loss_coeff": [0.0, 1.0e-4]}),
+    ]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -2191,6 +2211,7 @@ def write5():
             ("s3", "screen5ldmnorm2", arms5ldmnorm2("s3")),
             ("s1", "screen5ngptopt", arms5ngptopt("s1")),
             *[(z, "screen5stab", arms5stab(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5qb", arms5qb(z)) for z in ("s1", "s3")],
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
