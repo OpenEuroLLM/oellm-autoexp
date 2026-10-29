@@ -114,3 +114,10 @@ sweep:
           backend.megatron.num_experts: 384
           backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.75"
           backend.env.MEM_BREAKDOWN: "1"
+        # intermediate (user 2026-10-29): ~60B MoE (256 experts: 2.34B + 256 x 0.2265B = 60.3B) + 60B
+        # Engram (tables x1.5); Engram's per-GPU cost is small (lean table optimizer, sharded over 256
+        # GPUs) and its tables are not all-gathered per micro-batch
+        - aux.arm: e256_eng60
+          backend.megatron.num_experts: 256
+          backend.megatron.engram_table_size: 29220576
+          backend.env.MEM_BREAKDOWN: "1"
