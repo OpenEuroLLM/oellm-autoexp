@@ -95,12 +95,15 @@ def main():
         os.environ["RETOK_UNIT_TOKENS"] = "20"     # several units per shard: re-encoded and copied ones interleave
         subprocess.run(run + ["find", "--shards", os.path.join(d, "shards.txt")] + common, check=True)
         subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)
+        subprocess.run(run + ["write", "--out", out, "--sources", "a"] + common, check=True)    # resume: nothing left
+        subprocess.run(run + ["assemble", "--out", out, "--sources", "a"] + common, check=True)
         subprocess.run(run + ["decon", "--out", out, "--decon", os.path.join(d, "flag-decon-v2"),
                               "--decon-out", os.path.join(d, "flag-decon-v2-agenttok")] + common, check=True)
         subprocess.run(run + ["verify", "--out", out, "--sources", "a"] + common, check=True)
         # a source outside --sources is linked even with delimiters
         out2 = os.path.join(d, "flag-agenttok-b")
         subprocess.run(run + ["write", "--out", out2, "--sources", "b"] + common, check=True)
+        subprocess.run(run + ["assemble", "--out", out2, "--sources", "b"] + common, check=True)
         assert os.path.islink(os.path.join(out2, "a/shard_0000_text_document.bin"))
 
         a = os.path.join(out, "a/shard_0000_text_document")
@@ -115,7 +118,7 @@ def main():
             assert sa.decode(docs[i][:-1].tolist()) == t and docs[i][-1] == 2
         assert len(docs[1]) < len(enc(texts_a[1]))
         info = json.load(open(a.removesuffix("_text_document") + ".info.json"))
-        assert info["retokenization"]["sequences_reencoded"] == 2
+        assert info["retokenization"]["sequences_changed"] == 2
         assert info["retokenization"]["delimiter_counts"]["<|im_start|>"] == 2
         dv = Index(os.path.join(d, "flag-decon-v2-agenttok", "a/shard_0000_text_document.idx"))
         assert dv.doc_count - 1 == 5 and dv.lengths[1] == ix.lengths[2]       # doc 1 dropped, the rest shifted

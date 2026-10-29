@@ -5,7 +5,8 @@
 #   run_step.sh <step> [extra args for retok.py]
 #     selftest  test_retok.py (tiny tokenizer, synthetic shards)
 #     find      decode every sequence of the mix, find the delimiters ($WORK/find; split over the job's nodes)
-#     write     flag-agenttok: re-encoded shards (those with delimiters), symlinks for the rest
+#     write     re-encode the units with delimiters (split over the nodes, resumable); links the other shards
+#     assemble  flag-agenttok: the re-encoded shards' .bin / .idx from the part files
 #     decon     flag-decon-v2-agenttok: flag-decon-v2's dropped documents applied to flag-agenttok
 #     verify    decoded text / untouched sequences / counts against flag/
 set -euo pipefail
@@ -24,6 +25,7 @@ case $step in
 selftest) python scripts/flag_retok/test_retok.py ;;
 find)     $R find --root "$ROOT" --work "$WORK" --shards "$WORK/shards_all.txt" "$@" ;;
 write)    $R write --root "$ROOT" --work "$WORK" --out "$OUT" "$@" ;;
+assemble) $R assemble --root "$ROOT" --work "$WORK" --out "$OUT" "$@" ;;
 decon)    $R decon --root "$ROOT" --work "$WORK" --out "$OUT" "$@" ;;
 verify)   $R verify --root "$ROOT" --work "$WORK" --out "$OUT" "$@" ;;
 *) echo "unknown step $step" >&2; exit 2 ;;

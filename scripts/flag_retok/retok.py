@@ -2,6 +2,7 @@
 
     python scripts/flag_retok/retok.py find   --root flag --shards shards.txt --work W [--part i --nparts n] [--procs p]
     python scripts/flag_retok/retok.py write  --root flag --out flag-agenttok --work W [--part i --nparts n]
+    python scripts/flag_retok/retok.py assemble --root flag --out flag-agenttok --work W [--part i --nparts n]
     python scripts/flag_retok/retok.py decon  --out flag-agenttok --decon flag-decon-v2 --decon-out flag-decon-v2-agenttok
     python scripts/flag_retok/retok.py verify --root flag --out flag-agenttok --work W [--part i --nparts n]
 
@@ -38,6 +39,7 @@ from delimiters import AGENT_TOKENS  # noqa: E402
 BASE_TOK = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
 AGENT_TOK = "/gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent/tokenizer.model"
 CONTROL = (1, 2)                       # <bos>, <eos>: decode drops them; re-appended where they were
+IDENTITY_EVERY = 64                   # encode_base(decode(seq)) == seq checked on every 64th re-encoded sequence
 UNIT_TOKENS = int(os.environ.get("RETOK_UNIT_TOKENS", 1 << 26))   # tests: tiny units (mixed copy / re-encode)
 DELIMS = [t for _, t in AGENT_TOKENS]
 RX = re.compile("|".join(re.escape(d) for d in sorted(DELIMS, key=len, reverse=True)))
@@ -181,8 +183,8 @@ def _encode_unit(job):
                 skipped += 1
                 fo.write(t.tobytes())
                 continue
-            if _G["base"].encode(text) != body.tolist():
-                not_identity += 1               # the original was not plain encode(text); re-encoded anyway
+            if changed % IDENTITY_EVERY == 0 and _G["base"].encode(text) != body.tolist():
+                not_identity += 1               # sampled: the original was not plain encode(text)
             new = np.array(_G["agent"].encode(text) + tail.tolist(), np.int32)
             fo.write(new.tobytes())
             lengths[k] = len(new)
@@ -229,8 +231,7 @@ def _assemble_shard(job):
                                       total_tokens=int(lengths.sum()))
     info.setdefault("bin", {}).update(size=os.path.getsize(dst + ".bin"), md5sum=md5(dst + ".bin"))
     info["retokenization"] = {"tokenizer": "tokenizer-256k-agent", "source_prefix": src,
-                              "sequences_reencoded": stats[0], "reencoded_not_identity_under_base": stats[1],
-                              "sequences_skipped_pad": stats[2],
+                              "sequences_changed": int((lengths != idx.lengths).sum()),
                               "tokens_before": int(idx.lengths.astype(np.int64).sum()),
                               "tokens_after": int(lengths.sum()),
                               "delimiter_counts": {d: int(c) for d, c in zip(DELIMS, counts) if c}}
@@ -253,21 +254,19 @@ def mix_rels(root):
     return [l.split()[1] for l in open(os.path.join(root, "datamix.txt")) if l.strip()]
 
 
-def cmd_write(a):
-    """One node: every shard of the mix; units with delimiters re-encoded in parallel, then per shard one
-    writer (in parallel over shards). Shards without delimiters: symlinks."""
-    assert os.path.realpath(a.out) != os.path.realpath(a.root)
-    rels = mix_rels(a.root)
+def plan_write(a):
+    """(shards with delimiters -> (units, delimiter counts), encode jobs); links the other shards (part 0)."""
     jobs, shards = [], {}
-    for rel in rels:
+    for rel in mix_rels(a.root):
         src, dst = os.path.join(a.root, rel), os.path.join(a.out, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         found = load_find(a.work, rel) if selected(a, rel) else None
         if found is None or not len(found[0]):
-            link(src + ".bin", dst + ".bin")
-            link(src + ".idx", dst + ".idx")
-            info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
-            json.dump(info, open(info_path(dst), "w"), indent=2)
+            if a.part == 0:
+                link(src + ".bin", dst + ".bin")
+                link(src + ".idx", dst + ".idx")
+                info = json.load(open(info_path(src))) if os.path.exists(info_path(src)) else {"idx": {}, "bin": {}}
+                json.dump(info, open(info_path(dst), "w"), indent=2)
             continue
         hit = found[0]
         us = [(s, e) for _, s, e in units_of(a.root, [rel])]
@@ -277,22 +276,48 @@ def cmd_write(a):
             h = hit[(hit >= s) & (hit < e)]
             if len(h):
                 jobs.append((rel, s, e, a.root, a.out, h.tolist()))
-    print(f"[write] {len(shards)} shards with delimiters ({len(jobs)} units to re-encode), "
-          f"{len(rels) - len(shards)} linked", flush=True)
-    stats = {r: [0, 0, 0] for r in shards}
+    return shards, jobs
+
+
+def part_done(out, rel, s):
+    d = os.path.join(out, rel) + ".parts"
+    return os.path.exists(os.path.join(d, f"{s:012d}.bin")) and os.path.exists(os.path.join(d, f"{s:012d}.len.npy"))
+
+
+def cmd_write(a):
+    """Re-encode the units with delimiters, split over the job's nodes (--part / --nparts); resumable (units
+    with a finished part file are skipped). Then `assemble`."""
+    assert os.path.realpath(a.out) != os.path.realpath(a.root)
+    shards, jobs = plan_write(a)
+    mine = [j for j in jobs[a.part::a.nparts] if not part_done(a.out, j[0], j[1])]
+    print(f"[write {a.part}] {len(shards)} shards with delimiters, {len(jobs)} units to re-encode, "
+          f"{len(mine)} left on this node", flush=True)
     t0 = time.time()
     with Pool(a.procs, initializer=_init, initargs=(a.base_tok, a.agent_tok)) as pool:
-        for i, (rel, s, ch, ni, sk) in enumerate(pool.imap_unordered(_encode_unit, jobs, chunksize=1)):
-            st = stats[rel]
-            st[0] += ch; st[1] += ni; st[2] += sk
+        for i, (rel, s, ch, ni, sk) in enumerate(pool.imap_unordered(_encode_unit, mine, chunksize=1)):
+            if ni:
+                print(f"[write {a.part}] {rel} unit {s}: {ni} sampled sequences not identity", flush=True)
             if i % 50 == 0:
-                print(f"[write] {i + 1}/{len(jobs)} units re-encoded, {time.time() - t0:.0f}s", flush=True)
+                print(f"[write {a.part}] {i + 1}/{len(mine)} units re-encoded, {time.time() - t0:.0f}s", flush=True)
+    print(f"[write {a.part}] done in {time.time() - t0:.0f}s", flush=True)
+
+
+def cmd_assemble(a):
+    """Per shard with delimiters (split over the nodes): the new .bin / .idx / info.json from the part files."""
+    shards, jobs = plan_write(a)
+    missing = [(j[0], j[1]) for j in jobs if not part_done(a.out, j[0], j[1])]
+    assert not missing, f"{len(missing)} units not re-encoded yet, e.g. {missing[:3]}"
+    stats = {r: [0, 0, 0] for r in shards}
+    mine = sorted(shards)[a.part::a.nparts]
+    t0 = time.time()
+    with Pool(min(a.procs, max(len(mine), 1)), initializer=_init, initargs=(a.base_tok, a.agent_tok)) as pool:
         for rel, st, t_before, t_after in pool.imap_unordered(
-                _assemble_shard, [(r, a.root, a.out, shards[r][0], stats[r], shards[r][1]) for r in shards]):
-            print(f"[write] rewrote {rel}: {st[0]} seqs re-encoded ({st[1]} not identity, {st[2]} skipped), "
-                  f"tokens {t_before} -> {t_after} ({t_after - t_before:+d})", flush=True)
-    shutil.copy(os.path.join(a.root, "datamix.txt"), os.path.join(a.out, "datamix.txt"))
-    print(f"[write] done in {time.time() - t0:.0f}s", flush=True)
+                _assemble_shard, [(r, a.root, a.out, shards[r][0], stats[r], shards[r][1]) for r in mine]):
+            print(f"[assemble {a.part}] rewrote {rel}: tokens {t_before} -> {t_after} ({t_after - t_before:+d})",
+                  flush=True)
+    if a.part == 0:
+        shutil.copy(os.path.join(a.root, "datamix.txt"), os.path.join(a.out, "datamix.txt"))
+    print(f"[assemble {a.part}] done in {time.time() - t0:.0f}s", flush=True)
 
 
 def cmd_decon(a):
@@ -367,7 +392,7 @@ def cmd_verify(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=["find", "write", "decon", "verify"])
+    ap.add_argument("mode", choices=["find", "write", "assemble", "decon", "verify"])
     ap.add_argument("--root", default="/gpfs/projects/ehpc533/training-data-collection/flag")
     ap.add_argument("--out", default="/gpfs/projects/ehpc533/users/korbip/data/flag-agenttok")
     ap.add_argument("--decon", default="/gpfs/projects/ehpc533/users/korbip/data/flag-decon-v2")
@@ -385,7 +410,8 @@ def main():
     a = ap.parse_args()
     if a.mode != "find":
         _init(a.base_tok, a.agent_tok)
-    {"find": cmd_find, "write": cmd_write, "decon": cmd_decon, "verify": cmd_verify}[a.mode](a)
+    {"find": cmd_find, "write": cmd_write, "assemble": cmd_assemble, "decon": cmd_decon,
+     "verify": cmd_verify}[a.mode](a)
 
 
 if __name__ == "__main__":
