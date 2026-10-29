@@ -6,6 +6,7 @@
 # the production recipe at 216 and 384 experts; exposed communication by kind with
 # scripts/korbi/ep_speed/trace_breakdown.py.
 #
+#   enqueue with the size64 data (v1, its warm index): ... --config-name experiments/korbi/production/hybrid_size64_prof_mn5 "backend/megatron=[data_flag_decon_v1_mn5]"
 #   python3 scripts/korbi/ep_speed/trace_breakdown.py <base>/torch_profile/rank-0.json.gz
 #
 # Traces: /gpfs/scratch/ehpc533/hybrid_nucleus/production/size64prof/<arm>/torch_profile/rank-{0,255}.json.gz
@@ -19,7 +20,9 @@ aux:
 
 backend:
   megatron:
-    train_iters: 10
+    # 12 = the size64 recipe: reuses its data index in data_cache_shared (with the v1 data, pinned
+    # at enqueue: backend/megatron=[data_flag_decon_v1_mn5]); another train_iters builds a new one (~20 min)
+    train_iters: 12
     log_interval: 1
     profile: true
     use_pytorch_profiler: true
