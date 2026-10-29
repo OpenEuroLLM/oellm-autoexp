@@ -6602,6 +6602,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "post_act_norm_floor": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help='Both post-activation norms: 0 normalizes every token, h / rms(h); > 0 is the bounded norm h / max(rms(h), floor) (anGPT\'s "bound"): activations below the floor pass through (scaled by 1 / floor), only larger ones are held at rms floor -- a cap on runaway activations that leaves normal operation unchanged.',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "post_sublayer_norm": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -13967,6 +13975,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="learned_absolute",
+    ),
+    "post_act_norm_floor": MegatronActionSpec(
+        option_strings=("--post-act-norm-floor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "post_sublayer_norm": MegatronActionSpec(
         option_strings=("--post-sublayer-norm",),

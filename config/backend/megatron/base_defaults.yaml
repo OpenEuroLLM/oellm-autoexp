@@ -820,6 +820,7 @@ pkm_table_parallel: tp  # Values table distribution, as engram_table_parallel: "
 pkm_topk: 32  # Candidates kept per half and rows read per head.
 pkm_value_dim: null  # Width of a value row; None = hidden_size.
 position_embedding_type: learned_absolute  # choices: ['learned_absolute', 'rope', 'yarn', 'mrope', 'relative', 'none'] | Position embedding type.
+post_act_norm_floor: 0.0  # Both post-activation norms: 0 normalizes every token, h / rms(h); > 0 is the bounded norm h / max(rms(h), floor) (anGPT's "bound"): activations below the floor pass through (scaled by 1 / floor), only larger ones are held at rms floor -- a cap on runaway activations that leaves normal operation unchanged.
 post_sublayer_norm: false  # Sandwich / peri-LN normalization: normalize every sublayer output (attention, MLP, MoE, Mamba, linear mixers, Engram, PKM) with a learnable gain before it enters the residual, h <- h + Norm(f(Norm(h))) (Gemma 2/3, OLMo 2). Unlike ngpt the residual stream stays unnormalized; with mHC / AttnRes / nGPT the normalized output is what they mix.
 pretrained_checkpoint: null  # Directory containing a pretrained model checkpoint for finetuning.
 profile: false  # Enable nsys profiling. When using this option, nsys options should be specified in commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi --capture-range-end=stop`.

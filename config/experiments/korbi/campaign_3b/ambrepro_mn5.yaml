@@ -56,6 +56,11 @@ sweep:
         - aux.arm: pan
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.mlp_post_act_norm: true
+        # A + B bounded: h / max(rms(h), 1) -- leaves normal activations unchanged, caps runaway ones
+        - aux.arm: pab
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
         # + F: 200-step linear warmup to the constant lr
         - aux.arm: pan_wu
           backend.megatron.moe_expert_post_act_norm: true

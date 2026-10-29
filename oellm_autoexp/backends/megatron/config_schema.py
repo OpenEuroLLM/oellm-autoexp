@@ -331,6 +331,12 @@ class MegatronConfig(ConfigInterface):
     # The same post-activation norm in the dense MLPs and the shared experts (TP 1).
     mlp_post_act_norm: bool = False
 
+    # Both post-activation norms: 0 normalizes every token, h / rms(h); > 0 is the bounded
+    # norm h / max(rms(h), floor) (anGPT's "bound"): activations below the floor pass through
+    # (scaled by 1 / floor), only larger ones are held at rms floor -- a cap on runaway
+    # activations that leaves normal operation unchanged.
+    post_act_norm_floor: float = 0.0
+
     # True is rotate pairs of even and odd dimensions (RoFormer style), False is rotate pairs
     # of first half and second half (LLaMa style). Default to False.
     rotary_interleaved: bool = False
