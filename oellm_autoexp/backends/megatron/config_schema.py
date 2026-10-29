@@ -3672,9 +3672,21 @@ class MegatronConfig(ConfigInterface):
     # sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE;
     # "quantile_balancing" (QB) uses dual coordinate descent on a per-expert bias to handle
     # load balance internally; "none" implies no load balancing. The default is "aux_loss".
-    moe_router_load_balancing_type: Literal[
-        "aux_loss", "seq_aux_loss", "global_aux_loss", "sinkhorn", "quantile_balancing", "none"
-    ] = "aux_loss"
+    moe_router_load_balancing_type: (
+        list[
+            Literal[
+                "aux_loss",
+                "seq_aux_loss",
+                "global_aux_loss",
+                "sinkhorn",
+                "quantile_balancing",
+                "none",
+            ]
+        ]
+        | Literal[
+            "aux_loss", "seq_aux_loss", "global_aux_loss", "sinkhorn", "quantile_balancing", "none"
+        ]
+    ) = "aux_loss"
 
     # Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended.
     moe_aux_loss_coeff: list[float] | float = 0.0

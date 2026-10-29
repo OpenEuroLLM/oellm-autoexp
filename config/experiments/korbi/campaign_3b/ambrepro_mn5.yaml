@@ -101,3 +101,12 @@ sweep:
           backend.megatron.moe_router_enable_expert_bias: false
           backend.megatron.moe_aux_loss_coeff: 0.0
           backend.megatron.moe_router_fusion: false
+        # QB + DeepSeek-V3's small sequence-level aux loss (1e-4): QB balances the global batch,
+        # the loss each sequence, and gives the router a balancing gradient (Megatron >= aa422264b:
+        # the list form used to fall back to plain top-k). Launch as suite ambreproqb too.
+        - aux.arm: qb_seq
+          backend.megatron.moe_router_load_balancing_type: [quantile_balancing, seq_aux_loss]
+          backend.megatron.moe_aux_loss_coeff: [0.0, 1.0e-4]
+          backend.megatron.moe_router_quantile_balancing_ema: 0.0
+          backend.megatron.moe_router_enable_expert_bias: false
+          backend.megatron.moe_router_fusion: false

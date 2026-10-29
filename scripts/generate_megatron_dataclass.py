@@ -162,6 +162,10 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
             literals = ", ".join(_literal_token(option) for option in meta.choices)
             imports.add("Literal")
             type_repr = f"Literal[{literals}]"
+            # a multi-value choice argument (nargs="+", e.g. --moe-router-load-balancing-type
+            # [quantile_balancing, seq_aux_loss]) takes a list of the choices, or one of them
+            if meta.nargs in {"+", "*"} or _is_multi_nargs(meta.nargs):
+                type_repr = f"list[{type_repr}] | {type_repr}"
     elif base_type is bool and not _is_multi_nargs(meta.nargs):
         type_repr = "bool"
     elif base_type is int and not _is_multi_nargs(meta.nargs):
