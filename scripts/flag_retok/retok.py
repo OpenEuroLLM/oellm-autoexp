@@ -396,9 +396,11 @@ def _verify_shard(job):
             bx, tx = split_body(x)
             by, ty = split_body(y)
             V = _G["V"]
-            ok = (np.array_equal(tx, ty) and
-                  _G["base"].decode(bx[(bx >= 0) & (bx < V)].tolist()) == _G["agent"].decode(by.tolist()))
-            ok = ok or (bx.size and ((bx < 0) | (bx >= V)).any() and np.array_equal(x, y))   # skipped (<pad>)
+            if ((bx < 0) | (bx >= V)).any():        # ids outside the vocabulary (<pad>): left as they were
+                ok = np.array_equal(x, y)
+            else:
+                ok = (np.array_equal(tx, ty) and not ((by < 0) | (by >= V)).any() and
+                      _G["base"].decode(bx.tolist()) == _G["agent"].decode(by.tolist()))
         else:
             ok = np.array_equal(x, y)
         bad += not ok

@@ -68,9 +68,12 @@ def main():
                    "code <b> a|b [INST] print [/INST] end", "plain <start_of_turn>user think", "no delimiters here",
                    "unknown token <|not_a_delim|> stays"]
         texts_b = ["the quick brown fox", "lazy dog jumps"]
+        PAD = 262144                                                       # an id outside the vocabulary
         enc = lambda t: np.array(sp.encode(t) + [2], np.int64)            # documents end with <eos>
         root = os.path.join(d, "flag")
-        write_dataset(os.path.join(root, "a/shard_0000_text_document"), [enc(t) for t in texts_a])
+        docs_a = [enc(t) for t in texts_a]
+        docs_a.append(np.concatenate([enc("<|im_start|>user with pad")[:-1], [PAD, 2]]))   # skipped, kept as is
+        write_dataset(os.path.join(root, "a/shard_0000_text_document"), docs_a)
         write_dataset(os.path.join(root, "b/shard_0000_text_document"), [enc(t) for t in texts_b])
         open(os.path.join(root, "datamix.txt"), "w").write("0.5 a/shard_0000_text_document\n0.5 b/shard_0000_text_document\n")
         open(os.path.join(d, "shards.txt"), "w").write(f"{root}/a/shard_0000_text_document\n{root}/b/shard_0000_text_document\n")
@@ -122,17 +125,18 @@ def main():
         assert ID["[INST]"] in docs[2] and ID["[/INST]"] in docs[2]
         assert docs[3].tolist() == enc(texts_a[3]).tolist()                 # no agent delimiter: untouched
         assert docs[0].tolist() == enc(texts_a[0]).tolist()
-        for i, t in enumerate(texts_a):
+        for i, t in enumerate(texts_a):          # (doc 6: the <pad> one, checked above)
             assert sa.decode(docs[i][:-1].tolist()) == t and docs[i][-1] == 2
         assert len(docs[1]) < len(enc(texts_a[1]))
         info = json.load(open(a.removesuffix("_text_document") + ".info.json"))
-        assert info["retokenization"]["sequences_changed"] == 2
-        assert info["retokenization"]["delimiter_counts"]["<|im_start|>"] == 2
+        assert info["retokenization"]["sequences_changed"] == 2             # the <pad> sequence is not one
+        assert info["retokenization"]["delimiter_counts"]["<|im_start|>"] == 3   # find counts the <pad> one too
         dv = Index(os.path.join(d, "flag-decon-v2-agenttok", "a/shard_0000_text_document.idx"))
-        assert dv.doc_count - 1 == 5 and dv.lengths[1] == ix.lengths[2]       # doc 1 dropped, the rest shifted
+        assert dv.doc_count - 1 == 6 and dv.lengths[1] == ix.lengths[2]       # doc 1 dropped, the rest shifted
+        assert docs[6].tolist() == docs_a[6].tolist()                       # the <pad> sequence: unchanged
         assert os.path.realpath(os.path.join(d, "flag-decon-v2-agenttok", "a/shard_0000_text_document.bin")) == os.path.realpath(a + ".bin")
         # nothing under flag/ changed
-        assert Index(os.path.join(root, "a/shard_0000_text_document.idx")).lengths.tolist() == [len(enc(t)) for t in texts_a]
+        assert Index(os.path.join(root, "a/shard_0000_text_document.idx")).lengths.tolist() == [len(x) for x in docs_a]
     print("all passed")
 
 
