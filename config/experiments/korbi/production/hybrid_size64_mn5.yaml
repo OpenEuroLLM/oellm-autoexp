@@ -96,3 +96,21 @@ sweep:
           backend.megatron.moe_expert_post_act_norm: true
           backend.megatron.mlp_post_act_norm: true
           backend.megatron.post_act_norm_floor: 1.0
+        # 2026-10-29 11:40: the limit is the allocator cache, not the peak. e288: max allocated 43.5 GiB,
+        # reserved 49.1 GiB, 13.4 GiB outside PyTorch (NCCL, MoonEP buffers / pools, context); e360_eng80
+        # died in NCCL's own cuMemAlloc at step 1 while PyTorch held its cache. Capping PyTorch's share
+        # (per_process_memory_fraction; at the cap it frees cached blocks and retries) leaves NCCL /
+        # MoonEP their room: 360-384 experts should fit (~2 GiB margin), 432 not. MEM_BREAKDOWN logs
+        # the non-PyTorch memory and every MoonEP allocation on ranks 0, 8, 16, 24.
+        - aux.arm: e288_cap
+          backend.megatron.num_experts: 288
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.75"
+          backend.env.MEM_BREAKDOWN: "1"
+        - aux.arm: e360_cap
+          backend.megatron.num_experts: 360
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.75"
+          backend.env.MEM_BREAKDOWN: "1"
+        - aux.arm: e384_cap
+          backend.megatron.num_experts: 384
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.75"
+          backend.env.MEM_BREAKDOWN: "1"
