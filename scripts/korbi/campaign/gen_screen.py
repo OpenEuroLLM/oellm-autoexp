@@ -1798,8 +1798,14 @@ def arms5stab(size: str):
         "ldm_pan_lr2": ("A + B at half the lr", {**pan, **half}),
         "ldm_clamp5": ("LDM x1, activation clamp 5 (E)", {B + "activation_func_clamp_value": 5.0}),
         "ldm_lr2": ("LDM x1 at half the lr (reference for the half-lr arms)", half),
+        # D: the row magnitudes g drift (Adam moves g by ~lr per step: s1 fc2 rows 0.06 -> up to
+        # 1.25 at lr 4e-3, half that at 2e-3); a decoupled decay caps |g| at ~1 / lambda
+        "ldm_gwd1": ("LDM x1, g weight decay 1 (cap ~1)", {B + "muown_classical_g_weight_decay": 1.0}),
+        "ldm_gwd03": ("LDM x1, g weight decay 0.3 (cap ~3)",
+                      {B + "muown_classical_g_weight_decay": 0.3}),
     }
-    keep = {"s1": ("ldm_pa", "ldm_pan", "ldm_pan_wu", "ldm_wu", "ldm_pan_lr2", "ldm_clamp5"),
+    keep = {"s1": ("ldm_pa", "ldm_pan", "ldm_pan_wu", "ldm_wu", "ldm_pan_lr2", "ldm_clamp5",
+                   "ldm_gwd1", "ldm_gwd03"),
             "s2": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2"),
             "s3": ("ldm_pan", "ldm_pan_lr2", "ldm_lr2")}[size]
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]

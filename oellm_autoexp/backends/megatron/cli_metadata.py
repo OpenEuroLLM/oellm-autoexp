@@ -5654,6 +5654,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "muown_classical_g_weight_decay": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="muown_classical: decoupled weight decay on the row magnitudes g, g <- g (1 - lr lambda): a soft cap at |g| ~ 1 / lambda against the Adam drift of g.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "muown_classical_v_weight_decay": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -13192,6 +13200,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="blockwise",
+    ),
+    "muown_classical_g_weight_decay": MegatronActionSpec(
+        option_strings=("--muown-classical-g-weight-decay",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "muown_classical_v_weight_decay": MegatronActionSpec(
         option_strings=("--muown-classical-v-weight-decay",),

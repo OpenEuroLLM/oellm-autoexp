@@ -2069,6 +2069,10 @@ class MegatronConfig(ConfigInterface):
     # annealing as t^-1/2.
     muown_classical_v_weight_decay: float = 0.0
 
+    # muown_classical: decoupled weight decay on the row magnitudes g, g <- g (1 - lr lambda):
+    # a soft cap at |g| ~ 1 / lambda against the Adam drift of g.
+    muown_classical_g_weight_decay: float = 0.0
+
     # Independent angular C/(1 + updates since warmup), before matrix scaling, with extra
     # factor fixed to 1. Required for angular_muown_simplified; fixed batch only.
     angular_muown_c: float | None = None
