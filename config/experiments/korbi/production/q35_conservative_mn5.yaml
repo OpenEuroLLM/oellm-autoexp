@@ -24,7 +24,12 @@
 
 defaults:
   - ../hybrid_speed/speed_base_mn5
-  - /backend/megatron: [data_flag_decon_v1_mn5]
+  # the default dataset since 2026-10-29 (user: "the default new dataset"; comparisons with flag-decon-v1
+  # runs hold except for the newly decontaminated evals): flag-decon-v2 (v6 references) + openthoughts-3 +
+  # the OpenEuroLLM -pure removals, with chat / agent / FIM delimiters as single tokens (tokenizer-256k-agent;
+  # docs/flag_retokenization.md). Validation loss is not paired with flag-decon-v1 runs (other split / tokens).
+  # Runs started on flag-decon-v1 keep it until they are re-enqueued from a newer snapshot.
+  - /backend/megatron: [data_flag_decon_v2_agenttok_mn5]
   - _self_
 
 aux:

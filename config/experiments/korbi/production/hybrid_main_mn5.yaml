@@ -18,8 +18,12 @@
 # speed_base_mn5).
 defaults:
   - ../hybrid_speed/speed_base_mn5
-  # flag-decon-v1 (user 2026-10-24): the flag mix without the documents holding a benchmark item
-  - /backend/megatron: [data_flag_decon_v1_mn5]
+  # the default dataset since 2026-10-29 (user: "the default new dataset"; comparisons with flag-decon-v1
+  # runs hold except for the newly decontaminated evals): flag-decon-v2 (v6 references) + openthoughts-3 +
+  # the OpenEuroLLM -pure removals, with chat / agent / FIM delimiters as single tokens (tokenizer-256k-agent;
+  # docs/flag_retokenization.md). Validation loss is not paired with flag-decon-v1 runs (other split / tokens).
+  # Runs started on flag-decon-v1 keep it until they are re-enqueued from a newer snapshot.
+  - /backend/megatron: [data_flag_decon_v2_agenttok_mn5]
   - _self_
 
 aux:
@@ -120,10 +124,17 @@ backend:
     # router in fp32, as every campaign run (user 2026-10-24)
     moe_router_dtype: fp32
     moe_router_score_function: sigmoid
-    moe_router_enable_expert_bias: true
-    moe_router_bias_update_rate: 0.001
-    moe_router_fusion: true
-    moe_aux_loss_coeff: 0.0001
+    # load balancing: quantile balancing (user 2026-10-29), replacing the expert bias (rate 1e-3) +
+    # aux loss 1e-4. Screens screen5qb s1 / s3 vs the rematch's ldm: -0.014 loss at both sizes and
+    # in the ambrepro reproducer; QB + seq aux loss 1e-4 gave back half of it. Per step the
+    # per-expert bias is the global batch's column quantile (EMA 0). Needs Megatron >= 81b6d4c58
+    # (216 / 112 experts do not divide 64k tokens x top-5), the unfused router, no expert bias.
+    # FRESH STARTS ONLY: a checkpoint of the bias-based runs has no qb_beta buffer.
+    moe_router_load_balancing_type: quantile_balancing
+    moe_router_quantile_balancing_ema: 0.0
+    moe_router_enable_expert_bias: false
+    moe_router_fusion: false
+    moe_aux_loss_coeff: 0.0
     moe_token_dispatcher_type: flex
     moe_flex_dispatcher_backend: moonep
     moe_flex_dispatcher_num_sms: 64
@@ -207,7 +218,8 @@ backend:
     arch_metrics_interval: 100          # gates, residual streams (per layer with the flag below)
     moe_per_layer_logging: true         # per-layer router / load metrics (router health)
     # the sequence-level balancing loss as a metric only (user 2026-10-29: the conservative run
-    # trains with seq_aux_loss and logs it; this run balances with aux_loss + the expert bias)
+    # trains with seq_aux_loss and logs it). Under quantile balancing (no aux loss) Megatron skips
+    # the aux-loss block, so nothing is logged; balance shows in the router health metrics
     moe_log_seq_aux_loss: true
     moe_expert_viability_metrics: true  # routed-expert viability (needs moe_per_layer_logging)
     wandb_project: ${aux.wandb_project}
