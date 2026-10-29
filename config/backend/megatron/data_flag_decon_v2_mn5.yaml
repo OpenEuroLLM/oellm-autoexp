@@ -1,0 +1,33 @@
+# @package backend.megatron
+# The decontaminated "flag" mix, v2 (docs/flag_post_decontamination.md 4.9): flag-decon-v2 =
+# /gpfs/projects/ehpc533/training-data-collection/flag-decon-v2 -- the same 452 shards (symlinked .bin)
+# with rewritten .idx files that leave out every document holding a benchmark item verbatim (longest
+# run >= 70 % of the item or >= 200 tokens; v6 references = v5 + docs/decontamination_eval_set.csv,
+# minus scripts/flag_decontam/exclude_v6.txt; 2.50M docs / 31.7B tokens, 2026-10-29). Weights unchanged.
+# Everything else as data_flag_mn5.yaml. NOTE: a different document count -> a different data order and
+# validation split than "flag": switch at a clean boundary, never inside a comparison.
+# Datamix file: python3 scripts/korbi/flag_datamix_mn5.py --root .../flag-decon-v2 \
+#     --out $HYBRID_ENV/data/flag_decon_v2_datamix_mn5.txt --require-complete
+data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v2_datamix_mn5.txt
+data_path: null
+split: "998,2,0"
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+# 262144 rows (the 32B runs' padding)
+padded_vocab_size: 262144
+vocab_size: null
+mock_data: false
+seq_length: 8192
+max_position_embeddings: 8192
+dataloader_inter_document_masking: true
+# BOS at every document start (user 2026-10-19: missed in most earlier setups; the flag shards
+# carry only an EOD at each document end -- 0 % start with <bos>). The production setting;
+# round 5 does not use it (its suites set the data keys themselves).
+dataloader_add_bos: true
+dataloader_type: cyclic
+# GPFS: 8 workers starved the GPUs at scale (throughput spikes); 16 workers + prefetch 8 fixed it
+num_workers: 16
+dataloader_prefetch_factor: 8
+num_dataset_builder_threads: 32
+data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_flag_decon_v2
+create_attention_mask_in_dataloader: false
