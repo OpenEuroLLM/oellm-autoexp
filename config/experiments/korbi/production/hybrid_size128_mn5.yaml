@@ -93,3 +93,16 @@ sweep:
           backend.env.NCCL_MIN_NCHANNELS: "8"
           backend.env.NCCL_NCHANNELS_PER_PEER: "8"
           job.metadata.pool_priority: 69
+        # the main run v2 at the voted size (user + -89, 2026-10-31): Engram [2, 3, 4] + sign hash at
+        # E80B (25,973,845 rows per head) -- 24 instead of 16 lookups per Engram layer
+        - aux.arm: e360_eng80_v2
+          backend.megatron.num_experts: 360
+          backend.megatron.engram_table_size: 25973845
+          backend.megatron.engram_ngram_orders: [2, 3, 4]
+          backend.megatron.engram_sign_hash: true
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          slurm.env.NCCL_MIN_NCHANNELS: "8"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
+          backend.env.NCCL_MIN_NCHANNELS: "8"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "8"
+          job.metadata.pool_priority: 70

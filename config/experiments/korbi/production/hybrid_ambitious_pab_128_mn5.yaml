@@ -17,9 +17,16 @@ defaults:
   - _self_
 
 aux:
-  arm: ambitious_e216_eng40_v2
+  # the voted size (user 2026-10-31): 360 experts + Engram 80B = 84B-A2.9B-E80B (~164B); size128 at
+  # 128 n: 28.9 s / step, 4,535 tok/s/GPU, memory 0.956 with cap 0.80 + 8 NCCL channels (16 OOM)
+  arm: ambitious_e360_eng80_v2
 
 backend:
+  env:
+    # cap PyTorch's share so NCCL's lazy allocations fit (ambitious_size64.md)
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+    NCCL_MIN_NCHANNELS: "8"
+    NCCL_NCHANNELS_PER_PEER: "8"
   megatron:
     # pab (docs/ambitious_stabilization.md, section 6): nothing else changes
     moe_expert_post_act_norm: true
@@ -31,12 +38,16 @@ backend:
     # of tables: rows per head x 2/3 (19,480,384 -> 12,986,923; bigrams ~96 %, trigrams ~70 %,
     # 4-grams ~48 % covered). Sign hash: the count-sketch +-1 pattern per (n-gram, lookup)
     # (Megatron >= 97423b203). Not screened; HF export of sign-hash models is not ported yet.
+    # at E80B: 38,960,768 x 2/3 = 25,973,845 rows per head
+    num_experts: 360
     engram_ngram_orders: [2, 3, 4]
-    engram_table_size: 12986923
+    engram_table_size: 25973845
     engram_sign_hash: true
 
 job:
   name: ambitious_v2_128n
+  # size128 e360_cap80_eng80_nccl8: 28.9 s (the [2, 3, 4] cost: arm e360_eng80_v2)
+  est_step_time_s: 29.0
 
 slurm:
   sbatch:
@@ -45,3 +56,6 @@ slurm:
   env:
     # a fresh run: no predecessor job to wait for
     WAIT_FOR_JOB_NAME: ""
+    # 8 NCCL channels (size128: +3 % at e360; 16 do not fit), both levels as hybrid_size128_mn5
+    NCCL_MIN_NCHANNELS: "8"
+    NCCL_NCHANNELS_PER_PEER: "8"
