@@ -113,6 +113,8 @@ def test_preflight_with_the_real_benchmark(pool):  # noqa: F811
     )
     log = pool.monitor_log.read_text()
     assert "preflight template set" in log and "preflight host001: passed" in log, log[-3000:]
+    template = (pool.pool_dir / "preflight_template" / "rid").read_text().strip()
+    assert pool.run_state(template).status == "COMPLETED", pool.run_state(template)
     bench_logs = list((pool.root / "runs" / "node_health").glob("slurm-*.log"))
     assert any("[node_health] {" in p.read_text() for p in bench_logs), bench_logs
 

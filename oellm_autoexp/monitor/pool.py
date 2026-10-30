@@ -92,6 +92,8 @@ _REASON_STATUS = {
     "host_lost": "PREEMPTED",
     "insufficient_nodes": "PREEMPTED",
     "timeout": "TIMEOUT",
+    # a job kept as the pool's preflight template: done with, nothing ran
+    "preflight_template": "COMPLETED",
 }
 
 ACTIVE_HOST_STATES = frozenset(
