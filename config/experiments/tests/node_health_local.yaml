@@ -1,0 +1,39 @@
+# @package _global_
+# The node-health benchmark (oellm_autoexp/node_health/bench.py) on CPU / gloo under
+# tests/fakeslurm: the real torchrun, every fake node a local agent (MASTER_ADDR 127.0.0.1).
+# A pool's preflight check in tests/pool (job.pool_host.preflight_check). Root: $POOL_TEST_ROOT.
+defaults:
+  - /backend: node_health
+  - /slurm: base
+  - /job: default
+  - /sweep: none
+  - _self_
+
+aux:
+  root: ${oc.env:POOL_TEST_ROOT}
+  repo: ${oc.env:PWD}
+
+job:
+  name: node_health
+  base_output_dir: ${aux.root}/runs/${job.name}
+
+backend:
+  nproc_per_node: 2
+  launcher: python3 -m torch.distributed.run
+  args: "--device cpu --coll-mb 4 --ring-mb 4 --matmul-n 256 --iters 3"
+  env:
+    PYTHONPATH: ${aux.repo}
+
+slurm:
+  launcher_cmd: ""
+  env:
+    MASTER_ADDR: 127.0.0.1
+    MASTER_PORT: "29600"
+    NUM_NODES: $SLURM_NNODES
+  sbatch:
+    nodes: 1
+    time: "00:05:00"
+    gres: null
+
+index: 0
+stage: ""

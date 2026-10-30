@@ -1,0 +1,38 @@
+# @package _global_
+# Node-health check of a MareNostrum 5 allocation (oellm_autoexp/node_health: GPU matmul,
+# FSDP-like collectives per GPU index, node ring; ~1 min on 130 nodes). The preflight check of
+# the 128+ node pools (job.pool_host.preflight_check: experiments/korbi/pool/node_health_mn5);
+# account / partition / qos are set to the pool host's when the pool enqueues it. On its own:
+#   scripts/korbi/mn5_autoexp_bg.sh nh scripts/run_autoexp.py --yes \
+#       --config-name experiments/korbi/pool/node_health_mn5 slurm.sbatch.nodes=8
+defaults:
+  - ../../base
+  - /backend: node_health
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+
+backend:
+  nproc_per_node: ${slurm.sbatch.gpus_per_node}
+  env:
+    PYTHONPATH: "."
+
+job:
+  name: node_health
+  base_output_dir: "${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/node_health"
+  est_steps: 1
+  est_step_time_s: 120
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:15:00"
+
+stage: test
+
+container:
+  image: ${aux.hybrid_env}/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif

@@ -423,6 +423,24 @@ def cmd_exit_host(layout: PoolLayout, args) -> int:
     return 0
 
 
+def cmd_hold(layout: PoolLayout, args) -> int:
+    """hold / unhold a host: a held host is never released by the monitor (not idle, not for
+    queued work it cannot run, not after a handover); its wall clock or exit-host still end it."""
+    hdir = layout.host_dir(args.host)
+    if not hdir.exists():
+        print(f"no such host: {args.host}", file=sys.stderr)
+        return 1
+    path = hdir / "control" / "hold"
+    if args.cmd == "hold":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("pool_ctl hold\n")
+        print(f"host {args.host}: held (the monitor never releases it)")
+    else:
+        path.unlink(missing_ok=True)
+        print(f"host {args.host}: released from hold")
+    return 0
+
+
 def cmd_set(layout: PoolLayout, args) -> int:
     meta = layout.load_meta()
     config = dict(meta.get("config") or {})
@@ -507,6 +525,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("exit-host")
     p.add_argument("host")
     p.set_defaults(func=cmd_exit_host)
+    for name in ("hold", "unhold"):
+        p = sub.add_parser(name, help="never release / release again a host (see cmd_hold)")
+        p.add_argument("host")
+        p.set_defaults(func=cmd_hold)
     p = waiting(sub.add_parser("drain"))
     p.add_argument("hosts", nargs="*")
     p.set_defaults(func=cmd_request("drain"))

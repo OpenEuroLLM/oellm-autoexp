@@ -1,0 +1,12 @@
+# Node-health benchmark of an allocation (oellm_autoexp/node_health/bench.py: GPU matmul,
+# FSDP-like all-gather / reduce-scatter per GPU index, node ring); its verdict:
+# oellm_autoexp/node_health/verdict.py. One torchrun agent per node, one rank per GPU.
+# A pool runs it on every new host (job.pool_host.preflight + preflight_check, config/job/pool_host.yaml).
+# MASTER_ADDR / MASTER_PORT / NUM_NODES come from the cluster's slurm env (a pool remaps them
+# to the step's nodes). Knobs: nproc_per_node, args (bench.py's flags, e.g. "--device cpu").
+class_name: BashBackend
+nproc_per_node: 4
+args: ""
+launcher: torchrun
+command: "${.launcher} --nnodes $NUM_NODES --nproc-per-node ${.nproc_per_node} --node-rank $SLURM_NODEID --master-addr $MASTER_ADDR --master-port $MASTER_PORT -m oellm_autoexp.node_health.bench ${.args}"
+env: {}

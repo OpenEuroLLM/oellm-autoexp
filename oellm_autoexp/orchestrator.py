@@ -1027,7 +1027,43 @@ def prepare_pool_host(plan: ExecutionPlan, job: JobPlan) -> tuple[Path, Path]:
         layout.root, host_definition=record.definition, config=cfg, session_dir=session_dir
     )
     LOGGER.info("Pool '%s' at %s (session %s)", cfg.name, layout.root, session_dir)
+    if cfg.preflight and cfg.preflight_check:
+        # the check runs inside the host: its account / partition / qos are the host's
+        sb = job.config.slurm.sbatch
+        same = [
+            f"++slurm.sbatch.{k}={getattr(sb, k)}"
+            for k in ("account", "partition", "qos")
+            if getattr(sb, k, None)
+        ]
+        enqueue_preflight_check(
+            plan, layout.root, cfg.preflight_check, [*same, *cfg.preflight_check_overrides]
+        )
     return layout.root, session_dir
+
+
+def enqueue_preflight_check(
+    plan: ExecutionPlan, pool_dir: str | Path, config_name: str, overrides: list[str] | tuple = ()
+) -> str:
+    """Compose the node-health check job ``config_name`` (+ ``overrides``, against the host
+    config's config dir) and enqueue it as the pool's preflight template: the monitor keeps
+    it and runs a copy of it on every new host's free nodes (pool.py, ``_preflight``).
+    Returns its record id."""
+    from oellm_autoexp.config.loader import load_config_reference
+
+    setup = plan.config_setup
+    check_setup = ConfigSetup(
+        pwd=setup.pwd,
+        config_name=config_name,
+        config_dir=setup.config_dir,
+        overrides=[*overrides, "+job.metadata.pool_preflight_template=true"],
+        monitor_state_dir=setup.monitor_state_dir,
+    )
+    check_plan = build_execution_plan(load_config_reference(config_setup=check_setup), config_setup=check_setup)
+    if len(check_plan.jobs) != 1:
+        raise ValueError(f"the preflight check {config_name} must plan one job, got {len(check_plan.jobs)}")
+    _, ids = enqueue_into_pool(check_plan, pool_dir)
+    LOGGER.info("Preflight check %s enqueued into %s as %s", config_name, pool_dir, ids[0])
+    return ids[0]
 
 
 def enqueue_into_pool(

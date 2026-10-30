@@ -47,3 +47,25 @@ pool_host:
   max_runs_per_host: 1
   # monitor stays up while the pool is open, also without work (pools used in bursts)
   keep_monitor: false
+  # node check of every new host before it takes work: GPU count per node (srun probe in the
+  # supervisor, 0 = off) and the node-health benchmark (oellm_autoexp/node_health) on all free
+  # nodes, from the job of the config preflight_check names (+ preflight_check_overrides; it
+  # gets the host's account / partition / qos; run_autoexp enqueues it with the pool). A node
+  # with a GPU or GPU group below preflight_ratio x median is excluded and the benchmark
+  # repeated (up to preflight_max_rounds); a host that fails is released
+  preflight: false
+  preflight_gpus_per_node: 0
+  preflight_gpu_cmd: 'nvidia-smi -L 2>/dev/null | grep -c "^GPU"'
+  preflight_ratio: 0.75
+  preflight_max_rounds: 3
+  preflight_check: ""
+  preflight_check_overrides: []
+  # verified handover: the old host's runs are stopped, the old host is KEPT until the moved
+  # runs logged handover_healthy_steps lines matching handover_healthy_pattern on the new one;
+  # if they fail or time out the NEW host is released and the runs go back to the old one
+  handover_verify: false
+  handover_healthy_steps: 3
+  handover_healthy_pattern: 'iteration\s+\d+/'
+  handover_verify_timeout_s: 3600
+  # hosts stay allocated without work (no idle exit, no retirement); per host: pool_ctl hold
+  hold_hosts: false

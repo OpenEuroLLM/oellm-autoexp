@@ -17,6 +17,15 @@ job:
   name: mn5_pool_o134e
   base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
   pool_host:
+    # node check of every new host before it takes work (user 2026-10-30): GPU count, then the
+    # node-health benchmark (oellm_autoexp/node_health); bad nodes excluded, a failing host released
+    preflight: true
+    preflight_gpus_per_node: 4
+    preflight_check: experiments/korbi/pool/node_health_mn5
+    # with handover: the old host stays until the moved run logged 20 iterations on the new one
+    handover_verify: true
+    handover_healthy_steps: 20
+    handover_verify_timeout_s: 5400
     max_hosts_running: 1
     max_own_hosts: 1
     max_runs_per_host: 6

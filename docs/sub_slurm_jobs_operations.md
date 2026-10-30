@@ -163,6 +163,59 @@ the new pool's supervisor into it as an `--overlap` step. That supervisor stops 
 (`pool_ctl <old> set idle_exit_s=<long>`, and enqueue nothing there). Its wall-clock signal then
 releases the allocation as usual. Config: `experiments/korbi/pool/mn5_pool_pack33`.
 
+**Node check of new hosts (`preflight`, 2026-10-30).** One dead-GPU node and four degraded NICs
+cost the 128-node runs 27-50 % of their speed for hours (10-27..29). A pool with `preflight: true`
+checks every new host before it gets any work. Composition in the host config:
+```yaml
+job:
+  pool_host:
+    preflight: true
+    preflight_gpus_per_node: 4          # 1. GPU count per node (srun probe in the supervisor)
+    preflight_check: experiments/korbi/pool/node_health_mn5   # 2. the node-health benchmark
+    preflight_check_overrides: []
+    preflight_ratio: 0.75
+    preflight_max_rounds: 3
+```
+1. The supervisor counts the GPUs of each node (`preflight_gpu_cmd`, default `nvidia-smi -L`).
+   A node with fewer than `preflight_gpus_per_node`, or one that does not answer, is excluded at
+   once.
+2. `run_autoexp` composes the `preflight_check` config when it creates or updates the pool, gives
+   it the host's account, partition and qos, and enqueues it as the pool's template. The monitor
+   runs a copy of it on all free nodes of each new host. The component is
+   `oellm_autoexp/node_health`:
+   * `bench.py` measures a GPU matmul, FSDP-like all-gather / reduce-scatter per GPU index, and a
+     node ring. Its backend config is `config/backend/node_health.yaml`, and it also runs on
+     CPU / gloo with `--device cpu`.
+   * `verdict.py` excludes a node with a GPU below `preflight_ratio` × the median. For a GPU
+     group below that, it excludes the node common to the two slowest ring pairs of that GPU
+     index (a degraded NIC).
+   * Then the check runs again, up to `preflight_max_rounds` rounds.
+3. **Pass**: the host takes runs. **Fail** (no result twice, or still slow after the last round):
+   the host is released (`exited`: `preflight failed ...`), unless it is held.
+
+Without a `preflight_check` (or a job enqueued by hand with
+`+job.metadata.pool_preflight_template=true`), only the GPU count is checked. The check also runs
+on its own, as an ordinary job: `--config-name experiments/korbi/pool/node_health_mn5
+slurm.sbatch.nodes=<N>`.
+
+**Verified handover (`handover_verify`, with `handover`).** The handover in four steps:
+1. A new host has started and passed its node check.
+2. The old host's runs are stopped with a checkpoint, and the old allocation is KEPT.
+3. The runs restart on the new host.
+4. Once each moved run has logged `handover_healthy_steps` lines matching
+   `handover_healthy_pattern` (default `iteration N/`), the old host is released, unless it
+   still has other runs.
+
+If a moved run fails there, or is not healthy within `handover_verify_timeout_s`, the NEW host is
+released instead and the runs go back to the old one. Monitor log: `handover hostA -> hostB:
+verified` or `... FAILED`.
+
+**Hold an allocation (`hold_hosts: true`, or `pool_ctl <pool> hold <host>` / `unhold`).** A held
+host is never released by the monitor: not when idle, not for queued work that does not fit, not
+after a handover or a failed node check. Only its wall clock or `pool_ctl exit-host` ends it. Use
+it for allocations that are hard to get back, such as adopted jobs of another account (cns144
+47998967 was released with 15 h left, 2026-10-30).
+
 ## 4. What is handled automatically
 
 | Event | What happens | Where you see it |

@@ -46,10 +46,11 @@ ledger() { printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%FT%T)" "$HID" "${SLURM_JOB_ID
 load_cfg() {
   POOL_POLL_S=10 POOL_IDLE_EXIT_S=1200 POOL_MONITOR_DEAD_EXIT_S=1800
   POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900 POOL_MAX_RUNS_PER_HOST=1
+  POOL_PREFLIGHT_GPUS=0 POOL_PREFLIGHT_GPU_CMD='nvidia-smi -L 2>/dev/null | grep -c "^GPU"'
   POOL_RANK_PATTERN='^[^ ]*python[^ ]*( +-[A-Za-z]+)* +(-m +torch\.distributed\.run|[^ ]*/(torchrun|ft_launcher))( |$)'
   # shellcheck disable=SC1091
   [ -f "$POOL/pool.env" ] && . "$POOL/pool.env"
-  export POOL_RANK_PATTERN
+  export POOL_RANK_PATTERN POOL_PREFLIGHT_GPU_CMD
 }
 
 expand_hosts() { scontrol show hostnames "$1" 2>/dev/null; }
@@ -280,6 +281,34 @@ touch "$H/alive"
 set_state idle
 ledger "-" "host start nodes=$NUM_NODES"
 log "up: job ${SLURM_JOB_ID:-?}, $NUM_NODES node(s), pool $POOL"
+
+# Preflight GPU probe (POOL_PREFLIGHT_GPUS > 0): every node's GPU count, all nodes at once in
+# one step; a node with fewer GPUs, or none answering, goes into this host's exclude_nodes (the
+# monitor adds it to the pool's list). <host>/probe_done tells the monitor it may go on.
+gpu_probe() {
+  [ "${POOL_PREFLIGHT_GPUS:-0}" -gt 0 ] || return 0
+  local nl n out bad node count
+  nl=$(usable_nodes "" | paste -sd, -)
+  n=$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)
+  [ "$n" -gt 0 ] || { atomic "$H/probe_done" "no usable nodes"; return 0; }
+  out=$(timeout 600 srun --overlap --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$nl" --nodes="$n" \
+    --ntasks="$n" --ntasks-per-node=1 --cpus-per-task=1 --job-name=gpu-probe \
+    bash -c 'echo "GPU_PROBE ${SLURMD_NODENAME:-$(hostname -s)} $(eval "$POOL_PREFLIGHT_GPU_CMD")"' 2>&1)
+  bad=""
+  for node in $(printf '%s' "$nl" | tr ',' ' '); do
+    count=$(printf '%s\n' "$out" | awk -v n="$node" '$1 == "GPU_PROBE" && $2 == n {print $3; exit}')
+    if ! [ "${count:-x}" -ge "$POOL_PREFLIGHT_GPUS" ] 2>/dev/null; then
+      bad="$bad $node"
+      log "GPU probe: $node has ${count:-no answer} GPU(s), expected $POOL_PREFLIGHT_GPUS: excluded"
+    fi
+  done
+  if [ -n "$bad" ]; then
+    printf '%s\n' $bad >>"$H/exclude_nodes"
+    ledger "-" "gpu probe excluded:$bad"
+  fi
+  atomic "$H/probe_done" "$(now) bad:${bad:- none}"
+}
+gpu_probe
 
 # runs of this host: rid -> pid of its background run_one; the nodes of each in $H/inuse/<rid>
 declare -A RUN_PID=()

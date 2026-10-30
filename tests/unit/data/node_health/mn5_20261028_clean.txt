@@ -1,0 +1,6 @@
+[fsdp_bench] group gpu0 (122 ranks, 256 MB): all_gather 11.8 ms (22.6 GB/s), reduce_scatter 11.8 ms (22.6 GB/s)
+[fsdp_bench] group gpu1 (122 ranks, 256 MB): all_gather 11.9 ms (22.3 GB/s), reduce_scatter 11.7 ms (22.8 GB/s)
+[fsdp_bench] group gpu2 (122 ranks, 256 MB): all_gather 11.8 ms (22.6 GB/s), reduce_scatter 11.7 ms (22.7 GB/s)
+[fsdp_bench] group gpu3 (122 ranks, 256 MB): all_gather 11.8 ms (22.6 GB/s), reduce_scatter 11.7 ms (22.7 GB/s)
+[fsdp_bench] node ring 512 MB per GPU: median 12.7 GB/s, min 10.1, max 14.1
+[fsdp_bench] slowest receivers (from -> to, GB/s): as02r2b32->as03r1b01:1=10.1, as02r2b32->as03r1b01:3=10.1, as02r2b31->as02r2b32:1=10.1, as02r2b31->as02r2b32:3=10.1, as02r2b31->as02r2b32:2=10.1, as02r2b32->as03r1b01:2=10.1, as02r2b32->as03r1b01:0=10.1, as02r2b31->as02r2b32:0=10.1, as03r5b16->as04r3b31:1=10.2, as01r5b23->as02r2b21:0=10.2

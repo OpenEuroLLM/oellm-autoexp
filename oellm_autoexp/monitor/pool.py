@@ -69,6 +69,9 @@ if TYPE_CHECKING:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 
+# how long the preflight waits for a host's GPU probe (supervisor.sh) before it goes on without
+PREFLIGHT_PROBE_WAIT_S = 900.0
+
 # The rank processes Megatron's --exit-signal-handler listens on are the DIRECT
 # CHILDREN of the torchrun / ft_launcher elastic agents. Signalling the agents
 # instead makes them tear their workers down ~30 s later, before the exit
@@ -176,6 +179,40 @@ class PoolHostConfig:
     # runs a host executes side by side on disjoint nodes (packing small jobs into one
     # allocation, e.g. three 8-node runs in a 33-node host); 1 = one run per host
     max_runs_per_host: int = 1
+    # PREFLIGHT node check of every new host, before any run is assigned to it (user 2026-10-30;
+    # one dead-GPU node and four degraded NICs cost 128-node runs 27-50 % for hours, 10-27..29):
+    # 1. preflight_gpus_per_node > 0: the supervisor counts each node's GPUs (preflight_gpu_cmd,
+    #    run there by srun) and excludes a node with fewer;
+    # 2. preflight: the node-health benchmark (oellm_autoexp/node_health/bench.py) on all usable
+    #    nodes, run from the pool's preflight template: the job of the config preflight_check
+    #    names (+ preflight_check_overrides), enqueued by run_autoexp when it creates / updates
+    #    the pool (by hand: any job enqueued with +job.metadata.pool_preflight_template=true).
+    #    A slow GPU or GPU group (below preflight_ratio x the median) excludes the node behind it
+    #    (oellm_autoexp.node_health.verdict) and the benchmark runs again, up to
+    #    preflight_max_rounds. Without a template only the GPU count is checked.
+    #    Pass: the host takes runs. Fail (no result twice, or still slow after the last round): the
+    #    host is released (kept if held, without runs).
+    preflight: bool = False
+    preflight_gpus_per_node: int = 0
+    preflight_gpu_cmd: str = 'nvidia-smi -L 2>/dev/null | grep -c "^GPU"'
+    preflight_ratio: float = 0.75
+    preflight_max_rounds: int = 3
+    preflight_check: str = ""
+    preflight_check_overrides: list[str] = field(default_factory=list)
+    # VERIFIED handover (with `handover`): the runs on the old host are stopped (checkpoint) and
+    # restart on the new, verified host while the old allocation stays; it is released once every
+    # moved run is healthy there (handover_healthy_steps matches of handover_healthy_pattern in
+    # its log), unless it still has other runs. A moved run that fails there, or is not healthy
+    # within handover_verify_timeout_s, releases the NEW host instead: the runs go back.
+    handover_verify: bool = False
+    handover_healthy_steps: int = 3
+    handover_healthy_pattern: str = r"iteration\s+\d+/"
+    handover_verify_timeout_s: float = 3600.0
+    # HOLD: the monitor never releases a host -- not idle, not for queued work it cannot run, not
+    # after a handover; only its wall clock or `pool_ctl exit-host` ends it (per host:
+    # `pool_ctl hold <host>`, a <host>/control/hold file). For allocations that are hard to get
+    # back (adopted cns144 jobs: 47998967 was released with 15 h left, 2026-10-30).
+    hold_hosts: bool = False
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -334,6 +371,8 @@ class PoolLayout:
                 "POOL_RANK_PATTERN": cfg.rank_pattern,
                 "POOL_ADOPT_STOP_MARGIN_S": int(round(cfg.adopt_stop_margin_s)),
                 "POOL_MAX_RUNS_PER_HOST": max(1, int(cfg.max_runs_per_host)),
+                "POOL_PREFLIGHT_GPUS": max(0, int(cfg.preflight_gpus_per_node)),
+                "POOL_PREFLIGHT_GPU_CMD": cfg.preflight_gpu_cmd,
             },
         )
 
@@ -890,6 +929,17 @@ class PoolManager:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             dump_job_config(config_path, job)
         self._runs[rid] = str(layout.root)
+        if _truthy(metadata.get("pool_preflight_template")):
+            # the pool's preflight node check: kept as a template, cloned for every new host
+            # (its node count from the host); the record itself ends at once
+            tdir = layout.root / "preflight_template"
+            tdir.mkdir(exist_ok=True)
+            for name in ("step.sh", "meta.env", "run.json"):
+                _atomic_write(tdir / name, (rd / name).read_text(encoding="utf-8"))
+            _atomic_write(tdir / "rid", rid + "\n")
+            write_rc(layout, rid, 0, "preflight_template")
+            LOGGER.info("[pool %s] preflight template set from %s (%s)", cfg.name, rid, job.name)
+            return rid
         LOGGER.info("[pool %s] queued run %s (%s, %d node(s))", cfg.name, rid, job.name, nodes)
         return rid
 
@@ -1094,16 +1144,59 @@ class PoolManager:
             if any(not (layout.run_dir(r) / "rc").exists() for r in h.assignments())
         }
 
+        # 1b. hosts the monitor never releases, and the preflight node check of new hosts:
+        #     an unverified host takes no run, and is not released as idle meanwhile
+        held = {
+            h.hid
+            for h in hosts
+            if cfg.hold_hosts or (layout.host_dir(h.hid) / "control" / "hold").exists()
+        }
+        unverified = self._preflight(layout, cfg, state, live, held, now)
+        live = [h for h in live if not h.retiring]
+
         # 2. handover: retire the oldest hosts beyond max_hosts_running once a
         #    newer one is up. `exit` makes its supervisor preempt the run
         #    (graceful stop, checkpoint) and release the allocation; the run comes
         #    back PREEMPTED, is requeued by the monitor, and goes to the new host.
+        #    With handover_verify the old allocation is kept until the moved runs
+        #    are healthy on the new one (or they go back: see _handover_check).
         handover_waiting = False
+        handovers = state.setdefault("handover", {})
         if cfg.handover and len(live) > cfg.max_hosts_running:
             excess = len(live) - cfg.max_hosts_running
+            verified = [h for h in live if h.hid not in unverified]
+            newest = max(verified, key=lambda h: h.start_ts, default=None)
             for host in sorted(live, key=lambda h: h.start_ts)[:excess]:
+                if host.hid in handovers:
+                    continue
                 if now - host.start_ts < cfg.handover_min_age_s:
                     handover_waiting = True
+                    continue
+                if cfg.handover_verify:
+                    if newest is None or newest.start_ts <= host.start_ts:
+                        handover_waiting = True  # a newer host is still in its preflight
+                        continue
+                    jobs = []
+                    for rid in host.assignments():
+                        rd = layout.run_dir(rid)
+                        if (rd / "rc").exists():
+                            continue
+                        job_id = json.loads(_read(rd / "run.json") or "{}").get("job_id", "")
+                        if not job_id:
+                            continue  # a preflight run
+                        _atomic_write(rd / "preempt", f"handover to {newest.hid}\n")
+                        jobs.append(job_id)
+                    handovers[host.hid] = {"new": newest.hid, "jobs": jobs, "ts": now}
+                    LOGGER.info(
+                        "[pool %s] handover: moving %s from %s to %s; %s kept until they are healthy",
+                        cfg.name,
+                        jobs or "nothing",
+                        host.hid,
+                        newest.hid,
+                        host.hid,
+                    )
+                    continue
+                if host.hid in held:
                     continue
                 self._control(layout, host.hid, "exit", "handover to a newer host")
                 host.retiring = True
@@ -1114,8 +1207,13 @@ class PoolManager:
                     host.record.runtime.runtime_job_id,
                 )
             live = [h for h in live if not h.retiring]
-        handover_in_progress = handover_waiting or any(
-            h.retiring and h.hid in busy and not h.dead for h in hosts
+        self._handover_check(loop, layout, cfg, handovers, hosts, held, now)
+        live = [h for h in live if not h.retiring]
+        handover_old = set(handovers)
+        handover_in_progress = (
+            handover_waiting
+            or bool(handovers)
+            or any(h.retiring and h.hid in busy and not h.dead for h in hosts)
         )
 
         # 3. queue
@@ -1163,6 +1261,8 @@ class PoolManager:
         #    as its free nodes and max_runs_per_host allow (packing; default one per host)
         max_runs = max(1, int(cfg.max_runs_per_host))
         for host in sorted(live, key=lambda h: -h.start_ts):
+            if host.hid in unverified or host.hid in handover_old:
+                continue  # in its preflight / being handed over: no new run
             active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
             # the supervisor puts a USE_EXCLUDED_NODES run on the excluded nodes first: free
             # healthy nodes, and free excluded ones only such runs may take
@@ -1208,6 +1308,8 @@ class PoolManager:
         for host in live:
             if host.hid in busy or handover_in_progress:
                 continue
+            if host.hid in held or host.hid in unverified:
+                continue  # held: never released by the monitor; unverified: in its preflight
             if any(fits(host, item[3], item[2]) for item in queued):
                 continue
             # only if a FRESH host would do better: a job bigger than every host of
@@ -1693,6 +1795,276 @@ class PoolManager:
                     subprocess.run(["scancel", "--signal=KILL", parts[0]], timeout=60)
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning("[pool] could not stop the old supervisor of %s: %s", jid, exc)
+
+    # --- verified handover ---------------------------------------------------
+    def _handover_check(
+        self,
+        loop: MonitorLoop,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        handovers: dict,
+        hosts: list[HostView],
+        held: set[str],
+        now: float,
+    ) -> None:
+        """Finish or undo the verified handovers in progress: release the old host once every
+        moved job runs healthy on the new one; release the NEW host (the jobs go back) when one
+        of them fails there or the verification times out."""
+        by_hid = {h.hid: h for h in hosts}
+        pattern = re.compile(cfg.handover_healthy_pattern)
+        for old_hid, ho in list(handovers.items()):
+            old, new = by_hid.get(old_hid), by_hid.get(ho["new"])
+            if old is None or old.dead:
+                handovers.pop(old_hid)
+                continue
+            if new is None or new.dead or new.retiring:
+                LOGGER.warning(
+                    "[pool %s] handover %s -> %s: the new host is gone; the jobs stay on %s",
+                    cfg.name,
+                    old_hid,
+                    ho["new"],
+                    old_hid,
+                )
+                handovers.pop(old_hid)
+                continue
+            healthy, failed = True, ""
+            for job_id in ho["jobs"]:
+                record = loop._store.load(job_id, include_finished=True)
+                if record is None or record.runtime.final_state in ("finished", "cancelled"):
+                    continue
+                if record.runtime.final_state == "failed":
+                    failed = f"{job_id} failed"
+                    break
+                rid = record.runtime.runtime_job_id
+                rs = read_run_state(layout, rid) if rid else None
+                if rs is None or rs.started.get("host") != new.hid:
+                    healthy = False  # not (yet) started on the new host
+                    continue
+                if rs.code not in (None, 0):
+                    failed = f"{job_id} ended {rs.code} {rs.reason} on {new.hid}"
+                    break
+                log = read_env_file(layout.run_dir(rid) / "meta.env").get("LOG", "")
+                try:
+                    text = Path(log).read_text(errors="replace")[:20_000_000] if log else ""
+                except OSError:
+                    text = ""
+                if len(pattern.findall(text)) < cfg.handover_healthy_steps:
+                    healthy = False
+            if not failed and not healthy and now - ho["ts"] > cfg.handover_verify_timeout_s:
+                failed = f"not healthy within {cfg.handover_verify_timeout_s:.0f}s"
+            if failed:
+                LOGGER.error(
+                    "[pool %s] handover %s -> %s FAILED (%s): releasing %s, the jobs go back to %s",
+                    cfg.name,
+                    old_hid,
+                    new.hid,
+                    failed,
+                    new.hid,
+                    old_hid,
+                )
+                if new.hid not in held:
+                    self._control(
+                        layout, new.hid, "exit", f"handover verification failed: {failed}"
+                    )
+                    new.retiring = True
+                handovers.pop(old_hid)
+                continue
+            if healthy:
+                others = [r for r in old.assignments() if not (layout.run_dir(r) / "rc").exists()]
+                if not others and old_hid not in held:
+                    self._control(layout, old_hid, "exit", f"handover verified on {new.hid}")
+                    old.retiring = True
+                LOGGER.info(
+                    "[pool %s] handover %s -> %s verified (%s healthy)%s",
+                    cfg.name,
+                    old_hid,
+                    new.hid,
+                    ho["jobs"],
+                    "" if not others and old_hid not in held else f"; {old_hid} kept",
+                )
+                handovers.pop(old_hid)
+
+    # --- preflight node check -------------------------------------------------
+    @staticmethod
+    def _add_pool_excludes(layout: PoolLayout, nodes: list[str]) -> list[str]:
+        """Append nodes to <pool>/exclude_nodes (one per line); returns the new ones."""
+        existing = set(_split_nodes(_read(layout.exclude_nodes)))
+        new = [n for n in nodes if n and n not in existing]
+        if new:
+            with layout.exclude_nodes.open("a") as fh:
+                for node in new:
+                    fh.write(node + "\n")
+        return new
+
+    def _host_free_nodes(self, layout: PoolLayout, host: HostView) -> list[str]:
+        """The host's nodes minus the pool's and its own exclusions."""
+        nodes = _split_nodes(host.info.get("NODELIST", ""))
+        excluded = set(_split_nodes(_read(layout.exclude_nodes))) | set(
+            _split_nodes(_read(layout.host_dir(host.hid) / "exclude_nodes"))
+        )
+        return [n for n in nodes if n not in excluded]
+
+    def _start_preflight(self, layout: PoolLayout, cfg: PoolHostConfig, host: HostView) -> str:
+        """A run cloned from <pool>/preflight_template on all of the host's usable nodes,
+        assigned to it directly (no queue, no job record: the monitor reads its rc)."""
+        tdir = layout.root / "preflight_template"
+        trid = (_read(tdir / "rid") or "").strip()
+        rid = layout.allocate_run_id(pool_tag(cfg.name))
+        rd = layout.run_dir(rid)
+        nodes = len(self._host_free_nodes(layout, host)) or host.usable_nodes
+        (rd / "step.sh").write_text(
+            (_read(tdir / "step.sh") or "").replace(trid, rid), encoding="utf-8"
+        )
+        meta = read_env_file(tdir / "meta.env")
+        meta["NODES"] = str(nodes)
+        meta["LOG"] = meta.get("LOG", "").replace(trid, rid) or str(rd / "run.log")
+        meta["NAME"] = f"{meta.get('NAME', 'preflight')}_{host.hid}"
+        write_env_file(rd / "meta.env", meta)
+        info = json.loads(_read(tdir / "run.json") or "{}")
+        info.update(
+            rid=rid,
+            nodes=nodes,
+            name=meta["NAME"],
+            log=meta["LOG"],
+            preflight=host.hid,
+            submitted_ts=time.time(),
+        )
+        _atomic_write(rd / "run.json", json.dumps(info, indent=2))
+        Path(meta["LOG"]).parent.mkdir(parents=True, exist_ok=True)
+        self._assign(layout, rid, host.hid)
+        return rid
+
+    def _preflight(
+        self,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        state: dict,
+        live: list[HostView],
+        held: set[str],
+        now: float,
+    ) -> set[str]:
+        """Drive the preflight node check of the live hosts; returns the hids not (yet) verified.
+
+        Per host (state["preflight"][hid]): pending -> (GPU probe done) -> running (a benchmark
+        round) -> passed | pending (nodes excluded, next round) | failed (released unless held).
+        """
+        if not cfg.preflight and cfg.preflight_gpus_per_node <= 0:
+            return set()
+        pf = state.setdefault("preflight", {})
+        unverified: set[str] = set()
+        for host in live:
+            if host.hid not in pf and (host.assignments() or host.state[:1] == ["busy"]):
+                # already working when the check first sees it (preflight switched on for a
+                # running pool, or a monitor of older code): it ran fine so far; never block a
+                # restart of its runs in the same allocation
+                pf[host.hid] = {"status": "passed", "round": 0, "errors": 0, "why": "had runs"}
+                LOGGER.info(
+                    "[pool %s] preflight %s: passed (had runs before the node check)",
+                    cfg.name,
+                    host.hid,
+                )
+                continue
+            st = pf.setdefault(host.hid, {"status": "pending", "round": 0, "errors": 0})
+            if st["status"] == "passed":
+                continue
+            unverified.add(host.hid)
+            if st["status"] == "failed":
+                continue
+            hdir = layout.host_dir(host.hid)
+            # the supervisor's GPU probe: its exclusions go into the pool's list
+            probed = _split_nodes(_read(hdir / "exclude_nodes"))
+            for node in self._add_pool_excludes(layout, probed):
+                LOGGER.warning(
+                    "[pool %s] preflight %s: %s excluded (GPU probe)", cfg.name, host.hid, node
+                )
+            if cfg.preflight_gpus_per_node > 0 and not (hdir / "probe_done").exists():
+                # a supervisor of older code never probes: do not wait for it forever
+                if not host.start_ts or now - host.start_ts < PREFLIGHT_PROBE_WAIT_S:
+                    continue
+                if not st.get("probe_skipped"):
+                    st["probe_skipped"] = True
+                    LOGGER.warning(
+                        "[pool %s] preflight %s: no GPU probe after %.0f s (supervisor too old?): "
+                        "skipping it",
+                        cfg.name,
+                        host.hid,
+                        now - host.start_ts,
+                    )
+            if not cfg.preflight or not (layout.root / "preflight_template" / "rid").exists():
+                if cfg.preflight:
+                    LOGGER.warning(
+                        "[pool %s] preflight %s: no preflight template (enqueue the benchmark with "
+                        "+job.metadata.pool_preflight_template=true): GPU probe only",
+                        cfg.name,
+                        host.hid,
+                    )
+                st["status"] = "passed"
+                unverified.discard(host.hid)
+                LOGGER.info("[pool %s] preflight %s: passed (GPU probe)", cfg.name, host.hid)
+                continue
+            if st["status"] == "pending":
+                st["rid"] = self._start_preflight(layout, cfg, host)
+                st["round"] = int(st.get("round", 0)) + 1
+                st["status"], st["ts"] = "running", now
+                LOGGER.info(
+                    "[pool %s] preflight %s: round %d (%s)",
+                    cfg.name,
+                    host.hid,
+                    st["round"],
+                    st["rid"],
+                )
+                continue
+            rd = layout.run_dir(st["rid"])
+            if not (rd / "rc").exists():
+                continue
+            from oellm_autoexp.node_health.verdict import judge
+
+            log = read_env_file(rd / "meta.env").get("LOG", "")
+            try:
+                text = Path(log).read_text(errors="replace")[-2_000_000:] if log else ""
+            except OSError:
+                text = ""
+            verdict = judge(text, cfg.preflight_ratio)
+            if verdict.status == "pass":
+                st["status"] = "passed"
+                unverified.discard(host.hid)
+                LOGGER.info("[pool %s] preflight %s: passed (%s)", cfg.name, host.hid, verdict.why)
+            elif verdict.status == "exclude" and st["round"] < cfg.preflight_max_rounds:
+                new = self._add_pool_excludes(layout, verdict.exclude)
+                LOGGER.warning(
+                    "[pool %s] preflight %s: excluding %s (%s); next round",
+                    cfg.name,
+                    host.hid,
+                    ", ".join(verdict.exclude),
+                    verdict.why,
+                )
+                st["status"], st["why"] = ("pending" if new else "failed"), verdict.why
+            elif verdict.status == "error" and int(st.get("errors", 0)) < 1:
+                st["errors"] = int(st.get("errors", 0)) + 1
+                st["status"] = "pending"
+                LOGGER.warning(
+                    "[pool %s] preflight %s: %s; retrying", cfg.name, host.hid, verdict.why
+                )
+            else:
+                st["status"], st["why"] = "failed", verdict.why
+            if st["status"] == "failed":
+                if host.hid in held:
+                    LOGGER.error(
+                        "[pool %s] preflight %s FAILED (%s): held, kept without runs",
+                        cfg.name,
+                        host.hid,
+                        st.get("why"),
+                    )
+                else:
+                    self._control(layout, host.hid, "exit", f"preflight failed: {st.get('why')}")
+                    host.retiring = True
+                    LOGGER.error(
+                        "[pool %s] preflight %s FAILED (%s): releasing it",
+                        cfg.name,
+                        host.hid,
+                        st.get("why"),
+                    )
+        return unverified
 
     @staticmethod
     def _control(layout: PoolLayout, hid: str, name: str, reason: str) -> None:
