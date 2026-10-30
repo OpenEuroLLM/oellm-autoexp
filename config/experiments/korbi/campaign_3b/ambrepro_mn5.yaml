@@ -38,6 +38,9 @@ backend:
     # and was unpaired with base (per-step loss correlation 0.01 vs 0.999 for every other arm)
     data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v1_datamix_mn5.txt
     tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+    # bf16 all-gather, pinned: hybrid_main_mn5 made the FP8 expert all-gather its default on
+    # 2026-10-30 (fsdp_fp8_param_gather: experts); the arms here stay paired with the earlier ones
+    fsdp_fp8_param_gather: none
     # the main run's balancing, pinned: hybrid_main_mn5 switched to quantile balancing on
     # 2026-10-29, and every arm here must stay comparable with base (the qb arms override it)
     moe_router_load_balancing_type: aux_loss

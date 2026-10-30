@@ -162,6 +162,11 @@ backend:
     overlap_param_gather: true
     overlap_grad_reduce: true
     fsdp_double_buffer: true
+    # FP8 all-gather of the routed-expert weights (user 2026-10-30; Megatron 839f9235f): E4M3 with
+    # one fp32 scale per 128 elements on the wire, dequantized to bf16 for the GEMMs -- the expert
+    # gathers are the largest exposed communication (docs/ambitious_size64.md). s3 on 4 nodes:
+    # 4.79 vs 5.05 s/step (-5 %), losses paired (hybrid_fp8ag_s3_mn5.yaml). Checkpoint-neutral.
+    fsdp_fp8_param_gather: experts
     # fp32 gradient reduction (MoonEP's wgrad needs fp32 main grads; bf16 deliberately not used)
     megatron_fsdp_main_grads_dtype: fp32
     megatron_fsdp_grad_comm_dtype: fp32

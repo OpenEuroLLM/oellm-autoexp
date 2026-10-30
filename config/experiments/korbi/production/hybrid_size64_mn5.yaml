@@ -32,6 +32,8 @@ aux:
 backend:
   megatron:
     num_experts: 216
+    # bf16 all-gather: these measurements predate the FP8 default in hybrid_main_mn5
+    fsdp_fp8_param_gather: none
 
 job:
   name: ${aux.suite}_${aux.arm}

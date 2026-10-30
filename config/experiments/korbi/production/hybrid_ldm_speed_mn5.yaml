@@ -23,6 +23,8 @@ backend:
     # Engram step lookup groups the micro-batches per step: 8 at 32 nodes (mbs 4), 2 at 128
     ENGRAM_STEP_GROUP: "${oc.eval:'str(max(1, 4096 // (${aux.nodes} * 4 * 4)))'}"
   megatron:
+    # bf16 all-gather: the suite's speed references predate the FP8 default
+    fsdp_fp8_param_gather: none
     train_iters: 12
     # every step logged: at the production log_interval 10 the one line of a 12-step run averages
     # steps 2-10, compile warm-up included (32 nodes, mHC-4: 100 s / step vs 87 s steady)

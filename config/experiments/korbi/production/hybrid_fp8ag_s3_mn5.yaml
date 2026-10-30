@@ -94,11 +94,13 @@ sweep:
     - type: list
       configs:
         - aux.arm: bf16
+          backend.megatron.fsdp_fp8_param_gather: none
         - aux.arm: fp8
           backend.megatron.fsdp_fp8_param_gather: experts
         # 2026-10-30 10:19: bf16 crashed in step 1 with "CUDA error: misaligned address"
         # (asynchronous, in the expert-DP NCCL watchdog) on the nodes where fp8 trained 300 steps;
         # synchronous launches to name the kernel
         - aux.arm: bf16_dbg
+          backend.megatron.fsdp_fp8_param_gather: none
           backend.env.CUDA_LAUNCH_BLOCKING: "1"
           backend.megatron.exit_interval: 5
