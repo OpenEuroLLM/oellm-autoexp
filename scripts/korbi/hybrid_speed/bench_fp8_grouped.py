@@ -14,6 +14,7 @@ fc1: [1536, 2048] (gate + up) on x [rows, 2048]; fc2: [2048, 768] on a [rows, 76
 import argparse
 
 import torch
+import transformer_engine.pytorch  # noqa: F401  (loads the extension library first)
 import transformer_engine_torch as tex
 from transformer_engine.pytorch.cpp_extensions import general_grouped_gemm_for_grouped_tensor
 from transformer_engine.pytorch.tensor.float8_blockwise_tensor import Float8BlockQuantizer
