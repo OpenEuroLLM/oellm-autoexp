@@ -429,6 +429,53 @@ def test_replacing_an_adopted_supervisor_keeps_the_allocation(pool, tmp_path):
     assert pool.run_state(rid).started["job"] == jid
 
 
+def test_an_adopted_host_is_not_released_when_queued_work_does_not_fit(pool, tmp_path):
+    """An attached / adopted allocation with too few usable nodes for the queued job (bad nodes
+    excluded) is kept -- not released at once as an own host would be (cns144 47998967 was lost
+    that way, 2026-10-30); only idle_exit_s can release it."""
+    import subprocess
+
+    wd = tmp_path / "alloc"
+    wd.mkdir()
+    (wd / "idle.sbatch").write_text(IDLE_ALLOC)
+    jid = subprocess.run(
+        ["sbatch", str(wd / "idle.sbatch")],
+        cwd=wd,
+        env=pool.env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout.split()[-1]
+    pool.create_pool(
+        "job.pool_host.poll_s=1",
+        "job.pool_host.idle_exit_s=3600",
+        "job.pool_host.max_own_hosts=0",
+        "job.pool_host.adopt_stop_margin_s=30",
+        "slurm.sbatch.nodes=2",
+    )
+    pool.wait_for(lambda: _fake_job(pool, jid)["state"] == "RUNNING", 30, "the allocation runs")
+    pool.ctl("exclude", f"n{jid}-1")  # one of its two nodes bad: 1 usable
+    pool.ctl("attach", jid, "--no-wait")
+    pool.start_monitor()
+    hdir = pool.pool_dir / "hosts" / "host001"
+    pool.wait_for(
+        lambda: (hdir / "state").exists() and (hdir / "state").read_text().split()[-1] == "1",
+        60,
+        "the supervisor, with 1 usable node",
+    )
+    pool.enqueue("big", "aux.iters=10", "aux.tick=0.1", "slurm.sbatch.nodes=2")
+    pool.wait_for(lambda: pool.runs_of("dummy_big"), 60, "the 2-node run is queued")
+    time.sleep(15)  # many monitor ticks
+    assert not (hdir / "exited").exists(), (
+        (hdir / "exited").read_text() if (hdir / "exited").exists() else ""
+    )
+    assert not (hdir / "control" / "exit").exists(), (
+        "an adopted host must not be released for unfit work"
+    )
+    assert _fake_job(pool, jid)["state"] == "RUNNING"
+    assert "adopted host host001 cannot run the queued job" in pool.monitor_log.read_text()
+
+
 def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
     """The second, independent fail-safe: registered for adoption but the hook is missing ->
     the monitor cancels the job adopt_hook_timeout_s after it starts."""

@@ -334,8 +334,12 @@ LAST_STATE=""
 show_state() { # only on a change: the monitor measures idle time from the state's timestamp
   local want=idle
   [ "${#RUN_PID[@]}" -gt 0 ] && want="busy $(printf '%s\n' "${!RUN_PID[@]}" | sort | paste -sd, -)"
-  [ "$want" = "$LAST_STATE" ] && return
-  LAST_STATE=$want
+  # the usable node count is part of the state the monitor reads: a node excluded on a running
+  # host must show (the run-free check otherwise sees the old count)
+  local key
+  key="$want $(usable_nodes "" | grep -c .)"
+  [ "$key" = "$LAST_STATE" ] && return
+  LAST_STATE=$key
   # shellcheck disable=SC2086
   set_state $want
 }

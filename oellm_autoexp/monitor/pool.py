@@ -1221,7 +1221,23 @@ class PoolManager:
                     [item[2] for item in queued],
                     host.nodes,
                 )
-            if fresh_fit:
+            if fresh_fit and host.adopted:
+                # an adopted / attached allocation (pool_ctl adopt / attach) is one we took
+                # over and cannot get back: never give it up at once because the queued work
+                # does not fit it (cns144 47998967, 2026-10-30: a 128-node run requeued
+                # against its 123 usable nodes released it with 15 h left); only idle_exit_s
+                warned = self.__dict__.setdefault("_unfit_warned", set())
+                if (cfg.name, host.hid) not in warned:
+                    LOGGER.warning(
+                        "[pool %s] adopted host %s cannot run the queued job(s) %s "
+                        "(%d usable nodes): kept; released only after idle_exit_s",
+                        cfg.name,
+                        host.hid,
+                        [item[2] for item in fresh_fit],
+                        host.usable_nodes,
+                    )
+                    warned.add((cfg.name, host.hid))
+            elif fresh_fit:
                 need = min(item[3] for item in fresh_fit)
                 why = (
                     f"needs {need} node(s), {host.usable_nodes} usable"
