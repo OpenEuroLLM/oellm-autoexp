@@ -36,7 +36,10 @@ job:
     min_hosts: 1
     handover: false
     idle_exit_s: 3600
-    monitor_dead_exit_s: 3600
+    # 3 days (the host's wall time), 2026-10-30: host001 (48161468) is held (pool_ctl hold) but
+    # runs a supervisor from before the hold fix, whose dead-man switch would still release it
+    # when idle with the monitor away; back to 3600 once 48161468 has ended
+    monitor_dead_exit_s: 259200
     min_remaining_s: 3600
     stop_grace_s: 1800
     preempt_grace_s: 2700
