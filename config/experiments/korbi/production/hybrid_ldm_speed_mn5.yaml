@@ -25,6 +25,10 @@ backend:
   megatron:
     # bf16 all-gather: the suite's speed references predate the FP8 default
     fsdp_fp8_param_gather: none
+    # the bounded post-activation norm, pinned off: hybrid_main_mn5 made it the default on
+    # 2026-10-30; the speed references and size64's paired arms predate it (pab arms override it)
+    moe_expert_post_act_norm: false
+    mlp_post_act_norm: false
     train_iters: 12
     # every step logged: at the production log_interval 10 the one line of a 12-step run averages
     # steps 2-10, compile warm-up included (32 nodes, mHC-4: 100 s / step vs 87 s steady)

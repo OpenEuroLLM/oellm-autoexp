@@ -41,6 +41,10 @@ backend:
     # bf16 all-gather, pinned: hybrid_main_mn5 made the FP8 expert all-gather its default on
     # 2026-10-30 (fsdp_fp8_param_gather: experts); the arms here stay paired with the earlier ones
     fsdp_fp8_param_gather: none
+    # the bounded post-activation norm, pinned off: hybrid_main_mn5 made it the default on
+    # 2026-10-30; the arms here stay paired with the earlier ones (pab arms override it)
+    moe_expert_post_act_norm: false
+    mlp_post_act_norm: false
     # the main run's balancing, pinned: hybrid_main_mn5 switched to quantile balancing on
     # 2026-10-29, and every arm here must stay comparable with base (the qb arms override it)
     moe_router_load_balancing_type: aux_loss
@@ -133,3 +137,16 @@ sweep:
           backend.megatron.moe_router_quantile_balancing_ema: 0.0
           backend.megatron.moe_router_enable_expert_bias: false
           backend.megatron.moe_router_fusion: false
+        # the production guess (user 2026-10-30): QB at EMA 0.9 + the bounded post-activation norm,
+        # to 1500 steps (the plain qb arm blew up at ~840; stability beyond 900 is the question).
+        # Reference: pab (bias + bound), continued to 1500 from its step-900 checkpoint
+        - aux.arm: qb_ema_pab
+          backend.megatron.moe_router_load_balancing_type: quantile_balancing
+          backend.megatron.moe_router_quantile_balancing_ema: 0.9
+          backend.megatron.moe_router_enable_expert_bias: false
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.moe_router_fusion: false
+          backend.megatron.moe_expert_post_act_norm: true
+          backend.megatron.mlp_post_act_norm: true
+          backend.megatron.post_act_norm_floor: 1.0
+          backend.megatron.exit_interval: 1500
