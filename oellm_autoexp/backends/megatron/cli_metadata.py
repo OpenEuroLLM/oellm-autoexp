@@ -2684,6 +2684,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "fsdp_fp8_param_gather": MegatronArgMetadata(
+        arg_type=str,
+        default="none",
+        help="Megatron-FSDP: all-gather bf16 weights through FP8 E4M3 with one fp32 scale per 128 elements (~1.03 instead of 2 bytes per element); the GEMMs stay bf16 on the dequantized weights. experts: only expert-parallel buckets; all: every bf16 bucket.",
+        choices=("none", "experts", "all"),
+        nargs=None,
+        element_type=None,
+    ),
     "fsdp_manual_registration": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -10716,6 +10724,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "fsdp_fp8_param_gather": MegatronActionSpec(
+        option_strings=("--fsdp-fp8-param-gather",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="none",
     ),
     "fsdp_manual_registration": MegatronActionSpec(
         option_strings=("--fsdp-manual-registration",),

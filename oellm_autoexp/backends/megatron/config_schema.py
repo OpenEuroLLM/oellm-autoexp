@@ -3198,6 +3198,11 @@ class MegatronConfig(ConfigInterface):
     # when using NCCL user buffers.
     fsdp_double_buffer: bool = False
 
+    # Megatron-FSDP: all-gather bf16 weights through FP8 E4M3 with one fp32 scale per 128
+    # elements (~1.03 instead of 2 bytes per element); the GEMMs stay bf16 on the dequantized
+    # weights. experts: only expert-parallel buckets; all: every bf16 bucket.
+    fsdp_fp8_param_gather: Literal["none", "experts", "all"] = "none"
+
     # Specifies the number of elements to communicate at once during FSDP (Fully Sharded Data
     # Parallel) operations. This flag also affects FSDP all-gather prefetch behavior. Setting
     # a larger value increases the communication buffer size, while a smaller value disables
