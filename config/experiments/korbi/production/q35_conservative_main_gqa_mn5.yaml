@@ -9,8 +9,18 @@ defaults:
   - override /backend/megatron: [data_flag_decon_v1_mn5]
   - _self_
 
+aux:
+  # the main run's size since 2026-10-27 (128 nodes, as q35_conservative_128_mn5.yaml)
+  nodes: 128
+
 job:
   # the running run's name and pool singleton (it was enqueued with these as overrides)
   name: q35c_main_gqa
+  est_step_time_s: 5.5
   metadata:
     pool_singleton: q35c_main_gqa
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_xehpc
