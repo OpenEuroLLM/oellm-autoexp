@@ -25,6 +25,15 @@ backend:
     moe_expert_post_act_norm: true
     mlp_post_act_norm: true
     post_act_norm_floor: 1.0
+    # Engram 2- / 3- / 4-grams + sign hash (user 2026-10-30; scripts/korbi/campaign/ngram_coverage.py
+    # on 4B tokens of this data mix: bigrams saturate -- the top 5M cover 92 %, 19.5M 97 % -- while
+    # the top 19.5M 4-grams cover ~50 % of positions, the 19.5M-th seen 13x per 4B tokens). Same 40B
+    # of tables: rows per head x 2/3 (19,480,384 -> 12,986,923; bigrams ~96 %, trigrams ~70 %,
+    # 4-grams ~48 % covered). Sign hash: the count-sketch +-1 pattern per (n-gram, lookup)
+    # (Megatron >= 97423b203). Not screened; HF export of sign-hash models is not ported yet.
+    engram_ngram_orders: [2, 3, 4]
+    engram_table_size: 12986923
+    engram_sign_hash: true
 
 job:
   name: ambitious_v2_128n
