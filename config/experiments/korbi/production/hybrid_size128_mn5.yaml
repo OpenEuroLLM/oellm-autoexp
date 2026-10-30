@@ -58,3 +58,17 @@ sweep:
         - aux.arm: e320_eng80
           backend.megatron.num_experts: 320
           backend.megatron.engram_table_size: 38960768
+        # more NCCL channels (64 n, 216 experts: 16 channels +2.3 %, +4 GiB outside PyTorch); both
+        # levels, the slurm config exports 4 and passes it to the container as --env
+        - aux.arm: e216_nccl16
+          backend.megatron.num_experts: 216
+          slurm.env.NCCL_MIN_NCHANNELS: "16"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "16"
+          backend.env.NCCL_MIN_NCHANNELS: "16"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "16"
+        - aux.arm: e320_nccl8
+          backend.megatron.num_experts: 320
+          slurm.env.NCCL_MIN_NCHANNELS: "8"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
+          backend.env.NCCL_MIN_NCHANNELS: "8"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "8"
