@@ -222,6 +222,11 @@ normal spike rate. Monitor `moe/routed_expert_output_rms_max`, not the grad norm
 - [ ] Watch `moe/routed_expert_output_rms_max`. In `base` the runaway was visible from step ~400: 0.13 → 0.88 → 2.3 by step 600.
 - [ ] Watch `moe_act/capped`. Expect ~0.15–0.3 in the ambitious model. If it keeps climbing well past ~0.3, the one knob is the
       floor (2 instead of 1).
+- [ ] Two settings in the restarted run (`ambitious_pab_128n`, p129 run 0243, 2026-10-30) that `pab` was never screened with:
+  - quantile router balancing, the production default since 2026-10-29;
+  - the FP8 all-gather of the routed-expert weights (`fsdp_fp8_param_gather: experts`, user's choice: inference uses FP8 anyway).
+    Its paired s3 check with `pab`, 300 steps: +0.005 train loss (steps 251–300), +0.003 validation at step 250, +5.4 % speed.
+  Watch the two metrics above over the first ~600 steps.
 - [ ] The restart runs on flag-decon-v2-agenttok, while `pab` was validated on the old data. The mechanism (a bound on the activation
       size) is data-independent; `screen5v2_s{2,3}` (§8) confirm it on the new data.
 
