@@ -11,10 +11,12 @@
 # - Prefetch depth is capped by fsdp_double_buffer (current + next unit).
 #
 # Arms, at the production size (216 experts) against a same-day reference, 12 steps:
-#   e216            reference
+#   e216            reference -> 50.6 s/step, 5,183 tok/s/GPU, mem 0.88
 #   e216_nccl16     16 NCCL channels (slurm config forces 4: a memory saving for PP layouts)
+#                   -> 5,302 vs 5,183 tok/s/GPU (+2.3 %), +4 GiB outside PyTorch (mem 0.94 vs 0.88)
 #   e216_rsbf16     gradient reduce-scatter in bf16 (SPEED ONLY: production keeps fp32, user
-#                   decision; MoonEP's wgrad still accumulates into fp32 main grads)
+#                   decision) -> refused: "MoonEP experts need fp32 main grads" (the bf16 comm dtype
+#                   makes the FSDP main-grad buffers bf16)
 #   e216_nooffload  RECOMPUTE_OFFLOAD=0: recompute-chunk inputs stay on the GPU (PCIe contention)
 #                   -> out of GPU memory in step 1 (2026-10-30): the offload is needed at mbs 4
 #   e216_nodb       no double buffer + 2e9-element communication unit: deeper all-gather prefetch
