@@ -1,0 +1,60 @@
+# @package _global_
+# How large can the ambitious main run be at 128 nodes while staying above ~4,500 tok/s/GPU?
+# (user 2026-10-30: maximize the model size -- experts can be offloaded at inference -- on the main
+# run's 128 nodes.) The main run's recipe: LDM, the bounded post-act norm (pab), FP8 all-gather of
+# the expert weights (fsdp_fp8_param_gather: experts), Megatron-FSDP + MoonEP EP 4, mbs 4,
+# gbs 4096 x 16k (2 micro-batches per step at 128 nodes); 12 steps, no saves
+# (hybrid_size64_mn5 / hybrid_ldm_speed_mn5).
+#
+# Runs in the p132 host's 128 nodes while the conservative run is preempted (user decision);
+# priority 60 > the conservative run's 0, so these run first and q35 resumes after.
+#
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_size128_mn5 \
+#       "backend/megatron=[data_flag_decon_v1_mn5]"     (v1: the size64 recipe's warm index)
+defaults:
+  - hybrid_size64_mn5
+  - _self_
+
+aux:
+  suite: size128
+  arm: e216
+  nodes: 128
+
+backend:
+  env:
+    MEM_BREAKDOWN: "1"
+  megatron:
+    fsdp_fp8_param_gather: experts
+    moe_expert_post_act_norm: true
+    mlp_post_act_norm: true
+    post_act_norm_floor: 1.0
+
+job:
+  metadata:
+    pool_singleton: null
+    pool_priority: 60
+  est_step_time_s: 35.0
+  # speed tests: no restart loop
+  log_events: []
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # the main run as configured (51B-A2.9B-E40B)
+        - aux.arm: e216
+          backend.megatron.num_experts: 216
+        - aux.arm: e288
+          backend.megatron.num_experts: 288
+        - aux.arm: e320
+          backend.megatron.num_experts: 320
+        - aux.arm: e360_cap80
+          backend.megatron.num_experts: 360
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+        # Engram 40B -> 80B on top of 320 experts (cheap in speed: +0.5 s / step per 20B at 64 n)
+        - aux.arm: e320_eng80
+          backend.megatron.num_experts: 320
+          backend.megatron.engram_table_size: 38960768
