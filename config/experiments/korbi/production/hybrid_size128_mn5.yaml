@@ -72,3 +72,24 @@ sweep:
           slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
           backend.env.NCCL_MIN_NCHANNELS: "8"
           backend.env.NCCL_NCHANNELS_PER_PEER: "8"
+        # the voted size (user 2026-10-30): 360 experts + Engram 80B + 16 NCCL channels, top of the
+        # queue; estimate: ~45 GiB PyTorch peak (cap 0.80 = 51.2) + ~15.6 GiB outside PyTorch with 16
+        # channels -- tight; the 8-channel variant right behind it as the fallback
+        - aux.arm: e360_cap80_eng80_nccl16
+          backend.megatron.num_experts: 360
+          backend.megatron.engram_table_size: 38960768
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          slurm.env.NCCL_MIN_NCHANNELS: "16"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "16"
+          backend.env.NCCL_MIN_NCHANNELS: "16"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "16"
+          job.metadata.pool_priority: 70
+        - aux.arm: e360_cap80_eng80_nccl8
+          backend.megatron.num_experts: 360
+          backend.megatron.engram_table_size: 38960768
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+          slurm.env.NCCL_MIN_NCHANNELS: "8"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
+          backend.env.NCCL_MIN_NCHANNELS: "8"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "8"
+          job.metadata.pool_priority: 69
