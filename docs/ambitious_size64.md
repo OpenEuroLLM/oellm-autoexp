@@ -85,3 +85,48 @@ Restart on e216 (51B-A2.9B-E40B) + the bounded post-act norm.
 - Bigger models buy little at 43x routed sparsity: s1 32x -> 64x was -0.008 nats. That is eaten by
   the lost tokens.
 - Use Megatron >= 570195e7c so the LDM metrics are logged.
+
+## Where the per-expert cost goes (profiles, 2026-10-30)
+
+Setup:
+- Torch profiles of step 8, rank 0, at 64 nodes (`hybrid_size64_prof_mn5.yaml`, v1 data, 12 steps).
+- Exposed communication from `scripts/korbi/ep_speed/trace_breakdown.py`. It counted each step twice
+  before 2026-10-30, which halved every per-step number.
+
+| per step | e216 | e384 (cap 0.80) | delta |
+|---|---|---|---|
+| step window | 58.5 s | 69.2 s | +10.8 s |
+| compute busy | 46.2 s (79 %) | 48.9 s (71 %) | +2.7 s |
+| FSDP collectives, kernel time | 26.8 s | 41.0 s | +14.2 s |
+| FSDP collectives, exposed | 7.0 s | 16.6 s | **+9.6 s** |
+| AllGather exposed / fp32 ReduceScatter exposed (each alone, offload memcpys not counted as compute) | 6.9 / 7.6 s | 16.8 / 12.8 s | +9.9 / +5.2 s |
+| MoonEP exposed | 2.6 s | 2.9 s | +0.3 s |
+
+- ~90 % of the extra step time is exposed FSDP communication. The expert gathers in particular
+  don't hide behind compute.
+- The network is busy 41 of 69 s at ~15.5 GB/s per GPU (~62 % of the NIC line rate).
+- The ideal step (full overlap) would be ~49 s.
+- Prefetch reaches one unit ahead (`fsdp_double_buffer`).
+- 9.8 s of the exposed time coincides with the activation-offload memcpys (PCIe shared with the
+  NICs).
+- At 32 nodes / 216 experts (`ldm_prof/ldm_m4`) the same picture is milder: 86 % compute busy, 8.1 s
+  FSDP exposed.
+
+## Levers tried (`hybrid_comm64_mn5.yaml`, 216 experts, 64 nodes, same-day reference)
+
+| arm | tok/s/GPU | result |
+|---|---|---|
+| e216 (reference) | 5,183 | mem 0.88 |
+| e216_nccl16 (16 NCCL channels instead of the forced 4) | **5,302 (+2.3 %)** | +4 GiB outside PyTorch (mem 0.94) |
+| e216_nooffload (`RECOMPUTE_OFFLOAD=0`) | - | out of GPU memory: the offload is needed at mbs 4 |
+| e216_nodb (no double buffer, 2e9 communication unit) | - | out of memory in NCCL's allocation |
+| e216_nodb_cap80 (the same with the allocator cap) | 4,550 (-12 %) | 47.6 GiB allocated, allocator thrash at the cap |
+| e216_rsbf16 (bf16 gradient reduce-scatter, speed only) | - | refused: "MoonEP experts need fp32 main grads" |
+
+Conclusions:
+- Only the NCCL channel count helps, and it costs memory. At 384 experts with the cap (mem
+  0.96-0.98) there is no room for +4 GiB; 8 channels would be the compromise to test.
+- The exposed traffic is structural: per-micro-batch ZeRO-3 gathers / reduce-scatters of all local
+  experts.
+- Multi-node EP does not reduce it at our ~262k tokens per GPU per step: token traffic outgrows the
+  saved weight traffic (traffic table in the 2026-10-29 analysis).
