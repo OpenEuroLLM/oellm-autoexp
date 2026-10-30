@@ -1,0 +1,42 @@
+# @package _global_
+# FP8 all-gather of the expert weights at 64 nodes (Megatron 839f9235f, fsdp_fp8_param_gather:
+# E4M3 with one fp32 scale per 128 elements, ~1.03 instead of 2 bytes per element; GEMMs stay
+# bf16). Profiles (docs/ambitious_size64.md): at 384 experts the expert AllGather is the largest
+# exposed communication (~17 s per step); the gathers are about half of the FSDP traffic.
+#
+# Arms (production recipe, 12 steps, v1 data pinned at enqueue for the warm index):
+#   e216, e216_fp8                 production size, without / with fsdp_fp8_param_gather=experts
+#   e384_cap80, e384_cap80_fp8     the large arm (allocator cap 0.80), without / with
+#
+#   ... --config-name experiments/korbi/production/hybrid_fp8ag64_mn5 "backend/megatron=[data_flag_decon_v1_mn5]"
+defaults:
+  - hybrid_size64_mn5
+  - _self_
+
+aux:
+  suite: fp8ag64
+  arm: e216
+
+backend:
+  env:
+    MEM_BREAKDOWN: "1"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: e216
+          backend.megatron.num_experts: 216
+        - aux.arm: e216_fp8
+          backend.megatron.num_experts: 216
+          backend.megatron.fsdp_fp8_param_gather: experts
+        - aux.arm: e384_cap80
+          backend.megatron.num_experts: 384
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+        - aux.arm: e384_cap80_fp8
+          backend.megatron.num_experts: 384
+          backend.megatron.fsdp_fp8_param_gather: experts
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
