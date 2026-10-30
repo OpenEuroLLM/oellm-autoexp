@@ -888,7 +888,10 @@ def arms5e(size: str):
     grid = {"s1": [(128, "eng11", {}), (116, "eng20", {}), (96, "eng34", {}),
                    (116, "eng20_lean", ENGRAM_LEAN),
                    (116, "eng20_lrx2p5", {B + "engram_lr_mult": 2.5})],
-            "s2": [(116, "eng20", {})]}[size]
+            "s2": [(116, "eng20", {})],
+            # s3 (user 2026-10-30): the shares above the s1 sweep's 34 % -- production's E40B is
+            # ~45 % -- on round 5's 4-node s3 layout (EP 16: expert counts divisible by 16)
+            "s3": [(80, "eng45", {}), (64, "eng57", {}), (96, "eng34", {})]}[size]
     out = []
     for experts, tag, extra in grid:
         kv, table, share = engram_arm(size, experts, **extra)
@@ -897,6 +900,8 @@ def arms5e(size: str):
         out.append((f"h5_moe_{tag}", f"{experts} experts + Engram {table / 1e6:.0f}M "
                     f"({share:.0%} of the inactive expert parameters){note.get(tag, '')}",
                     {**h5, **kv}))
+    if size == "s3":  # the baseline again on today's code (pairing check vs screen5_s3/h5_moe)
+        out.insert(0, ("h5_moe", "h5_moe (144 experts, no Engram), rerun", h5))
     return out
 
 
@@ -2411,7 +2416,8 @@ def write5():
                                         for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
-            for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
+            for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))] + [
+            ("s3", "screen5e", arms5e("s3"))]:
         hidden, blocks, heads, ffn, lr = R4_SIZES[size]
         lines = [HEADER.format(
             title="Round 5: the architecture decision on the production data setting (flag, 8k)",
