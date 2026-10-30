@@ -224,3 +224,48 @@ def test_switching_preflight_on_in_a_running_pool_keeps_the_busy_host(pool):  # 
     assert pool.run_state(second).started["job"] == pool.run_state(first).started["job"]
     assert "had runs before the node check" in pool.monitor_log.read_text()
     assert not _host_exit(pool)
+
+
+def _held_host_survives_a_dead_monitor(pool, *create, hold_by_ctl: bool):  # noqa: F811
+    pool.create_pool(
+        *FAST, "job.pool_host.idle_exit_s=3600", "job.pool_host.monitor_dead_exit_s=4", *create
+    )
+    pool.enqueue("a", "aux.iters=5", "aux.tick=0.1")
+    pool.start_monitor()
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(rid).status == "COMPLETED", 60, "the run")
+    if hold_by_ctl:
+        pool.ctl("hold", "host001")
+    pool.monitor.kill()  # no clean shutdown: the supervisor's dead-man switch is armed
+    pool.monitor = None
+    time.sleep(15)  # monitor_dead_exit_s is 4: without the hold it is gone by now
+    assert pool.fake_jobs()[0]["state"] == "RUNNING", pool.debug()
+    assert not (pool.layout.host_dir("host001") / "exited").exists()
+    log = pool.layout.host_dir("host001").parent.parent / f"slurm-{pool.fake_jobs()[0]['id']}.log"
+    assert "held: idle and no monitor tick" in log.read_text(), log.read_text()[-2000:]
+
+
+def test_a_held_host_survives_a_dead_monitor(pool):  # noqa: F811
+    """pool_ctl hold: an allocation with no runs stays even while the monitor is away."""
+    _held_host_survives_a_dead_monitor(pool, hold_by_ctl=True)
+
+
+def test_hold_hosts_survives_a_dead_monitor(pool):  # noqa: F811
+    _held_host_survives_a_dead_monitor(pool, "job.pool_host.hold_hosts=true", hold_by_ctl=False)
+
+
+def test_a_held_queued_host_is_not_cancelled_when_the_work_is_gone(pool):  # noqa: F811
+    """keep_pending 1 queues a successor while there is work; when the work is done the
+    successor is cancelled -- unless it is held."""
+    pool.create_pool(*FAST, "job.pool_host.keep_pending=1")
+    pool.enqueue("a", "aux.iters=20", "aux.tick=0.2")
+    pool.start_monitor(hold_new_jobs=True)
+    jobs = pool.wait_for(lambda: len(pool.fake_jobs()) >= 2 and pool.fake_jobs(), 30, "two hosts")
+    first, successor = jobs[0]["id"], jobs[1]["id"]
+    pool.ctl("hold", "host002")
+    pool.release(first)
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(rid).status == "COMPLETED", 90, "the run")
+    time.sleep(10)  # several ticks with no work
+    state = next(j for j in pool.fake_jobs() if j["id"] == successor)["state"]
+    assert state == "PENDING", (state, pool.debug())

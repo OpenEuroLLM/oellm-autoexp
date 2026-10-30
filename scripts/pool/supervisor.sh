@@ -47,6 +47,7 @@ load_cfg() {
   POOL_POLL_S=10 POOL_IDLE_EXIT_S=1200 POOL_MONITOR_DEAD_EXIT_S=1800
   POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900 POOL_MAX_RUNS_PER_HOST=1
   POOL_PREFLIGHT_GPUS=0 POOL_PREFLIGHT_GPU_CMD='nvidia-smi -L 2>/dev/null | grep -c "^GPU"'
+  POOL_HOLD_HOSTS=0
   POOL_RANK_PATTERN='^[^ ]*python[^ ]*( +-[A-Za-z]+)* +(-m +torch\.distributed\.run|[^ ]*/(torchrun|ft_launcher))( |$)'
   # shellcheck disable=SC1091
   [ -f "$POOL/pool.env" ] && . "$POOL/pool.env"
@@ -435,7 +436,18 @@ while true; do
   t=$(now)
   mon=$(stat -c %Y "$POOL/monitor.alive" 2>/dev/null || echo "$START_TS")
   if [ $((t - mon)) -ge "$POOL_MONITOR_DEAD_EXIT_S" ] && [ $((t - idle_since)) -ge "$POOL_POLL_S" ]; then
-    exit_host "idle for $((t - idle_since))s and no monitor tick for $((t - mon))s"
+    # a HELD host (pool_ctl hold / hold_hosts) stays allocated without work, also while the
+    # monitor is away (a login node kills monitors; the watchdog brings them back)
+    if [ -e "$H/control/hold" ] || [ "$POOL_HOLD_HOSTS" = 1 ]; then
+      if [ -z "${hold_logged:-}" ]; then
+        log "held: idle and no monitor tick for $((t - mon))s, staying allocated"
+        hold_logged=1
+      fi
+    else
+      exit_host "idle for $((t - idle_since))s and no monitor tick for $((t - mon))s"
+    fi
+  else
+    hold_logged=
   fi
   sleep "$POOL_POLL_S" &
   wait $!

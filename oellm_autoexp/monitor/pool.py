@@ -375,6 +375,7 @@ class PoolLayout:
                 "POOL_MAX_RUNS_PER_HOST": max(1, int(cfg.max_runs_per_host)),
                 "POOL_PREFLIGHT_GPUS": max(0, int(cfg.preflight_gpus_per_node)),
                 "POOL_PREFLIGHT_GPU_CMD": cfg.preflight_gpu_cmd,
+                "POOL_HOLD_HOSTS": int(bool(cfg.hold_hosts)),
             },
         )
 
@@ -1394,14 +1395,17 @@ class PoolManager:
         create_account: str | None = None
         if accounts:
             missing, create_account = self._account_targets(
-                loop, cfg, accounts, current, running, desired, now
+                loop, cfg, accounts, current, running, desired, now, held
             )
             current = [h for h in current if not h.retiring]
         else:
             # hosts still waiting in the queue beyond what is needed (keep_pending
             # lowered, work gone): cancel the newest; an up host is left to idle_exit
+            # (a held one is never cancelled: it counts, and the newest unheld go first)
             queued_hosts = sorted(
-                (h for h in current if not h.info), key=lambda h: h.record.job_id, reverse=True
+                (h for h in current if not h.info and h.hid not in held),
+                key=lambda h: h.record.job_id,
+                reverse=True,
             )
             for host in queued_hosts[: max(0, len(current) - desired)]:
                 self._cancel_host_record(loop, host)
@@ -1463,6 +1467,7 @@ class PoolManager:
         running: list[HostView],
         desired: int,
         now: float,
+        held: set[str] = frozenset(),
     ) -> tuple[int, str | None]:
         """host_accounts: the queued hosts wanted per account, surplus ones cancelled
         (newest first). Returns (hosts missing, the account to create the next one in).
@@ -1489,7 +1494,8 @@ class PoolManager:
                 key=lambda h: h.record.job_id,
                 reverse=True,
             )
-            for host in queued[: max(0, len(queued) - target)]:
+            surplus = [h for h in queued if h.hid not in held]  # a held host is never cancelled
+            for host in surplus[: max(0, len(queued) - target)]:
                 self._cancel_host_record(loop, host)
                 host.retiring = True
             gap = target - min(len(queued), target)
@@ -1501,6 +1507,7 @@ class PoolManager:
             if (
                 not host.info
                 and not host.retiring
+                and host.hid not in held
                 and host.account
                 and host.account not in accounts
             ):

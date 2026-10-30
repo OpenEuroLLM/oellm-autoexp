@@ -211,8 +211,16 @@ released instead and the runs go back to the old one. Monitor log: `handover hos
 verified` or `... FAILED`.
 
 **Hold an allocation (`hold_hosts: true`, or `pool_ctl <pool> hold <host>` / `unhold`).** A held
-host is never released by the monitor: not when idle, not for queued work that does not fit, not
-after a handover or a failed node check. Only its wall clock or `pool_ctl exit-host` ends it. Use
+host stays allocated with no runs at all.
+* The monitor never releases it: not when idle, not for queued work that does not fit, not after
+  a handover or a failed node check.
+* Its supervisor does not release itself while the monitor is away. The dead-man switch
+  (`monitor_dead_exit_s`) is off for it, and the host log says
+  `held: idle and no monitor tick for N s, staying allocated`.
+* A held host still waiting in the queue is never cancelled as surplus.
+* Only its wall clock, `pool_ctl exit-host` or `pool_ctl close` ends it.
+
+The supervisor part needs a host started with the supervisor of 2026-10-30 or later. Use
 it for allocations that are hard to get back, such as adopted jobs of another account (cns144
 47998967 was released with 15 h left, 2026-10-30).
 
