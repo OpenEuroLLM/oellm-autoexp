@@ -65,6 +65,20 @@ job:
     pool_singleton: null
     pool_priority: 45
   est_step_time_s: 10.0
+  # a test: no production restart loop (the bf16 arm's deterministic crash restarted 6 times,
+  # 2026-10-30) -- as hybrid_ldm_speed_mn5: one retry for a lost node, else stop
+  log_events: []
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+      action: {class_name: RestartAction, reason: "lost its node -- one retry", exclude_file: "${slurm.exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node again"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (test: no retry)"}
 
 slurm:
   sbatch:
