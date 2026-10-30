@@ -1845,6 +1845,26 @@ def arms5stab(size: str):
     return [(n, arms[n][0], {**base, **arms[n][1]}) for n in keep]
 
 
+def arms5v2(size: str):
+    """The production data (user 2026-10-30): flag-decon-v2-agenttok with tokenizer-256k-agent
+    (config/backend/megatron/data_flag_decon_v2_agenttok_mn5.yaml), every data key but the cache
+    path. New references for screens on it (the rematch ldm) plus pab, the expert stabilization
+    chosen on the old data (screen5stab: s3 -0.005, s2 +0.000), confirmed on the restart's data.
+    Same layout as screen5stab (s2: 2 nodes, s3: 8)."""
+    import yaml
+    path = Path(__file__).resolve().parents[3] / "config/backend/megatron/data_flag_decon_v2_agenttok_mn5.yaml"
+    # the screens' loader sizing stays (6 workers / prefetch 3: 16 / 8 is sized for >= 64 nodes)
+    keep = {"data_cache_path", "num_workers", "dataloader_prefetch_factor"}
+    data = {B + k: v for k, v in yaml.safe_load(path.read_text()).items() if k not in keep}
+    data[B + "data_args_path"] = data[B + "data_args_path"].replace(
+        "${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}",
+        "/gpfs/projects/ehpc533/users/korbip/hybrid_v019")
+    stab = dict((n, kv) for n, _, kv in arms5stab(size))
+    base = dict((n, kv) for n, _, kv in arms5resgqa(size))["ldm"]
+    return [("ldm", "LDM x1 (the rematch ldm) on the production data", {**base, **data}),
+            ("ldm_pab", "+ bounded post-act norm (pab) on the production data", {**stab["ldm_pab"], **data})]
+
+
 def arms5qb(size: str):
     """Quantile balancing (user 2026-10-29) in place of the expert bias + aux loss 1e-4, on the
     production setting (the rematch's ldm: LDM x1, classical Muown) and its layout / batches
@@ -2224,6 +2244,7 @@ def write5():
             ("s1", "screen5ngptopt", arms5ngptopt("s1")),
             *[(z, "screen5stab", arms5stab(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5qb", arms5qb(z)) for z in ("s1", "s3")],
+            *[(z, "screen5v2", arms5v2(z)) for z in ("s2", "s3")],
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
