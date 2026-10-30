@@ -477,6 +477,17 @@ class MegatronConfig(ConfigInterface):
     # ShortConv): Y = SiLU(conv(RMSNorm(v~))) + v~.
     engram_conv_prenorm: bool = False
 
+    # A random +-1 pattern per (n-gram, lookup) multiplies each retrieved row, from a second,
+    # independent hash into a fixed sign table (the count-sketch trick of modded-nanogpt PR
+    # 360): n-grams that share a table row usually carry different patterns, so their
+    # contributions to the row (and its gradient) cancel in expectation and each reads its own
+    # value back.
+    engram_sign_hash: bool = False
+
+    # Rows of the fixed +-1 sign table of ``engram_sign_hash`` (each ``engram_embed_dim``
+    # wide; not trained, not checkpointed: a function of a fixed seed).
+    engram_sign_table_size: int = 8192
+
     # Hash multipliers of their own for every Engram layer (the reference code seeds them per
     # layer), so two Engram layers do not share their n-gram collisions. False: one set of
     # multipliers for all Engram layers.

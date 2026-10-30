@@ -340,6 +340,8 @@ def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
         mlp_layers = [True] * len(mixer_types)
     engram = {}
     if "engram" in mixer_types:
+        if mcfg.get("engram_sign_hash"):  # Megatron engram_sign_hash (not ported to HF yet)
+            raise NotImplementedError("HF export of engram_sign_hash models is not implemented")
         sizes, mult = _engram_geometry(mcfg)
         engram = {
             "engram_ngram_orders": mcfg.get("engram_ngram_orders")

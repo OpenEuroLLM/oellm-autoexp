@@ -78,6 +78,8 @@ def hf_config(m: dict, vocab: int) -> dict:
     heads = m["num_attention_heads"]
     types = [_KINDS[c] for c in syms]
     engram_layers = [i for i, t in enumerate(types) if t == "engram"]
+    if engram_layers and m.get("engram_sign_hash"):  # Megatron engram_sign_hash: not in HF yet
+        raise NotImplementedError("HF export of engram_sign_hash models is not implemented")
     return {
         "architectures": ["OellmAmbitiousForCausalLM"],
         "model_type": "oellm_ambitious",

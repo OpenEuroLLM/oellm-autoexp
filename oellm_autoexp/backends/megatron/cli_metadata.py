@@ -1942,6 +1942,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "engram_sign_hash": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="A random +-1 pattern per (n-gram, lookup) multiplies each retrieved row, from a second, independent hash into a fixed sign table (the count-sketch trick of modded-nanogpt PR 360): n-grams that share a table row usually carry different patterns, so their contributions to the row (and its gradient) cancel in expectation and each reads its own value back.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "engram_sign_table_size": MegatronArgMetadata(
+        arg_type=int,
+        default=8192,
+        help="Rows of the fixed +-1 sign table of ``engram_sign_hash`` (each ``engram_embed_dim`` wide; not trained, not checkpointed: a function of a fixed seed).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "engram_table_fp32": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -10150,6 +10166,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=4,
+    ),
+    "engram_sign_hash": MegatronActionSpec(
+        option_strings=("--engram-sign-hash",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "engram_sign_table_size": MegatronActionSpec(
+        option_strings=("--engram-sign-table-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=8192,
     ),
     "engram_table_fp32": MegatronActionSpec(
         option_strings=("--no-engram-table-fp32", "--disable-engram-table-fp32"),
