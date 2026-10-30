@@ -16,6 +16,7 @@
 #   e216_rsbf16     gradient reduce-scatter in bf16 (SPEED ONLY: production keeps fp32, user
 #                   decision; MoonEP's wgrad still accumulates into fp32 main grads)
 #   e216_nooffload  RECOMPUTE_OFFLOAD=0: recompute-chunk inputs stay on the GPU (PCIe contention)
+#                   -> out of GPU memory in step 1 (2026-10-30): the offload is needed at mbs 4
 #   e216_nodb       no double buffer + 2e9-element communication unit: deeper all-gather prefetch
 #
 #   enqueue with the size64 data (warm index): ... --config-name experiments/korbi/production/hybrid_comm64_mn5 "backend/megatron=[data_flag_decon_v1_mn5]"
@@ -54,3 +55,9 @@ sweep:
         - aux.arm: e216_nodb
           backend.megatron.fsdp_double_buffer: false
           backend.megatron.suggested_communication_unit_size: 2000000000
+        # 2026-10-30 01:20: e216_nodb ran out of memory in NCCL's cuMemAlloc in step 1 (PyTorch
+        # holding the cache, as e360_eng80): the same with the allocator cap
+        - aux.arm: e216_nodb_cap80
+          backend.megatron.fsdp_double_buffer: false
+          backend.megatron.suggested_communication_unit_size: 2000000000
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
