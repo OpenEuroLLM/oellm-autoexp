@@ -215,6 +215,12 @@ class PoolHostConfig:
     # `pool_ctl hold <host>`, a <host>/control/hold file). For allocations that are hard to get
     # back (adopted cns144 jobs: 47998967 was released with 15 h left, 2026-10-30).
     hold_hosts: bool = False
+    # SINGLETON PREFERENCE (job.metadata.pool_singleton): hosts of these SLURM accounts
+    # ("cns144") are preferred -- a singleton run waiting on such a host supersedes the job's
+    # run on a host of another account at the SAME node count (preempt with a save there; the
+    # run continues here; that host stays, held or idle). One way only: no ping-pong. All pools
+    # of the singleton should list the same accounts.
+    singleton_prefer_accounts: str = ""
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -1282,7 +1288,7 @@ class PoolManager:
                 cap = free + (free_excl if use_excl else 0)
                 if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
                     if singleton and not self._claim_singleton(
-                        layout, singleton, rid, nodes, job_id
+                        layout, singleton, rid, nodes, job_id, self._host_pref(cfg, host)
                     ):
                         continue
                     self._assign(layout, rid, host.hid)
@@ -1551,8 +1557,20 @@ class PoolManager:
             return None
         return res
 
+    @staticmethod
+    def _host_pref(cfg: PoolHostConfig, host: HostView) -> int:
+        """1 if the host's account is one of singleton_prefer_accounts, else 0."""
+        prefer = {a.strip() for a in (cfg.singleton_prefer_accounts or "").split(",") if a.strip()}
+        if not prefer:
+            return 0
+        acc = host.account
+        if not acc:
+            accounts = host_accounts(cfg)
+            acc = accounts[0] if accounts else None
+        return int(bool(acc) and acc in prefer)
+
     def _claim_singleton(
-        self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str
+        self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str, pref: int = 0
     ) -> bool:
         """May run `rid` (`nodes` nodes) of the singleton job `key` start in this pool now?
 
@@ -1560,7 +1578,9 @@ class PoolManager:
         reservation for a larger run), or held by this very run. A holder in ANOTHER pool on
         fewer nodes is superseded -- its run is preempted there (graceful stop with a save, its
         job requeued in that pool) and the key reserved for this run, which starts once the
-        holder's run has ended; on as many or more nodes the holder keeps it.
+        holder's run has ended; on as many or more nodes the holder keeps it -- unless this
+        run's host is PREFERRED (``pref``, singleton_prefer_accounts) and the holder's is not:
+        then on as many nodes it is superseded too.
         Checked and claimed under a mkdir lock (atomic on GPFS), so two monitors never both
         start the job."""
         d = self._singleton_dir(layout, key)
@@ -1580,30 +1600,37 @@ class PoolManager:
             holder = self._singleton_holder(d)
             me = {"pool": str(layout.root), "rid": rid}
             reserved = self._singleton_reservation(d)
+            mine = {**me, "nodes": nodes, "pref": pref, "job_id": job_id}
+
+            def rank(entry: dict) -> tuple[int, int]:
+                return int(entry.get("nodes", 0)), int(entry.get("pref", 0))
+
             if (
                 holder is None
                 and reserved is not None
                 and {k: reserved.get(k) for k in me} != me
-                and int(reserved.get("nodes", 0)) > nodes
+                and rank(reserved) > (nodes, pref)
             ):
-                return False  # the key is promised to a larger run that superseded the holder
+                return False  # the key is promised to a better run that superseded the holder
             if holder is None or {k: holder.get(k) for k in me} == me:
-                _atomic_write(
-                    d / "holder.json",
-                    json.dumps({**me, "nodes": nodes, "job_id": job_id, "ts": time.time()}),
-                )
+                _atomic_write(d / "holder.json", json.dumps({**mine, "ts": time.time()}))
                 return True
-            if holder.get("pool") != str(layout.root) and nodes > int(holder.get("nodes", 0)):
+            hn = int(holder.get("nodes", 0))
+            better = nodes > hn or (nodes == hn and pref > int(holder.get("pref", 0)))
+            if holder.get("pool") != str(layout.root) and better:
                 if not holder.get("superseded"):
                     LOGGER.info(
-                        "[pool %s] singleton %s: superseding run %s in %s (%s nodes) with %s (%d nodes)",
+                        "[pool %s] singleton %s: superseding run %s in %s (%s nodes%s) with %s "
+                        "(%d nodes%s)",
                         layout.root.name,
                         key,
                         holder["rid"],
                         holder["pool"],
                         holder.get("nodes"),
+                        ", preferred host" if holder.get("pref") else "",
                         rid,
                         nodes,
+                        ", preferred host" if pref else "",
                     )
                     # PREEMPT, not cancel: the smaller pool's run saves and its job is requeued
                     # there; the reservation keeps the key for this run, so the requeued run waits.
@@ -1613,10 +1640,7 @@ class PoolManager:
                     _atomic_write(hold_rd / "preempt", f"superseded by {layout.root.name} {rid}\n")
                     holder["superseded"] = time.time()
                     _atomic_write(d / "holder.json", json.dumps(holder))
-                    _atomic_write(
-                        d / "reserved.json",
-                        json.dumps({**me, "nodes": nodes, "job_id": job_id, "ts": time.time()}),
-                    )
+                    _atomic_write(d / "reserved.json", json.dumps({**mine, "ts": time.time()}))
             return False
         finally:
             shutil.rmtree(lock, ignore_errors=True)

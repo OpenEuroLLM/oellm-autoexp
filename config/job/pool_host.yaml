@@ -69,3 +69,6 @@ pool_host:
   handover_verify_timeout_s: 3600
   # hosts stay allocated without work (no idle exit, no retirement); per host: pool_ctl hold
   hold_hosts: false
+  # singleton runs (job.metadata.pool_singleton) move to hosts of these accounts ("cns144") at
+  # the same node count: the waiting copy there supersedes the run on another account's host
+  singleton_prefer_accounts: ""

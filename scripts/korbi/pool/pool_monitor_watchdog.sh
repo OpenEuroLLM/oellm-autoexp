@@ -6,7 +6,7 @@
 # pool_monitor_watchdog_remote.sh, runs it over ssh).
 R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
 POOLS=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
-SNAP=${SNAP:-$R/autoexp_hold}
+SNAP=${SNAP:-$R/autoexp_capture}
 STALE_S=${STALE_S:-300}
 log() { echo "$(date '+%F %T') $*"; }
 running() { # running <session dir>: a monitor_autoexp.py process for it

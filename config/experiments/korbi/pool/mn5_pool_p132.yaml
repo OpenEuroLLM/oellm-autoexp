@@ -18,6 +18,11 @@ job:
   name: mn5_pool_p132
   base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
   pool_host:
+    # CAPTURE (user 2026-10-31): a host that starts is never released by the pool -- not idle,
+    # not without fitting work, not when its monitor is away; a main run's copy queued here takes it
+    hold_hosts: true
+    # main runs move to cns144 hosts at the same node count (singleton preference)
+    singleton_prefer_accounts: cns144
     # node check of every new host before it takes work (user 2026-10-30): GPU count, then the
     # node-health benchmark (oellm_autoexp/node_health); bad nodes excluded, a failing host released
     preflight: true

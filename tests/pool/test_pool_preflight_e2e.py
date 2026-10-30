@@ -8,7 +8,9 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from tests.pool.test_pool_e2e import FAST, _iterations, pool  # noqa: F401  (pool: fixture)
+import json
+
+from tests.pool.test_pool_e2e import FAST, _iterations, _resumed_from, pool  # noqa: F401  (pool: fixture)
 
 GOOD = """[fsdp_bench] group gpu0 (4 ranks, 256 MB): all_gather 12.0 ms (22.2 GB/s), reduce_scatter 11.7 ms (22.8 GB/s)
 [fsdp_bench] group gpu1 (4 ranks, 256 MB): all_gather 11.9 ms (22.3 GB/s), reduce_scatter 11.7 ms (22.8 GB/s)
@@ -269,3 +271,114 @@ def test_a_held_queued_host_is_not_cancelled_when_the_work_is_gone(pool):  # noq
     time.sleep(10)  # several ticks with no work
     state = next(j for j in pool.fake_jobs() if j["id"] == successor)["state"]
     assert state == "PENDING", (state, pool.debug())
+
+
+def _singleton_two_pools(pool, prefer: str):  # noqa: F811
+    """A 1-node singleton running in the default pool; a second pool whose hosts are on account
+    "cnsx" gets a host. Returns (first run, other pool dir, monitor process, running())."""
+    import subprocess
+    import sys
+
+    other = pool.root / "pool_cns"
+    acc = ("job.pool_host.singleton_prefer_accounts=" + prefer,) if prefer else ()
+    pool.create_pool(*FAST, *acc)
+    pool.autoexp(
+        "--no-monitor",
+        "--config-name",
+        "experiments/tests/pool_local_host",
+        *FAST,
+        *acc,
+        "job.name=localpool_cns",
+        f"job.base_output_dir={other}",
+        "++slurm.sbatch.account=cnsx",
+    )
+    single = "+job.metadata.pool_singleton=sjob"
+    pool.enqueue("s", "aux.iters=400", "aux.tick=0.1", "slurm.sbatch.nodes=1", single)
+    pool.autoexp(
+        "--no-monitor",
+        "--pool",
+        str(other),
+        "--config-name",
+        "experiments/tests/pool_local_dummy",
+        "aux.tag=s",
+        "aux.iters=400",
+        "aux.tick=0.1",
+        "slurm.sbatch.nodes=1",
+        "++slurm.sbatch.account=cnsx",
+        single,
+    )
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_s"), 30, "the first pool's run")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 20, 60, "20 iterations")
+    session = json.loads((other / "pool.json").read_text())["session_dir"]
+    mon = subprocess.Popen(
+        [
+            sys.executable,
+            "scripts/monitor_autoexp.py",
+            "--session-dir",
+            session,
+            "--poll-interval",
+            "1",
+            "--force",
+        ],
+        cwd=pool.env["PWD"],
+        env={**pool.env, "FAKESLURM_HOLD": "1"},
+        stdout=open(pool.root / "monitor_cns.out", "a"),
+        stderr=subprocess.STDOUT,
+    )
+    host = pool.wait_for(
+        lambda: [j for j in pool.fake_jobs() if j["name"].startswith("localpool_cns")],
+        30,
+        "the cns pool's host",
+    )[0]
+    pool.release(host["id"])
+
+    def running():
+        out = []
+        for root in (pool.pool_dir, other):
+            for rd in (root / "runs").iterdir() if (root / "runs").exists() else []:
+                if (rd / "started").exists() and not (rd / "rc").exists():
+                    out.append(rd)
+        return out
+
+    return first, other, mon, running
+
+
+def test_a_singleton_moves_to_a_preferred_account_host_at_the_same_node_count(pool):  # noqa: F811
+    """singleton_prefer_accounts=cnsx: the job runs on 1 node in the default pool; when the cns
+    pool (same node count) gets a host, the run moves there (preempted with a save, resumed from
+    it) -- never two runs at once; the first pool's held host stays."""
+    first, other, mon, running = _singleton_two_pools(pool, "cnsx")
+    try:
+        deadline, moved = time.time() + 120, None
+        while time.time() < deadline and moved is None:
+            assert len(running()) <= 1, f"two runs of the singleton at once: {running()}"
+            for rd in (other / "runs").iterdir() if (other / "runs").exists() else []:
+                if (rd / "started").exists() and "dummy_s" in (rd / "run.json").read_text():
+                    moved = rd
+            time.sleep(0.2)
+        assert moved, "the job never moved to the preferred host"
+        assert pool.run_state(first).status == "PREEMPTED"
+        saved = max(_iterations(pool.run_log(first)))
+        log = Path(json.loads((moved / "run.json").read_text())["log"])
+        pool.wait_for(
+            lambda: log.exists() and _resumed_from(log.read_text()) is not None, 60, "resume"
+        )
+        assert _resumed_from(log.read_text()) == saved
+        for _ in range(20):  # it stays there: no move back
+            assert len(running()) <= 1 and (not running() or running()[0] == moved), running()
+            time.sleep(0.5)
+    finally:
+        mon.terminate()
+        mon.wait(timeout=20)
+
+
+def test_without_a_preference_a_singleton_stays_at_the_same_node_count(pool):  # noqa: F811
+    first, other, mon, running = _singleton_two_pools(pool, "")
+    try:
+        time.sleep(15)
+        assert pool.run_state(first).status == "RUNNING"
+        assert running() == [pool.layout.run_dir(first)], running()
+    finally:
+        mon.terminate()
+        mon.wait(timeout=20)

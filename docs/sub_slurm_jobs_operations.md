@@ -224,6 +224,23 @@ The supervisor part needs a host started with the supervisor of 2026-10-30 or la
 it for allocations that are hard to get back, such as adopted jobs of another account (cns144
 47998967 was released with 15 h left, 2026-10-30).
 
+**Capture every large host for the main runs (MareNostrum 5, 2026-10-31).** The cns144 128-node
+host was lost on 2026-10-30 because no work for it was queued in its pool. The setup now:
+1. `hold_hosts: true` in every large pool. A host that starts is never released.
+2. A copy of each main run (`job.metadata.pool_singleton`) is queued in EVERY large pool:
+   ambitious at `pool_priority` 100, conservative at 90. Each copy is enqueued from the
+   snapshot of its running run, with the pool's account. The singleton guard lets one copy
+   run. Whichever host starts first takes the waiting run. When a host ends, a copy
+   continues on any other live host, from the same checkpoint directory.
+3. `singleton_prefer_accounts: cns144`: a copy waiting on a cns144 host supersedes the run on
+   an ehpc533 host at the same node count. The ehpc533 run saves and stops, and the job
+   continues on the cns144 host. It only goes one way, so there is no ping-pong. The ehpc533
+   host stays (held). Release it with `pool_ctl <pool> unhold <host>` +
+   `exit-host <host>` when it is not needed.
+
+`pool_ctl cancel <job>` cancels a copy in ONE pool. To stop a main run for good, cancel it in
+every pool.
+
 ## 4. What is handled automatically
 
 | Event | What happens | Where you see it |
