@@ -230,6 +230,42 @@ normal spike rate. Monitor `moe/routed_expert_output_rms_max`, not the grad norm
 - [ ] The restart runs on flag-decon-v2-agenttok, while `pab` was validated on the old data. The mechanism (a bound on the activation
       size) is data-independent; `screen5v2_s{2,3}` (§8) confirm it on the new data.
 
+### 6.1 The v2 main run: automatic stop and fallback (2026-10-31)
+
+`ambitious_v2_128n` has 360 experts, Engram [2, 3, 4] + sign hash (80B), QB EMA 0.9, pab and the
+fp8 expert gather. It takes p132's 128 nodes from the conservative q35 run, which is preempted
+and requeued at priority 90 (v2: 100; the size128 arms: 60 / 70).
+
+**The watchdog.** `scripts/korbi/campaign/main_run_watchdog.py` runs every 10 min in a loop on the
+login node (log `$R/monitor_logs/v2_watchdog.log`). From step 200 it trips on:
+- the expert output: `routed_expert_output_rms_max` > 0.5 at 2 consecutive readings;
+- the grad norm: the median of the last 50 steps > max(1, 4 × the median of steps 100–300);
+- the loss: a NaN, or a jump of 0.2 over the previous 100 steps.
+
+On a trip it cancels the job in every pool where it is enqueued, and q35 takes the nodes back.
+
+It was validated on the reproducer:
+- `base` trips at step 430, before its loss shows anything;
+- `pab` stays ok through step 900 (largest expert output 0.073, grad norm 0.21).
+
+**Why QB needs the bound.** Plain QB (EMA 0, no pab) blew up in the reproducer from step 850
+(grad norm 0.68 → 7.7 → 12.8):
+- it showed the same single-expert runaway as `base` (largest expert output 4.95 at step 800);
+- load balance was fine throughout (entropy ≥ 0.988);
+- but its router was 6× sharper (mean max probability 0.18 vs 0.03, score entropy 0.62 vs 0.96),
+  so the runaway output reached the residual stream with a large weight.
+
+`pab` caps that path. EMA 0.9 is not a safeguard, because bias jitter was not the cause. No aux
+loss is used with QB (user decision: a batch-1 inference target).
+
+**Watch by hand:**
+- the first ~10 steps, for speed and memory (reference e360 + E80B [2, 3]: 28.9 s/step, memory
+  0.956);
+- the expert and router metrics through step ~1000.
+
+**Fallback if it trips:** pab with the expert bias + aux-loss balancing, which is the combination
+validated in the reproducer, as a fresh start.
+
 ## 7. Implementation
 
 All in Megatron, branch oellm/v0.19-hybrid.
