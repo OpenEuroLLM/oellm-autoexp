@@ -1,5 +1,9 @@
 # @package _global_
-# The NEW ambitious main run (2026-10-30): LDM residual + pab, the post-activation bound in every
+# The NEW ambitious main run, v2 (user 2026-10-30: "start it under a v2 version and if it remains
+# stable keep it"): quantile balancing at EMA 0.9 (hybrid_main_mn5's default since c09d8fd8; plain QB
+# at EMA 0 blew up in ambrepro) + pab. Its first enqueue (p129.0243, rendered with QB at EMA 0) was
+# replaced before it started.
+# LDM residual + pab, the post-activation bound in every
 # MLP (docs/ambitious_stabilization.md: the earlier run's single-expert spectral collapse from step
 # ~400 on; pab keeps the largest expert output flat, s3 -0.005, ~-0.1 % speed). A FRESH start in
 # its own directory (new arm): the old run's checkpoints (36 / 500 / 1038) carry, or lead into, the
@@ -13,7 +17,7 @@ defaults:
   - _self_
 
 aux:
-  arm: ambitious_e216_eng40_pab
+  arm: ambitious_e216_eng40_v2
 
 backend:
   megatron:
@@ -23,7 +27,7 @@ backend:
     post_act_norm_floor: 1.0
 
 job:
-  name: ambitious_pab_128n
+  name: ambitious_v2_128n
 
 slurm:
   sbatch:
