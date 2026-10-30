@@ -33,6 +33,11 @@ backend:
     # schedule is constant, so train_iters only fixes the data order (equal in every arm)
     micro_batch_size: 2
     exit_interval: 900
+    # the main run's data, pinned: hybrid_main_mn5 switched to flag-decon-v2-agenttok (another
+    # tokenizer, another data order) on 2026-10-29; ambrepro_sc3 (2026-10-29 22:05) inherited it
+    # and was unpaired with base (per-step loss correlation 0.01 vs 0.999 for every other arm)
+    data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v1_datamix_mn5.txt
+    tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
     # the main run's balancing, pinned: hybrid_main_mn5 switched to quantile balancing on
     # 2026-10-29, and every arm here must stay comparable with base (the qb arms override it)
     moe_router_load_balancing_type: aux_loss
