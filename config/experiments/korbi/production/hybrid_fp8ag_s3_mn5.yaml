@@ -1,0 +1,84 @@
+# @package _global_
+# FP8 expert all-gather (fsdp_fp8_param_gather, Megatron 839f9235f) in a real model: the production
+# stack (Megatron-FSDP ZeRO-3 + MoonEP EP 4, LDM, CKDA 7:1 attention first, muown_classical, the
+# bounded post-act norm) at the campaign's s3 size, on 4 nodes (the spare nodes of the p132
+# allocation, user 2026-10-30).
+#
+# - EP 4 on 16 GPUs leaves expert data parallelism 4 across the 4 nodes, so the expert weights
+#   are all-gathered over the network every micro-batch, as in production.
+# - Paired arms (same seed, init, data order): bf16 gather vs FP8 gather of the expert buckets.
+#   1000 steps, validation every 250, no checkpoints. Loss and step time compared.
+# - s3 size: hidden 1280, 24 blocks, 144 experts x 896 top-3 + shared 896 (screen5stab_s3's ldm_pan),
+#   seq 8192, gbs 64 (mbs 1: 4 micro-batches per step), lr 1.8e-3 constant.
+#
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_fp8ag_s3_mn5 "backend/megatron=[data_flag_decon_v1_mn5]"
+defaults:
+  - hybrid_main_mn5
+  - _self_
+
+aux:
+  suite: fp8ag_s3
+  arm: bf16
+  nodes: 4
+  ep: 4
+  gbs: 64
+  seq: 8192
+  topk: 3
+  expert_ffn: 896
+  pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE"
+  only: []
+
+backend:
+  megatron:
+    hidden_size: 1280
+    num_attention_heads: 10
+    num_query_groups: 2
+    kv_channels: 128
+    ffn_hidden_size: 3584
+    linear_num_key_heads: 10
+    linear_num_value_heads: 10
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    num_experts: 144
+    moe_shared_expert_intermediate_size: 896
+    micro_batch_size: 1
+    moe_expert_post_act_norm: true
+    mlp_post_act_norm: true
+    post_act_norm_floor: 1.0
+    lr: 1.8e-3
+    min_lr: 1.8e-3
+    train_iters: 1000
+    exit_interval: 1000
+    eval_interval: 250
+    eval_iters: 10
+    log_interval: 1
+    # a test: no checkpoints
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  array_group: null
+  metadata:
+    pool_singleton: null
+    pool_priority: 45
+  est_step_time_s: 10.0
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_xehpc
+    time: "06:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: bf16
+        - aux.arm: fp8
+          backend.megatron.fsdp_fp8_param_gather: experts
