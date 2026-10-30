@@ -39,6 +39,9 @@ backend:
     num_attention_heads: 4
     num_query_groups: 2
     num_experts: 4
+    # set directly: q35_conservative_mn5 has moe_router_topk: 8 as a literal (aux.topk does not reach it);
+    # skip_train still runs the evaluation, where top-k > num_experts fails (job 48291962, after the build)
+    moe_router_topk: 2
     # --- never the main run's checkpoints ---
     load: null
     save: null
