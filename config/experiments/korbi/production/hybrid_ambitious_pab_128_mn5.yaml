@@ -1,0 +1,34 @@
+# @package _global_
+# The NEW ambitious main run (2026-10-30): LDM residual + pab, the post-activation bound in every
+# MLP (docs/ambitious_stabilization.md: the earlier run's single-expert spectral collapse from step
+# ~400 on; pab keeps the largest expert output flat, s3 -0.005, ~-0.1 % speed). A FRESH start in
+# its own directory (new arm): the old run's checkpoints (36 / 500 / 1038) carry, or lead into, the
+# collapsed experts. 128 nodes in a 129-node ehpc533 host (one spare); data flag-decon-v2-agenttok
+# (the hybrid_main_mn5 default). The singleton guard keeps one ambitious main run across pools.
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p129 \
+#       --config-name experiments/korbi/production/hybrid_ambitious_pab_128_mn5 --yes
+defaults:
+  - hybrid_ambitious_128_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e216_eng40_pab
+
+backend:
+  megatron:
+    # pab (docs/ambitious_stabilization.md, section 6): nothing else changes
+    moe_expert_post_act_norm: true
+    mlp_post_act_norm: true
+    post_act_norm_floor: 1.0
+
+job:
+  name: ambitious_pab_128n
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_xehpc
+  env:
+    # a fresh run: no predecessor job to wait for
+    WAIT_FOR_JOB_NAME: ""
