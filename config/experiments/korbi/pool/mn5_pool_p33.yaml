@@ -19,6 +19,9 @@ job:
   name: mn5_pool_p33
   base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
   pool_host:
+    preflight: true
+    preflight_gpus_per_node: 4
+    preflight_check: experiments/korbi/pool/node_health_mn5
     max_hosts_running: 1
     keep_pending: 1
     min_hosts: 1
