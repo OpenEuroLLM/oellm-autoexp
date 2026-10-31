@@ -57,6 +57,10 @@ backend:
     ENGRAM_STEP_GROUP: "1"
   megatron:
     micro_batch_size: 1
+    # async rolling checkpoint every 100 steps (user 2026-10-31; inherited 125): ~52 min at 30.8 s
+    # per step. A divisor of 500 and of save_interval 1000, so the equal-token eval marks at
+    # 500 * 2^n still land on complete checkpoints
+    non_persistent_save_interval: 100
     # pab (docs/ambitious_stabilization.md, section 6): nothing else changes
     moe_expert_post_act_norm: true
     mlp_post_act_norm: true
