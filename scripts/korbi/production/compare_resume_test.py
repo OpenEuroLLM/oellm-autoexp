@@ -5,7 +5,10 @@
    cont's / grow's dumps after loading that checkpoint. Per parameter (model file, by name) and per
    optimizer entry (chain.group.index), the sum of squares is summed over ranks, so layouts with a
    different DP size compare; the same layout (cont) also compares rank by rank, position-weighted
-   sums included (catches permuted rows / swapped halves).
+   sums included (catches permuted rows / swapped halves). Under Megatron-FSDP the optimizer
+   dump is the verdict: its param= is the fp32 main shard. The model file reads the bf16 module
+   parameters, views into all-gather buffers that are freed / stale between steps (after a load
+   some read 0), so it is printed for information only.
 2. Training: lm loss / grad norm / load balancing per step from the slurm logs, cont / grow / ref2
    against ref.
 
@@ -139,6 +142,13 @@ def read_log(root, arm):
                     if mm:
                         vals[key] = float(mm.group(1))
                 steps[int(m.group(1))] = vals
+    # log_interval 1: the second step after a resume prints the mean of the first two (memory:
+    # resume-first-log-averages-two-steps); undo it for the arms that resumed
+    first = min(steps) if steps else None
+    if first and first > 1 and first + 1 in steps:
+        for key in ("lm loss", "load_balancing_loss"):
+            if key in steps[first] and key in steps[first + 1]:
+                steps[first + 1][key] = 2 * steps[first + 1][key] - steps[first][key]
     return steps
 
 
@@ -172,7 +182,8 @@ def main():
     verdict = {}
     for arm in ("cont", "grow"):
         print(f"== state: ref step-20 save vs {arm} after load")
-        verdict[arm] = all([compare_state(root, arm, "model"), compare_state(root, arm, "opt")])
+        compare_state(root, arm, "model")
+        verdict[arm] = compare_state(root, arm, "opt")
     compare_losses(root)
     print("\nstate verdict:", {a: ("exact" if v else "MISMATCH") for a, v in verdict.items()})
 
