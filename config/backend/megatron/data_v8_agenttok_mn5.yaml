@@ -1,0 +1,32 @@
+# @package backend.megatron
+# OpenEuroLLM datamix v8 (12T-token budget, docs/datamix_v8/), decontaminated and with the agent delimiters:
+# - the 21 v8 sources that are in flag: flag-decon-v2-agenttok (as data_flag_decon_v2_agenttok_mn5);
+# - the others: v8-decon-agenttok = v8_raw (mixture-vitae subsets from JUPITER, LUMI data_tok sets with
+#   their <bos> stripped, HF-only sets tokenized with GigaToken, the full propella-filtered stackv2, the LUMI
+#   dolmino-math with both ingredients), decontaminated with the v6 table and flag-decon-v2's rules (1.71 % of
+#   tokens) and re-tokenized with tokenizer-256k-agent (29 datasets with structural chat / reasoning delimiters).
+# Weights: ratio_pct of docs/datamix_v8/datamix_v8.tsv, split over a source's shards by tokens
+# (scripts/datamix_v8/build_datamix.py; per-source tokens / epochs in docs/datamix_v8/datamix_v8_mn5_report.tsv).
+# Provenance and decisions: docs/datamix_v8/metadata.yaml. Everything else as data_flag_decon_v2_agenttok_mn5.
+# NOTE: another blend -> another data order and validation split: switch at a clean boundary.
+data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8_mn5.txt
+data_path: null
+split: "998,2,0"
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent
+# 262144 rows (the 32B runs' padding)
+padded_vocab_size: 262144
+vocab_size: null
+mock_data: false
+seq_length: 8192
+max_position_embeddings: 8192
+dataloader_inter_document_masking: true
+# BOS at every document start: no shard carries one (flag convention; the LUMI sets' <bos> was stripped)
+dataloader_add_bos: true
+dataloader_type: cyclic
+# GPFS: 8 workers starved the GPUs at scale (throughput spikes); 16 workers + prefetch 8 fixed it
+num_workers: 16
+dataloader_prefetch_factor: 8
+num_dataset_builder_threads: 32
+data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_v8_agenttok
+create_attention_mask_in_dataloader: false

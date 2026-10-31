@@ -1,0 +1,19 @@
+# @package _global_
+# The dataset index of the ambitious recipe on the datamix v8 blend (data_v8_agenttok_mn5: same tokenizer, only
+# the blend differs from the current default), built on ONE rank before a run needs it. As
+# data_cache_prebuild_ambitious_mn5 (stand-in model, skip_train, no load / save); the index lands in the shared
+# cache keyed by the blend, so a run with data_v8_agenttok_mn5 and the same schedule reuses it.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh prebuild_ambitious_v8 scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/data_cache_prebuild_ambitious_v8_mn5 --yes
+defaults:
+  - data_cache_prebuild_ambitious_mn5
+  - _self_
+
+backend:
+  megatron:
+    data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8_mn5.txt
+
+job:
+  name: data_cache_prebuild_ambitious_v8
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v8
