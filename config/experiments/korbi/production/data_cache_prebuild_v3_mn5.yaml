@@ -59,6 +59,10 @@ backend:
     use_persistent_ckpt_worker: false
 
 job:
+  # no inherited restart rules (2026-10-31): a prebuild that times out or fails must not resume on
+  # its own -- p132.0145 / 0146 restarted at the old 1.5 h limit next to their 8 h reruns, two
+  # builds contending on one key; re-enqueue by hand instead
+  state_events: []
   name: data_cache_prebuild_v3_p${aux.phase}
   base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v3_p${aux.phase}
   est_step_time_s: 60.0
