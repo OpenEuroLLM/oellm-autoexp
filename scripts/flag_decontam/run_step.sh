@@ -20,6 +20,7 @@
 #     finalize  drop decisions + new tree in $OUT (FINALIZE_ARGS, e.g. --dry-run)
 #     verify    new tree loads in Megatron, kept documents are unchanged
 #     audit     recall of the token matcher vs. a text matcher (agenttrove, megamath; 100k docs each)
+#     v8tree    datamix v8: the Megatron tree over the non-flag sources in $ROOT (scripts/datamix_v8/build_raw_tree.py)
 set -euo pipefail
 step=$1; shift || true
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -29,6 +30,11 @@ OUT=${OUT:-/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1}
 REFS=${REFS:-$WORK/refs/refs.jsonl.gz}
 mkdir -p "$WORK"
 cd "$HERE/../.."
+if [ "$step" = v8tree ]; then   # datamix v8: the tree over the non-flag sources (before $ROOT/datamix.txt exists)
+  python scripts/datamix_v8/build_raw_tree.py --out "$ROOT" "$@"
+  echo "[$step] done"
+  exit 0
+fi
 
 # shard lists: every shard of the mix; the count sample leaves out the sources most likely to
 # hold benchmark copies (their copies must not make the benchmark's n-grams look "common")
