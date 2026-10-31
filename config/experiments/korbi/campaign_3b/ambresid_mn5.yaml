@@ -1,0 +1,61 @@
+# @package _global_
+# Settle the residual for the ambitious v2 run (user 2026-10-31: "should we switch back to mHC-4?
+# ... the small loss improvement does not justify such massive compute for trying to get things
+# stabilized"). The first ambitious run (mHC-4, no pab) was stable to 2.6k steps; the LDM runs
+# show the step-7 router collapse and the later single-expert runaway (ambrepro: expert output
+# 0.88 at step 500, 6.7 at 900 without pab). Residual x pab at the ambrepro scale with the v2
+# recipe (ambwarmup_mn5: 16 nodes, gbs 512 x 16k, 216 experts, Engram [2, 3, 4] + sign hash 40B,
+# expert bias + global_aux_loss 1e-4 with the Megatron scaling fix), to step 900, no warmup:
+#   ldm_pab   the v2 recipe
+#   mhc4_pab  mHC-4 (mixer lr x0.25, as the first run) + pab
+#   ldm       LDM without pab
+#   mhc4      mHC-4 without pab (the first run's residual and MLPs)
+# Same sample order in every arm (train_iters as v2's sample count); training loss only, no
+# saves / eval. Watch moe/routed_expert_output_rms_max (runaway), the router health and the loss.
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool $H/pools/mn5_pool_p132 \
+#       --config-name experiments/korbi/campaign_3b/ambresid_mn5 \
+#       ++job.metadata.pool_priority=95 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - ambwarmup_mn5
+  - _self_
+
+aux:
+  suite: ambresid
+  arm: ldm_pab
+
+backend:
+  megatron:
+    exit_interval: 900
+
+job:
+  name: ambresid_${aux.arm}
+
+slurm:
+  sbatch:
+    qos: acc_xehpc
+    time: "10:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ldm_pab
+        - aux.arm: mhc4_pab
+          backend.megatron.depth_memory: false
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.residual_mixer_lr_mult: 0.25
+        - aux.arm: ldm
+          backend.megatron.moe_expert_post_act_norm: false
+          backend.megatron.mlp_post_act_norm: false
+        - aux.arm: mhc4
+          backend.megatron.depth_memory: false
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.moe_expert_post_act_norm: false
+          backend.megatron.mlp_post_act_norm: false
