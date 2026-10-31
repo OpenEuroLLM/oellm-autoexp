@@ -9,7 +9,7 @@
 #   PREEMPT/FAIL <job name> <pool> <run> <rc>         a main run that ended badly (last 2 h)
 # Run on MareNostrum 5: bash alloc_probe.sh
 P=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
-POOLS="p33 p129 p132 p264 o134e o134c o260c"
+POOLS="p33 p129 p132 p264 o134e o134c o260c p134c"
 MAINS="q35c_main_gqa ambitious_v2_128n"
 now=$(date +%s)
 
