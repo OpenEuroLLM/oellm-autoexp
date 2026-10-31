@@ -79,6 +79,7 @@ sources:
         file sizes was wrong); 12-15 % of the other documents share some run (common templates), < 1 % contained
     proposal: use the LUMI dolmino-math (22.3B, both ingredients, <bos> stripped) instead of flag's ingredient2 ->
       ~3.9 epochs at the 88B budget
-    decision: pending (user)
+    decision: LUMI dolmino-math (both ingredients, 22.3B, <bos> stripped) in place of flag's ingredient2 (user, 2026-10-31)
+    reason: ~10.5B tokens of ingredient1 are distinct documents; ~3.9 epochs at the 88B budget instead of 7.5
   openthoughts-3:
     decision: not a separate entry (92.1 % of its documents are contained in mixture-vitae; docs/flag_retokenization.md)
