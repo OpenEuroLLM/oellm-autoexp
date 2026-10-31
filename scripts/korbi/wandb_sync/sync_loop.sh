@@ -44,6 +44,10 @@ while true; do
                 | grep -E "uploading history|Finished|rror|failed" | tail -2 | sed "s#^#  $(basename "$(dirname "$f")"): #"
         done
     done
+    # display names / tags / notes (labels.json): an upload can reset the name to the job name
+    LABELS="${LABELS:-$HERE/labels.json}"
+    [ -f "$LABELS" ] && "${PYTHON:-$HOME/.miniconda3/envs/oellm/bin/python}" "$HERE/apply_labels.py" \
+        "$LABELS" "$ENTITY/$PROJECT" 2>&1 | grep -v "^wandb:"
     [ -n "${ONCE:-}" ] && break
     sleep "$INTERVAL"
 done
