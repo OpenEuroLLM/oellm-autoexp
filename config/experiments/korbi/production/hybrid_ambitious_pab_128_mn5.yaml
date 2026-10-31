@@ -19,7 +19,8 @@ defaults:
 aux:
   # the voted size (user 2026-10-31): 360 experts + Engram 80B = 84B-A2.9B-E80B (~164B); size128 at
   # 128 n: 28.9 s / step, 4,535 tok/s/GPU, memory 0.956 with cap 0.80 + 8 NCCL channels (16 OOM)
-  arm: ambitious_e360_eng80_v2_64k
+  # own arm (fresh start): the QB 64k start's checkpoints have no expert bias
+  arm: ambitious_e360_eng80_v2b_64k
   # 64k context (user 2026-10-31), set before the run's first real steps: the sequence length
   # sets the data index and order, so it can never change later. Same 67M tokens per step and
   # per micro-batch (1 x 65536 = 4 x 16384: LDM kernel shapes, MoE dispatch, quantile balancing,
@@ -76,13 +77,17 @@ backend:
     engram_ngram_orders: [2, 3, 4]
     engram_table_size: 25973845
     engram_sign_hash: true
-    # QB (EMA 0.9, hybrid_main_mn5) + a small global-batch balancing loss (user 2026-10-31: against
-    # dead / "ghost" experts at 5 of 360): its token fractions come from the router's raw top-k
-    # (no QB bias), so it pulls the raw preferences toward balance, without the per-sequence
-    # pressure of seq_aux_loss (not used: a batch-1 model). Watch moe/ghost_expert_layer_slots,
-    # moe/expert_mean_weight_ratio_min (Megatron with the per-expert routing-weight metric).
-    moe_router_load_balancing_type: [quantile_balancing, global_aux_loss]
-    moe_aux_loss_coeff: [0.0, 1.0e-5]
+    # load balancing: the expert bias (rate 1e-3) + global-batch aux loss 1e-4, as the first
+    # ambitious run (user 2026-10-31; stable to 2.6k steps there: load entropy min 0.993, max_vio
+    # ~1-2, router mean max prob 0.02-0.04). Not QB: in the 64k start (QB EMA 0.9 + global aux
+    # 1e-5, p132.0059, to step 324) max_vio 35 / 1,811 near-dead slots at step 40, up to 616 ghost
+    # slots (expert_mean_weight_ratio_min ~0.007), router mean max prob 0.17 -- the bias hid a
+    # strongly unbalanced raw router. aux_loss (not seq_aux_loss: a batch-1 model)
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 0.001
+    moe_router_fusion: true
 
 job:
   name: ambitious_v2_128n
