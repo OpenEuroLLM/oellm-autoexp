@@ -11,7 +11,13 @@ files with a stdlib-only reader (the login node has neither tensorboard nor prot
   2. grad norm: the median of the last 50 steps above max(``--gn-floor``, ``--gn-factor`` x the
      median of steps 100-300) (stable runs ~0.2-0.3; QB without pab went to 7.7 / 12.8);
   3. loss: NaN / inf, or the mean of the last 20 steps above the mean of the 100 before by
-     ``--loss-jump``.
+     ``--loss-jump``;
+  4. router (from ``--router-min-step``, the medians of the last ``--router-window`` readings):
+     near-dead (layer, expert) slots above ``--near-dead-max``, ghost slots above ``--ghost-max``,
+     or the worst layer's load entropy below ``--entropy-min`` (v1 healthy: < 10 near-dead,
+     entropy > 0.99; the broken v2 starts: thousands of near-dead / hundreds of ghost slots);
+  5. no progress: a job is RUNNING in a pool but the last logged step has not advanced for
+     ``--stall-min`` minutes (crash / restart loops; state in <run-dir>/watchdog_state.json).
 On a trip it writes ``<run-dir>/watchdog_tripped.json`` and cancels ``--job`` in every ``--pool``
 (unless ``--dry-run``); later calls see the marker and do nothing.
 
@@ -30,7 +36,9 @@ import sys
 import time
 from pathlib import Path
 
-TAGS = ("moe/routed_expert_output_rms_max", "grad-norm", "lm loss")
+TAGS = ("moe/routed_expert_output_rms_max", "grad-norm", "lm loss",
+        "moe/selected_near_dead_expert_layer_slots", "moe/ghost_expert_layer_slots",
+        "moe/dispatched_expert_load_entropy_min")
 
 
 def _varint(buf, i):
@@ -114,7 +122,7 @@ def median(xs):
 
 def check(series, a):
     """None, or the reason the run should stop."""
-    exp, gn, loss = (series[t] for t in TAGS)
+    exp, gn, loss = (series[t] for t in TAGS[:3])
     last = max(list(gn) + list(loss) + [0])
     if last < a.min_step:
         return None
@@ -140,6 +148,47 @@ def check(series, a):
         before = sum(loss[s] for s in ls[-120:-20]) / 100
         if now > before + a.loss_jump:
             return f"loss mean {now:.4f} over the last 20 steps > {before:.4f} + {a.loss_jump} (step {ls[-1]})"
+    router = (("moe/selected_near_dead_expert_layer_slots", "near-dead slots", a.near_dead_max, 1),
+              ("moe/ghost_expert_layer_slots", "ghost slots", a.ghost_max, 1),
+              ("moe/dispatched_expert_load_entropy_min", "load entropy min", a.entropy_min, -1))
+    for tag, label, limit, sign in router:
+        pts = [v for st, v in sorted(series[tag].items()) if st >= a.router_min_step]
+        if len(pts) >= a.router_window:
+            m = median(pts[-a.router_window:])
+            if sign * (m - limit) > 0:
+                return f"{label}: median {m:.4g} over the last {a.router_window} readings beyond {limit} (step {last})"
+    return None
+
+
+def running_jobs(a):
+    """Names of a.job RUNNING in any of a.pool (pool_ctl status)."""
+    found = set()
+    for pool in a.pool:
+        r = subprocess.run(a.pool_ctl.split() + [pool, "status"], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[1] == "RUNNING" and parts[2] in a.job:
+                found.add(parts[2])
+    return found
+
+
+def check_stall(series, a, now):
+    """None, or a reason: a job runs but the last step has not moved for --stall-min minutes."""
+    if a.stall_min <= 0:
+        return None
+    state_path = Path(a.run_dir) / "watchdog_state.json"
+    try:
+        state = json.loads(state_path.read_text())
+    except (OSError, ValueError):
+        state = {}
+    last = max([max(s) for s in series.values() if s] + [-1])
+    running = running_jobs(a)
+    if not running or last != state.get("last_step"):
+        state = {"last_step": last, "since": now}  # waiting in a queue, or progress: reset
+        state_path.write_text(json.dumps(state))
+        return None
+    if now - state["since"] > 60 * a.stall_min:
+        return f"no progress for {(now - state['since']) / 60:.0f} min at step {last} while {sorted(running)} RUNNING"
     return None
 
 
@@ -156,6 +205,12 @@ def main():
     ap.add_argument("--gn-floor", type=float, default=1.0)
     ap.add_argument("--gn-factor", type=float, default=4.0)
     ap.add_argument("--loss-jump", type=float, default=0.2)
+    ap.add_argument("--router-min-step", type=int, default=300)
+    ap.add_argument("--router-window", type=int, default=50)
+    ap.add_argument("--near-dead-max", type=float, default=500)
+    ap.add_argument("--ghost-max", type=float, default=300)
+    ap.add_argument("--entropy-min", type=float, default=0.85)
+    ap.add_argument("--stall-min", type=float, default=0, help="minutes without a new step while RUNNING (0: off)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--once", action="store_true", help="one check (the default; kept for the loop)")
     a = ap.parse_args()
@@ -164,7 +219,7 @@ def main():
     if marker.exists():
         return 0
     series = load(a.run_dir)
-    reason = check(series, a)
+    reason = check(series, a) or check_stall(series, a, time.time())
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     last = {t: (max(s), s[max(s)]) if s else None for t, s in series.items()}
     if reason is None:

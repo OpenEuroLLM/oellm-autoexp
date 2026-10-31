@@ -36,8 +36,8 @@ job:
   array_group: null
   metadata:
     pool_singleton: null
-    # above the conservative run (90), below the ambitious main run (100)
-    pool_priority: 95
+    # above the conservative run (90) and the ambitious main run (100): the check runs first
+    pool_priority: 101
   est_step_time_s: 32.0
   log_events: []
   state_events:
@@ -59,7 +59,8 @@ sweep:
   groups:
     - type: list
       configs:
-        - {aux.arm: ldm_p1, aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
+        # first: the main run's phase 1 waits for this arm (its marker v3speed_p1_ok)
+        - {aux.arm: ldm_p1, aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16, job.metadata.pool_priority: 102}
         # p2 / p3 start at iteration 0 here: one transition at the phase's own length, as the
         # data-cache prebuild (data_cache_prebuild_v3_mn5), so the index is the prebuilt one
         - {aux.arm: ldm_p2, aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4, backend.megatron.phase_transition_iterations: "18954"}

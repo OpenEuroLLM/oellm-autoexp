@@ -131,7 +131,16 @@ sweep:
   groups:
     - type: list
       configs:
-        - {aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
+        - aux.phase: 1
+          aux.seq: 4096
+          aux.gbs: 16384
+          backend.megatron.micro_batch_size: 16
+          # the 128-node check of the phase-1 shape (hybrid_v3speed128_mn5 ldm_p1: 4k x mbs 16 never
+          # ran with the LDM kernels) writes this marker once it ran clean (or write it by hand)
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${job.base_output_dir}/v3speed_p1_ok"
+            persistent_pass: true
         - aux.phase: 2
           aux.seq: 16384
           aux.gbs: 4096
