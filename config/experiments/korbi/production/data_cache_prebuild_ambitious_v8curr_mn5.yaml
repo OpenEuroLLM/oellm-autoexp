@@ -1,4 +1,6 @@
 # @package _global_
+# SUPERSEDED (2026-10-31): the v3 run uses all v8ml stage data = 236,733 steps, transitions 4,737 / 23,691 -> use
+# data_cache_prebuild_v3_mn5 (allocation controller, df837207). The 15T numbers below build keys v3 does not read.
 # The training dataset indices of the big run's sequence-length curriculum on the v8 + multilingual stage data
 # (docs/datamix_v8/README.md: datamix_v8ml_stage{1,2,3}_mn5.txt), built before the run needs them. As
 # data_cache_prebuild_ambitious_mn5 (stand-in model, skip_train, no load / save, shared cache).
