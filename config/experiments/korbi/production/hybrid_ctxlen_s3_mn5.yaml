@@ -6,13 +6,14 @@
 # tokens. Question: does a shorter context learn faster early, and does 64k close the gap?
 #
 # - The s3 production stack of hybrid_fp8ag_s3_mn5 (LDM, CKDA 7:1, MoE 144 x 896 top-3, pab, QB,
-#   FP8 expert gather), one node per arm (EP 4 in-node, FSDP over 4 GPUs), all four arms at once on
-#   the p132 host's 4 spare nodes (paired in time, same data mix).
-# - Same tokens everywhere: 64k tokens per micro-batch (mbs = 65536 / seq, as the main run),
-#   2 micro-batches per GPU per step, 524,288 tokens per step (= s3's 64 x 8192, so lr 1.8e-3
-#   constant stays as tuned), 1000 steps = 0.52B tokens.
+#   FP8 expert gather) on 4 nodes per arm, as the fp8ag_s3 test (EP 4, expert DP 4). One node per arm
+#   ran out of memory in the optimizer-state setup (expert DP 1: unsharded experts, 2026-10-31), so
+#   the arms run one after another on the p132 host's 4 spare nodes.
+# - Same tokens everywhere: 64k tokens per micro-batch (mbs = 65536 / seq, as the main run), one
+#   micro-batch per GPU per step, 1,048,576 tokens per step (lr 1.8e-3 constant as fp8ag_s3, at 2x
+#   its tokens per step), 1000 steps = 1.05B tokens.
 # - Validation every 250 steps at the arm's own length on the same token budget (eval_iters 10 x
-#   524k). The fair cross-length comparison (every arm at 4k and at 64k on the same documents) runs
+#   1M). The fair cross-length comparison (every arm at 4k and at 64k on the same documents) runs
 #   later from the saved checkpoints (400, 800, final 1000); 800 is also the branch point for a
 #   short-then-long arm.
 #
@@ -22,11 +23,11 @@ defaults:
   - _self_
 
 aux:
-  suite: ctxlen_s3
+  suite: ctxlen4n_s3
   arm: s8k
-  nodes: 1
+  nodes: 4
   seq: 8192
-  gbs: 64
+  gbs: 128
 
 backend:
   megatron:
@@ -45,7 +46,7 @@ job:
   name: ${aux.suite}_${aux.arm}
   metadata:
     pool_priority: 50
-  est_step_time_s: 18.0
+  est_step_time_s: 10.0
 
 slurm:
   sbatch:
@@ -60,17 +61,17 @@ sweep:
       configs:
         - aux.arm: s4k
           aux.seq: 4096
-          aux.gbs: 128
+          aux.gbs: 256
           backend.megatron.micro_batch_size: 16
         - aux.arm: s8k
           aux.seq: 8192
-          aux.gbs: 64
+          aux.gbs: 128
           backend.megatron.micro_batch_size: 8
         - aux.arm: s16k
           aux.seq: 16384
-          aux.gbs: 32
+          aux.gbs: 64
           backend.megatron.micro_batch_size: 4
         - aux.arm: s64k
           aux.seq: 65536
-          aux.gbs: 8
+          aux.gbs: 16
           backend.megatron.micro_batch_size: 1
