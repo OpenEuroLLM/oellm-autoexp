@@ -40,6 +40,9 @@ aux:
   arm: base
   nodes: 16
   gbs: 512
+  # pinned: the production config moved to 64k context (mbs 1); at mbs 2 x 64k every arm ran out
+  # of memory in the first forward (second launch, 2026-10-31)
+  seq: 16384
   only: []
 
 backend:
