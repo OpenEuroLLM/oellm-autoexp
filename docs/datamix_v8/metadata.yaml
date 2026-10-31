@@ -70,6 +70,15 @@ sources:
     catalogue: allenai/dolma3_dolmino_mix-100B-1125
     flag: {release: ingredient2-dolmino-math, tokens: 11.8B, documents: 20.95M}
     v8_table: {avail_B: 22, budget_B: 88, lumi: "vitiugin/data_tok/dolmino-math (22.3B, 32.96M documents)"}
-    decision: pending -- document-overlap check of the LUMI dolmino-math vs flag's ingredient2 (2026-10-31)
+    overlap_check:                             # doc_overlap.py, work flag_decon_ovl_dolm, 2026-10-31
+      method: 5000 random LUMI documents as references, flag ingredient2 scanned, containment by position (10 buckets)
+      contained_ge_0.7: 55.9%                  # overall
+      by_position: "docs 0-~8M: 0.4-1 %; ~8M-~28M: 93-96 % (any run: 100 %) = ingredient2; ~28M-33M: 0-34 %"
+      conclusion: the LUMI file = ingredient1 + ingredient2 (+ ingredient1 tail); ~12M documents (~10.5B tokens) are NOT in
+        flag's ingredient2 -- the two ingredients are different documents, not one pool counted twice (earlier guess from
+        file sizes was wrong); 12-15 % of the other documents share some run (common templates), < 1 % contained
+    proposal: use the LUMI dolmino-math (22.3B, both ingredients, <bos> stripped) instead of flag's ingredient2 ->
+      ~3.9 epochs at the 88B budget
+    decision: pending (user)
   openthoughts-3:
     decision: not a separate entry (92.1 % of its documents are contained in mixture-vitae; docs/flag_retokenization.md)
