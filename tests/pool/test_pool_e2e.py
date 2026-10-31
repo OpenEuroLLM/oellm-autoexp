@@ -1020,6 +1020,29 @@ def test_bad_node_in_a_live_host(pool):
     )
 
 
+def test_a_crashed_run_s_leftover_gpu_memory_keeps_the_next_run_off_its_node(pool):
+    """settle: JUPITER 2026-10-31 14:08 -- after a GPU fault the next run started on the same
+    nodes while the crashed run's processes still held 77.5 GiB per GPU, and OOMed on 1019
+    ranks. A node whose GPUs stay busy after settle_timeout_s is excluded for the allocation."""
+    import subprocess
+
+    pool.create_pool(*FAST, "job.pool_host.settle_timeout_s=3", "job.pool_host.idle_exit_s=60")
+    pool.enqueue("a", "aux.iters=400", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run a")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 10, 60, "10 iterations")
+    jid, node = pool.run_state(first).started["job"], pool.run_state(first).started["nodes"]
+    pool.enqueue("b", "aux.iters=20", "aux.tick=0.05")
+    (Path(pool.env["FAKESLURM_DIR"]) / "gpu_busy").write_text(node + "\n")  # a leftover process
+    subprocess.run(["pkill", "-9", "-f", "sigterm_dummy_trainer.py.*dummy_a/checkpoints"], check=False)
+    pool.wait_for(lambda: pool.run_state(first).status == "FAILED", 60, "run a to crash")
+    second = pool.wait_for(lambda: pool.runs_of("dummy_b"), 60, "run b")[0]
+    pool.wait_for(lambda: pool.run_state(second).status == "COMPLETED", 90, "run b")
+    state = pool.run_state(second)
+    assert (state.started["job"], state.started["nodes"]) == (jid, f"n{jid}-1")
+    assert node in (pool.layout.host_dir("host001") / "exclude_nodes").read_text().split()
+
+
 def test_a_node_slurm_reports_down_is_skipped_by_the_next_run(pool):
     # the spare-node model: a host one node larger than its job, with --no-kill, survives a
     # node failure; the supervisor keeps the next run off a node SLURM reports unusable,

@@ -764,6 +764,8 @@ def test_restart_hooks_attribute_a_failed_pool_run_to_its_node(env, tmp_path):
     # the node whose rank logged the fault (task 1 -> second node) is excluded, with evidence
     assert "jpbo-001-02" in excl.read_text().split() and "jpbo-001-01" not in excl.read_text()
     assert f"job {host_job}" in excl.read_text()
+    # ... and for the restart in the same live host: the pool's own list, read at every launch
+    assert env.layout.exclude_nodes.read_text().split() == ["jpbo-001-02"]
     audit = (log.parent.parent / "nccl-peer-events.jsonl").read_text()
     assert f'"pool_run": "{rid}"' in audit
     # hooks get the HOST's SLURM job id, not the run id, plus the run's own facts

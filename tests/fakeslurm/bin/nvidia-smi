@@ -1,0 +1,5 @@
+#!/bin/bash
+# fake nvidia-smi for tests/pool: `--query-gpu=memory.used ...` reports 80000 MiB on the nodes
+# listed in $FAKESLURM_DIR/gpu_busy (one per line; a crashed run's leftover process), else 0.
+node=${SLURMD_NODENAME:-$(hostname -s)}
+if [ -f "$FAKESLURM_DIR/gpu_busy" ] && grep -qx "$node" "$FAKESLURM_DIR/gpu_busy"; then echo 80000; else echo 0; fi

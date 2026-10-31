@@ -47,10 +47,11 @@ load_cfg() {
   POOL_POLL_S=10 POOL_IDLE_EXIT_S=1200 POOL_MONITOR_DEAD_EXIT_S=1800
   POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900 POOL_MAX_RUNS_PER_HOST=1
   POOL_PRECHECK_COMMAND="" POOL_PRECHECK_TIMEOUT_S=600 POOL_PRECHECK_SLOW_TOL=0.10
+  POOL_SETTLE_TIMEOUT_S=600 POOL_SETTLE_GPU_MIB=2048
   POOL_RANK_PATTERN='^[^ ]*python[^ ]*( +-[A-Za-z]+)* +(-m +torch\.distributed\.run|[^ ]*/(torchrun|ft_launcher))( |$)'
   # shellcheck disable=SC1091
   [ -f "$POOL/pool.env" ] && . "$POOL/pool.env"
-  export POOL_RANK_PATTERN
+  export POOL_RANK_PATTERN POOL_SETTLE_GPU_MIB
 }
 
 expand_hosts() { scontrol show hostnames "$1" 2>/dev/null; }
@@ -233,6 +234,7 @@ ts=$t0"
     elif [ "$rc" -eq 0 ]; then reason=completed; else reason=failed; fi
   fi
   echo "[pool] $(date +%FT%T) run $rid ended: rc=$rc ($reason)" >>"$LOG"
+  [ "$reason" = completed ] || { mkdir -p "$H/settle" && atomic "$H/settle/$rid" "$nl"; }
   finish_run "$rid" "$rc" "$reason"
 }
 
@@ -301,6 +303,34 @@ free_nodes() { # free_nodes <extra exclude>: usable nodes no running run holds
   else
     usable_nodes "$1" | grep -vxF -f <(printf '%s\n' "$held")
   fi
+}
+
+# After a run that did not complete normally, its processes can outlive its step on some nodes
+# and still hold GPU memory (JUPITER 2026-10-31 14:08: the restarted run hit OOM on 1019 ranks,
+# "Process ... has 77.5 GiB memory in use"). Before the next launch on this host: wait until the
+# old step has left SLURM, then until no GPU of its nodes holds more than settle_gpu_mib
+# (nvidia-smi, skipped where it is missing); nodes still busy after settle_timeout_s are excluded
+# for the rest of this allocation.
+settle() { # settle <rid of the ended run>: its nodes are in $H/settle/<rid>
+  local rid=$1 nodes n deadline busy=""
+  nodes=$(cat "$H/settle/$rid" 2>/dev/null)
+  n=$(printf '%s' "$nodes" | tr ',' '\n' | grep -c .)
+  deadline=$(($(now) + ${POOL_SETTLE_TIMEOUT_S:-600}))
+  while [ -n "$(step_of "$rid")" ] && [ "$(now)" -lt "$deadline" ]; do sleep 5; done
+  while [ "$n" -gt 0 ]; do
+    busy=$(timeout 60 srun --overlap --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$nodes" --nodes="$n" \
+      --ntasks="$n" --ntasks-per-node=1 --cpus-per-task=1 --job-name="settle-$HID" \
+      bash -c 'command -v nvidia-smi >/dev/null || exit 0; m=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | sort -n | tail -n 1); [ "${m:-0}" -gt "$POOL_SETTLE_GPU_MIB" ] && echo "BUSY ${SLURMD_NODENAME:-$(hostname -s)} $m"' \
+      2>/dev/null | awk '/^BUSY/ {print $2}' | sort -u)
+    [ -z "$busy" ] || [ "$(now)" -ge "$deadline" ] && break
+    sleep 15
+  done
+  if [ -n "$busy" ]; then
+    printf '%s\n' "$busy" >>"$H/exclude_nodes"
+    log "run $rid left GPU memory in use on $(printf '%s' "$busy" | paste -sd' ' -): excluded for this allocation"
+    ledger "$rid" "settle excluded $(printf '%s' "$busy" | paste -sd, -)"
+  fi
+  rm -f "$H/settle/$rid"
 }
 
 # Pre-run node check (pool setting precheck_command; nothing happens when it is empty): one
@@ -381,8 +411,12 @@ while true; do
     fi
     meta=$(. "$R/meta.env"; printf '%s|%s' "${NODES:-1}" "${EXCLUDE:-}")
     need=${meta%%|*}
-    # the node check runs on an idle host only (packed runs would share the probe's nodes)
-    [ "${#RUN_PID[@]}" -eq 0 ] && precheck "$need" "${meta#*|}"
+    # an idle host only (packed runs would share the probes' nodes): first let an ended run's
+    # leftovers go, then the node check
+    if [ "${#RUN_PID[@]}" -eq 0 ]; then
+      for f in "$H"/settle/*; do [ -e "$f" ] && settle "$(basename "$f")"; done
+      precheck "$need" "${meta#*|}"
+    fi
     nl=$(free_nodes "${meta#*|}" | head -n "$need" | paste -sd, -)
     if [ "$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)" -lt "$need" ]; then
       if [ "${#RUN_PID[@]}" -eq 0 ]; then

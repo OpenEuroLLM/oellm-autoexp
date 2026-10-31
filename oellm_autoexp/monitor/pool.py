@@ -188,6 +188,10 @@ class PoolHostConfig:
     precheck_command: str = ""
     precheck_timeout_s: float = 600.0
     precheck_slow_tolerance: float = 0.10
+    # after a run that did not complete normally: wait up to settle_timeout_s for its step to
+    # leave SLURM and its nodes' GPUs to drop below settle_gpu_mib in use; still busy -> excluded
+    settle_timeout_s: float = 600.0
+    settle_gpu_mib: int = 2048
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -349,6 +353,8 @@ class PoolLayout:
                 "POOL_PRECHECK_COMMAND": cfg.precheck_command,
                 "POOL_PRECHECK_TIMEOUT_S": int(round(cfg.precheck_timeout_s)),
                 "POOL_PRECHECK_SLOW_TOL": cfg.precheck_slow_tolerance,
+                "POOL_SETTLE_TIMEOUT_S": int(round(cfg.settle_timeout_s)),
+                "POOL_SETTLE_GPU_MIB": int(cfg.settle_gpu_mib),
             },
         )
 
@@ -598,6 +604,18 @@ def run_fault_context(layout: PoolLayout, rid: str) -> dict | None:
         "status": state.status,
         "reason": state.reason,
     }
+
+
+def exclude_in_pool(layout: PoolLayout, nodes) -> list[str]:
+    """Append nodes to the pool's exclude_nodes (honoured at every step launch, also in
+    hosts that are already up); returns the ones that were new."""
+    existing = set(_read(layout.exclude_nodes).split())
+    added = [n for n in dict.fromkeys(nodes) if n and n not in existing]
+    if added:
+        with layout.exclude_nodes.open("a", encoding="utf-8") as fh:
+            fh.write("".join(f"{n}\n" for n in added))
+        LOGGER.info("[pool %s] excluded for every later launch: %s", layout.root.name, added)
+    return added
 
 
 def scan_pool_run(

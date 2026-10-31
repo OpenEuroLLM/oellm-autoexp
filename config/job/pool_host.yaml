@@ -55,3 +55,6 @@ pool_host:
   precheck_command: ""
   precheck_timeout_s: 600
   precheck_slow_tolerance: 0.10
+  # after a failed run: wait for its leftovers to free the GPUs (see PoolHostConfig)
+  settle_timeout_s: 600
+  settle_gpu_mib: 2048

@@ -1002,6 +1002,15 @@ class MonitorLoop:
                     len(result.get("events", [])),
                     result.get("newly_excluded"),
                 )
+                # The fleet list only reaches hosts submitted from now on; the requeued run
+                # usually restarts in the SAME live host, whose supervisor reads the pool's
+                # exclude_nodes before every launch (JUPITER 2026-10-31 14:08: the restart
+                # took the faulted jpbo-055-11 again).
+                attributed = result.get("exclude") or []
+                if attributed:
+                    from oellm_autoexp.monitor.pool import exclude_in_pool
+
+                    exclude_in_pool(PoolLayout(job.definition.pool_dir), attributed)
             except Exception as exc:
                 LOGGER.warning("NCCL peer scan of a pool run failed; continuing recovery: %s", exc)
         elif hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
