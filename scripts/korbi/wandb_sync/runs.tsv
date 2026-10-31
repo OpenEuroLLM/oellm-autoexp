@@ -9,3 +9,4 @@ conservative_q35_main_gqa	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/
 ambitious_ldm_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e216_eng40
 ambitious_v2_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v2
 ambitious_v2_64k	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v2_64k
+ambitious_v2b_64k	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v2b_64k
