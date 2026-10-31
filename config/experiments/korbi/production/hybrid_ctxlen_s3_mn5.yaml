@@ -1,0 +1,76 @@
+# @package _global_
+# Training context length from scratch at s3 (user 2026-10-31). The ambitious v2 run at 64k lagged
+# the 16k runs by ~10-12 steps over steps 35-175, a gap that narrows. The 16k v2 start tracked the
+# first ambitious run exactly, and the other differences (data, tokenizer) are too small. The model
+# has no position embedding (NoPE): early attention averages over whole documents of up to 64k
+# tokens. Question: does a shorter context learn faster early, and does 64k close the gap?
+#
+# - The s3 production stack of hybrid_fp8ag_s3_mn5 (LDM, CKDA 7:1, MoE 144 x 896 top-3, pab, QB,
+#   FP8 expert gather), one node per arm (EP 4 in-node, FSDP over 4 GPUs), all four arms at once on
+#   the p132 host's 4 spare nodes (paired in time, same data mix).
+# - Same tokens everywhere: 64k tokens per micro-batch (mbs = 65536 / seq, as the main run),
+#   2 micro-batches per GPU per step, 524,288 tokens per step (= s3's 64 x 8192, so lr 1.8e-3
+#   constant stays as tuned), 1000 steps = 0.52B tokens.
+# - Validation every 250 steps at the arm's own length on the same token budget (eval_iters 10 x
+#   524k). The fair cross-length comparison (every arm at 4k and at 64k on the same documents) runs
+#   later from the saved checkpoints (400, 800, final 1000); 800 is also the branch point for a
+#   short-then-long arm.
+#
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_ctxlen_s3_mn5 --yes
+defaults:
+  - hybrid_fp8ag_s3_mn5
+  - _self_
+
+aux:
+  suite: ctxlen_s3
+  arm: s8k
+  nodes: 1
+  seq: 8192
+  gbs: 64
+
+backend:
+  megatron:
+    fsdp_fp8_param_gather: experts
+    micro_batch_size: 8
+    train_iters: 1000
+    exit_interval: 1000
+    eval_interval: 250
+    eval_iters: 10
+    log_interval: 1
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 400
+    async_save: false
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  metadata:
+    pool_priority: 50
+  est_step_time_s: 18.0
+
+slurm:
+  sbatch:
+    time: "10:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: s4k
+          aux.seq: 4096
+          aux.gbs: 128
+          backend.megatron.micro_batch_size: 16
+        - aux.arm: s8k
+          aux.seq: 8192
+          aux.gbs: 64
+          backend.megatron.micro_batch_size: 8
+        - aux.arm: s16k
+          aux.seq: 16384
+          aux.gbs: 32
+          backend.megatron.micro_batch_size: 4
+        - aux.arm: s64k
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
