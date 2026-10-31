@@ -74,6 +74,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "adam_lr_warmup_iters": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Linear lr warmup over this many steps of every parameter a Muon-family optimizer hands to Adam (router, embedding, output layer, norms) and of the Engram / PKM tables; the Muon-family matrices keep the schedule (0: off).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "add_bias_linear": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -5294,6 +5302,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs="+",
         element_type=str,
     ),
+    "moe_router_lr_warmup_iters": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Linear lr warmup of the MoE router weights over this many steps, on top of the schedule (0: off).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "moe_router_num_groups": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -8558,6 +8574,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "adam_eps": MegatronActionSpec(
         option_strings=("--adam-eps",), action_type="store", nargs=None, const=None, default=1e-08
+    ),
+    "adam_lr_warmup_iters": MegatronActionSpec(
+        option_strings=("--adam-lr-warmup-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "add_bias_linear": MegatronActionSpec(
         option_strings=("--disable-bias-linear",),
@@ -12961,6 +12984,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs="+",
         const=None,
         default="aux_loss",
+    ),
+    "moe_router_lr_warmup_iters": MegatronActionSpec(
+        option_strings=("--moe-router-lr-warmup-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "moe_router_num_groups": MegatronActionSpec(
         option_strings=("--moe-router-num-groups",),

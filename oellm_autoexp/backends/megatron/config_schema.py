@@ -2018,6 +2018,15 @@ class MegatronConfig(ConfigInterface):
     # tied embeddings. Conflicts with --decoupled-lr.
     output_layer_lr_mult: float = 1.0
 
+    # Linear lr warmup of the MoE router weights over this many steps, on top of the schedule
+    # (0: off).
+    moe_router_lr_warmup_iters: int = 0
+
+    # Linear lr warmup over this many steps of every parameter a Muon-family optimizer hands
+    # to Adam (router, embedding, output layer, norms) and of the Engram / PKM tables; the
+    # Muon-family matrices keep the schedule (0: off).
+    adam_lr_warmup_iters: int = 0
+
     # When the loaded optimizer checkpoint has no param_group matching a current group (a
     # multiplier enabled mid-run creates a new group), load the new group from the
     # structurally equivalent saved group and keep the current overrides instead of raising.
