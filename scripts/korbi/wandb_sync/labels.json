@@ -165,5 +165,17 @@
    "seed2"
   ],
   "notes": "Residual test for the ambitious v2 restart: LDM + pab, 216 experts, seed 2 (noise level vs ldm_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "ambitious_v3_main": {
+  "name": "ambitious_v3_ldm_curriculum",
+  "tags": [
+   "v3",
+   "ldm",
+   "curriculum",
+   "4k-16k-64k",
+   "bias_globalaux",
+   "pab"
+  ],
+  "notes": "Ambitious v3 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), LDM (address width 128), sequence-length curriculum 4k / 16k / 64k (2 / 8 / 90 %, transitions at 4,737 / 23,691) at 67M tokens per step on the v8ml stage data, expert bias + global_aux_loss 1e-4 (fixed scaling), pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant."
  }
 }

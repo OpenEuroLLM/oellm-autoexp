@@ -15,8 +15,8 @@ files with a stdlib-only reader (the login node has neither tensorboard nor prot
 On a trip it writes ``<run-dir>/watchdog_tripped.json`` and cancels ``--job`` in every ``--pool``
 (unless ``--dry-run``); later calls see the marker and do nothing.
 
-    while true; do python main_run_watchdog.py --once --run-dir <dir> --job ambitious_v2_128n \\
-        --pool <pool> [--pool ...]; sleep 600; done
+    while true; do python main_run_watchdog.py --once --run-dir <dir> --job ambitious_v3_128n_p1 \\
+        [--job ambitious_v3_128n_p2 ...] --pool <pool> [--pool ...]; sleep 600; done
 """
 
 import argparse
@@ -146,7 +146,8 @@ def check(series, a):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True, help="the run's base dir (with tb/)")
-    ap.add_argument("--job", required=True, help="job name to cancel (pool_ctl cancel --all)")
+    ap.add_argument("--job", action="append", required=True,
+                    help="job name to cancel (pool_ctl cancel --all); repeat for several (curriculum phases)")
     ap.add_argument("--pool", action="append", default=[], help="pool dirs to cancel it in")
     ap.add_argument("--pool-ctl", default="scripts/korbi/mn5_autoexp.sh scripts/pool_ctl.py")
     ap.add_argument("--min-step", type=int, default=200)
@@ -174,10 +175,12 @@ def main():
               "dry_run": a.dry_run, "cancel": []}
     if not a.dry_run:
         for pool in a.pool:
-            cmd = a.pool_ctl.split() + [pool, "cancel", a.job, "--all"]
-            r = subprocess.run(cmd, capture_output=True, text=True)
-            report["cancel"].append({"pool": pool, "rc": r.returncode, "out": r.stdout[-500:] + r.stderr[-500:]})
-            print(f"  cancel in {pool}: rc {r.returncode}", flush=True)
+            for job in a.job:
+                cmd = a.pool_ctl.split() + [pool, "cancel", job, "--all"]
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                report["cancel"].append({"pool": pool, "job": job, "rc": r.returncode,
+                                         "out": r.stdout[-500:] + r.stderr[-500:]})
+                print(f"  cancel {job} in {pool}: rc {r.returncode}", flush=True)
         marker.write_text(json.dumps(report, indent=1))
     else:
         print(json.dumps(report, indent=1), flush=True)
