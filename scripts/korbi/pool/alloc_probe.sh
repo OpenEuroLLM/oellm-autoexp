@@ -10,6 +10,8 @@
 #   BLOCKED <pool> <host> free=<n> queued_fits=<m>    a running host with >= 8 idle nodes while a
 #                                                     queued run of <= n nodes waits (pool limit:
 #                                                     max_runs_per_host, priority, ...)
+#   UNDERUSED <pool> <host> free=<n>                  a running host with >= 16 idle nodes and no
+#                                                     queued run that fits (capacity to fill)
 # Run on MareNostrum 5: bash alloc_probe.sh
 P=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
 POOLS="p33 p129 p132 p264 o134e o134c o260c p134c"
@@ -42,7 +44,12 @@ for p in $POOLS; do
             n=$(grep -m1 '^NODES=' "$q/meta.env" | cut -d= -f2)
             [ -n "$n" ] && [ "$n" -le "$free" ] && fit=$n && break
           done
-          [ -n "$fit" ] && echo "BLOCKED $p $(basename "$h") free=$free queued_fits=$fit"
+          if [ -n "$fit" ]; then
+            echo "BLOCKED $p $(basename "$h") free=$free queued_fits=$fit"
+          elif [ "$free" -ge 16 ]; then
+            # bucketed, so the line changes only when the idle capacity changes by >= 16 nodes
+            echo "UNDERUSED $p $(basename "$h") free>=$((free / 16 * 16))"
+          fi
         fi
         ;;
       idle*)
