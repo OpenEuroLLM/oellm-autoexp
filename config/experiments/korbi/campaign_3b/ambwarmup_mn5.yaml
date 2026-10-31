@@ -69,9 +69,13 @@ backend:
     async_save: false
     use_persistent_ckpt_worker: false
     eval_interval: 100000
-    eval_iters: 0
-    wandb_project: null
-    wandb_exp_name: null
+    # not 0: the validation mix is a separate blend, and a 0-sample validation loader asserts
+    # ("no sample to consume: 0", the first ambwarmup launch); 1 iteration at the end only
+    eval_iters: 1
+    # offline W&B -> flag_hybrid_experimental (scripts/korbi/wandb_sync/runs_experimental.tsv)
+    wandb_project: flag_hybrid_experimental
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
 
 job:
   name: ambwarmup_${aux.arm}

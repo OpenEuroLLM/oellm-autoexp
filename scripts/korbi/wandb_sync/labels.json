@@ -81,5 +81,45 @@
    "no_pab"
   ],
   "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25), no pab: the first ambitious run's residual and MLPs. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambwarmup__base": {
+  "name": "ambwarmup_base",
+  "tags": [
+   "ambwarmup",
+   "router_collapse",
+   "ldm",
+   "no_warmup"
+  ],
+  "notes": "Early router collapse test: LDM + pab, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+ },
+ "x_ambwarmup__rwu50": {
+  "name": "ambwarmup_rwu50",
+  "tags": [
+   "ambwarmup",
+   "router_collapse",
+   "ldm",
+   "router_warmup"
+  ],
+  "notes": "Early router collapse test: router-only lr warmup over 50 steps. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+ },
+ "x_ambwarmup__awu50": {
+  "name": "ambwarmup_awu50",
+  "tags": [
+   "ambwarmup",
+   "router_collapse",
+   "ldm",
+   "adam_warmup"
+  ],
+  "notes": "Early router collapse test: lr warmup of every Adam parameter over 50 steps. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+ },
+ "x_ambwarmup__mhc4": {
+  "name": "ambwarmup_mhc4",
+  "tags": [
+   "ambwarmup",
+   "router_collapse",
+   "mhc4",
+   "no_warmup"
+  ],
+  "notes": "Early router collapse test: mHC-4 (mixer lr x0.25) instead of LDM, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
  }
 }

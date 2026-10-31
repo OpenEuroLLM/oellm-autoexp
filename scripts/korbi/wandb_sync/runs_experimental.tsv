@@ -105,3 +105,7 @@ x_ambresid__ldm_pab	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/ld
 x_ambresid__mhc4_pab	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/mhc4_pab
 x_ambresid__ldm	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/ldm
 x_ambresid__mhc4	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/mhc4
+x_ambwarmup__base	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambwarmup/base
+x_ambwarmup__rwu50	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambwarmup/rwu50
+x_ambwarmup__awu50	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambwarmup/awu50
+x_ambwarmup__mhc4	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambwarmup/mhc4
