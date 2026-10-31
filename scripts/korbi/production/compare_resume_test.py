@@ -70,7 +70,10 @@ def summed(per_rank, skip=("grad", "shape", "link")):
             for k, v in fields.items():
                 if k in skip or v is None:
                     continue
-                if isinstance(v, tuple):
+                if isinstance(v, tuple) and k == "step":
+                    # a step tensor (TableAdam) is held whole by every rank: a value, not a shard
+                    scal[(name, k)].add(math.sqrt(v[0]))
+                elif isinstance(v, tuple):
                     tot[(name, k)] += v[0]
                 elif isinstance(v, float):
                     scal[(name, k)].add(v)

@@ -16,6 +16,10 @@
 #   phase resume (load ref's step-20 rolling checkpoint, train to 30, save only into their own dirs)
 #     cont   4 nodes (same layout)
 #     grow   8 nodes (DP x 2, expert DP x 2: the 32 -> 128-node handover pattern)
+#   phase save / resume, the same pair with dataloader_type single (ref_s -> grow_s): production's
+#     cyclic sampler + data_sharding hands every step after a DP change other samples (grow's
+#     losses after 20 do not pair with ref's), the single sampler the same global batch in the same
+#     4-sample micro-batches (QB routes per micro-batch) on 4 and 8 nodes
 #   Compare steps 21-30 (lm loss, grad norm, load balancing, muown / LDM / router metrics) of
 #   cont / grow against ref, with ref vs ref2 as the tolerance.
 #
@@ -104,7 +108,7 @@ slurm:
 sweep:
   type: product
   store_sweep_json: true
-  filter: "\\${oc.eval:'(len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}) and (\"\\${aux.arm}\" in [\"ref\", \"ref2\"]) == (\"\\${aux.phase}\" == \"save\")'}"
+  filter: "\\${oc.eval:'(len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}) and (\"\\${aux.arm}\" in [\"ref\", \"ref2\", \"ref_s\"]) == (\"\\${aux.phase}\" == \"save\")'}"
   groups:
     - type: list
       configs:
@@ -116,3 +120,10 @@ sweep:
         - aux.arm: grow
           aux.nodes: 8
           backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref/ckpt_rolling
+        - aux.arm: ref_s
+          backend.megatron.dataloader_type: single
+          backend.megatron.non_persistent_save_interval: 20
+        - aux.arm: grow_s
+          aux.nodes: 8
+          backend.megatron.dataloader_type: single
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref_s/ckpt_rolling
