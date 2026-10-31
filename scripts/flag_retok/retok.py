@@ -435,7 +435,11 @@ def _verify_shard(job):
     src, dst = os.path.join(root, rel), os.path.join(out, rel)
     a, b = Index(src + ".idx"), Index(dst + ".idx")
     assert a.doc_count == b.doc_count and a.seq_count == b.seq_count and np.array_equal(a.doc_idx, b.doc_idx), rel
-    assert os.path.getsize(dst + ".bin") == 4 * int(b.lengths.astype(np.int64).sum()), rel
+    if os.path.islink(dst + ".bin"):          # linked source shard: its .idx may skip bytes (a <bos>-stripped .idx)
+        end = int((b.pointers + 4 * b.lengths.astype(np.int64)).max()) if b.seq_count else 0
+        assert os.path.getsize(dst + ".bin") >= end, rel
+    else:                                     # rewritten shard: dense
+        assert os.path.getsize(dst + ".bin") == 4 * int(b.lengths.astype(np.int64).sum()), rel
     found = load_find(work, rel) if sel else None
     hit = set(found[0].tolist()) if found is not None else set()
     rng = np.random.default_rng(0)

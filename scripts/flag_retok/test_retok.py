@@ -83,8 +83,15 @@ def main():
         Ld = np.array([len(x) for x in docs_d], np.int32)
         Pd = np.concatenate([[0], np.cumsum((Ld[:-1].astype(np.int64) + 1) * 4)]) + 4
         write_index(dp + ".idx", 4, Ld, Pd, np.arange(len(docs_d) + 1))
+        ep = os.path.join(root, "e/x/shard_0000_text_document")   # gap-indexed, outside --sources: linked as is
+        os.makedirs(os.path.dirname(ep), exist_ok=True)
+        docs_e = [enc("plain e"), enc("<think>mention</think> as text")]
+        np.concatenate([np.concatenate([[1], x]) for x in docs_e]).astype(np.int32).tofile(ep + ".bin")
+        Le = np.array([len(x) for x in docs_e], np.int32)
+        write_index(ep + ".idx", 4, Le, np.concatenate([[0], np.cumsum((Le[:-1].astype(np.int64) + 1) * 4)]) + 4,
+                    np.arange(len(docs_e) + 1))
         open(os.path.join(root, "datamix.txt"), "w").write("0.5 a/shard_0000_text_document\n0.5 b/shard_0000_text_document\n"
-                                                           "0.1 d/x/shard_0000_text_document\n")
+                                                           "0.1 d/x/shard_0000_text_document\n0.1 e/x/shard_0000_text_document\n")
         # c: a source outside the mix (openthoughts-3 style), added with --extra-rels
         write_dataset(os.path.join(root, "c/shard_0000_text_document"),
                       [enc("<|im_start|>user\nq<|im_end|>"), enc("plain c"), enc("<think>t</think> a")])
@@ -96,7 +103,8 @@ def main():
         th_c = np.zeros(3, bool); th_c[1] = True
         np.savez(os.path.join(d, "theirs_c.npz"), theirs=th_c)
         open(os.path.join(d, "shards.txt"), "w").write(f"{root}/a/shard_0000_text_document\n{root}/b/shard_0000_text_document\n"
-                                                       f"{root}/c/shard_0000_text_document\n{root}/d/x/shard_0000_text_document\n")
+                                                       f"{root}/c/shard_0000_text_document\n{root}/d/x/shard_0000_text_document\n"
+                                                       f"{root}/e/x/shard_0000_text_document\n")
         # v2-like decontamination tree: drop doc 1 of shard a
         dec = os.path.join(d, "flag-decon-v2", "a/shard_0000_text_document")
         os.makedirs(os.path.dirname(dec), exist_ok=True)
@@ -113,6 +121,9 @@ def main():
         decd = os.path.join(d, "flag-decon-v2", "d/x/shard_0000_text_document")
         os.makedirs(os.path.dirname(decd), exist_ok=True)
         os.symlink(dp + ".idx", decd + ".idx")
+        dece = os.path.join(d, "flag-decon-v2", "e/x/shard_0000_text_document")
+        os.makedirs(os.path.dirname(dece), exist_ok=True)
+        os.symlink(ep + ".idx", dece + ".idx")
         decc = os.path.join(d, "flag-decon-v2", "c/shard_0000_text_document")    # v2 dropped nothing in c
         os.makedirs(os.path.dirname(decc), exist_ok=True)
         os.symlink(os.path.join(root, "c/shard_0000_text_document.idx"), decc + ".idx")
@@ -180,6 +191,7 @@ def main():
         assert got[1].tolist() == docs_d[1].tolist() and got[3].tolist() == docs_d[3].tolist()
         assert got[0][0] == ID["<|im_start|>"] and ID["<think>"] in got[2]
         assert all(sa.decode(g[:-1].tolist()) == t and g[-1] == 2 for g, t in zip(got, texts_d))
+        assert os.path.islink(os.path.join(out, "e/x/shard_0000_text_document.bin"))   # e: linked, verify passed
         # nothing under flag/ changed
         assert Index(os.path.join(root, "a/shard_0000_text_document.idx")).lengths.tolist() == [len(x) for x in docs_a]
     print("all passed")
