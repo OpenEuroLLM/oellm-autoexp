@@ -5,7 +5,7 @@ decontamination matcher: word-level canonical stream, longest verbatim runs (for
     python scripts/flag_decontam/doc_overlap.py refs --prefix <A prefix> --n 5000 --out $WORK/refs/refs.jsonl.gz
     # 2. build_table.py --refs ..., scan.py --mode scan --shards <file with B's prefixes>  (run_step.sh)
     # 3. per sampled document of A: the longest run found in B, as a share of the document
-    python scripts/flag_decontam/doc_overlap.py report --work $WORK
+    python scripts/flag_decontam/doc_overlap.py report --work $WORK [--buckets 10]   # + containment by position in A
 
 The report: coverage histogram of the sampled documents (best single run / document tokens, canonical),
 the share >= 0.7 (contained, by the decontamination rule) and >= 0.3, and a few examples.
@@ -64,6 +64,15 @@ def cmd_report(a):
            "ge_0.3_pct": round(100 * float((cov >= 0.3).mean()), 2),
            "any_run_pct": round(100 * float((cov > 0).mean()), 2),
            "refs": meta["refs"]}
+    if a.buckets:                    # containment by position of the sampled document in A (e.g. concatenated parts)
+        with gzip.open(meta["refs"], "rt", encoding="utf-8") as fh:
+            pos = np.array([int(json.loads(l)["src"].rsplit(":", 1)[1]) for l in fh])
+        pos, c = pos[ok], cov
+        edges = np.linspace(0, pos.max() + 1, a.buckets + 1)
+        rep["by_position"] = [{"docs": f"{int(lo)}-{int(hi)}", "sampled": int(m.sum()),
+                               "contained_ge_0.7_pct": round(100 * float((c[m] >= 0.7).mean()), 2) if m.any() else None,
+                               "any_run_pct": round(100 * float((c[m] > 0).mean()), 2) if m.any() else None}
+                              for lo, hi in zip(edges[:-1], edges[1:]) for m in [(pos >= lo) & (pos < hi)]]
     json.dump(rep, open(os.path.join(a.work, "_report_doc_overlap.json"), "w"), indent=1)
     print(json.dumps(rep, indent=1))
 
@@ -79,6 +88,7 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--work")
     ap.add_argument("--tokenizer", default=TOKENIZER)
+    ap.add_argument("--buckets", type=int, default=0, help="report: containment per position bucket of the sampled documents")
     a = ap.parse_args()
     {"refs": cmd_refs, "report": cmd_report}[a.mode](a)
 

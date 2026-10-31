@@ -1,0 +1,75 @@
+# datamix v8 (OpenEuroLLM, 12T tokens) as built on MareNostrum 5 -- provenance and decisions per source,
+# in the spirit of the flag collection's per-source metadata.yaml (catalogue -> source -> sample -> release).
+# Copied into the data trees (v8_raw/, v8-decon/) next to their datamix.txt. docs/datamix_v8/README.md has the
+# narrative; datamix_v8.tsv the table (budget_B, ratio_pct); inventory.tsv where each source was found.
+#
+name: datamix-v8
+tokenizer: openeurollm/tokenizer-256k        # base tokenizer; agent-delimiter ids (tokenizer-256k-agent) added later
+convention: {bos: false, eos: per document, dtype: int32, sequence_per_document: true}
+#                                              # BOS is added by the dataloader (dataloader_add_bos: true)
+trees:                                         # under /gpfs/projects/ehpc533/users/korbip/data/
+  v8_sources: transferred / tokenized inputs as received (never modified)
+  v8_raw: Megatron tree over the non-flag sources (links; <bos>-stripped .idx for vtok/*), scripts/datamix_v8/build_raw_tree.py
+  v8-decon: decontaminated v8_raw (finalize.py); _report/ holds report.json, sources.tsv, benchmarks.tsv
+  flag-decon-v2-agenttok: the 21 v8 sources that are in flag/ (unchanged, see docs/flag_retokenization.md)
+#
+decontamination:                               # identical to flag-decon-v2 (docs/flag_post_decontamination.md)
+  table: v6 (flag_decon_v6/table; refs = docs/decontamination_eval_set.csv + flag_evals)
+  rule: {frac: 0.7, abs_run: 200, min_run: 20, max_docs: 20000}
+  exclude_src: scripts/flag_decontam/exclude_v6.txt
+  work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v8
+  result_2026-10-31:                           # 43 shards (all non-flag sources except stackv2)
+    tokens: 803.5B
+    dropped: {documents: 1122843, tokens: 11.93B, token_pct: 1.48}
+    by_part: {vtok: 2.71%, mv1sub: 0.87%, hftok: 0.58%}
+#
+sources:
+  # ---------------------------------------------------------------- origin groups
+  mv1sub:                                      # 16 mixture-vitae-1.0 subsets + stackexchange
+    origin: JUPITER /e/data1/datasets/playground/mmlaion/oellm/container/data/training/collection/flag/mixture-vitae-1.0-subsets-reasoning-instruct/<subset>/megatron-lm
+    stages: [flag pipeline (same convention), hpctransfer -> v8_sources/jsc_mv1_subsets, link -> v8_raw/mv1sub]
+  vtok:                                        # 15 LUMI-only sets (16 files)
+    origin: LUMI /scratch/project_465002530/users/vitiugin/data_tok/<name>.{bin,idx}
+    format_in: "<bos> doc <eos>, our tokenizer; chat sets partly ChatML, partly plain prompt + response"
+    stages: [hpctransfer -> v8_sources/lumi_vtok, strip <bos> (new .idx: pointer +4 B, length -1; .bin linked) -> v8_raw/vtok]
+    check: every document of all 16 files started with <bos> and ended with <eos>; none empty after the strip
+  hftok:                                       # 7 HF-only sets
+    origin: HF -> JUPITER /e/scratch/e-ext-2025e02-108/poeppel1/v8/hf
+    stages: [GigaToken (scripts/datamix_v8/tokenize_gt.py; == SentencePiece ids, tested), hpctransfer -> v8_sources/jsc_tok, link -> v8_raw/hftok]
+    chat_format: "ChatML <|im_start|>role\\n...<|im_end|>, reasoning_content -> <think>\\n...\\n</think>\\n\\n, tool calls <tool_call>, tool results <tool_response>, schemas <tools> in the system turn"
+    sets:
+      Nemotron-Cascade-2-SFT-Data: {repo: nvidia/Nemotron-Cascade-2-SFT-Data, format: chat, domains: all 8, tokens: 176.7B, shards: 4}
+      Nemotron-SFT-Science-v2: {repo: nvidia/Nemotron-SFT-Science-v2, format: chat, tokens: 16.27B}
+      Nemotron-SFT-Math-v4: {repo: nvidia/Nemotron-SFT-Math-v4, format: chat, tokens: 7.24B}
+      marin-open-thoughts-4-code-qwen3-32b-annotated: {format: "user = instruction_seed, assistant = generated_text (Qwen3-32B, <think>)", tokens: 8.34B}
+      marin-open-thoughts-4-math-qwen3-32b-annotated: {format: seed_gen, tokens: 27.54B}
+      marin-open-thoughts-4-science-qwen3-32b-annotated: {format: seed_gen, tokens: 2.22B, note: "1 row without generated_text skipped"}
+      Nemotron-Pretraining-Specialized-v1.2: {format: text, subsets: all 4, tokens: 43.85B}
+  # ---------------------------------------------------------------- decisions (2026-10-31, user)
+  common-pile-stackv2-0.1:
+    catalogue: common-pile/0.1/stackv2
+    flag:                                      # flag/common-pile-stackv2-0.1/metadata.yaml + counts/
+      source: {tokens: 2928.6B, documents: 218.4M}
+      sample: {filter: propella-filter.py, tokens: 2839.0B, kept: 97%, note: "keeps quality excellent..poor, safety incl. nsfw"}
+      release: {sample: random, budget: 25%, tokens: 709.7B}  # = the flag shards
+    v8_table: {avail_B: 2929, budget_B: 2050}
+    decision: full propella-filtered sample stage (2839B), replacing the flag release
+    reason: the 25 % release is a random budget cut, not a quality filter; same expected quality; 0.72 epochs at the v8 budget instead of 2.9
+    built_from: LUMI flag/common-pile-stackv2-0.1/sample/documents (764 x .jsonl.zst) -> JUPITER -> GigaToken -> v8_sources/jsc_tok/common-pile-stackv2-0.1-full (57 shards)
+    check: 2839.25B tokens incl. one <eos> per document = sample.json's 2839.0B + 213M documents
+  hplt-4.0/eng_Latn/ccc:
+    catalogue: hplt/4.0 clean/eng_Latn *.cc.jsonl.zst
+    flag:
+      source: {filter: "etc/ccc.slurm: crawl_id >= CC-MAIN-2024-31", tokens: 954.6B, documents: 1034M}
+      sample: {filter: bsc-edu-filter.py, threshold: 1.5, tokens: 350.1B}
+      release: {mask: [account_number, private_email, private_phone, private_url, secret], scrub: [xml, md], tokens: 349.1B}
+    v8_table: {avail_B: 955, budget_B: 799}
+    decision: keep the flag release (349B, quality-filtered)
+    reason: the other 605B were rejected by the bsc-edu quality filter (and are not PII-masked); ~2.3 epochs at the v8 budget
+  dolma-3-math:
+    catalogue: allenai/dolma3_dolmino_mix-100B-1125
+    flag: {release: ingredient2-dolmino-math, tokens: 11.8B, documents: 20.95M}
+    v8_table: {avail_B: 22, budget_B: 88, lumi: "vitiugin/data_tok/dolmino-math (22.3B, 32.96M documents)"}
+    decision: pending -- document-overlap check of the LUMI dolmino-math vs flag's ingredient2 (2026-10-31)
+  openthoughts-3:
+    decision: not a separate entry (92.1 % of its documents are contained in mixture-vitae; docs/flag_retokenization.md)
