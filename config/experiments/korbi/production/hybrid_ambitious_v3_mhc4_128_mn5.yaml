@@ -1,0 +1,22 @@
+# @package _global_
+# The ambitious main run v3 with mHC-4 instead of LDM (the first ambitious run's residual: 4 streams,
+# mixer lr x0.25), everything else as hybrid_ambitious_pab_128_mn5. The choice after
+# campaign_3b/ambresid (LDM vs mHC-4 x pab at the ambrepro scale). Memory / speed at 128 nodes:
+# hybrid_v3speed128_mn5 arm mhc4.
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p132 \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v3_mhc4_128_mn5 --yes
+defaults:
+  - hybrid_ambitious_pab_128_mn5
+  - _self_
+
+aux:
+  suite: main_mhc4
+  arm: ambitious_e360_eng80_v3_64k
+
+backend:
+  megatron:
+    depth_memory: false
+    mhc: true
+    mhc_expansion_rate: 4
+    residual_mixer_lr_mult: 0.25

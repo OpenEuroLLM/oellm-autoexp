@@ -1,16 +1,18 @@
 # @package _global_
-# The NEW ambitious main run, v2 (user 2026-10-30: "start it under a v2 version and if it remains
-# stable keep it"): quantile balancing at EMA 0.9 (hybrid_main_mn5's default since c09d8fd8; plain QB
-# at EMA 0 blew up in ambrepro) + pab. Its first enqueue (p129.0243, rendered with QB at EMA 0) was
-# replaced before it started.
-# LDM residual + pab, the post-activation bound in every
-# MLP (docs/ambitious_stabilization.md: the earlier run's single-expert spectral collapse from step
-# ~400 on; pab keeps the largest expert output flat, s3 -0.005, ~-0.1 % speed). A FRESH start in
-# its own directory (new arm): the old run's checkpoints (36 / 500 / 1038) carry, or lead into, the
-# collapsed experts. 128 nodes in a 129-node ehpc533 host (one spare); data flag-decon-v2-agenttok
-# (the hybrid_main_mn5 default). The singleton guard keeps one ambitious main run across pools.
+# The ambitious main run, v3 (2026-10-31): the restart after the v2 starts (QB, then expert bias with
+# the per-sequence aux loss, then with the broken global aux loss; docs/ambitious_stabilization.md).
+#   size       360 experts + Engram 80B ([2, 3, 4] + sign hash) = 84B-A2.9B-E80B (~164B)
+#   context    64k, micro-batch 1, gbs 1024 (67M tokens per step)
+#   balancing  expert bias 1e-3 + global_aux_loss 1e-4 (Megatron >= 24a814eba: as strong as aux_loss,
+#              over the global batch; no sequence-level loss)
+#   experts    pab, the bounded post-activation norm in every MLP
+#   optimizer  muown_classical, lr 8.5e-4 constant, no warmup; CKDA beta on Adam (linear_beta_adam)
+#   residual   LDM (address width 128) here; mHC-4: hybrid_ambitious_v3_mhc4_128_mn5 (the choice
+#              after campaign_3b/ambresid)
+# A FRESH start in its own directory (new arm). The singleton guard keeps one ambitious main run
+# across pools. Speed / memory check of both residuals: hybrid_v3speed128_mn5.
 #   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
-#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p129 \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p132 \
 #       --config-name experiments/korbi/production/hybrid_ambitious_pab_128_mn5 --yes
 defaults:
   - hybrid_ambitious_128_mn5
@@ -19,9 +21,9 @@ defaults:
 aux:
   # the voted size (user 2026-10-31): 360 experts + Engram 80B = 84B-A2.9B-E80B (~164B); size128 at
   # 128 n: 28.9 s / step, 4,535 tok/s/GPU, memory 0.956 with cap 0.80 + 8 NCCL channels (16 OOM)
-  # own arm (fresh start): the QB 64k start's checkpoints have no expert bias; v2b_64k trained
-  # with the per-micro-batch aux_loss (cancelled at step ~80)
-  arm: ambitious_e360_eng80_v2c_64k
+  # own arm (fresh start); the v2 starts (v2_64k QB, v2b_64k per-sequence aux, v2c_64k broken
+  # global aux) are not resumed
+  arm: ambitious_e360_eng80_v3_64k
   # 64k context (user 2026-10-31), set before the run's first real steps: the sequence length
   # sets the data index and order, so it can never change later. Same 67M tokens per step and
   # per micro-batch (1 x 65536 = 4 x 16384: LDM kernel shapes, MoE dispatch, quantile balancing,
@@ -78,16 +80,11 @@ backend:
     engram_ngram_orders: [2, 3, 4]
     engram_table_size: 25973845
     engram_sign_hash: true
-    # load balancing: the expert bias (rate 1e-3) + global-batch aux loss 1e-4, the first ambitious
-    # run's coefficients (user 2026-10-31; stable to 2.6k steps there: load entropy min 0.993,
-    # max_vio ~1-2, router mean max prob 0.02-0.04). Not QB: in the 64k start (QB EMA 0.9 + global aux
-    # 1e-5, p132.0059, to step 324) max_vio 35 / 1,811 near-dead slots at step 40, up to 616 ghost
-    # slots (expert_mean_weight_ratio_min ~0.007), router mean max prob 0.17 -- the bias hid a
-    # strongly unbalanced raw router. global_aux_loss, not aux_loss (user 2026-10-31): aux_loss
-    # balances each rank's micro-batch, which at 1 x 65536 is one sequence -- the per-sequence
-    # balancing ruled out for a batch-1 model (v2b, p132.0071: load_balancing_loss ==
-    # seq_load_balancing_loss in every layer); global_aux_loss sums the token counts over TP x DP x
-    # CP and the step's micro-batches (reset in finalize_model_grads)
+    # load balancing: the expert bias (rate 1e-3) + global_aux_loss 1e-4, the first ambitious run's
+    # coefficients (stable to 2.6k steps there). global_aux_loss, not aux_loss: at 1 x 65536 per
+    # micro-batch aux_loss is the per-sequence loss (v2b: load_balancing_loss == seq_...). Needs
+    # Megatron >= 24a814eba: before, global_aux_loss was 1 / DP as strong (v2c at DP 512 ran on the
+    # bias alone and was the worst start). Not QB (v2_64k: early collapse, ghost experts).
     moe_router_load_balancing_type: global_aux_loss
     moe_aux_loss_coeff: 1.0e-4
     moe_router_enable_expert_bias: true
@@ -95,7 +92,8 @@ backend:
     moe_router_fusion: true
 
 job:
-  name: ambitious_v2_128n
+  # v3: a new name, so nothing that acts on the cancelled v2 copies by name touches it
+  name: ambitious_v3_128n
   # size128 e360_cap80_eng80_nccl8: 28.9 s (the [2, 3, 4] cost: arm e360_eng80_v2)
   est_step_time_s: 29.0
 
