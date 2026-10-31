@@ -75,7 +75,16 @@ def main():
         docs_a.append(np.concatenate([enc("<|im_start|>user with pad")[:-1], [PAD, 2]]))   # skipped, kept as is
         write_dataset(os.path.join(root, "a/shard_0000_text_document"), docs_a)
         write_dataset(os.path.join(root, "b/shard_0000_text_document"), [enc(t) for t in texts_b])
-        open(os.path.join(root, "datamix.txt"), "w").write("0.5 a/shard_0000_text_document\n0.5 b/shard_0000_text_document\n")
+        texts_d = ["<|im_start|>user\nq<|im_end|>", "plain d", "<think>t</think> ok", "more plain"]
+        docs_d = [enc(t) for t in texts_d]
+        dp = os.path.join(root, "d/x/shard_0000_text_document")
+        os.makedirs(os.path.dirname(dp), exist_ok=True)
+        np.concatenate([np.concatenate([[1], x]) for x in docs_d]).astype(np.int32).tofile(dp + ".bin")
+        Ld = np.array([len(x) for x in docs_d], np.int32)
+        Pd = np.concatenate([[0], np.cumsum((Ld[:-1].astype(np.int64) + 1) * 4)]) + 4
+        write_index(dp + ".idx", 4, Ld, Pd, np.arange(len(docs_d) + 1))
+        open(os.path.join(root, "datamix.txt"), "w").write("0.5 a/shard_0000_text_document\n0.5 b/shard_0000_text_document\n"
+                                                           "0.1 d/x/shard_0000_text_document\n")
         # c: a source outside the mix (openthoughts-3 style), added with --extra-rels
         write_dataset(os.path.join(root, "c/shard_0000_text_document"),
                       [enc("<|im_start|>user\nq<|im_end|>"), enc("plain c"), enc("<think>t</think> a")])
@@ -87,7 +96,7 @@ def main():
         th_c = np.zeros(3, bool); th_c[1] = True
         np.savez(os.path.join(d, "theirs_c.npz"), theirs=th_c)
         open(os.path.join(d, "shards.txt"), "w").write(f"{root}/a/shard_0000_text_document\n{root}/b/shard_0000_text_document\n"
-                                                       f"{root}/c/shard_0000_text_document\n")
+                                                       f"{root}/c/shard_0000_text_document\n{root}/d/x/shard_0000_text_document\n")
         # v2-like decontamination tree: drop doc 1 of shard a
         dec = os.path.join(d, "flag-decon-v2", "a/shard_0000_text_document")
         os.makedirs(os.path.dirname(dec), exist_ok=True)
@@ -101,6 +110,9 @@ def main():
         decb = os.path.join(d, "flag-decon-v2", "b/shard_0000_text_document")
         os.makedirs(os.path.dirname(decb), exist_ok=True)
         os.symlink(os.path.join(root, "b/shard_0000_text_document.idx"), decb + ".idx")
+        decd = os.path.join(d, "flag-decon-v2", "d/x/shard_0000_text_document")
+        os.makedirs(os.path.dirname(decd), exist_ok=True)
+        os.symlink(dp + ".idx", decd + ".idx")
         decc = os.path.join(d, "flag-decon-v2", "c/shard_0000_text_document")    # v2 dropped nothing in c
         os.makedirs(os.path.dirname(decc), exist_ok=True)
         os.symlink(os.path.join(root, "c/shard_0000_text_document.idx"), decc + ".idx")
@@ -112,22 +124,22 @@ def main():
         os.environ["RETOK_UNIT_TOKENS"] = "20"     # several units per shard: re-encoded and copied ones interleave
         subprocess.run(run + ["find", "--shards", os.path.join(d, "shards.txt")] + common, check=True)
         X = ["--extra-rels", extra]
-        subprocess.run(run + ["write", "--out", out, "--sources", "a,c"] + X + common, check=True)
-        subprocess.run(run + ["write", "--out", out, "--sources", "a,c"] + X + common, check=True)  # resume: nothing left
-        subprocess.run(run + ["assemble", "--out", out, "--sources", "a,c"] + X + common, check=True)
+        subprocess.run(run + ["write", "--out", out, "--sources", "a,c,d/x"] + X + common, check=True)
+        subprocess.run(run + ["write", "--out", out, "--sources", "a,c,d/x"] + X + common, check=True)  # resume: nothing left
+        subprocess.run(run + ["assemble", "--out", out, "--sources", "a,c,d/x"] + X + common, check=True)
         # a crash between the parts' removal and info.json, then a rerun: nothing redone, info.json restored
         ia = os.path.join(out, "a/shard_0000.info.json")
         os.remove(ia)
-        r = subprocess.run(run + ["assemble", "--out", out, "--sources", "a,c"] + X + common, check=True,
+        r = subprocess.run(run + ["assemble", "--out", out, "--sources", "a,c,d/x"] + X + common, check=True,
                            capture_output=True, text=True)
         assert "already assembled" in r.stdout and "retokenization" in json.load(open(ia))
-        subprocess.run(run + ["write", "--out", out, "--sources", "a,c"] + X + common, check=True)   # no parts recreated
+        subprocess.run(run + ["write", "--out", out, "--sources", "a,c,d/x"] + X + common, check=True)   # no parts recreated
         assert not os.path.exists(os.path.join(out, "a/shard_0000_text_document.parts"))
         subprocess.run(run + ["decon", "--out", out, "--decon", os.path.join(d, "flag-decon-v2"),
                               "--decon-out", os.path.join(d, "flag-decon-v2-agenttok"),
                               "--extra-drop", f"a/shard_0000_text_document={d}/theirs_a.npz",
                               "--extra-drop", f"c/shard_0000_text_document={d}/theirs_c.npz"] + X + common, check=True)
-        subprocess.run(run + ["verify", "--out", out, "--sources", "a,c"] + X + common, check=True)
+        subprocess.run(run + ["verify", "--out", out, "--sources", "a,c,d/x"] + X + common, check=True)
         # a source outside --sources is linked even with delimiters
         out2 = os.path.join(d, "flag-agenttok-b")
         subprocess.run(run + ["write", "--out", out2, "--sources", "b"] + common, check=True)
@@ -160,6 +172,14 @@ def main():
         assert not os.path.islink(c_new + ".bin")                             # c re-tokenized
         for t in (out, os.path.join(d, "flag-decon-v2-agenttok")):
             assert "0.25 c/shard_0000_text_document" in open(os.path.join(t, "datamix.txt")).read()
+        # d: gap-indexed source -> dense new .bin, re-encoded and copied documents right, the <bos> gaps dropped
+        dn = os.path.join(out, "d/x/shard_0000_text_document")
+        ixd = Index(dn + ".idx")
+        assert not os.path.islink(dn + ".bin") and os.path.getsize(dn + ".bin") == 4 * int(ixd.lengths.sum())
+        got = [np.fromfile(dn + ".bin", np.int32, count=int(ixd.lengths[i]), offset=int(ixd.pointers[i])) for i in range(4)]
+        assert got[1].tolist() == docs_d[1].tolist() and got[3].tolist() == docs_d[3].tolist()
+        assert got[0][0] == ID["<|im_start|>"] and ID["<think>"] in got[2]
+        assert all(sa.decode(g[:-1].tolist()) == t and g[-1] == 2 for g, t in zip(got, texts_d))
         # nothing under flag/ changed
         assert Index(os.path.join(root, "a/shard_0000_text_document.idx")).lengths.tolist() == [len(x) for x in docs_a]
     print("all passed")

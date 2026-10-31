@@ -74,6 +74,12 @@ def units_of(root, rels, unit_tokens=UNIT_TOKENS):
     return out
 
 
+def dense(idx, s, e):
+    """Sequences s..e-1 lie back to back in the .bin (no bytes between them)."""
+    p, n = idx.pointers[s:e], idx.lengths[s:e].astype(np.int64)
+    return bool((p[1:] == p[:-1] + 4 * n[:-1]).all())
+
+
 def read_seqs(path, idx, s, e):
     """Token arrays of sequences s..e-1 (one contiguous read)."""
     a, b = int(idx.pointers[s]), int(idx.pointers[e - 1]) + 4 * int(idx.lengths[e - 1])
@@ -238,7 +244,7 @@ def _assemble_shard(job):
                 with open(part, "rb") as fp:
                     shutil.copyfileobj(fp, fo, 1 << 24)
                 lengths[s:e] = np.load(os.path.join(pdir, f"{s:012d}.len.npy"))
-            else:
+            elif dense(idx, s, e):
                 a, b = int(idx.pointers[s]), int(idx.pointers[e - 1]) + 4 * int(idx.lengths[e - 1])
                 fi.seek(a)
                 left = b - a
@@ -246,6 +252,9 @@ def _assemble_shard(job):
                     buf = fi.read(min(left, 1 << 24))
                     fo.write(buf)
                     left -= len(buf)
+            else:                                 # gaps between sequences (e.g. a <bos>-stripped .idx): per sequence
+                for t in read_seqs(src, idx, s, e):
+                    fo.write(np.ascontiguousarray(t, np.int32).tobytes())
     pointers = np.concatenate([[0], np.cumsum(lengths[:-1] * 4)]).astype(np.int64)
     os.replace(dst + ".bin.tmp", dst + ".bin")
     assert os.path.getsize(dst + ".bin") == 4 * int(lengths.sum()), rel
@@ -265,7 +274,8 @@ def source_list(x):
 
 
 def selected(a, rel):
-    return not a.sources or rel.split("/")[0] in a.sources
+    """--sources names a first path component (flag: the source) or a deeper prefix (v8_raw: vtok/<name>)."""
+    return not a.sources or any(rel == x or rel.startswith(x.rstrip("/") + "/") for x in a.sources)
 
 
 def mix_lines(a, root=None):
