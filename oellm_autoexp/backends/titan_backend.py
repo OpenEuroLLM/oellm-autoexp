@@ -6,6 +6,8 @@ import logging
 import shlex
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
+
+from oellm_autoexp.utils.dry_run import dry_run_path
 from typing import Any, Literal
 import importlib
 
@@ -113,11 +115,12 @@ class TitanBackend(BaseBackend):
     def _ensure_toml(self) -> str:
         output_path = self.config.toml_output_path or "config.titan.toml"
         path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        write = dry_run_path(path)
+        write.parent.mkdir(parents=True, exist_ok=True)
 
         data = self._build_toml_dict()
         toml_text = _dump_toml(data)
-        path.write_text(toml_text, encoding="utf-8")
+        write.write_text(toml_text, encoding="utf-8")
         if self.config.write_toml_provenance:
             self._write_provenance(path, data)
         return str(path)

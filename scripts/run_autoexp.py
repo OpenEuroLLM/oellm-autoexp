@@ -29,6 +29,8 @@ from oellm_autoexp.orchestrator import (
     run_loop,
     stop_path,
 )
+from oellm_autoexp.utils.dry_run import activate as activate_dry_run
+from oellm_autoexp.utils.dry_run import dry_run_path, dry_run_root
 from oellm_autoexp.utils.logging_config import configure_logging
 
 
@@ -42,6 +44,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
     parser.add_argument(
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
+    )
+    parser.add_argument(
+        "--dry-run-root",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Dry run (implies --dry-run) that writes its rendered files below DIR, mirroring their "
+            "absolute paths (/gpfs/x/job.sbatch -> DIR/gpfs/x/job.sbatch); the contents keep the "
+            "real paths. Default: $AUTOEXP_DRY_RUN_ROOT for every --dry-run, else the real paths."
+        ),
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
     parser.add_argument(
@@ -568,7 +580,9 @@ def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) 
             for job in pool_jobs:
                 record = _build_job_record(plan, job, "dry-run")
                 problems = check_fits_host(record.definition, host, host_accounts(layout.load_config()))
-                out = Path(record.definition.slurm.script_path).with_suffix(".pool-step.sh")
+                out = dry_run_path(
+                    Path(record.definition.slurm.script_path).with_suffix(".pool-step.sh")
+                )
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_text(
                     render_step_script(
@@ -646,6 +660,11 @@ def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.dry_run_root:
+        args.dry_run = True
+    if args.dry_run:
+        # rendered files below the dry-run root, if one is given (oellm_autoexp/utils/dry_run.py)
+        activate_dry_run(args.dry_run_root)
     configure_logging(not args.no_verbose, args.debug)
 
     config_dir = Path(args.config_dir)
@@ -795,9 +814,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.dry_run:
         script_paths = render_job_scripts(plan)
         if script_paths:
-            print(f"Rendered {len(script_paths)} script(s) (not submitted):")
+            root = dry_run_root()
+            where = f" below {root}" if root else ""
+            print(f"Rendered {len(script_paths)} script(s) (not submitted){where}:")
             for p in script_paths:
-                print(f"  {p}")
+                print(f"  {dry_run_path(p)}")
         exit(0)
 
     if gpu_hours > 100 and not args.yes:

@@ -35,6 +35,7 @@ import oellm_autoexp.postprocess.oellm_eval  # noqa  - register
 import oellm_autoexp.backends.titan_backend  # noqa  - register
 import oellm_autoexp.backends.oellm_eval_backend  # noqa  - register
 import oellm_autoexp.backends.megatron_bridge_backend  # noqa  - register
+from oellm_autoexp.utils.dry_run import dry_run_path
 from oellm_autoexp.config.schema import (
     RootConfig,
     ConfigSetup,
@@ -715,9 +716,10 @@ def _bind_array_groups(records: list[JobRecord]) -> list[JobRecord]:
             # A launcher (e.g. `apptainer exec ... image.sif`) runs a program, not shell
             # syntax: a `case` handed to it would be exec'd. Each task's command goes to
             # its own script next to the array script, and the launcher runs that.
-            group_dir.mkdir(parents=True, exist_ok=True)
+            write_dir = dry_run_path(group_dir)
+            write_dir.mkdir(parents=True, exist_ok=True)
             for index, command in enumerate(commands):
-                (group_dir / f"task_{index}.sh").write_text(f"#!/bin/bash\n{command}\n")
+                (write_dir / f"task_{index}.sh").write_text(f"#!/bin/bash\n{command}\n")
             dispatch = f"bash {group_dir}/task_${{SLURM_ARRAY_TASK_ID}}.sh"
         else:
             branches = [f"{index})\n{command}\n;;" for index, command in enumerate(commands)]
@@ -818,7 +820,7 @@ def _render_chunk(indices: list[int]) -> list[tuple[int, str]]:
             LOGGER.info("Skipping script render for non-SLURM job '%s'", record.job_id)
             continue
         path = generate_script(record.definition.slurm)
-        LOGGER.info("Rendered script: %s", path)
+        LOGGER.info("Rendered script: %s", dry_run_path(path))
         rendered.append((index, str(path)))
     return rendered
 

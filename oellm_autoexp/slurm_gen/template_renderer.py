@@ -6,6 +6,8 @@ import logging
 from collections.abc import Mapping
 from pathlib import Path
 
+from oellm_autoexp.utils.dry_run import dry_run_path
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -60,6 +62,9 @@ def render_template_file(
     template_text = template_path.read_text()
     rendered = render_template(template_text, replacements)
 
+    # a dry run with a root writes below it (oellm_autoexp/utils/dry_run.py); the content keeps
+    # the real paths
+    output_path = dry_run_path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered)
 

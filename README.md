@@ -104,6 +104,10 @@ Tested, please use the `container/build_container.sh` script with the latest/mat
 # Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, for example no submission)
 python scripts/run_autoexp.py --config-name experiments/default
 
+# Render a cluster config locally without creating its output tree (/gpfs/...): the files go below
+# the dry-run root, mirroring their absolute paths; their contents keep the real paths
+python scripts/run_autoexp.py --dry-run-root /tmp/dry --config-name experiments/korbi/production/hybrid_main_mn5
+export AUTOEXP_DRY_RUN_ROOT=$HOME/dry_runs   # or once in your shell: every --dry-run then uses it
 ```
 
 ### Training → conversion → evaluation chain (Megatron-Bridge + oellm-evals)
