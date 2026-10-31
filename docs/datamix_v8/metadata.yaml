@@ -90,5 +90,12 @@ sources:
     v8_table: none (v8 is English only, like flag-option5-project2530)
     proposal: 80 % v8 (table weights x 0.8) + 20 % flag-ml (its weights), build_datamix.py --ml ... --en-share 0.8
     decision: pending (user)
+  v8.1 full HF versions (2026-10-31):            # tokenize_gt.py on MareNostrum (run_step.sh v8tokgt), pool p132
+    reason: the LUMI data_tok copies of these were partial (hermes 353 docs = 318 epochs, Themis shard -0 = 45 epochs)
+    hermes-agent-reasoning-traces: {repo: lambda/hermes-agent-reasoning-traces, configs: [kimi, glm-5.1], docs: 14701, tokens: 0.40B, lumi_before: 0.0035B}
+    Themis-CodePreference: {repo: project-themis/Themis-CodePreference, format: "user = input, assistant = chosen", docs: 354010, tokens: 0.40B, lumi_before: 0.06B}
+    Nemotron-Cascade-SFT-Stage-1: {repo: nvidia/Nemotron-Cascade-SFT-Stage-1, subsets: [general, math, code, science], docs: 5436618, tokens: 35.6B, lumi_before: 3.4B}
+    Nemotron-Math-v2: {repo: nvidia/Nemotron-Math-v2, files: parquet (the jsonl hold the same rows), docs: 7085839, tokens: 53.5B, lumi_before: 4.6B}
+    openthoughts-4-code-qwen3-32b-32k-annotated: {decision: keep the LUMI copy (12.1B, 733k docs), reason: "same 959k HF rows; 478k without output (only a garbled qwen3_annotation) -> HF output-only 6.9B"}
   openthoughts-3:
     decision: not a separate entry (92.1 % of its documents are contained in mixture-vitae; docs/flag_retokenization.md)
