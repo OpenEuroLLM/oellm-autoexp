@@ -27,6 +27,11 @@ aux:
 backend:
   megatron:
     exit_interval: 900
+    # offline W&B (ambwarmup turns it off) -> flag_hybrid_experimental via
+    # scripts/korbi/wandb_sync/runs_experimental.tsv
+    wandb_project: flag_hybrid_experimental
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
 
 job:
   name: ambresid_${aux.arm}

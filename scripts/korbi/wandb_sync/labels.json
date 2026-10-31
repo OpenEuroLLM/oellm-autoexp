@@ -1,23 +1,85 @@
 {
-  "_comment": "W&B display name / tags / notes per run id of runs.tsv, (re)applied after every sync pass by apply_labels.py (an upload of an offline fragment can reset the name to the Megatron job name). Owners: the run's agent.",
-  "ambitious_v2_main": {
-    "name": "ambitious_v2_16k_QB",
-    "tags": ["v2", "16k", "quantile_balancing", "replaced"],
-    "notes": "Ambitious v2 at 16k: quantile balancing (EMA 0.9) + global aux loss 1e-5. Replaced: cap 0.78 allocator thrash (32 s/step), then the long-context restart. Not a main run."
-  },
-  "ambitious_v2_64k": {
-    "name": "ambitious_v2_64k_QB",
-    "tags": ["v2", "64k", "quantile_balancing", "replaced"],
-    "notes": "Ambitious v2 at 64k (p132.0059): quantile balancing (EMA 0.9) + global aux loss 1e-5. Healthy to step ~340, but QB hid a strongly unbalanced raw router (max_vio 35, 1,811 near-dead slots, up to 616 ghost slots). Replaced by expert-bias balancing (v2b, then v2c)."
-  },
-  "ambitious_v2b_64k": {
-    "name": "ambitious_v2b_64k_bias_seqaux",
-    "tags": ["v2b", "64k", "expert_bias", "aux_loss", "replaced"],
-    "notes": "Ambitious v2b at 64k (p132.0071, commit ad149a00): expert bias (rate 1e-3) + aux_loss 1e-4. At mbs 1 x 65536 aux_loss balances each micro-batch = one sequence (load_balancing_loss == seq_load_balancing_loss), the per-sequence balancing ruled out for a batch-1 model. Cancelled at step ~77, replaced by v2c (global_aux_loss)."
-  },
-  "ambitious_v2c_64k": {
-    "name": "ambitious_v2c_64k_bias_globalaux",
-    "tags": ["v2c", "64k", "expert_bias", "global_aux_loss", "stability_check"],
-    "notes": "Ambitious v2c at 64k (p132.0075, commit 809ce46b): expert bias (rate 1e-3) + global_aux_loss 1e-4 (token counts over TP x DP x CP and the step's micro-batches; not the per-sequence aux) -- after quantile balancing hid an unbalanced raw router. 360 experts + Engram 80B [2,3,4] + sign hash, LDM + pab, seq 65536 / mbs 1 / gbs 1024, cap 0.80, NCCL 8, ENGRAM_STEP_GROUP 1, new blend without openthoughts-3, rolling save every 100. 1k-step stability check (exit at 1000)."
-  }
+ "_comment": "W&B display name / tags / notes per run id of runs.tsv, (re)applied after every sync pass by apply_labels.py (an upload of an offline fragment can reset the name to the Megatron job name). Owners: the run's agent.",
+ "ambitious_v2_main": {
+  "name": "ambitious_v2_16k_QB",
+  "tags": [
+   "v2",
+   "16k",
+   "quantile_balancing",
+   "replaced"
+  ],
+  "notes": "Ambitious v2 at 16k: quantile balancing (EMA 0.9) + global aux loss 1e-5. Replaced: cap 0.78 allocator thrash (32 s/step), then the long-context restart. Not a main run."
+ },
+ "ambitious_v2_64k": {
+  "name": "ambitious_v2_64k_QB",
+  "tags": [
+   "v2",
+   "64k",
+   "quantile_balancing",
+   "replaced"
+  ],
+  "notes": "Ambitious v2 at 64k (p132.0059): quantile balancing (EMA 0.9) + global aux loss 1e-5. Healthy to step ~340, but QB hid a strongly unbalanced raw router (max_vio 35, 1,811 near-dead slots, up to 616 ghost slots). Replaced by expert-bias balancing (v2b, then v2c)."
+ },
+ "ambitious_v2b_64k": {
+  "name": "ambitious_v2b_64k_bias_seqaux",
+  "tags": [
+   "v2b",
+   "64k",
+   "expert_bias",
+   "aux_loss",
+   "replaced"
+  ],
+  "notes": "Ambitious v2b at 64k (p132.0071, commit ad149a00): expert bias (rate 1e-3) + aux_loss 1e-4. At mbs 1 x 65536 aux_loss balances each micro-batch = one sequence (load_balancing_loss == seq_load_balancing_loss), the per-sequence balancing ruled out for a batch-1 model. Cancelled at step ~77, replaced by v2c (global_aux_loss)."
+ },
+ "ambitious_v2c_64k": {
+  "name": "ambitious_v2c_64k_bias_globalaux",
+  "tags": [
+   "v2c",
+   "64k",
+   "expert_bias",
+   "global_aux_loss",
+   "stability_check"
+  ],
+  "notes": "Ambitious v2c at 64k (p132.0075, commit 809ce46b): expert bias (rate 1e-3) + global_aux_loss 1e-4 (token counts over TP x DP x CP and the step's micro-batches; not the per-sequence aux) -- after quantile balancing hid an unbalanced raw router. 360 experts + Engram 80B [2,3,4] + sign hash, LDM + pab, seq 65536 / mbs 1 / gbs 1024, cap 0.80, NCCL 8, ENGRAM_STEP_GROUP 1, new blend without openthoughts-3, rolling save every 100. 1k-step stability check (exit at 1000)."
+ },
+ "x_ambresid__ldm_pab": {
+  "name": "ambresid_ldm_pab",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "ldm",
+   "pab"
+  ],
+  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): LDM + pab (the v2 recipe). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambresid__mhc4_pab": {
+  "name": "ambresid_mhc4_pab",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "mhc4",
+   "pab"
+  ],
+  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25) + pab. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambresid__ldm": {
+  "name": "ambresid_ldm",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "ldm",
+   "no_pab"
+  ],
+  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): LDM, no pab. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambresid__mhc4": {
+  "name": "ambresid_mhc4",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "mhc4",
+   "no_pab"
+  ],
+  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25), no pab: the first ambitious run's residual and MLPs. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ }
 }
