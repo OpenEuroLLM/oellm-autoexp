@@ -23,8 +23,18 @@ aux:
 
 backend:
   env:
-    # cap PyTorch's share so NCCL's lazy allocations fit (ambitious_size64.md)
-    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+    # cap PyTorch's share so NCCL's lazy allocations fit (ambitious_size64.md). 0.78, not 0.80
+    # (2026-10-31): at 0.80 (50.9 of ~63.7 GiB) + 12.6 GiB outside PyTorch (MoonEP 4.0, NCCL with 8
+    # channels, context) the device is full once PyTorch reaches its cap -- v2's first start died
+    # in ncclCuMemAlloc after step 1 (a lazily created single-rank communicator, fixed in Megatron
+    # 7ec909031). 0.78 leaves ~1.4 GiB for NCCL; size128 e360_eng80 peaked at 47.5 GiB reserved.
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.78"
+    # release the allocator cache after the forward-backward of the first 2 steps, so NCCL's
+    # buffers for the optimizer step / grad norm / metric collectives are allocated while there
+    # is room (no cost later)
+    EMPTY_CACHE_FIRST_STEPS: "2"
+    # memory outside PyTorch per group, printed at iterations < 3 on ranks 0, 8, 16, 24 only
+    MEM_BREAKDOWN: "1"
     NCCL_MIN_NCHANNELS: "8"
     NCCL_NCHANNELS_PER_PEER: "8"
   megatron:
