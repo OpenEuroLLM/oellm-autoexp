@@ -356,12 +356,21 @@ log_events:
       class_name: CancelAction
       reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
 
+  # An OOM is usually a configuration error, but in a pool the restarted run can find the
+  # crashed run's processes still holding GPU memory on its nodes (JUPITER 2026-10-31 14:08:
+  # OOM on 1019 ranks, "Process ... has 77.5 GiB in use", and the old CancelAction ended the
+  # production job for good). So restart, with a small budget: a real configuration OOM still
+  # ends the job after max_fires quick failures.
   - name: err_torch_oom
     pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
     action:
-      class_name: CancelAction
-      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+      class_name: RestartAction
+      cancel_first: true
+      reason: "OOM (leftover processes after a crash, or the model) — retrying"
 
   # === INFRASTRUCTURE: node-local and transient -> RESTART ==================
   - name: err_cuda_alloc_init
