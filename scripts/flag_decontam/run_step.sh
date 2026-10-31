@@ -23,6 +23,7 @@
 #     v8tree    datamix v8: the Megatron tree over the non-flag sources in $ROOT (scripts/datamix_v8/build_raw_tree.py)
 #     v8datamix datamix v8: the data_args_path file + per-source report (scripts/datamix_v8/build_datamix.py)
 #     v8tokgt   datamix v8: tokenize_gt.py encode / assemble on MareNostrum (args: <mode> --source <name> ...)
+#     v8split   datamix v8: split_stages.py split / datamix (sequence-length curriculum stages)
 set -euo pipefail
 step=$1; shift || true
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -32,13 +33,14 @@ OUT=${OUT:-/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1}
 REFS=${REFS:-$WORK/refs/refs.jsonl.gz}
 mkdir -p "$WORK"
 cd "$HERE/../.."
-if [ "$step" = v8tree ] || [ "$step" = v8datamix ] || [ "$step" = v8tokgt ]; then   # datamix v8 (no $ROOT/datamix.txt)
+if [ "$step" = v8tree ] || [ "$step" = v8datamix ] || [ "$step" = v8tokgt ] || [ "$step" = v8split ]; then   # datamix v8
   if [ "$step" = v8tree ]; then python scripts/datamix_v8/build_raw_tree.py --out "$ROOT" "$@"
   elif [ "$step" = v8tokgt ]; then   # GigaToken from $HYBRID_ENV/pylibs_gigatoken (offline wheels; image numpy kept)
     PYTHONPATH="$PYTHONPATH:${HYBRID_ENV:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/pylibs_gigatoken" \
       TOKGT_ROOT=${TOKGT_ROOT:-/gpfs/projects/ehpc533/users/korbip/data/v8_sources} \
       TOKGT_TOKENIZER=${TOKGT_TOKENIZER:-/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model} \
       python scripts/datamix_v8/tokenize_gt.py "$@"
+  elif [ "$step" = v8split ]; then python scripts/datamix_v8/split_stages.py "$@"
   else python scripts/datamix_v8/build_datamix.py "$@"; fi
   echo "[$step] done"
   exit 0

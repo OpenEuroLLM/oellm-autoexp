@@ -197,8 +197,62 @@ def test_build_raw_tree():
         print("build_raw_tree ok")
 
 
+def test_split_stages():
+    try:
+        import split_stages as SS
+        from common import Index, write_index
+    except ImportError as e:
+        print(f"split_stages: SKIPPED ({e})")
+        return
+    import subprocess
+    with tempfile.TemporaryDirectory() as d:
+        data = f"{d}/data"
+
+        def shard(prefix, docs):
+            os.makedirs(os.path.dirname(prefix), exist_ok=True)
+            L = np.array([len(x) for x in docs], np.int32)
+            P = np.concatenate([[0], np.cumsum(L[:-1].astype(np.int64) * 4)])
+            np.concatenate(docs).astype(np.int32).tofile(prefix + ".bin")
+            write_index(prefix + ".idx", 4, L, P, np.arange(len(docs) + 1))
+        rng = np.random.default_rng(0)
+        docs = {"srcA/x/shard_0000": [rng.integers(3, 100, rng.integers(2, 20)) for _ in range(5000)],
+                "srcB/y/shard_0000": [rng.integers(3, 100, 5) for _ in range(3000)],
+                "srcB/y/shard_0001": [rng.integers(3, 100, 7) for _ in range(4000)]}
+        for n, ds in docs.items():
+            shard(f"{data}/{n}_text_document", ds)
+        tb = [sum(map(len, docs["srcB/y/shard_0000"])), sum(map(len, docs["srcB/y/shard_0001"]))]
+        open(f"{d}/mix.txt", "w").write(f"60.0 {data}/srcA/x/shard_0000_text_document\n"
+                                        f"{40 * tb[0] / sum(tb)} {data}/srcB/y/shard_0000_text_document\n"
+                                        f"{40 * tb[1] / sum(tb)} {data}/srcB/y/shard_0001_text_document\n")
+        open(f"{d}/rep.tsv", "w").write("category\tname\tratio_pct\ttokens_B\tshards\tepochs\tdir\n"
+                                        f"x\tA\t60\t0\t1\t0\t{data}/srcA\nx\tB\t40\t0\t2\t0\t{data}/srcB/y\n")
+        run = [sys.executable, os.path.join(HERE, "split_stages.py")]
+        com = ["--datamix", f"{d}/mix.txt", "--out", f"{d}/stages", "--data-root", data, "--fractions", "0.1,0.2,0.7"]
+        for part in range(2):
+            subprocess.run(run + ["split"] + com + ["--part", str(part), "--nparts", "2"], check=True, capture_output=True)
+        subprocess.run(run + ["datamix"] + com + ["--report", f"{d}/rep.tsv", "--datamix-out", f"{d}/mix_s{{k}}.txt"],
+                       check=True, capture_output=True)
+        for n, ds in docs.items():                      # every document in exactly one stage, unchanged; hard links
+            seen = []
+            for k in range(3):
+                p = f"{d}/stages/s{k + 1}/{n}_text_document"
+                assert os.stat(p + ".bin").st_ino == os.stat(f"{data}/{n}_text_document.bin").st_ino
+                seen += [tuple(x) for x in read_docs(p, dense=False)]   # a view into the shared .bin
+                share = (Index(p + ".idx").doc_count - 1) / len(ds)
+                assert abs(share - [0.1, 0.2, 0.7][k]) < 0.03, (n, k, share)
+            assert sorted(seen) == sorted(tuple(x) for x in ds), n
+        for k in range(3):                              # each source keeps its weight in every stage
+            rows = [l.split() for l in open(f"{d}/mix_s{k + 1}.txt")]
+            assert abs(sum(float(w) for w, p in rows if "/srcA/" in p) - 60) < 1e-6
+            assert abs(sum(float(w) for w, p in rows if "/srcB/" in p) - 40) < 1e-6
+        a = SS.stage_of_docs("srcA/x/shard_0000_text_document", 5000, [0.1, 0.2, 0.7])
+        assert (a == SS.stage_of_docs("srcA/x/shard_0000_text_document", 5000, [0.1, 0.2, 0.7])).all()
+        print("split_stages ok")
+
+
 if __name__ == "__main__":
     test_chatml()
     test_tokenize()
     test_build_raw_tree()
+    test_split_stages()
     print("all run")
