@@ -257,7 +257,39 @@ Two MoonEP bugs under Megatron-FSDP (Megatron moonep.py):
   rest). The production optimizer costs nothing over Adam. 4-GPU equivalence test (uneven / empty
   shards, weights + every row state over 4 steps) passes. FSDP checkpoints: the SwiGLU / GDN
   state split hard-coded Adam's keys (fixed: any parameter-shaped state split like the weight,
-  `[rows, 1]` row states by rows); save / exact-resume check pending.
+  `[rows, 1]` row states by rows). Save / exact resume verified on MN5 2026-10-31 for the whole
+  ambitious v2 recipe (below).
+
+### Save / resume check of the ambitious v2 recipe (2026-10-31, MN5 acc_debug)
+
+`config/experiments/korbi/production/hybrid_ambitious_resume_test_mn5.yaml`, compared by
+`scripts/korbi/production/compare_resume_test.py`. The production model (LDM cute + unwind, CKDA
+7:1, pab, QB EMA 0.9 + global_aux_loss, Engram [2, 3, 4] + sign hash with TableAdam, muown_classical
++ head-wise QKV + compact ckpt, Megatron-FSDP + MoonEP EP4, fp8 expert gather, fsdp_dtensor) at
+32 experts and Engram tables / 32, gbs 128 x 16k; an ASYNC rolling save at step 20 on 4 nodes,
+loaded on 4 and 8 nodes. `MEGATRON_DEBUG_OPT_STATE_FILE` dumps every optimizer entry (fp32 main
+param + all states: Muown g / m_u / m_g / v_g, Adam moments, TableAdam bf16 m / row-wise v / step)
+at the save and after each load.
+
+| resume | optimizer state (15,473 entries) | step 21 lm loss | steps 22-30 |
+|---|---|---|---|
+| 4 -> 4 nodes (`cont`) | rank by rank exact (sum sq + position-weighted) | 7.649179 = 7.649179 | \|d loss\| <= 0.007, grad norm within 2 % |
+| 4 -> 8 nodes, single sampler (`grow_s`) | summed over ranks, max rel diff 7e-10 | 7.545552 = 7.545552 | \|d loss\| <= 0.003 |
+| 4 -> 8 nodes, production cyclic sampler (`grow`) | max rel diff 5e-10 | 7.6667 vs 7.6492 | other batches (not paired) |
+
+- The production sampler (`dataloader_type cyclic` + `data_sharding`) gives every step after a DP
+  change different samples, so a node-count change shows as a loss / grad-norm shift that is data,
+  not state (`grow`: grad norm 38 at step 21; `ref_s` alone has 33 and 32 at steps 19 / 26).
+- The model-parameter dump is not a check under Megatron-FSDP: the module parameters are views into
+  all-gather buffers, stale or 0 after a load; the fp32 main params in the optimizer dump are.
+- Not covered by the dump: model buffers (QB's `qb_beta`); the identical step-21 losses (routing
+  depends on it) cover them. `_initial_expert_rms` (`moe_expert_viability_metrics`, metrics only)
+  differs per EP rank under one key: one rank's copy after a load (code read, not tested).
+- Code audit (same day): no Muown / Engram / QB / LDM / fp8-gather state outside the checkpoint;
+  strict fsdp_dtensor loads (a missing key fails the load). Caveats: a changed lr / lr_mult between
+  segments is overridden by the checkpoint's max_lr / min_lr; the SwiGLU row-state split is wrong
+  for TP > 1 (we run TP 1); `muown_expert_spectral_cap`'s init sigma_max is recomputed at every
+  start (off in production).
 
 ### LDM under FSDP: where the time goes (1-node profiles, LDM K 8 vs mHC-4, mbs 2)
 

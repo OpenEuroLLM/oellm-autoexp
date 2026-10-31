@@ -84,8 +84,8 @@ def rel(a, b):
     return abs(a - b) / max(abs(a), abs(b), 1e-30)
 
 
-def compare_state(root, arm, kind):
-    ref = dumps(root, "ref", "at_save_20", kind)
+def compare_state(root, arm, kind, ref_arm="ref"):
+    ref = dumps(root, ref_arm, "at_save_20", kind)
     new = dumps(root, arm, "after_load", kind)
     if not ref or not new:
         print(f"  [{kind}] missing dumps: ref {len(ref)} ranks, {arm} {len(new)} ranks")
@@ -155,10 +155,10 @@ def read_log(root, arm):
     return steps
 
 
-def compare_losses(root):
-    ref = read_log(root, "ref")
-    print(f"\nper-step metrics vs ref ({len(ref)} steps logged by ref)")
-    for arm in ("ref2", "cont", "grow"):
+def compare_losses(root, ref_arm="ref", arms=("ref2", "cont", "grow")):
+    ref = read_log(root, ref_arm)
+    print(f"\nper-step metrics vs {ref_arm} ({len(ref)} steps logged by {ref_arm})")
+    for arm in arms:
         log = read_log(root, arm)
         common = sorted(set(ref) & set(log))
         if not common:
@@ -183,11 +183,14 @@ def compare_losses(root):
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else "/gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs"
     verdict = {}
-    for arm in ("cont", "grow"):
-        print(f"== state: ref step-20 save vs {arm} after load")
-        compare_state(root, arm, "model")
-        verdict[arm] = compare_state(root, arm, "opt")
+    # ref -> cont / grow: production's cyclic sampler; ref_s -> grow_s: the single sampler (the same
+    # batches on 4 and 8 nodes)
+    for ref_arm, arm in (("ref", "cont"), ("ref", "grow"), ("ref_s", "grow_s")):
+        print(f"== state: {ref_arm} step-20 save vs {arm} after load")
+        compare_state(root, arm, "model", ref_arm)
+        verdict[arm] = compare_state(root, arm, "opt", ref_arm)
     compare_losses(root)
+    compare_losses(root, "ref_s", ("grow_s",))
     print("\nstate verdict:", {a: ("exact" if v else "MISMATCH") for a, v in verdict.items()})
 
 
