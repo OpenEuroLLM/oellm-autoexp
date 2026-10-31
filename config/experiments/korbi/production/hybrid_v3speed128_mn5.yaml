@@ -60,10 +60,13 @@ sweep:
     - type: list
       configs:
         - {aux.arm: ldm_p1, aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
-        - {aux.arm: ldm_p2, aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4}
-        - {aux.arm: ldm_p3, aux.phase: 3}
+        # p2 / p3 start at iteration 0 here: one transition at the phase's own length, as the
+        # data-cache prebuild (data_cache_prebuild_v3_mn5), so the index is the prebuilt one
+        - {aux.arm: ldm_p2, aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4, backend.megatron.phase_transition_iterations: "18954"}
+        - {aux.arm: ldm_p3, aux.phase: 3, backend.megatron.phase_transition_iterations: "213042"}
         - aux.arm: mhc4
           aux.phase: 3
+          backend.megatron.phase_transition_iterations: "213042"
           backend.megatron.depth_memory: false
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
