@@ -17,8 +17,9 @@
 # Comparison: the validation loss in phase 3 (both arms at 64k on the same documents), and the checkpoints at
 # 400 / 800 / 1000 at 4k and 64k as for ctxlen4n_s3.
 #
-#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_ctxcurr_s3_mn5 \
-#       'aux.only=[curr_p1]' --yes          # then curr_p2 after curr_p1 has finished, ...
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_ctxcurr_s3_mn5 --yes
+# enqueues all six jobs at once (2026-10-31): phases 2 / 3 wait for the previous phase's last checkpoint
+# (start_condition on <arm>/ckpt/latest_checkpointed_iteration.txt == 20 / 100), as the v3 main run.
 defaults:
   - hybrid_ctxlen_s3_mn5
   - _self_
@@ -47,9 +48,65 @@ sweep:
   groups:
     - type: list
       configs:
-        - {aux.arm: curr, aux.phase: 1, aux.seq: 4096, aux.gbs: 256, backend.megatron.micro_batch_size: 16}
-        - {aux.arm: curr, aux.phase: 2, aux.seq: 16384, aux.gbs: 64, backend.megatron.micro_batch_size: 4}
-        - {aux.arm: curr, aux.phase: 3, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
-        - {aux.arm: c64k, aux.phase: 1, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
-        - {aux.arm: c64k, aux.phase: 2, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
-        - {aux.arm: c64k, aux.phase: 3, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
+        - aux.arm: curr
+          aux.phase: 1
+          aux.seq: 4096
+          aux.gbs: 256
+          backend.megatron.micro_batch_size: 16
+        - aux.arm: curr
+          aux.phase: 2
+          aux.seq: 16384
+          aux.gbs: 64
+          backend.megatron.micro_batch_size: 4
+          # the previous phase's last checkpoint (it saves and exits at 20); persistent: a restart
+          # within the phase must not wait again
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*20\\s*$"
+            mode: regex
+            persistent_pass: true
+        - aux.arm: curr
+          aux.phase: 3
+          aux.seq: 65536
+          aux.gbs: 16
+          backend.megatron.micro_batch_size: 1
+          # the previous phase's last checkpoint (it saves and exits at 100); persistent: a restart
+          # within the phase must not wait again
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*100\\s*$"
+            mode: regex
+            persistent_pass: true
+        - aux.arm: c64k
+          aux.phase: 1
+          aux.seq: 65536
+          aux.gbs: 16
+          backend.megatron.micro_batch_size: 1
+        - aux.arm: c64k
+          aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 16
+          backend.megatron.micro_batch_size: 1
+          # the previous phase's last checkpoint (it saves and exits at 20); persistent: a restart
+          # within the phase must not wait again
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*20\\s*$"
+            mode: regex
+            persistent_pass: true
+        - aux.arm: c64k
+          aux.phase: 3
+          aux.seq: 65536
+          aux.gbs: 16
+          backend.megatron.micro_batch_size: 1
+          # the previous phase's last checkpoint (it saves and exits at 100); persistent: a restart
+          # within the phase must not wait again
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*100\\s*$"
+            mode: regex
+            persistent_pass: true
