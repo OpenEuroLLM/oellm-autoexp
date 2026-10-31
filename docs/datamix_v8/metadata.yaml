@@ -89,7 +89,13 @@ sources:
     on_mn5: flag-decon-v2-agenttok (286 shards, 4963B tokens, 42 languages; v6-decontaminated, agent tokenizer)
     v8_table: none (v8 is English only, like flag-option5-project2530)
     proposal: 80 % v8 (table weights x 0.8) + 20 % flag-ml (its weights), build_datamix.py --ml ... --en-share 0.8
-    decision: pending (user)
+    decision: 80 / 20 = $HYBRID_ENV/data/datamix_v8ml_mn5.txt (531 shards; user 2026-10-31) -- at 15T the English part keeps its 12T
+  curriculum stages:                             # user 2026-10-31: sequence-length curriculum 4k -> 16k -> 64k
+    split: scripts/datamix_v8/split_stages.py, by document (hash of shard path + document index), 2 / 8 / 90 %
+    trees: /gpfs/projects/ehpc533/users/korbip/data/v8ml-stages/s{1,2,3} (idx views, .bin hard links)
+    datamix: $HYBRID_ENV/data/datamix_v8ml_stage{1,2,3}_mn5.txt (the same per-source weights in every stage)
+    megatron: --phase-transition-iterations + --phase-transition-variable-batch (6cec40be3), constant tokens per step
+    test: experiments/korbi/production/hybrid_ctxcurr_s3_mn5 (curr vs c64k at s3)
   v8.1 full HF versions (2026-10-31):            # tokenize_gt.py on MareNostrum (run_step.sh v8tokgt), pool p132
     reason: the LUMI data_tok copies of these were partial (hermes 353 docs = 318 epochs, Themis shard -0 = 45 epochs)
     hermes-agent-reasoning-traces: {repo: lambda/hermes-agent-reasoning-traces, configs: [kimi, glm-5.1], docs: 14701, tokens: 0.40B, lumi_before: 0.0035B}

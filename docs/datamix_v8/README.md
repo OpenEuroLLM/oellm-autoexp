@@ -88,3 +88,21 @@ hplt, 0.62 tower+, 2.25 finepdfs-edu, <= 1 for the rest; a few eng-X pair sets ~
 **Proposal (v8 + ML):** 80 % v8 (its table weights x 0.8) + 20 % flag-ml (its own weights), as option4 / option5 and
 the current training mix -- `build_datamix.py --ml docs/datamix_v8/flag-ml_lumi.txt --en-share 0.8`. The English
 sources' epochs drop by a fifth (the instruct / reasoning sets ~4 -> ~3.2); no new tokenization or decontamination.
+
+## Sequence-length curriculum stages (2026-10-31)
+
+The decided mix is `datamix_v8ml_mn5.txt` (80 % v8 + 20 % flag-ml). For a sequence-length curriculum (4k -> 16k -> 64k
+over 2 / 8 / 90 % of the tokens, constant tokens per step) it is split by document into three frozen stage datasets
+(`scripts/datamix_v8/split_stages.py`): a document's stage is a hash of its shard path and index, every stage keeps
+every source's weight (spread over the shards by the stage's tokens), no document is in two stages, and each stage
+has its own dataset index -- a stage with another sequence length or schedule cannot reshuffle another stage's data.
+Trees `data/v8ml-stages/s{1,2,3}` (`.idx` views, `.bin` hard-linked), datamix files
+`$HYBRID_ENV/data/datamix_v8ml_stage{1,2,3}_mn5.txt`, per-source tokens in `v8ml-stages/stages_report.tsv`.
+
+Training switches stages with Megatron's phase transitions (`--phase-transition-iterations t1,t2`, one job per stage;
+a stage saves and exits at its last iteration) and `--phase-transition-variable-batch` (Megatron 6cec40be3: another
+global batch size per stage, the LR schedule continues at the same iteration; also fixes the stage sample counts for
+`--train-iters` runs). Literature: Li et al. 2022 (sequence length warmup, stability), SkyLadder (2025, short-to-long
+context schedule at a fixed token budget), Dataset Decomposition (2024), GrowLength (2023), Shortformer (2021).
+Test at s3: `config/experiments/korbi/production/hybrid_ctxcurr_s3_mn5.yaml` (curriculum vs constant 64k on the same
+stage data, 1000 steps x 1M tokens, transitions at 20 / 100).
