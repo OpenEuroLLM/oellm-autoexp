@@ -33,8 +33,9 @@ from multiprocessing import Pool
 
 import numpy as np
 
-ROOT = "/e/scratch/e-ext-2025e02-108/poeppel1/v8"
-TOKENIZER = f"{ROOT}/tokenizer-256k/tokenizer.model"
+# JUPITER defaults; on MareNostrum 5: TOKGT_ROOT=<data>/v8_sources (hf/... below it), TOKGT_TOKENIZER=<tokenizer.model>
+ROOT = os.environ.get("TOKGT_ROOT", "/e/scratch/e-ext-2025e02-108/poeppel1/v8")
+TOKENIZER = os.environ.get("TOKGT_TOKENIZER", f"{ROOT}/tokenizer-256k/tokenizer.model")
 EOS = 2
 _HEADER = b"MMIDIDX\x00\x00"
 
@@ -52,7 +53,17 @@ SOURCES = {
     "Nemotron-Pretraining-Specialized-v1.2": (["hf/nvidia/Nemotron-Pretraining-Specialized-v1.2/*/*.parquet"], "text"),
     # flag's propella-filtered sample stage (2,839B tokens); the flag release is a random 25 % of it
     "common-pile-stackv2-0.1-full": (["flag_src/common-pile-stackv2-0.1/sample/documents/*.jsonl.zst"], "text"),
+    # v8.1: full HF versions of sets whose LUMI data_tok copies are partial (2026-10-31)
+    "hermes-agent-reasoning-traces": (["hf/lambda/hermes-agent-reasoning-traces/data/kimi/*.parquet",   # the two configs;
+                                       "hf/lambda/hermes-agent-reasoning-traces/data/glm-5.1/*.parquet"], "sharegpt"),  # data/train-* = old kimi copy
+    "Themis-CodePreference": (["hf/project-themis/Themis-CodePreference/data/*.parquet"], ("pair", "input", "chosen")),
+    "openthoughts-4-code-qwen3-32b-32k-annotated": (
+        ["hf/laion/openthoughts-4-code-qwen3-32b-32k-annotated/data/*.parquet"], ("pair", "instruction_seed", "output")),
+    "Nemotron-Cascade-SFT-Stage-1": (["hf/nvidia/Nemotron-Cascade-SFT-Stage-1/*.jsonl",
+                                      "hf/nvidia/Nemotron-Cascade-SFT-Stage-1/*/*.jsonl"], "chat"),
+    "Nemotron-Math-v2": (["hf/nvidia/Nemotron-Math-v2/data/*.parquet"], "chat"),   # the .jsonl files hold the same rows
 }
+SHAREGPT_ROLE = {"human": "user", "gpt": "assistant", "system": "system", "tool": "tool", "function_call": "assistant"}
 JSONL_RANGE = 1 << 30            # byte range per unit of an uncompressed .jsonl
 BATCH_CHARS = 32 << 20           # characters per encode call
 
@@ -105,7 +116,29 @@ def chatml(messages, tools=None) -> str:
     return "\n".join(turns)
 
 
-def fmt_doc(fmt: str, row: dict) -> str | None:
+def sharegpt(conversations, tools=None) -> str:
+    """ShareGPT turns ({from, value}); the values already carry <think> / <tool_call> / <tool_response> as text.
+    Tool schemas go into the system turn only when it does not list them already."""
+    msgs = [{"role": SHAREGPT_ROLE.get(m.get("from"), m.get("from") or "user"), "content": _text(m.get("value"))}
+            for m in (_json(conversations) or [])]
+    tools = _json(tools) or []
+    if tools and not any(m["role"] == "system" and "<tools>" in m["content"] and "{" in m["content"] for m in msgs):
+        block = "<tools>\n" + "\n".join(json.dumps(t, ensure_ascii=False) for t in tools) + "\n</tools>"
+        if msgs and msgs[0]["role"] == "system":
+            msgs[0] = dict(msgs[0], content=msgs[0]["content"] + "\n\n" + block)
+        else:
+            msgs = [{"role": "system", "content": block}] + msgs
+    return "\n".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>" for m in msgs)
+
+
+def fmt_doc(fmt, row: dict) -> str | None:
+    if isinstance(fmt, tuple) and fmt[0] == "pair":   # ("pair", user column, assistant column)
+        q, a = row.get(fmt[1]), row.get(fmt[2])
+        if not q or not a:
+            return None
+        return chatml([{"role": "user", "content": _text(q)}, {"role": "assistant", "content": _text(a)}])
+    if fmt == "sharegpt":
+        return sharegpt(row.get("conversations"), row.get("tools")) or None
     if fmt == "text":
         return row.get("text")
     if fmt == "chat":

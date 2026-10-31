@@ -82,6 +82,17 @@ def test_chatml():
                  '<|im_start|>tool\n<tool_response>\nout\n</tool_response><|im_end|>\n'
                  '<|im_start|>assistant\na<|im_end|>'), s
     assert T.fmt_doc("seed_gen", {"instruction_seed": "q", "generated_text": None}) is None
+    assert T.fmt_doc(("pair", "input", "chosen"), {"input": "q", "chosen": "a", "rejected": "b"}) == \
+        "<|im_start|>user\nq<|im_end|>\n<|im_start|>assistant\na<|im_end|>"
+    assert T.fmt_doc(("pair", "input", "chosen"), {"input": "q", "chosen": None}) is None
+    sg = T.fmt_doc("sharegpt", {"conversations": [{"from": "system", "value": "sys <tools> </tools> tags"},
+                                                  {"from": "human", "value": "hi"},
+                                                  {"from": "gpt", "value": "<think>\nx\n</think>\nok"},
+                                                  {"from": "tool", "value": "<tool_response>\nr\n</tool_response>"}],
+                                "tools": '[{"name": "f"}]'})
+    assert sg == ('<|im_start|>system\nsys <tools> </tools> tags\n\n<tools>\n{"name": "f"}\n</tools><|im_end|>\n'
+                  '<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n<think>\nx\n</think>\nok<|im_end|>\n'
+                  '<|im_start|>tool\n<tool_response>\nr\n</tool_response><|im_end|>'), sg   # no double <tool_response>
     assert T.chatml("[]") == ""
     print("chatml ok")
 

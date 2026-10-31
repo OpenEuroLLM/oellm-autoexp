@@ -32,6 +32,10 @@ FLAG = f"{DATA}/flag-decon-v2-agenttok"
 V8 = f"{DATA}/v8-decon-agenttok"
 OVERRIDE = {"common-pile-stackv2-0.1": f"{V8}/hftok/common-pile-stackv2-0.1-full/megatron-lm",
             "dolma-3-math": f"{V8}/vtok/dolmino-math/megatron-lm"}
+# v8.1: the full HF versions replace partial LUMI data_tok copies (tokenize_gt.py on MareNostrum, 2026-10-31)
+OVERRIDE.update({n: f"{V8}/hftok/{n}/megatron-lm" for n in [
+    "hermes-agent-reasoning-traces", "Themis-CodePreference", "openthoughts-4-code-qwen3-32b-32k-annotated",
+    "Nemotron-Cascade-SFT-Stage-1", "Nemotron-Math-v2"]})
 
 
 def source_dir(row):
