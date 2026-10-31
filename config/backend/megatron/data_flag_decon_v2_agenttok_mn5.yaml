@@ -15,8 +15,12 @@
 # Everything else as data_flag_mn5.yaml. NOTE: a different document count -> a different data order and
 # validation split than "flag": switch at a clean boundary, never inside a comparison.
 # Datamix file: python3 scripts/korbi/flag_datamix_mn5.py --root .../flag-decon-v2-agenttok \
-#     --out $HYBRID_ENV/data/flag_decon_v2_agenttok_datamix_mn5.txt --require-complete
-data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v2_agenttok_datamix_mn5.txt
+#     --out $HYBRID_ENV/data/flag_decon_v2_agenttok_without_ot_datamix_mn5.txt --require-complete --exclude openthoughts-3
+# openthoughts-3 is NOT a separate source any more (2026-10-31): 92 % of its documents are contained
+# (>= 70 % verbatim, reformatted) in mixture-vitae (doc_overlap.py, 5,000 sampled; docs/flag_retokenization.md).
+# The datamix without it: flag_datamix_mn5.py --exclude openthoughts-3. The earlier file with it
+# (*_datamix_mn5.txt) stays unchanged for the runs that use it (ambitious_v2_128n: the stability check).
+data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v2_agenttok_without_ot_datamix_mn5.txt
 data_path: null
 split: "998,2,0"
 tokenizer_type: HuggingFaceTokenizer

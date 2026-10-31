@@ -40,12 +40,17 @@ def main():
         os.environ.get("HYBRID_ENV", "/gpfs/projects/ehpc533/users/korbip/hybrid_v019"),
         "data", "flag_datamix_mn5.txt"))
     ap.add_argument("--require-complete", action="store_true")
+    ap.add_argument("--exclude", action="append", default=[],
+                    help="leave out sources by name (the first path component), e.g. openthoughts-3: "
+                         "it is contained in mixture-vitae (docs/flag_retokenization.md)")
     args = ap.parse_args()
     root = Path(args.root)
     rows = []
     for line in (root / "datamix.txt").read_text().splitlines():
         if line.strip():
             w, prefix = line.split()
+            if prefix.split("/")[0] in args.exclude:
+                continue
             rows.append((float(w), prefix))
     by_source = defaultdict(lambda: [0.0, 0.0, 0, 0])  # weight total, weight present, n, present
     kept = []
