@@ -1,0 +1,34 @@
+# datamix v8: v8_raw datasets re-tokenized with tokenizer-256k-agent (retok.py --sources @this): the ones that use
+# chat / reasoning delimiters structurally (find over v8_raw, 2026-10-31: >= 1 % of their sequences). Left as text
+# (literal mentions only, <= 0.02 % of sequences): hftok/common-pile-stackv2-0.1-full, mv1sub/ling-coder-syntheticqa,
+# vtok/nemotron_sft_math_v3, mv1sub/stackexchange, mv1sub/pyedu_reasoning, mv1sub/ling-coder-sft,
+# hftok/Nemotron-Pretraining-Specialized-v1.2 and the sets without any.
+hftok/Nemotron-Cascade-2-SFT-Data                     # 100 %
+hftok/Nemotron-SFT-Math-v4                            # 100 %
+hftok/Nemotron-SFT-Science-v2                         # 100 %
+hftok/marin-open-thoughts-4-code-qwen3-32b-annotated  # 100 %
+hftok/marin-open-thoughts-4-math-qwen3-32b-annotated  # 100 %
+hftok/marin-open-thoughts-4-science-qwen3-32b-annotated  # 100 %
+mv1sub/glaiveai-reasoning                             # 100 %
+mv1sub/open_thoughts                                  # 100 %
+mv1sub/prism_math                                     # 100 %
+mv1sub/nvidia_openscience                             # 100 %
+mv1sub/dart-math                                      # 97 %
+mv1sub/ring-lite-sft                                  # 91 %
+mv1sub/misc_instruct                                  # 40 %
+mv1sub/nemo_science_math                              # 5.5 %
+vtok/Nemotron-Terminal-Corpus                         # 100 %
+vtok/SWE-ZERO-12M-trajectories                        # 100 %
+vtok/nemotron_competitive_programming_v1              # 100 %
+vtok/nemotron_math_v2                                 # 100 %
+vtok/nemotron_sft_competitive_programming_v2          # 100 %
+vtok/omnithought                                      # 100 %
+vtok/omnithought_0528                                 # 100 %
+vtok/Alibaba-Apsara_Superior-Reasoning-SFT-gpt-oss-120b  # 100 %
+vtok/acereason_1_1_sft                                # 100 %
+vtok/nemotron_cascade_sft_stage1                      # 100 %
+vtok/nemotron_cascade_sft_stage2                      # 100 %
+vtok/hermes_agent_reasoning_traces                    # 97 %
+vtok/openthoughts3_glm47                              # 32 %
+vtok/openthoughts4_code_qwen3                         # 13 %
+vtok/dolmino-math                                     # 1.2 %
