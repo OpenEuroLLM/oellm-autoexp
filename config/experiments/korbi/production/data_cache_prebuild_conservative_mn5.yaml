@@ -29,6 +29,12 @@ backend:
     WANDB_MODE: disabled
   megatron:
     skip_train: true
+    # the VALIDATION index too (2026-10-31): with skip_train Megatron sizes validation for ONE
+    # evaluation (eval_iters x gbs = 10,240 at 64k), a training run for all of them
+    # ((train_iters // eval_interval + 1) x eval_iters x gbs = 921,600) -- so the prebuilt valid
+    # index never matched and every 128-node start built its own (p132.0059: 13.8 min). 10 = the
+    # main run's eval_iters. The split has no test part (998,2,0), so the test size is moot.
+    eval_iters: ${oc.eval:'(int(${backend.megatron.train_iters}) // int(${backend.megatron.eval_interval}) + 1) * 10'}
     # the cache this recipe's runs read (literal: independent of suite / group names)
     data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main/data_cache
     distributed_timeout_minutes: 180
@@ -50,6 +56,14 @@ backend:
     use_persistent_ckpt_worker: false
 
 job:
+  # stop as soon as the indices are built: with the full validation size the evaluation that
+  # skip_train still runs afterwards would take hours on the stand-in
+  log_events:
+    - name: indices_built
+      pattern: "[after dataloaders are built]"
+      pattern_type: substring
+      match_once: true
+      action: {class_name: CancelAction, reason: "dataset indices built: the prebuild is done"}
   name: data_cache_prebuild_conservative
   base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/conservative
   metadata:
