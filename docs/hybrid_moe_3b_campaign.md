@@ -3464,3 +3464,34 @@ bf16 for the GEMMs.
   matrix owners through the row exchange.
 - **A pool host releases itself when nothing it can run is queued.** The cns144 host was lost on
   2026-10-30 after the queue emptied.
+
+### HF export of the v2 architecture (2026-10-31)
+
+`oellm_autoexp/hf_export/export_ambitious.py` and `oellm_ambitious/` now cover the v2 main run:
+- **Linear Depth Memory** in its stream form: the embedding write; per layer, read x + r, the
+  sublayer, the RLS write and the next query; the final read before the norm. The LDM state is per
+  token, so decoding needs no extra cache.
+- **Quantile-balancing routing:** selection on logits − `qb_beta`, weights from the unbiased sigmoid
+  scores.
+- **`pab`**, on the routed and shared experts.
+- **The Engram sign hash:** its multipliers and the ±1 table are regenerated from Megatron's seeds,
+  since they are not in the checkpoint.
+
+The mHC exports keep working.
+
+**Tests:**
+- Parity tests against the Megatron modules (`tests/hf_export_gpu/test_ambitious_v2_hf.py`): 7/7
+  pass.
+- **End to end on a real checkpoint** (`score_on_flag`), the previous LDM main run at step 500
+  (`ambitious_e216_eng40/ckpt_eval/iter_0000500`, 170 GB in bf16):
+  - mean NLL **1.889** on 64 flag-decon-v1 documents of 4096 tokens, against the run's training loss
+    of 1.861 at steps 480–499;
+  - cached decoding matches the full forward (`gen_check_match` 1.0).
+
+**Practical notes:**
+- `score_on_flag` needs `--gpu-mem-gib 54` (whole-layer packing) for the 40 GB Engram layers, and
+  `accelerate` on the path (`$HYBRID_ENV/accelerate-1.15.0-py3-none-any.whl` via `aux.images.ep.libs`).
+- Run the export as a pool job with `slurm.sbatch.time` of at least 2 h; `est_step_time_s` does not
+  set the pool's limit.
+- `pab`, quantile balancing and the sign hash are covered by the layer parity tests only, until the
+  v2 run saves a checkpoint.
