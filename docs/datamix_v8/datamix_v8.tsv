@@ -1,0 +1,66 @@
+# OpenEuroLLM datamix v8 (12T-token budget), as given by the user 2026-10-31. Columns: category, name, kind,
+# available tokens (B), epochs, budget (B), mix ratio (%), JSC oellm-256k-v1 tokenized path, LUMI tokenized path,
+# HF source. JSC "flag/..." = /e/data1/datasets/playground/mmlaion/oellm/training/collection/flag/...;
+# JSC "mv1sub/X" = /e/data1/datasets/playground/mmlaion/oellm/container/data/training/collection/flag/mixture-vitae-1.0-subsets-reasoning-instruct/X/megatron-lm/;
+# LUMI "vtok/X" = /scratch/project_465002530/users/vitiugin/data_tok/X; "-" = none given.
+category	name	kind	avail_B	epochs	budget_B	ratio_pct	jsc	lumi	hf
+web	Nemotron-CC-high	real	556	1.52168488679247	845	7.0448	flag/nemotron-cc-1.0/megatron-lm/high/actual	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/nemotron-cc/1.0/10p-sample/nemotron-ha-10p-sample	-
+web	Nemotron-CC-medium-high	real	515	1.48690927649623	766	6.3871	flag/nemotron-cc-1.0/megatron-lm/medium-high/actual	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/nemotron-cc/1.0/10p-sample/nemotron-mha-10p-sample	-
+web	dclm	real	3879	0.364273107742379	1413	11.7736	flag/dclm-1.0/megatron-lm	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/mlfoundations/dclm-baseline-1.0-10p-sample/dclm-10p-sample	-
+web	finepdfs-edu	real	137	1.0	137	1.1424	flag/finepdfs-edu-1.0.0/megatron-lm/eng_Latn	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/HuggingFaceFW/finepdfs-edu-10p-sample/eng_Latn	-
+web	hplt-4.0/eng_Latn/ab	real	39	0.95	37	0.3095	flag/hplt-4.0/megatron-lm/clean/eng_Latn/ab	/scratch/project_465002530/training/collection/flag/hplt-4.0/megatron-lm/clean/eng_Latn/ab	-
+web	hplt-4.0/eng_Latn/ccc	real	955	0.836731545817364	799	6.6561	flag/hplt-4.0/megatron-lm/clean/eng_Latn/ccc	/scratch/project_465002530/training/collection/flag/hplt-4.0/megatron-lm/clean/eng_Latn/ccc	-
+web	hplt-4.0/eng_Latn/ia	real	175	0.923640638516102	162	1.3489	flag/hplt-4.0/megatron-lm/clean/eng_Latn/ia	/scratch/project_465002530/training/collection/flag/hplt-4.0/megatron-lm/clean/eng_Latn/ia	-
+web	finephrase	synth	488	1.0	488	4.0629	flag/finephrase-0.0.0/megatron-lm	/scratch/project_462000963/preprocessed/oellm-v1-256k/HuggingFaceFW/finephrase/finephrase_decomp	-
+mv1-instruct	glaiveai-reasoning	synth	38	4	153	1.2768	mv1sub/glaiveai-reasoning	-	glaiveai/reasoning-v1-20m
+mv1-instruct	ling-coder-dpo	synth	0.4	4	2	0.0140	mv1sub/ling-coder-dpo	-	inclusionAI/Ling-Coder-DPO
+mv1-instruct	ling-coder-sft	synth	7	4	27	0.2241	mv1sub/ling-coder-sft	-	inclusionAI/Ling-Coder-SFT
+mv1-instruct	ling-coder-syntheticqa	synth	20	4	80	0.6689	mv1sub/ling-coder-syntheticqa	-	inclusionAI/Ling-Coder-SyntheticQA
+mv1-instruct	misc_instruct	synth	6	4	23	0.1958	mv1sub/misc_instruct	-	(several)
+mv1-instruct	nvidia_openscience	synth	18	4	71	0.5955	mv1sub/nvidia_openscience	-	nvidia/OpenScience
+mv1-instruct	open_thoughts3	synth	19	4	78	0.6469	mv1sub/open_thoughts	-	open-thoughts/OpenThoughts3-1.2M
+mv1-instruct	P3	synth	17	4	66	0.5510	mv1sub/P3	-	Muennighoff/P3
+mv1-instruct	pyedu_reasoning	synth	3	4	13	0.1118	mv1sub/pyedu_reasoning	-	hkust-nlp/CodeIO-PyEdu-Reasoning
+mv1-instruct	ring-lite-sft	synth	17	4	66	0.5513	mv1sub/ring-lite-sft	-	inclusionAI/Ring-lite-sft-data
+mv1-instruct	websight	synth	1	4	4	0.0339	mv1sub/websight	-	HuggingFaceM4/WebSight
+mv1-instruct	nemo_science_math	synth	23	4	92	0.7660	mv1sub/nemo_science_math	-	nvidia/Llama-Nemotron-Post-Training-Dataset
+mv1-instruct	dart-math	synth	1	4	3	0.0209	mv1sub/dart-math	-	hkust-nlp/dart-math-pool-math
+mv1-instruct	prism_math	synth	6	4	25	0.2056	mv1sub/prism_math	-	nvidia/Nemotron-PrismMath
+mv1-instruct	math	synth	5	4	20	0.1704	mv1sub/math	-	google-deepmind/mathematics_dataset
+mv1-instruct	math_word_problems	synth	1	4	3	0.0221	mv1sub/math_word_problems	-	ontocord/MixtureVitae-v1-decontaminated
+other	nemotron-pretraining-specialized-1.0	synth	297	2.14	636	5.3012	flag/nemotron-pretraining-specialized-1.0/megatron-lm	/scratch/project_465002530/training/collection/flag/nemotron-pretraining-specialized-1.0/megatron-lm	nvidia/Nemotron-Pretraining-Specialized-v1
+other	nemotron-pretraining-specialized-1.1	synth	10	4	41	0.3421	flag/nemotron-pretraining-specialized-1.1/megatron-lm	/scratch/project_465002530/training/collection/flag/nemotron-pretraining-specialized-1.1/megatron-lm	nvidia/Nemotron-Pretraining-Specialized-v1.1
+other	agenttrove-0.0	synth	20	4	81	0.6740	flag/agenttrove-0.0/megatron-lm	vtok/agenttrove	open-thoughts/AgentTrove
+other	SWE-ZERO-12M-trajectories	synth	112	3.4	381	3.1733	-	vtok/SWE-ZERO-12M-trajectories	AlienKevin/SWE-ZERO-12M-trajectories
+other	Nemotron-Terminal-Corpus	synth	7	4	28	0.2369	-	vtok/Nemotron-Terminal-Corpus	nvidia/Nemotron-Terminal-Corpus
+other	Nemotron-Cascade-SFT-Stage-1	synth	6	4	23	0.1900	-	vtok/nemotron_cascade_sft_stage1	nvidia/Nemotron-Cascade-SFT-Stage-1
+other	Nemotron-Cascade-SFT-Stage-2	synth	23	4	92	0.7667	-	vtok/nemotron_cascade_sft_stage2	nvidia/Nemotron-Cascade-SFT-Stage-2
+other	Nemotron-Cascade-2-SFT-Data	synth	68	4	273	2.2720	-	-	nvidia/Nemotron-Cascade-2-SFT-Data
+other	AceReason-1.1-SFT	synth	13	4	52	0.4300	-	vtok/acereason_1_1_sft	nvidia/AceReason-1.1-SFT
+other	Nemotron-SFT-Science-v2	synth	7	4	30	0.2489	-	-	nvidia/Nemotron-SFT-Science-v2
+other	Nemotron-Math-v2	synth	8	4	30	0.2500	-	vtok/nemotron_math_v2.bin	nvidia/Nemotron-Math-v2
+other	Nemotron-SFT-Math-v3	synth	4	4	16	0.1333	-	vtok/nemotron_sft_math_v3	nvidia/Nemotron-SFT-Math-v3
+other	Nemotron-SFT-Math-v4	synth	6	4	25	0.2104	-	-	nvidia/Nemotron-SFT-Math-v4
+other	Nemotron-Competitive-Programming-v1	synth	21	4	84	0.7000	-	vtok/nemotron_competitive_programming_v1	nvidia/Nemotron-Competitive-Programming-v1
+other	Nemotron-SFT-Competitive-Programming-v2	synth	22	4	86	0.7200	-	vtok/nemotron_sft_competitive_programming_v2	nvidia/Nemotron-SFT-Competitive-Programming-v2
+other	openthoughts3-1.2m-glm4.7-20k	synth	20	4	81	0.6767	-	vtok/openthoughts3_glm47	laion/openthoughts3-1.2m-glm4.7-20k
+other	openthoughts-4-code-qwen3-32b-32k-annotated	synth	15	4	58	0.4833	-	vtok/openthoughts4_code_qwen3	laion/openthoughts-4-code-qwen3-32b-32k-annotated
+other	OmniThought-0528	synth	2	4	9	0.0767	-	vtok/omnithought_0528	alibaba-pai/OmniThought-0528
+other	OmniThought	synth	2	4	10	0.0800	-	vtok/omnithought	alibaba-pai/OmniThought
+other	hermes-agent-reasoning-traces	synth	0.25	4	1	0.0092	-	vtok/hermes_agent_reasoning_traces	lambda/hermes-agent-reasoning-traces
+other	Themis-CodePreference	synth	0.5	4	2	0.0206	-	vtok/themis_code_preference-0.dedup.clean_text_document	project-themis/Themis-CodePreference
+other	marin-open-thoughts-4-code-qwen3-32b-annotated	synth	11	4	42	0.3526	-	-	marin-community/open-thoughts-4-code-qwen3-32b-annotated
+other	marin-open-thoughts-4-math-qwen3-32b-annotated	synth	30	4	120	1.0002	-	-	marin-community/open-thoughts-4-math-qwen3-32b-annotated
+other	marin-open-thoughts-4-science-qwen3-32b-annotated	synth	3	4	11	0.0919	-	-	marin-community/open-thoughts-4-science-qwen3-32b-annotated
+other	Superior-Reasoning-SFT-gpt-oss-120b	synth	6	4	25	0.2064	-	vtok/Alibaba-Apsara_Superior-Reasoning-SFT-gpt-oss-120b	Alibaba-Apsara/Superior-Reasoning-SFT-gpt-oss-120b
+other	Nemotron-Pretraining-Specialized-v1.2	synth	42	4	167	1.3943	-	-	nvidia/Nemotron-Pretraining-Specialized-v1.2
+math	finemath-0.0.0	real	39	4	157	1.3124	flag/finemath-0.0.0/megatron-lm/finemath-3plus	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/HuggingFaceTB/finemath-full/finemath-3plus/finemath-3plus_text_document	-
+math	megamath-0.0.0	real	318	4	1272	10.6016	flag/megamath-0.0.0/megatron-lm	vtok/megamath	-
+math	swallow-math-2.0	real	35	4	140	1.1681	flag/swallow-math-2.0/megatron-lm	/scratch/project_465002530/training/collection/flag/swallow-math-2.0/megatron-lm	-
+math	dolma-3-math	real	22	4	88	0.7333	flag/dolmino-mix-100b-1125/megatron-lm/ingredient2-dolmino-math	vtok/dolma3_dolmino_mix-100B-1125/dolmino-math	-
+math	openwebmath-0.0.0	real	14	4	55	0.4598	flag/openwebmath-0.0.0/megatron-lm/data	/scratch/project_465002530/preprocessed/oellm-v1-256k/open-web-math/open-web-math	-
+code	swallow-code-2.0	real	50	1	50	0.4181	flag/swallow-code-2.0/megatron-lm/stage5-auto-format/python/medium	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/swallow-code-v2/sampled-10p/stage5-auto-format/python-medium	-
+code	starcoder-0.0.0	real	252	1	252	2.0996	flag/starcoder-0.0.0/megatron-lm	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/starcoder-10p-sample/starcoder-10p-sample	-
+code	common-pile-stackv2-0.1	real	2929	0.7	2050	17.0837	flag/common-pile-stackv2-0.1/megatron-lm/documents	/scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/the-stack/1.2/data/sampled-10p/00_ALL_LANGUAGES/all-languages	-
+code	common-pile-stackv2-edu-0.1	real	80	1	80	0.6672	flag/common-pile-stackv2-edu-0.1/megatron-lm/documents	/scratch/project_465002530/preprocessed/oellm-v1-256k/common-pile/stackv2edu/stackv2_edu	-
+code	stackexchange	real	25	3	76	0.6351	mv1sub/stackexchange	/scratch/project_465002530/users/vitiugin/data_tok/MixtureVitae-v1-decontaminated/stackexchange	-

@@ -1,0 +1,61 @@
+category	name	budget_B	mn5_tokens_B	mn5_shards	jupiter_tokens_B	jupiter_shards	lumi_tokens_B	lumi_shards	status
+web	Nemotron-CC-high	845	556.3	6/6	556.3	6/6	0.0	0/0	on MN5
+web	Nemotron-CC-medium-high	766	514.9	5/5	514.9	5/5	0.0	0/0	on MN5
+web	dclm	1413	3881.4	100/100	3881.4	100/100	0.0	0/0	on MN5
+web	finepdfs-edu	137	137.1	2/2	137.1	2/2	0.0	0/0	on MN5
+web	hplt-4.0/eng_Latn/ab	37	39.1	1/1	39.1	1/1	39.1	1/1	on MN5
+web	hplt-4.0/eng_Latn/ccc	799	349.4	4/4	349.4	4/4	349.4	4/4	on MN5
+web	hplt-4.0/eng_Latn/ia	162	175.4	2/2	175.4	2/2	175.4	2/2	on MN5
+web	finephrase	488	488.5	5/5	488.5	5/5	0.0	0/0	on MN5
+mv1-instruct	glaiveai-reasoning	153	-	-	38.3	1/1	-	-	JUPITER -> MN5
+mv1-instruct	ling-coder-dpo	2	-	-	0.4	1/1	-	-	JUPITER -> MN5
+mv1-instruct	ling-coder-sft	27	-	-	6.7	1/1	-	-	JUPITER -> MN5
+mv1-instruct	ling-coder-syntheticqa	80	-	-	20.1	1/1	-	-	JUPITER -> MN5
+mv1-instruct	misc_instruct	23	-	-	5.9	1/1	-	-	JUPITER -> MN5
+mv1-instruct	nvidia_openscience	71	-	-	17.9	1/1	-	-	JUPITER -> MN5
+mv1-instruct	open_thoughts3	78	-	-	19.4	1/1	-	-	JUPITER -> MN5
+mv1-instruct	P3	66	-	-	16.5	1/1	-	-	JUPITER -> MN5
+mv1-instruct	pyedu_reasoning	13	-	-	3.4	1/1	-	-	JUPITER -> MN5
+mv1-instruct	ring-lite-sft	66	-	-	16.5	1/1	-	-	JUPITER -> MN5
+mv1-instruct	websight	4	-	-	1.0	1/1	-	-	JUPITER -> MN5
+mv1-instruct	nemo_science_math	92	-	-	23.0	1/1	-	-	JUPITER -> MN5
+mv1-instruct	dart-math	3	-	-	0.6	1/1	-	-	JUPITER -> MN5
+mv1-instruct	prism_math	25	-	-	6.2	1/1	-	-	JUPITER -> MN5
+mv1-instruct	math	20	-	-	5.1	1/1	-	-	JUPITER -> MN5
+mv1-instruct	math_word_problems	3	-	-	0.7	1/1	-	-	JUPITER -> MN5
+other	nemotron-pretraining-specialized-1.0	636	296.9	4/4	296.9	4/4	585.9	8/8	on MN5
+other	nemotron-pretraining-specialized-1.1	41	10.2	1/1	10.2	1/1	29.2	3/3	on MN5
+other	agenttrove-0.0	81	20.2	1/1	20.2	1/1	20.2	1/1	on MN5
+other	SWE-ZERO-12M-trajectories	381	-	-	-	-	134.1	1/1	LUMI -> MN5
+other	Nemotron-Terminal-Corpus	28	-	-	-	-	7.1	1/1	LUMI -> MN5
+other	Nemotron-Cascade-SFT-Stage-1	23	-	-	-	-	3.5	1/1	LUMI -> MN5
+other	Nemotron-Cascade-SFT-Stage-2	92	-	-	-	-	45.1	1/1	LUMI -> MN5
+other	Nemotron-Cascade-2-SFT-Data	273	-	-	-	-	-	-	not tokenized (HF only)
+other	AceReason-1.1-SFT	52	-	-	-	-	12.5	1/1	LUMI -> MN5
+other	Nemotron-SFT-Science-v2	30	-	-	-	-	-	-	not tokenized (HF only)
+other	Nemotron-Math-v2	30	-	-	-	-	4.6	1/1	LUMI -> MN5
+other	Nemotron-SFT-Math-v3	16	-	-	-	-	4.1	1/1	LUMI -> MN5
+other	Nemotron-SFT-Math-v4	25	-	-	-	-	-	-	not tokenized (HF only)
+other	Nemotron-Competitive-Programming-v1	84	-	-	-	-	31.5	1/1	LUMI -> MN5
+other	Nemotron-SFT-Competitive-Programming-v2	86	-	-	-	-	26.3	1/1	LUMI -> MN5
+other	openthoughts3-1.2m-glm4.7-20k	81	-	-	-	-	20.9	1/1	LUMI -> MN5
+other	openthoughts-4-code-qwen3-32b-32k-annotated	58	-	-	-	-	12.1	1/1	LUMI -> MN5
+other	OmniThought-0528	9	-	-	-	-	2.4	1/1	LUMI -> MN5
+other	OmniThought	10	-	-	-	-	4.8	2/2	LUMI -> MN5
+other	hermes-agent-reasoning-traces	1	-	-	-	-	0.0	1/1	LUMI -> MN5
+other	Themis-CodePreference	2	-	-	-	-	0.1	1/1	LUMI -> MN5
+other	marin-open-thoughts-4-code-qwen3-32b-annotated	42	-	-	-	-	-	-	not tokenized (HF only)
+other	marin-open-thoughts-4-math-qwen3-32b-annotated	120	-	-	-	-	-	-	not tokenized (HF only)
+other	marin-open-thoughts-4-science-qwen3-32b-annotated	11	-	-	-	-	-	-	not tokenized (HF only)
+other	Superior-Reasoning-SFT-gpt-oss-120b	25	-	-	-	-	7.5	1/1	LUMI -> MN5
+other	Nemotron-Pretraining-Specialized-v1.2	167	-	-	-	-	-	-	not tokenized (HF only)
+math	finemath-0.0.0	157	39.4	1/1	39.4	1/1	0.0	0/0	on MN5
+math	megamath-0.0.0	1272	318.3	4/4	318.3	4/4	318.4	1/1	on MN5
+math	swallow-math-2.0	140	35.1	1/1	35.1	1/1	69.4	2/2	on MN5
+math	dolma-3-math	88	11.8	1/1	11.8	1/1	0.0	0/0	on MN5
+math	openwebmath-0.0.0	55	13.8	1/1	13.8	1/1	0.0	0/0	on MN5
+code	swallow-code-2.0	50	50.2	1/1	50.2	1/1	0.0	0/0	on MN5
+code	starcoder-0.0.0	252	252.1	3/3	252.1	3/3	0.0	0/0	on MN5
+code	common-pile-stackv2-0.1	2050	709.8	8/8	709.8	8/8	0.0	0/0	on MN5
+code	common-pile-stackv2-edu-0.1	80	80.1	1/1	80.1	1/1	0.0	0/0	on MN5
+code	stackexchange	76	-	-	25.4	1/1	33.7	6/6	JUPITER -> MN5
