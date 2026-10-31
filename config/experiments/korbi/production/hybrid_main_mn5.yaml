@@ -102,6 +102,10 @@ backend:
     linear_num_key_heads: 16
     linear_num_value_heads: 16
     linear_beta_max: 2.0
+    # beta's projection (one scalar gate per value head) on Adam instead of Muown, as the MoE
+    # router (user 2026-10-31; Megatron linear_beta_adam). alpha / output gate (a vector per
+    # head) stay on Muown. Not screened.
+    linear_beta_adam: true
     linear_drop_qkv_silu: true
     linear_gate_activation: signed_sigmoid2
     linear_gate_init_style: shipped

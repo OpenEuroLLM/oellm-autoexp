@@ -3636,6 +3636,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "linear_beta_adam": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="complex_kda under a Muon-family optimizer: train the beta projection (``b_proj``, hidden -> one scalar per value head) with the scalar optimizer (Adam) instead of the matrix optimizer, as the MoE router. Its rows are independent per-head gates: an orthogonalized update moves every head's row by the same step whatever its gradient. The decay-gate (alpha) and output-gate projections produce a vector per head and stay on the matrix optimizer.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "linear_beta_max": MegatronArgMetadata(
         arg_type=float, default=1.0, help=None, choices=None, nargs=None, element_type=None
     ),
@@ -11566,6 +11574,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="sigmoid",
+    ),
+    "linear_beta_adam": MegatronActionSpec(
+        option_strings=("--linear-beta-adam",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "linear_beta_max": MegatronActionSpec(
         option_strings=("--linear-beta-max",),

@@ -827,6 +827,14 @@ class MegatronConfig(ConfigInterface):
     # a signed-vs-unsigned comparison must set deliberately rather than inherit.
     linear_drop_qkv_silu: bool = False
 
+    # complex_kda under a Muon-family optimizer: train the beta projection (``b_proj``, hidden
+    # -> one scalar per value head) with the scalar optimizer (Adam) instead of the matrix
+    # optimizer, as the MoE router. Its rows are independent per-head gates: an orthogonalized
+    # update moves every head's row by the same step whatever its gradient. The decay-gate
+    # (alpha) and output-gate projections produce a vector per head and stay on the matrix
+    # optimizer.
+    linear_beta_adam: bool = False
+
     # mlstm_kernels sequence kernel used by the mLSTM attention variant.
     mlstm_backend: str = "chunkwise--triton_xl_chunk"
 
