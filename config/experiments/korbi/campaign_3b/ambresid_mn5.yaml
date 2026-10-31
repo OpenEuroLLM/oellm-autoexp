@@ -10,6 +10,10 @@
 #   mhc4_pab  mHC-4 (mixer lr x0.25, as the first run) + pab
 #   ldm       LDM without pab
 #   mhc4      mHC-4 without pab (the first run's residual and MLPs)
+# Added on the spare p132 nodes (2026-10-31 18:30):
+#   mhc4_e360 / mhc4_pab_e360   the two mHC-4 arms at the v2 run's 360 experts (tables kept at
+#            40B; LDM at 360 does not fit 16 nodes: 0.86 memory at 216)
+#   mhc4_pab_seed2              mhc4_pab with seed 2 (other init + data order): the noise level
 # Same sample order in every arm (train_iters as v2's sample count); training loss only, no
 # saves / eval. Watch moe/routed_expert_output_rms_max (runaway), the router health and the loss.
 #   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
@@ -59,3 +63,23 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.moe_expert_post_act_norm: false
           backend.megatron.mlp_post_act_norm: false
+        - aux.arm: mhc4_e360
+          backend.megatron.depth_memory: false
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.moe_expert_post_act_norm: false
+          backend.megatron.mlp_post_act_norm: false
+          backend.megatron.num_experts: 360
+        - aux.arm: mhc4_pab_e360
+          backend.megatron.depth_memory: false
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.num_experts: 360
+        - aux.arm: mhc4_pab_seed2
+          backend.megatron.depth_memory: false
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.seed: 2

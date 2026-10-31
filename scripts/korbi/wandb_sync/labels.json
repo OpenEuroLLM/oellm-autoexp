@@ -121,5 +121,38 @@
    "no_warmup"
   ],
   "notes": "Early router collapse test: mHC-4 (mixer lr x0.25) instead of LDM, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+ },
+ "x_ambresid__mhc4_e360": {
+  "name": "ambresid_mhc4_e360",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "mhc4",
+   "no_pab",
+   "e360"
+  ],
+  "notes": "Residual test for the ambitious v2 restart: mHC-4, no pab, 360 experts (the v2 expert count). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambresid__mhc4_pab_e360": {
+  "name": "ambresid_mhc4_pab_e360",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "mhc4",
+   "pab",
+   "e360"
+  ],
+  "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 360 experts (the v2 expert count). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambresid__mhc4_pab_seed2": {
+  "name": "ambresid_mhc4_pab_seed2",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "mhc4",
+   "pab",
+   "seed2"
+  ],
+  "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 216 experts, seed 2 (noise level vs mhc4_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
  }
 }
