@@ -20,6 +20,11 @@ REPO = Path(__file__).resolve().parents[2]
 def _clean_env(monkeypatch):
     monkeypatch.delenv(dry_run.ROOT_ENV, raising=False)
     monkeypatch.delenv(dry_run.ACTIVE_ENV, raising=False)
+    yield
+    # activate() sets os.environ directly (for render workers): never leak a dry run into later
+    # tests, whose renders would then go below this test's root
+    for name in (dry_run.ROOT_ENV, dry_run.ACTIVE_ENV):
+        os.environ.pop(name, None)
 
 
 def test_no_dry_run_no_redirect(tmp_path, monkeypatch):
