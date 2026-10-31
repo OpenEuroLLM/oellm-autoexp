@@ -11,6 +11,8 @@ Every row of docs/datamix_v8/datamix_v8.tsv (ratio_pct) maps to its shards in th
   propella-filtered stage), dolma-3-math -> vtok/dolmino-math (both ingredients).
 A shard's weight is ratio_pct * shard tokens / source tokens (weights sum to 100); tokens from the shard's .idx.
 The report (--report) has per source: ratio, tokens, shards, epochs at --total-tokens. Fails on a missing source.
+--ml <flag-ml file> --en-share 0.8: the v8 table becomes 80 % and the multilingual part (flag-ml, as in flag-option4 / 5)
+the other 20 % (report rows "multilingual", per collection source).
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from common import Index  # noqa: E402
 DATA = "/gpfs/projects/ehpc533/users/korbip/data"
 FLAG = f"{DATA}/flag-decon-v2-agenttok"
 V8 = f"{DATA}/v8-decon-agenttok"
+LUMI_FLAG = "/scratch/project_465002530/training/collection/flag/"
 OVERRIDE = {"common-pile-stackv2-0.1": f"{V8}/hftok/common-pile-stackv2-0.1-full/megatron-lm",
             "dolma-3-math": f"{V8}/vtok/dolmino-math/megatron-lm"}
 # v8.1: the full HF versions replace partial LUMI data_tok copies (tokenize_gt.py on MareNostrum, 2026-10-31)
@@ -63,6 +66,9 @@ def main():
                                                    "data", "datamix_v8_mn5.txt"))
     ap.add_argument("--report", default="")
     ap.add_argument("--total-tokens", type=float, default=12e12)
+    ap.add_argument("--ml", default="", help="multilingual part: 'weight LUMI-path' lines (docs/datamix_v8/flag-ml_lumi.txt), "
+                    "mapped to flag-decon-v2-agenttok; their weights are rescaled to 1 - --en-share")
+    ap.add_argument("--en-share", type=float, default=1.0, help="share of the v8 (English) table when --ml is given, e.g. 0.8")
     a = ap.parse_args()
     rows = [r for r in csv.DictReader((l for l in open(a.table) if not l.startswith("#") and l.strip("\t\n")),
                                       delimiter="\t") if r.get("name") and r.get("ratio_pct")]
@@ -74,11 +80,29 @@ def main():
             missing.append((r["name"], d))
             continue
         tok = [tokens(p) for p in prefixes]
-        total, ratio = sum(tok), float(r["ratio_pct"])
+        total, ratio = sum(tok), float(r["ratio_pct"]) * (a.en_share if a.ml else 1.0)
         lines += [f"{ratio * t / total:.10f} {p}" for p, t in zip(prefixes, tok) if t]
         rep.append((r["category"], r["name"], ratio, total, len(prefixes), ratio / 100 * a.total_tokens / total, d))
         print(f"{r['name']:50s} {ratio:8.4f} % {total / 1e9:9.2f}B {len(prefixes):4d} shards "
               f"{rep[-1][5]:6.2f} epochs", flush=True)
+    if a.ml:                                  # the multilingual part, its own relative weights, scaled to 1 - en_share
+        ml = [(float(w), p.rstrip("/")) for w, p in (l.split()[:2] for l in open(a.ml) if l.strip() and not l.startswith("#"))]
+        wsum = sum(w for w, _ in ml)
+        by_src = {}
+        for w, p in ml:
+            assert p.startswith(LUMI_FLAG), p
+            q = os.path.join(FLAG, p[len(LUMI_FLAG):])
+            if not os.path.exists(q + ".idx"):
+                missing.append(("ml " + p, q))
+                continue
+            share = 100 * (1 - a.en_share) * w / wsum
+            lines.append(f"{share:.10f} {q}")
+            src = p[len(LUMI_FLAG):].split("/")[0]
+            b = by_src.setdefault(src, [0.0, 0, 0])
+            b[0] += share; b[1] += tokens(q); b[2] += 1
+        for src, (share, t, n) in sorted(by_src.items(), key=lambda x: -x[1][0]):
+            rep.append(("multilingual", src, share, t, n, share / 100 * a.total_tokens / t, f"{FLAG}/{src}"))
+            print(f"ml {src:47s} {share:8.4f} % {t / 1e9:9.2f}B {n:4d} shards {rep[-1][5]:6.2f} epochs", flush=True)
     if missing:
         sys.exit("missing sources:\n" + "\n".join(f"  {n}: {d}" for n, d in missing))
     os.makedirs(os.path.dirname(a.out), exist_ok=True)

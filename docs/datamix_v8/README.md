@@ -43,3 +43,48 @@ starts with `<think>`; some are cut at the generation limit, kept as published).
 Sources: Nemotron-Cascade-2-SFT-Data (593 GB jsonl, all 8 domains), Nemotron-SFT-Science-v2 (53 GB), Nemotron-SFT-Math-v4
 (5.5 GB parquet), marin open-thoughts-4 code / math / science qwen3-32b annotated (21 / 50 / 3.3 GB),
 Nemotron-Pretraining-Specialized-v1.2 (54 GB, 4 subsets, text).
+
+## English vs multilingual: v8 and the earlier OpenEuroLLM mixes (2026-10-31)
+
+The mix files on LUMI (`/scratch/project_465002530/users/vitiugin/datamix/`, copied for reference where noted):
+
+| file | weight | content |
+|---|---:|---|
+| `flag-option4.txt` / `flag-option5.txt` | 0.80 | English part (27 / 29 sources) |
+| `flag-ml.txt` (= `docs/datamix_v8/flag-ml_lumi.txt`) | 0.20 | multilingual part: 286 shards, 42 languages |
+| `flag-option4-shards.txt` / `flag-option5-shards.txt` | 1.00 | the two combined per shard; option5-shards = the flag mix trained on MN5 so far (452 shards) |
+| `flag-option5-project2530.txt` | 1.00 | English only (the 12T table) -- option5's English part renormalized |
+| v8 (`datamix_v8.tsv`) | 1.00 | English only |
+
+English part, % of the English weight (path-matched; mixture-vitae counted as one source):
+
+| source | opt4 | opt5 | project2530 | v8 |
+|---|---:|---:|---:|---:|
+| common-pile-stackv2 | 23.2 | 23.1 | 24.4 | 17.1 |
+| dclm | 0 | 11.3 | 11.3 | 11.8 |
+| megamath | 10.6 | 10.6 | 10.6 | 10.6 |
+| mixture-vitae (full) | 14.3 | 14.3 | 14.3 | 0 |
+| mixture-vitae, 17 instruct / reasoning subsets | 0 | 0 | 0 | 6.7 |
+| new agent / reasoning SFT sets (SWE-ZERO, Nemotron-Cascade, ...) | 0 | 0 | 0 | 13.7 |
+| finephrase | 16.3 | 8.1 | 8.1 | 4.1 |
+| hplt-4.0 eng ccc | 8.0 | 7.9 | 8.0 | 6.7 |
+| Nemotron-CC high / medium-high | 9.3 / 0 | 4.6 / 1.3 | 4.6 / 1.3 | 7.0 / 6.4 |
+| nemotron-pretraining-specialized 1.0 | 5.7 | 5.7 | 5.7 | 5.3 |
+| Nemotron-MIND | 0 | 1.1 | 1.1 | 0 |
+| openthoughts-3 | 0.7 | 0 | 0 | 0 |
+| stackv2-edu / dolma-3-math / other dolmino | 1.3 / 0.4 / 0.9 | 1.3 / 0.4 / 0.9 | 0.7 / 0.7 / 0 | 0.7 / 0.7 / 0 |
+
+The rest (starcoder, finemath, swallow-math / -code, openwebmath, finepdfs-edu eng, hplt ab / ia, agenttrove,
+specialized-1.1) is unchanged across the four. So v8 = project2530 with the full mixture-vitae replaced by its
+reasoning / instruct subsets plus new agent / reasoning SFT data, less stackv2 and finephrase, more Nemotron-CC --
+and, like project2530, **no multilingual data**, whereas every full mix so far was 80 % English + 20 % `flag-ml`.
+
+**flag-ml** (identical in option4 and option5): hplt-4.0 58.6 %, nemotron-cc-tower+ 14.0 %, finepdfs-edu 13.2 %,
+finepdfs 4.8 %, nemotron-cc-opus 4.4 %, fineopus 3.2 %, finewiki 1.0 %, dochplt 0.7 % (of the 20 %); 42 languages, top
+spa 15.6 / deu 13.9 / fra 13.8 / por 5.4 / ita 4.9 % (eng-X parallel pairs 3.9 %). All 286 shards are on MareNostrum in
+`flag-decon-v2-agenttok` (v6-decontaminated, agent tokenizer): 4,963B tokens -> at 2.4T (20 % of 12T) 0.48 epochs of
+hplt, 0.62 tower+, 2.25 finepdfs-edu, <= 1 for the rest; a few eng-X pair sets ~3.
+
+**Proposal (v8 + ML):** 80 % v8 (its table weights x 0.8) + 20 % flag-ml (its own weights), as option4 / option5 and
+the current training mix -- `build_datamix.py --ml docs/datamix_v8/flag-ml_lumi.txt --en-share 0.8`. The English
+sources' epochs drop by a fifth (the instruct / reasoning sets ~4 -> ~3.2); no new tokenization or decontamination.

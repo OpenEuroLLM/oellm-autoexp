@@ -84,5 +84,11 @@ sources:
       ~3.9 epochs at the 88B budget
     decision: LUMI dolmino-math (both ingredients, 22.3B, <bos> stripped) in place of flag's ingredient2 (user, 2026-10-31)
     reason: ~10.5B tokens of ingredient1 are distinct documents; ~3.9 epochs at the 88B budget instead of 7.5
+  multilingual (flag-ml):
+    origin: LUMI users/vitiugin/datamix/flag-ml.txt (= docs/datamix_v8/flag-ml_lumi.txt), the 20 % of flag-option4 / 5
+    on_mn5: flag-decon-v2-agenttok (286 shards, 4963B tokens, 42 languages; v6-decontaminated, agent tokenizer)
+    v8_table: none (v8 is English only, like flag-option5-project2530)
+    proposal: 80 % v8 (table weights x 0.8) + 20 % flag-ml (its weights), build_datamix.py --ml ... --en-share 0.8
+    decision: pending (user)
   openthoughts-3:
     decision: not a separate entry (92.1 % of its documents are contained in mixture-vitae; docs/flag_retokenization.md)
