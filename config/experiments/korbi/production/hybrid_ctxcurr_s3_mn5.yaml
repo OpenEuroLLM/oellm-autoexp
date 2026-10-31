@@ -1,0 +1,55 @@
+# @package _global_
+# Sequence-length curriculum at s3 (user 2026-10-31): 4k -> 16k -> 64k over 2 / 8 / 90 % of the tokens at constant
+# tokens per step, against constant 64k -- the schedule planned for the big run, tested ("post-approved") on the
+# same recipe as the ctxlen4n_s3 screen (hybrid_ctxlen_s3_mn5: s3 production stack, 4 nodes per arm, 1,048,576
+# tokens per step = 64k tokens per GPU, lr 1.8e-3 constant, 1000 steps = 1.05B tokens).
+#
+# Data: datamix v8 + multilingual (80 / 20), split by document into the three stages
+# (scripts/datamix_v8/split_stages.py: $HYBRID_ENV/data/datamix_v8ml_stage{1,2,3}_mn5.txt, the same per-source
+# ratios in every stage, no document in two stages). Both arms read the same stage data in the same phases; they
+# differ only in the sequence length (and so the sequences per step) of phases 1 and 2.
+#
+# Phases (Megatron --phase-transition-iterations 20,100 --phase-transition-variable-batch, 6cec40be3): a phase
+# saves and exits at its last iteration; the next phase resumes the arm's checkpoint with its own sequence length,
+# global batch size and stage data. One job per (arm, phase), enqueued in order:
+#   curr:  p1 = it 0-20 at 4k (gbs 256, mbs 16), p2 = 20-100 at 16k (gbs 64, mbs 4), p3 = 100-1000 at 64k (gbs 16)
+#   c64k:  the same phases, all at 64k (gbs 16, mbs 1)
+# Comparison: the validation loss in phase 3 (both arms at 64k on the same documents), and the checkpoints at
+# 400 / 800 / 1000 at 4k and 64k as for ctxlen4n_s3.
+#
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_ctxcurr_s3_mn5 \
+#       'aux.only=[curr_p1]' --yes          # then curr_p2 after curr_p1 has finished, ...
+defaults:
+  - hybrid_ctxlen_s3_mn5
+  - _self_
+
+aux:
+  suite: ctxcurr_s3
+  arm: curr
+  phase: 1
+  key: ${aux.arm}_p${aux.phase}
+  stage_datamix: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8ml_stage${aux.phase}_mn5.txt
+
+backend:
+  megatron:
+    data_args_path: ${aux.stage_datamix}
+    phase_transition_iterations: "20,100"
+    phase_transition_variable_batch: true
+    load: ${job.base_output_dir}/ckpt
+
+job:
+  name: ${aux.suite}_${aux.key}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.key}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - {aux.arm: curr, aux.phase: 1, aux.seq: 4096, aux.gbs: 256, backend.megatron.micro_batch_size: 16}
+        - {aux.arm: curr, aux.phase: 2, aux.seq: 16384, aux.gbs: 64, backend.megatron.micro_batch_size: 4}
+        - {aux.arm: curr, aux.phase: 3, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
+        - {aux.arm: c64k, aux.phase: 1, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
+        - {aux.arm: c64k, aux.phase: 2, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
+        - {aux.arm: c64k, aux.phase: 3, aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
