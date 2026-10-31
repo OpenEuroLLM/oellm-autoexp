@@ -274,7 +274,7 @@ at the save and after each load.
 | resume | optimizer state (15,473 entries) | step 21 lm loss | steps 22-30 |
 |---|---|---|---|
 | 4 -> 4 nodes (`cont`) | rank by rank exact (sum sq + position-weighted) | 7.649179 = 7.649179 | \|d loss\| <= 0.007, grad norm within 2 % |
-| 4 -> 8 nodes, single sampler (`grow_s`) | summed over ranks, max rel diff 7e-10 | 7.545552 = 7.545552 | \|d loss\| <= 0.003 |
+| 4 -> 8 nodes, single sampler (`grow_s`) | summed over ranks, max rel diff 7e-10 | 7.545552 = 7.545552 | \|d loss\| <= 0.003 to step 25; 0.043 at 27 after a grad-norm spike at 26 (31.6 vs 41.2: rounding drift amplified, another reduction order on 32 ranks), 0.004 at 30 |
 | 4 -> 8 nodes, production cyclic sampler (`grow`) | max rel diff 5e-10 | 7.6667 vs 7.6492 | other batches (not paired) |
 
 - The production sampler (`dataloader_type cyclic` + `data_sharding`) gives every step after a DP
