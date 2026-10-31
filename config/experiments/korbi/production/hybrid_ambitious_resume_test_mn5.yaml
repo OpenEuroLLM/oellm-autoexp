@@ -1,0 +1,110 @@
+# @package _global_
+# Save / resume test of the ambitious v2 recipe (user 2026-10-31: "run the resume test on the dev
+# queue"). The production model (hybrid_ambitious_pab_128_mn5: LDM cute + unwind, CKDA 7:1, pab,
+# QB EMA 0.9 + global_aux_loss, Engram [2, 3, 4] + sign hash with TableAdam (rowwise v, bf16 m,
+# sparse grads, step lookup), muown_classical + head-wise QKV + compact ckpt, Megatron-FSDP
+# optim_grads_params + MoonEP EP4, fp8 expert gather, fsdp_dtensor, async rolling saves) at a size
+# that fits 4 nodes: 72 experts (360 / 5), Engram tables / 32 (811,683 rows per head: odd, as
+# 25,973,845, so the DP shards stay uneven), gbs 128 x 16k.
+#
+#   phase save (4 nodes each, train_iters 40 for every arm: the same data order)
+#     ref    trains to step 30; an ASYNC rolling (non-persistent global) save at step 20 into
+#            ref/ckpt_rolling, as production writes the checkpoints it resumes from
+#     ref2   the same without saves: the run-to-run noise floor (non-deterministic kernels)
+#   phase resume (load ref's step-20 rolling checkpoint, train to 30, save only into their own dirs)
+#     cont   4 nodes (same layout)
+#     grow   8 nodes (DP x 2, expert DP x 2: the 32 -> 128-node handover pattern)
+#   Compare steps 21-30 (lm loss, grad norm, load balancing, muown / LDM / router metrics) of
+#   cont / grow against ref, with ref vs ref2 as the tolerance.
+#
+#   ./sync_to_marenostrum.sh amb_rs
+#   scripts/korbi/mn5_autoexp_bg.sh amb_rs_save scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_ambitious_resume_test_mn5 --yes aux.phase=save
+#   ... aux.phase=resume   (after ref has written iter_0000020)
+defaults:
+  - hybrid_ambitious_pab_128_mn5
+  - _self_
+
+aux:
+  experiment_group: resume_tests
+  suite: amb_rs
+  arm: ref
+  phase: save
+  nodes: 4
+  gbs: 128
+  dev_queue: true
+  only: []
+
+backend:
+  env:
+    # one Engram step group = the micro-batches of a step: 2 at 4 nodes (mbs 4), 1 at 8
+    ENGRAM_STEP_GROUP: "${oc.eval:'str(max(1, ${aux.gbs} // (${aux.nodes} * 4 * 4)))'}"
+  megatron:
+    num_experts: 72
+    engram_table_size: 811683
+    train_iters: 40
+    exit_interval: 30
+    log_interval: 1
+    arch_metrics_interval: 5
+    eval_interval: 100000
+    eval_iters: 0
+    split: "1000,0,0"
+    wandb_project: null
+    wandb_exp_name: null
+    # ref: the rolling save at step 20 (async, persistent worker, constant structure as production);
+    # its exit save at 30 goes to its own persistent dir. cont / grow: an empty persistent load dir,
+    # so the latest checkpoint is ref's rolling iter 20.
+    save: ${job.base_output_dir}/ckpt
+    load: ${job.base_output_dir}/ckpt
+    save_interval: 1000
+    save_retain_interval: null
+    non_persistent_ckpt_type: global
+    # per arm in the sweep (ref2 must not see ref's rolling checkpoint: it would resume from it)
+    non_persistent_save_interval: 1000
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  metadata:
+    pool_singleton: null
+  est_step_time_s: 25.0
+  # cold data index (gbs 128 x 40 steps is a new sample count) + compile
+  est_startup_min: 30.0
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (test: no retry)"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node (test: no retry)"}
+    - name: give_up_oom
+      transition: [null, OUT_OF_MEMORY]
+      action: {class_name: CancelAction, reason: "out of host memory (test: no retry)"}
+  log_events: []
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_debug
+    time: "01:30:00"
+  env:
+    WAIT_FOR_JOB_NAME: ""
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'(len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}) and (\"\\${aux.arm}\" in [\"ref\", \"ref2\"]) == (\"\\${aux.phase}\" == \"save\")'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ref
+          backend.megatron.non_persistent_save_interval: 20
+        - aux.arm: ref2
+        - aux.arm: cont
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref/ckpt_rolling
+        - aux.arm: grow
+          aux.nodes: 8
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref/ckpt_rolling
