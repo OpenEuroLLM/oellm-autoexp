@@ -32,3 +32,9 @@ vtok/hermes_agent_reasoning_traces                    # 97 %
 vtok/openthoughts3_glm47                              # 32 %
 vtok/openthoughts4_code_qwen3                         # 13 %
 vtok/dolmino-math                                     # 1.2 %
+# v8.1: the full HF versions of five sets (replace the vtok copies of hermes, Themis, openthoughts4_code, cascade stage 1, math v2)
+hftok/hermes-agent-reasoning-traces
+hftok/Themis-CodePreference
+hftok/openthoughts-4-code-qwen3-32b-32k-annotated
+hftok/Nemotron-Cascade-SFT-Stage-1
+hftok/Nemotron-Math-v2

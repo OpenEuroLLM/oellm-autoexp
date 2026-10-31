@@ -396,7 +396,7 @@ def cmd_units(a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", choices=["units", "encode", "assemble"])
-    ap.add_argument("--source", required=True, choices=sorted(SOURCES))
+    ap.add_argument("--source", required=True, help="a SOURCES name, or several comma-separated (run one after another)")
     ap.add_argument("--part", type=int, default=int(os.environ.get("SLURM_NODEID", 0)))
     ap.add_argument("--nparts", type=int, default=int(os.environ.get("SLURM_NNODES", 1)))
     ap.add_argument("--procs", type=int, default=max(1, (os.cpu_count() or 2) - 8))
@@ -404,7 +404,12 @@ def main():
     ap.add_argument("--out", default=f"{ROOT}/tok")
     ap.add_argument("--shard-tokens", type=int, default=50_000_000_000)
     a = ap.parse_args()
-    {"units": cmd_units, "encode": cmd_encode, "assemble": cmd_assemble}[a.mode](a)
+    names = [x for x in a.source.split(",") if x]
+    bad = [x for x in names if x not in SOURCES]
+    assert not bad, f"unknown sources {bad}; known: {sorted(SOURCES)}"
+    for x in names:
+        a.source = x
+        {"units": cmd_units, "encode": cmd_encode, "assemble": cmd_assemble}[a.mode](a)
 
 
 if __name__ == "__main__":
