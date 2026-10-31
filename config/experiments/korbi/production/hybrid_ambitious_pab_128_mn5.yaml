@@ -19,7 +19,17 @@ defaults:
 aux:
   # the voted size (user 2026-10-31): 360 experts + Engram 80B = 84B-A2.9B-E80B (~164B); size128 at
   # 128 n: 28.9 s / step, 4,535 tok/s/GPU, memory 0.956 with cap 0.80 + 8 NCCL channels (16 OOM)
-  arm: ambitious_e360_eng80_v2
+  arm: ambitious_e360_eng80_v2_64k
+  # 64k context (user 2026-10-31), set before the run's first real steps: the sequence length
+  # sets the data index and order, so it can never change later. Same 67M tokens per step and
+  # per micro-batch (1 x 65536 = 4 x 16384: LDM kernel shapes, MoE dispatch, quantile balancing,
+  # activation memory unchanged), still 2 micro-batches per step at 128 nodes (the per-micro-batch
+  # FSDP expert gathers unchanged), train_iters unchanged. Cost: attention only (1 layer in 8,
+  # document-masked via cu_seqlens: only documents > 32k cost more). v2speed128 at 4 channels:
+  # 64k 31.7 vs 32k 30.9 s (+2.6 %); with 8 channels + ENGRAM_STEP_GROUP 1 expected ~30.7 s
+  # (32k measured 29.9). Own arm: never resumes the 16k start (ambitious_e360_eng80_v2).
+  seq: 65536
+  gbs: 1024
 
 backend:
   env:
@@ -28,7 +38,11 @@ backend:
     # channels, context) the device is full once PyTorch reaches its cap -- v2's first start died
     # in ncclCuMemAlloc after step 1 (a lazily created single-rank communicator, fixed in Megatron
     # 7ec909031). 0.78 leaves ~1.4 GiB for NCCL; size128 e360_eng80 peaked at 47.5 GiB reserved.
-    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.78"
+    # 0.80 again (2026-10-31): at 0.78 the 16k start (p132.0044) ran stably but ~10 % slow (32 vs
+    # 28.9 s / step), PyTorch at ~48.9 of the cap's 49.7 GiB -- allocator thrash. v2speed128 at 32k
+    # (20 steps, zero allocator retries): cap 0.80 + 8 channels + ENGRAM_STEP_GROUP 1 = 29.9 s,
+    # 4,378 tok/s/GPU, 48.3 GiB reserved, 3.35 GiB free; 4 channels 30.9 s; async groups 31.8 s
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
     # release the allocator cache after the forward-backward of the first 2 steps, so NCCL's
     # buffers for the optimizer step / grad norm / metric collectives are allocated while there
     # is room (no cost later)
@@ -37,7 +51,12 @@ backend:
     MEM_BREAKDOWN: "1"
     NCCL_MIN_NCHANNELS: "8"
     NCCL_NCHANNELS_PER_PEER: "8"
+    # Engram lookups per micro-batch (v2speed128: as fast as 2, 0.7 GiB less PyTorch memory --
+    # margin for the first save / validation); overrides hybrid_ambitious_128_mn5's 2. No
+    # ENGRAM_ASYNC_GROUPS (-6 %)
+    ENGRAM_STEP_GROUP: "1"
   megatron:
+    micro_batch_size: 1
     # pab (docs/ambitious_stabilization.md, section 6): nothing else changes
     moe_expert_post_act_norm: true
     mlp_post_act_norm: true
@@ -73,6 +92,7 @@ slurm:
   env:
     # a fresh run: no predecessor job to wait for
     WAIT_FOR_JOB_NAME: ""
-    # 8 NCCL channels (size128: +3 % at e360; 16 do not fit), both levels as hybrid_size128_mn5
+    # 8 NCCL channels (v2speed128: 29.9 vs 30.9 s with 4, fits with cap 0.80), both levels as
+    # hybrid_size128_mn5
     NCCL_MIN_NCHANNELS: "8"
     NCCL_NCHANNELS_PER_PEER: "8"
