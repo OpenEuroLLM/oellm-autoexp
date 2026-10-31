@@ -1,0 +1,45 @@
+# @package _global_
+# The training dataset indices of the big run's sequence-length curriculum on the v8 + multilingual stage data
+# (docs/datamix_v8/README.md: datamix_v8ml_stage{1,2,3}_mn5.txt), built before the run needs them. As
+# data_cache_prebuild_ambitious_mn5 (stand-in model, skip_train, no load / save, shared cache).
+#
+# The schedule (user 2026-10-31): 2^26 = 67,108,864 tokens per step in every stage, 15T tokens = 223,517 steps;
+# stage boundaries at 2 % / 10 % = iterations 4,470 / 22,352 (--phase-transition-iterations 4470,22352):
+#   stage 1: it 0 - 4,470          seq 4,096   gbs 16,384   73,236,480 samples
+#   stage 2: it 4,470 - 22,352     seq 16,384  gbs 4,096    73,244,672 samples
+#   stage 3: it 22,352 - 223,517   seq 65,536  gbs 1,024   205,992,960 samples
+# A phase's dataset is sized by its own sample count (Megatron: (next - this transition) x this phase's gbs),
+# computed from the iteration it starts at -- a prebuild starts at 0, so each stage is built here WITHOUT phases,
+# with train_iters = the stage's length: the same train sample count, sequence length, blend and seed, i.e. the
+# same training index. (The small validation index depends on train_iters and is built by the run.)
+#
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/data_cache_prebuild_ambitious_v8curr_mn5 --yes
+defaults:
+  - data_cache_prebuild_ambitious_mn5
+  - _self_
+
+aux:
+  stage: 1
+  gbs: 16384
+  seq: 4096
+  stage_iters: 4470
+
+backend:
+  megatron:
+    data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8ml_stage${aux.stage}_mn5.txt
+    train_iters: ${aux.stage_iters}
+    micro_batch_size: 1
+
+job:
+  name: data_cache_prebuild_ambitious_v8curr_s${aux.stage}
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v8curr_s${aux.stage}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - {aux.stage: 1, aux.seq: 4096, aux.gbs: 16384, aux.stage_iters: 4470}
+        - {aux.stage: 2, aux.seq: 16384, aux.gbs: 4096, aux.stage_iters: 17882}
+        - {aux.stage: 3, aux.seq: 65536, aux.gbs: 1024, aux.stage_iters: 201165}
