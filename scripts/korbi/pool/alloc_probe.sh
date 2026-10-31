@@ -7,6 +7,9 @@
 #   MONDEAD <pool>                                    pool monitor heartbeat older than 10 min
 #   HELDIDLE <pool> <host> <nodes>                    a running host with no active run (costs)
 #   PREEMPT/FAIL <job name> <pool> <run> <rc>         a main run that ended badly (last 2 h)
+#   BLOCKED <pool> <host> free=<n> queued_fits=<m>    a running host with >= 8 idle nodes while a
+#                                                     queued run of <= n nodes waits (pool limit:
+#                                                     max_runs_per_host, priority, ...)
 # Run on MareNostrum 5: bash alloc_probe.sh
 P=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
 POOLS="p33 p129 p132 p264 o134e o134c o260c p134c"
@@ -24,6 +27,24 @@ for p in $POOLS; do
     st=$(cat "$h/state" 2>/dev/null)
     [ -e "$h/exited" ] && continue
     case "$st" in
+      busy*)
+        usable=$(echo "$st" | awk '{print $NF}')
+        used=0
+        for r in $(ls "$h/assign" 2>/dev/null); do
+          [ -e "$d/runs/$r/rc" ] && continue
+          used=$((used + $(grep -m1 '^NODES=' "$d/runs/$r/meta.env" 2>/dev/null | cut -d= -f2 || echo 0)))
+        done
+        free=$((usable - used))
+        if [ "$free" -ge 8 ]; then
+          fit=""
+          for q in "$d"/runs/*; do
+            [ -e "$q/rc" ] || [ -e "$q/assigned" ] || [ ! -e "$q/meta.env" ] && continue
+            n=$(grep -m1 '^NODES=' "$q/meta.env" | cut -d= -f2)
+            [ -n "$n" ] && [ "$n" -le "$free" ] && fit=$n && break
+          done
+          [ -n "$fit" ] && echo "BLOCKED $p $(basename "$h") free=$free queued_fits=$fit"
+        fi
+        ;;
       idle*)
         ts=$(echo "$st" | awk '{print $2}')
         [ -n "$ts" ] && [ $((now - ${ts%.*})) -gt 600 ] &&
