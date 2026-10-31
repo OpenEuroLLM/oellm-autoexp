@@ -99,3 +99,20 @@ node's own shards and write info.json before deleting the parts.
   `$HYBRID_ENV/data/flag_decon_v2_datamix_mn5.txt` (old tokenizer, v2 only) and
   `flag_decon_v2_agenttok_datamix_mn5.txt` (**the final clean dataset**: v2 + openthoughts-3 + -pure
   removals + agent tokens; config `data_flag_decon_v2_agenttok_mn5`).
+
+### openthoughts-3 is inside mixture-vitae (2026-10-31)
+
+Feedback: openthoughts-3 is part of mixture-vitae. Checked with `scripts/flag_decontam/doc_overlap.py`
+(5,000 random openthoughts-3 documents as references, the decontamination matcher -- word level,
+formatting-independent -- over the 5 mixture-vitae shards; work `flag_decon_ovl_ot_mv`): **92.1 %** of
+the documents are >= 70 % contained in one verbatim run (89.4 % >= 90 %), 98.3 % share some run; 1.7 %
+none. mixture-vitae holds them reformatted (`Q:`, `Teacher`, `### User:` instead of ChatML) -- and it
+was re-tokenized here too (4 of 5 shards; its own <think> / ChatML spans).
+
+So the separate openthoughts-3 entry was a second copy. New datamix files without it
+(`flag_datamix_mn5.py --exclude openthoughts-3`): `$HYBRID_ENV/data/flag_decon_v2_agenttok_without_ot_datamix_mn5.txt`
+and `flag_decon_v2_without_ot_datamix_mn5.txt` (452 shards); the configs `data_flag_decon_v2_agenttok_mn5` /
+`data_flag_decon_v2_mn5` point at them. The files WITH openthoughts-3 stay unchanged: the running
+ambitious_v2_128n (kept as a stability check, user) and runs enqueued before read them. The
+openthoughts-3 shard stays in the trees (unused by the new datamix). The new blend needs its own
+dataset index (prebuild configs `data_cache_prebuild_*_mn5`).
