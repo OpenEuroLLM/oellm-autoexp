@@ -51,7 +51,7 @@ for m in $MAINS; do
         rc=$(cat "$r/rc")
         t=$(stat -c %Y "$r/rc")
         case "$rc" in
-          *completed* | *cancelled*) ;;
+          *completed* | *cancelled* | "0 preempted"*) ;;
           *) [ $((now - t)) -lt 7200 ] && echo "FAIL $m $p $rid ${rc// /_}" ;;
         esac
       fi
