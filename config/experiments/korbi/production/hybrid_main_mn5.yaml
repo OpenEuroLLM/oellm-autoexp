@@ -117,7 +117,10 @@ backend:
     depth_memory_unwind: true
     depth_memory_groups: 16
     depth_memory_key_dim: 8
-    depth_memory_hidden_dim: 32
+    # address-network width H (user 2026-10-31): 128, scaled to the model -- the paper's 32 is its
+    # 400M setting (64 at 1.5B); the address networks are plain Linear layers outside the CuTe
+    # kernels (~0.3M parameters per site). Not screened at 128.
+    depth_memory_hidden_dim: 128
     num_experts: 112
     moe_ffn_hidden_size: ${aux.expert_ffn}
     # SwiGLU clamp (DeepSeek-V4.1 / gpt-oss, user 2026-10-24: adopt): honoured by the shared

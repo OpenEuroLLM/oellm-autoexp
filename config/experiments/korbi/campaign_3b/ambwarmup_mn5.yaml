@@ -52,6 +52,8 @@ backend:
   megatron:
     micro_batch_size: 2
     num_experts: 216
+    # pinned at the width these suites ran with (production moved to 128, 2026-10-31)
+    depth_memory_hidden_dim: 32
     # the v2 restart's balancing (pinned: the production config may move on)
     moe_router_load_balancing_type: global_aux_loss
     moe_aux_loss_coeff: 1.0e-4
