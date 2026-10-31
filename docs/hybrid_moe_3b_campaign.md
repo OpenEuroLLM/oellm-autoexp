@@ -3249,7 +3249,7 @@ fixed sets (the long-context set).
   output-normalized nGPT + LDM put ~28 % on layer-0 QKV and the rest on the embedding.
 - **Stream RMS across depth**, first -> last layer:
   - s3: plain 0.060 -> 1.59 (x27), mHC-4 0.064 -> 0.94 (x15), LDM 0.070 -> 1.30 (x18).
-  - s2: plain x20, mHC-4 x13. (s2 LDM: NaN, under investigation.)
+  - s2: plain x20, mHC-4 x13. (s2 LDM: a NaN in that measurement at the time; later resolved.)
   - Update / stream: LDM 0.15-0.17, plain 0.19-0.24, mHC-4 0.29-0.31.
 
 **Verdict:**
@@ -3258,3 +3258,209 @@ fixed sets (the long-context set).
 - **The update ratio is already even across depth without normalization.** The stream growth
   (x18-27) remains, but at this scale it does not show up as a training problem.
 - **Production keeps plain LDM at mixer lr x1 with classical Muown** (the user's rule).
+
+### Expert stabilization of the ambitious run (2026-10-28 – 10-30)
+
+Full write-up: `docs/ambitious_stabilization.md`. In short:
+
+**The problem.** In the ambitious main run (LDM, classical Muown without weight decay, constant lr
+8.5e-4), the routed-expert output grew 100× in layers 55–73 between steps 400 and 870.
+
+**The cause: single-expert spectral collapse.** One expert per layer (of 216) collapses:
+- its stable rank falls from ~200–300 to single digits;
+- its fc1 and fc2 co-align (0.95 vs 0.75);
+- its Frobenius and row norms stay flat.
+
+It is step-driven: the reproducer `ambrepro`, the production config at 1/8 of the tokens per
+step, blows up at the same steps.
+
+**Decision: `pab`**, the bounded post-activation norm inside every SwiGLU,
+h ← h / max(rms(h), 1):
+- the largest expert output stays flat at ~0.07 in the reproducer (unchanged model: 6.7);
+- s3 −0.005, s2 +0.000, s1 −0.003 vs `ldm`;
+- −0.1 % speed, +0.4 GB.
+
+**Alternatives that lost, faded or were erratic:**
+- v / g weight decay, clamp 5, the full norm (`pan`), peri-LN;
+- the Muown stable-rank floor, the spectral cap κ = 2 / 3 / 5 and orthogonal expert directions;
+- `pab` combined with a cap;
+- half lr helps, but lr changes are excluded.
+
+**nGPT-like late decay:** no variant reproduced it.
+
+### Quantile balancing (QB) (2026-10-29 – 10-31)
+
+**Loss** (`screen5qb`, vs `ldm` with expert bias + aux loss 1e-4, final 100 steps):
+
+| | s1 | s3 |
+|---|---:|---:|
+| QB (EMA 0, no aux loss) | −0.018 | −0.015 |
+| QB + sequence aux loss 1e-4 | −0.004 | −0.003 |
+
+- The sequence-level aux loss gives back most of QB's gain.
+- It is **not used** (user 2026-10-31): the model targets batch-1 inference, so per-sequence
+  balancing is unwanted.
+
+**Router health: QB has no dead or near-dead experts in any run** (s1, s3, the reproducer).
+- QB sets every expert's bias to the global batch's score quantile, so every expert gets its
+  quota by construction.
+- The bias method was the one starving experts: at s3 `ldm`, near-dead (layer, expert) slots grew
+  from 31 to 86, minimum load entropy fell from 0.95 to 0.72, and max load violation reached 28.
+- QB's router is much sharper: mean max routing probability 0.17–0.33 vs 0.02–0.04, minimum score
+  entropy 0.42–0.65 vs 0.94–0.99.
+
+**How plain QB blew up** (reproducer, EMA 0, no `pab`):
+- the same single-expert runaway as `base` (largest expert output 4.95 at step 800);
+- load balance stayed fine (entropy ≥ 0.988);
+- the 6× sharper routing weights let the runaway reach the residual stream: grad norm 0.68 → 7.7
+  → 12.8 from step 850, while `base` stayed at 0.24.
+
+`pab` caps that path. EMA 0.9 (the production setting, user: keep 0.9 or higher) smooths the bias,
+but bias jitter was not the cause.
+
+**How QB routes:**
+- the bias only selects experts, under `no_grad`;
+- the routing weights come from the unbiased logits, so the router learns from the LM loss alone.
+
+**The possible failure mode under QB is a "ghost" expert:** selected through its bias, but with
+almost no routing weight, so it barely trains.
+- Neither the token counts nor `pab`'s activation metrics can see it: they are measured before the
+  routing weight.
+- New metric (Megatron b36a1b418): `moe/expert_mean_weight_ratio_min` (an expert's mean routing
+  weight / its layer's) and `moe/ghost_expert_layer_slots` (ratio < 0.1).
+
+**Production v2 adds `global_aux_loss` 1e-5 next to QB** (user 2026-10-31). Its token fractions come
+from the router's raw top-k without the QB bias, so it pulls the raw preferences toward balance. It
+adds no per-sequence pressure.
+
+### Engram scaling: n-gram coverage and the s3 allocation sweep (2026-10-30 / 31)
+
+**n-gram coverage of the production mix** (`scripts/korbi/campaign/ngram_coverage.py`):
+- data: 4B tokens of flag-decon-v2-agenttok after the Engram token map;
+- GPU counting, one node, 7.5 min;
+- orders 2–5;
+- nested 0.5–4B samples, so the growth with tokens can be read off.
+
+| order | distinct | top 5M cover | top 19.5M cover | top 40M | top 80M | count of the 19.5M-th | positions with an n-gram seen ≥ 10× |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 96M | 92 % | 97 % | 98 % | 100 % | 6 | 96 % |
+| 3 | 648M | 62 % | 72 % | 77 % | 82 % | 15 | 75 % |
+| 4 | 1.44B | 42 % | 50 % | 54 % | 59 % | 13 | 52 % |
+| 5 | 2.05B | 31 % | 37 % | 41 % | 45 % | 10 | 37 % |
+
+- **Growth with tokens:** top-K coverage at fixed K drops only ~0.01 per doubling of tokens
+  (orders 3–4), flattening; the counts grow ~linearly. At 12T tokens the 19.5M-th 4-gram would be
+  seen ~40k times.
+- **Bigram tables are saturated:** 5M rows cover 92 %.
+- **Trigrams gain ~5 points per doubling of rows.**
+- **4-grams at the production row count would cover ~half of all positions.**
+- **The token map** (built for tokenizer-256k) covers the agent tokenizer's ids: max id 262144 <
+  262272 map entries.
+
+**s3 allocation sweep** (`screen5e_s3`):
+- setup: round 5's 4-node layout and data index, `h5_moe` (144 experts) vs routed experts traded
+  for tables at **equal total and active parameters**, orders [2, 3];
+- pairing: the `h5_moe` rerun pairs with round 5's baseline (detrended per-step correlation 0.998).
+
+| table share (experts) | tables | 500–1000 | 1500–2000 | 2500–3000 | final 100 |
+|---|---:|---:|---:|---:|---:|
+| 34 % (96) | 4.0B | −0.028 | −0.022 | −0.019 | **−0.017** |
+| 45 % (80) | 5.3B | −0.025 | −0.020 | −0.018 | **−0.017** |
+| 57 % (64) | 6.6B | −0.026 | −0.019 | −0.017 | −0.016 |
+
+- **Flat from 34 to 45 %, slightly down at 57 %,** at equal total parameters. 34 % led by ~0.002 in
+  mid-run windows and finished level.
+- **This agrees with the Engram paper's U** (optimum 20–30 %). It does not agree with s1, where 34 %
+  was still the best point.
+- **No speed cost at s3:** 2.78–2.81 s/step for every arm vs 2.80 s.
+
+**Equal total parameters is the wrong exchange rate for deployment.** For batch-1 inference:
+- an expert parameter costs VRAM and per-token bandwidth: the routed experts are weight-read every
+  token;
+- a table parameter costs host RAM or NVMe and a few KB per token. The addresses depend only on
+  the token ids, so lookups can be prefetched and the hot rows sit in the page cache.
+
+So tables "count" far less than experts, and the production question is the value of tables on
+top of a fixed expert budget. It was not measured: the proposed add-on arms (`h5_moe` + 4.0B / +
+6.6B, and + [2, 3, 4] + sign hash) were not run.
+
+**Production decision** (user 2026-10-30 / 31):
+- Engram **[2, 3, 4] + sign hash** at the same table size per run (rows per head × 2/3). The
+  coverage shows the saturated bigram rows are better spent on 4-grams.
+- The sign hash: an independent hash picks a fixed ±1 pattern per (n-gram, lookup), the
+  count-sketch trick of modded-nanogpt PR 360 (Megatron 97423b203, `engram_sign_hash`). Its HF
+  export is not ported yet.
+- Neither change was screened.
+
+**Not adopted:** modded-nanogpt PR 367. It is exact-match retrieval of 6- / 10- / 20-grams over the
+training corpus, a retrieval LM. It needs the index at inference and rewards reproducing seen text,
+which conflicts with the deployment target and the decontamination.
+
+### FP8 expert-weight gather (2026-10-30; speed agent)
+
+`fsdp_fp8_param_gather: experts`: an FP8 all-gather of the routed-expert weights, dequantized to
+bf16 for the GEMMs.
+- **Paired s3 check with `pab`, 300 steps:** +0.005 train loss (steps 251–300), +0.003 validation
+  at step 250; +5.4 % speed.
+- **Adopted for the main run** (user: inference uses FP8 anyway).
+- **Pinned off in the reproducer**, so its arms stay paired.
+
+### The v2 ambitious main run (2026-10-31)
+
+**Identity:**
+- job `ambitious_v2_128n`, arm `ambitious_e360_eng80_v2`;
+- directory `/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v2`;
+- config `config/experiments/korbi/production/hybrid_ambitious_pab_128_mn5.yaml`;
+- W&B id `ambitious_v2_main`.
+
+**What it changes over v1:**
+- 360 experts at 5 of 360;
+- Engram 80B, [2, 3, 4] + sign hash;
+- `pab`;
+- QB at EMA 0.9 + `global_aux_loss` 1e-5;
+- the FP8 expert gather;
+- PyTorch memory cap 0.80, 8 NCCL channels;
+- flag-decon-v2-agenttok data with tokenizer-256k-agent.
+
+**Combinations never run together before:**
+- QB + `pab`;
+- 1:72 sparsity;
+- 4-grams + sign hash;
+- the FP8 gather beyond 300 steps;
+- the global aux loss.
+
+**Safety net:**
+- **The watchdog** (`scripts/korbi/campaign/main_run_watchdog.py`, login-node loop, every 10 min)
+  trips from step 200 on:
+  - the largest routed-expert output above 0.5 at 2 consecutive readings;
+  - the grad-norm median above max(1, 4× its steps-100–300 median);
+  - a NaN or a loss jump of 0.2.
+- **What it does:** cancels the job in every pool, so the conservative q35 run (requeued at
+  priority 90) takes the nodes back.
+- **Validated on the reproducer:** it trips on `base` at step 430 and stays quiet on `pab` through
+  step 900.
+- **Checkpoints:** rolling every 125 steps.
+
+**Watch by hand:**
+- the first ~10 steps for speed and memory (reference e360 + E80B [2, 3]: 28.9 s/step, memory
+  0.956);
+- through step ~1000: `routed_expert_output_rms_max`, `moe_act/capped`, the ghost-expert metric,
+  and the grad norm around step 850.
+
+### Measurement lessons (2026-10-28 – 10-31)
+
+- **Measure the noise with an identical twin.** `pab` vs `pab_r` (same seed and data) differ by
+  0.033 at steps 100–200 and 0.003 at 700–800. The per-step scatter of the difference is small, so
+  the gap is an offset between trajectories. Below ~0.003 the reproducer cannot resolve gaps; use
+  the s2 / s3 screens.
+- **Pin data, tokenizer and balancing in every comparison config.** The κ = 3 reproducer run
+  inherited production's new data and tokenizer: its per-step loss correlation with `base` was
+  0.01 (paired arms 0.996–0.999). Check this correlation on every new paired arm.
+- **Early windows mislead:**
+  - the spectral cap κ = 3 led `pab` by 0.014 at steps 200–400 and ended behind;
+  - peri-LN led by 0.065 in the reproducer and was fading;
+  - 34 % Engram led 45 % by 0.002 mid-run and finished level.
+- **Spectral bounds on Megatron-FSDP shards** must see the full matrix: floor and cap at the
+  matrix owners through the row exchange.
+- **A pool host releases itself when nothing it can run is queued.** The cns144 host was lost on
+  2026-10-30 after the queue emptied.
