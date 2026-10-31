@@ -3333,6 +3333,10 @@ almost no routing weight, so it barely trains.
 from the router's raw top-k without the QB bias, so it pulls the raw preferences toward balance. It
 adds no per-sequence pressure.
 
+**Superseded (2026-10-31):** QB did not carry to the production scale (360 experts, 128 nodes) and is
+dropped; see "The v2 starts and their router failures" below. The `global_aux_loss` 1e-5 above acted as
+~2e-8 (the scaling bug below).
+
 ### Engram scaling: n-gram coverage and the s3 allocation sweep (2026-10-30 / 31)
 
 **n-gram coverage of the production mix** (`scripts/korbi/campaign/ngram_coverage.py`):
@@ -3405,7 +3409,7 @@ bf16 for the GEMMs.
 - **Adopted for the main run** (user: inference uses FP8 anyway).
 - **Pinned off in the reproducer**, so its arms stay paired.
 
-### The v2 ambitious main run (2026-10-31)
+### The v2 ambitious main run (2026-10-31; superseded by v3, see below)
 
 **Identity:**
 - job `ambitious_v2_128n`, arm `ambitious_e360_eng80_v2`;
@@ -3495,3 +3499,209 @@ The mHC exports keep working.
   set the pool's limit.
 - `pab`, quantile balancing and the sign hash are covered by the layer parity tests only, until the
   v2 run saves a checkpoint.
+
+### The v2 starts and their router failures (2026-10-31)
+
+Three starts of v2 (84B-A2.9B-E80B, 64k, 128 nodes, `pab`) each failed on router balance. None
+reached the expert instability `pab` guards against; the largest routed-expert output stayed at
+0.04–0.07 in all of them.
+
+| start | balancing | max load violation, step 40 | near-dead slots, step 40 | ghost slots (max) | router mean max prob |
+|---|---|---:|---:|---:|---:|
+| v2_64k (p132.0059, to step 324) | QB EMA 0.9 + `global_aux_loss` 1e-5 | 34.7 | 1,811 | 788 (step 157) | 0.17 |
+| v2b_64k (p132.0071, to step ~80) | expert bias + `aux_loss` 1e-4 | 27.7 | 695 | 54 | 0.004 |
+| v2c_64k (p132.0075, to step ~80) | expert bias + `global_aux_loss` 1e-4 | **61.3** | **3,804** | 511 | 0.005 |
+| v1 (mHC-4, 216 experts, 128 n) | expert bias + `aux_loss` 1e-4 | 8.1 | 81 | – | 0.007 |
+
+Near-dead / ghost slots are counted over (layer, expert) pairs: 48 MoE layers × 360 experts = 17,280.
+
+- **QB at scale:** the bias forced even token counts while the raw router became sharp and
+  unbalanced (raw-router balancing loss 9.4 at step 196, 1.0 = balanced). That left up to 788
+  ghost slots: experts selected through the bias at ~1 % of their layer's mean routing weight.
+  The EMA 0.9 bias also lags the fast early router. QB's screen gain (s1 / s3) did not carry over;
+  dropped (user).
+- **v2b: `aux_loss` at micro-batch 1 × 64k is the per-sequence loss.** Megatron's `aux_loss`
+  balances each rank's micro-batch, which here is one sequence: `load_balancing_loss` ==
+  `seq_load_balancing_loss` in every layer. Ruled out for the batch-1 target (user).
+- **v2c: `global_aux_loss` was broken** (next section): it acted on the bias alone.
+
+### The `global_aux_loss` scaling bug (Megatron 24a814eba, b59ba8a9e)
+
+Upstream `global_aux_loss` took the expert token fractions over the TP × DP × CP group (correct),
+but also averaged each rank's router probabilities over the whole group's token count. With
+DP-averaged gradients its pressure was **1 / DP of `aux_loss`'s at the same coefficient**:
+- DP 512 (v2c): 1e-4 acted as ~2e-7, so the run balanced with the expert bias alone;
+- the QB start's 1e-5 acted as ~2e-8;
+- the logged value looked normal (~1.0): the logging sums over the same group.
+
+**Fix (24a814eba):** the probability average is over the local TP × CP tokens, as in `aux_loss`;
+only the token fractions stay global; logged as `aux_loss` (TP × CP sum, DP mean). Test
+(`test_global_aux_loss_dp_invariant`): with identical routing on every DP rank the gradient and
+value equal `aux_loss`'s, at TP 1 / 2 and CP 2 on 4 GPUs.
+
+**Second fix (b59ba8a9e):** `get_tokens_per_expert_and_token_count` read the local valid-token
+count (padding-mask path) after an in-place all-reduce, so it was the whole group's count. It now
+counts first. This also affected `aux_loss`'s per-token-loss scaling.
+
+The remaining failures of the 4-GPU test run are tests that need 8 GPUs.
+
+### Router warmup and the early collapse (`ambwarmup`, 2026-10-31)
+
+**Question:** is the step-7 router collapse the router's AdamW at full lr from step 1 (no warmup)?
+- In Adam's first steps every weight moves by ~lr (sign-like), so the router logits spread from
+  0.13 to 1–2 within ~40 steps.
+- The expert bias moves 1e-3 per step (~0.04 by step 40), and the aux loss is only a small part of
+  the router's gradient.
+
+**Screen** (ambrepro scale: 16 nodes, gbs 512 × 16k, 216 experts, v2 recipe with expert bias +
+fixed `global_aux_loss` 1e-4; 60 steps):
+
+| arm | loss, step 60 | near-dead slots, step 10 | near-dead slots, step 60 | worst-layer load entropy, step 10 |
+|---|---:|---:|---:|---:|
+| `base` (LDM, no warmup) | 5.66 | 622 | 27 | 0.75 |
+| `rwu50` (router lr warmup, 50 steps) | 5.64 | 478 | 20 | 0.79 |
+| `awu50` (every Adam parameter, 50 steps) | 5.72 | 776 | 27 | 0.68 |
+| `mhc4` (mHC-4 instead of LDM) | **5.60** | 242 | 22 | 0.82 |
+
+- **Warmup does not help:** at step 10 the warmed-up router lr is 20 % of full, yet the logit spread
+  is the same (0.53 vs 0.57). The spread comes from the router's input (the hidden states, moved by
+  Muown at the full lr), not the router weights. Not adopted.
+- **The router's score entropy barely moves** (worst layer 0.98, mean max prob ~1/117): a small
+  logit spread over nearly uniform sigmoid scores suffices to send most tokens to the same top-5.
+- **The screens understate the full-scale collapse:** with 8× fewer tokens per step each update is
+  noisier, so tokens move less coherently. Full-scale first LDM main run at step 8: 1,980 near-dead
+  slots, entropy min 0.64; v1 (mHC-4): 142 and 0.83.
+
+**LDM vs mHC-4 at full scale, same balancing** (bias + `aux_loss` 1e-4, 216 experts, 128 n): the
+first LDM main run collapsed much deeper at step 7–8 (above) with a +0.5 loss bump that v1 did not
+have, and it later had the single-expert runaway; v1 ran clean to step 2.6k without `pab`.
+Caveat: the two runs started on different dates and may differ in data.
+
+### The residual test (`ambresid`, 2026-10-31; stopped at step ~300)
+
+LDM vs mHC-4 (mixer lr ×0.25, as v1) × `pab`, same scale and recipe as `ambwarmup`, planned to step
+900; plus mHC-4 at 360 experts and seed-2 twins. Stopped at step 300–312 (the 216-expert arms) and
+170–184 (the others) to free p132 for the v3 launch. Training loss, mean per window:
+
+| arm | 30–60 | 60–100 | 100–150 | 150–200 | 200–250 | 250–300 | s/step | memory |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `ldm_pab` (v2 recipe) | 6.357 | 5.159 | 4.222 | 3.376 | 2.868 | 2.597 | 33.8 | 0.86 |
+| `ldm` | 6.287 | 5.104 | 4.149 | 3.317 | 2.840 | 2.579 | 29.8 | 0.87 |
+| `mhc4_pab` | 6.261 | 5.114 | 4.154 | 3.283 | 2.813 | 2.566 | 28.5 | 0.73 |
+| `mhc4` | **6.246** | **5.078** | **4.106** | **3.255** | **2.802** | **2.560** | 28.4 | 0.73 |
+
+Seed noise (steps 100–170): `mhc4_pab` 3.969 vs seed 2 3.999 (0.031); `ldm_pab` 4.047 vs 4.043
+(0.004). 360 experts (mHC-4): `mhc4_e360` 3.916, `mhc4_pab_e360` 3.981 at steps 100–170; 37.6 s/step,
+memory 0.87 / 0.89.
+
+- **mHC-4 led throughout:** at steps 250–300 by 0.019 (no `pab`) and 0.031 (`pab`), shrinking from
+  0.03–0.05 early; the seed spread early on is of the same order, so the residual comparison is not
+  settled at step 300.
+- **`pab` costs a little early loss** (0.02–0.04 at steps 200–300 in both residuals), as at s3.
+- **Expert outputs:** without `pab` the largest routed-expert output grows (LDM 0.12, mHC-4 0.09 at
+  steps 200–300); with `pab` it stays at 0.05–0.07. The runaway of the old reproducer started at
+  step ~400, past where the test was stopped: **not reproduced, not excluded.**
+- **Router after step 60:** healthy in every arm (worst-layer entropy 0.94–0.98, < 75 near-dead
+  slots, max load violation 3–11).
+- **Speed / memory:** `pab` cost LDM 13 % per step here (33.8 vs 29.8 s) but mHC-4 nothing (28.5 vs
+  28.4), likely an unfused path in the LDM + `pab` combination at this setting (not investigated).
+  mHC-4 at 360 experts fits 16 nodes (0.87–0.89); LDM at 360 would not (0.86 at 216).
+
+**Decision (user 2026-10-31):** LDM one final time in the v3 run; if it fails, mHC-4.
+
+### Optimizer assignment under `muown_classical`
+
+Every 2-D weight matrix goes to Muown (W = g · v/‖v‖ per row: v a Muon-style orthogonalized step,
+the row magnitudes g Adam-updated), base lr, no weight decay. Exceptions, on Adam:
+
+| parameters | optimizer | lr | weight decay |
+|---|---|---|---|
+| attention QKV (split per head) and output; CKDA q / k / v / α (`f_proj`) / output gate (`g_proj`) / output projections; every routed expert, the shared expert; Engram key / value projections; **LDM address networks** (`w1`, `address`, `gate`) | Muown | ×1 (LDM: the mixer lr, ×1) | 0 |
+| word embedding, output layer (untied), MoE router weight | Adam | ×1 | 0.1 |
+| **CKDA β projection** (`b_proj`, with `linear_beta_adam`) | Adam | ×1 | 0.1 |
+| Engram tables | Adam | ×5 | 0 |
+| mHC `phi` (tagged) and other mHC parameters | Adam | the mixer lr | 0.1 on `phi`, 0 on 1-D |
+| conv kernels (CKDA, Engram) | Adam | ×1 | 0.1 |
+| norms, biases, 1-D scalars (CKDA `A_log` / dt bias, LDM `forget_logit` / `read_gain`) | Adam | ×1 | 0 |
+
+Not optimizer-updated: the expert bias (sign rule, 1e-3 per step), the Engram hash multipliers and
+sign table (seeded), `pab` (no parameters).
+
+**Two changes for v3 (user 2026-10-31), both untested in a run:**
+- **`linear_beta_adam`** (Megatron ef64277d7): CKDA's β projection is one scalar gate per value
+  head (2048 → 16), like the router; Muown moved every head's row by the same step. α and the
+  output gate produce a vector per head and stay on Muown. No warmup (user): Adam's first steps can
+  move a head's β logit by up to ~1.4 (Muown: ~0.04), but β ∈ [0, 2] keeps the delta rule stable.
+  Test: `tests/unit_tests/ssm/test_ckda_beta_adam.py`.
+- **LDM address-network width 128** (`depth_memory_hidden_dim`, was 32 = the LDM paper's 400M
+  setting; 64 at 1.5B). Plain Linear layers outside the CuTe kernels, ~0.3M parameters per site.
+
+### The v3 ambitious main run (2026-10-31)
+
+**Config:** `config/experiments/korbi/production/hybrid_ambitious_pab_128_mn5.yaml` (mHC-4
+fallback: `hybrid_ambitious_v3_mhc4_128_mn5.yaml`); arm `ambitious_e360_eng80_v3`, directory
+`production/main_ldm/ambitious_e360_eng80_v3`; jobs `ambitious_v3_128n_p{1,2,3}`; W&B
+`ambitious_v3_main` (one id across the phases: Megatron logs at the global iteration). Snapshot
+`autoexp_ambv3` (autoexp fb971234, Megatron 6cec40be3).
+
+| | |
+|---|---|
+| size | 360 experts + Engram 80B ([2, 3, 4] + sign hash, 25,973,845 rows per head) = 84B-A2.9B-E80B (~164B) |
+| residual | LDM, address width 128 |
+| balancing | expert bias 1e-3 + `global_aux_loss` 1e-4 (fixed), router fusion, no sequence-level loss |
+| experts | `pab` |
+| optimizer | `muown_classical`, lr 8.5e-4 constant, no warmup; CKDA β on Adam |
+| systems | FP8 expert gather, allocator cap 0.80, 8 NCCL channels, `ENGRAM_STEP_GROUP` 1, rolling checkpoint every 100 steps |
+
+**Sequence-length curriculum** (user 2026-10-31) at constant 67M tokens per step and 64k tokens per
+micro-batch, on the v8 + multilingual data split by document into three stages (no document in two
+stages, the same per-source ratios; `v8ml-stages/stages_report.tsv`):
+
+| phase | context | gbs | mbs | data | tokens | steps |
+|---|---:|---:|---:|---|---:|---:|
+| 1 | 4k | 16,384 | 16 | `datamix_v8ml_stage1_mn5.txt` | 317.9B (2 %) | 0 – 4,737 |
+| 2 | 16k | 4,096 | 4 | `…stage2…` | 1,272.1B (8 %) | 4,737 – 23,691 |
+| 3 | 64k | 1,024 | 1 | `…stage3…` | 14,296.8B (90 %) | 23,691 – 236,733 |
+
+- **Megatron** `--phase-transition-iterations 4737,23691 --phase-transition-variable-batch`
+  (6cec40be3): a phase saves and exits at its last step; the next phase loads that checkpoint with
+  its own context, batch and stage data, its dataloader at the stage's sample 0; the lr scheduler
+  is taken from the arguments (constant lr).
+- **autoexp:** one job per phase, all three enqueued together, sharing the run directory. Phase 2 /
+  3 have a start condition (`latest_checkpointed_iteration.txt` == 4737 / 23691,
+  `persistent_pass`, so a restart within a phase does not wait again).
+- **Data caches** prebuilt per phase at the run's sizes (`data_cache_prebuild_v3_mn5`, controller
+  session).
+- Validation runs on each stage's held-out split at the phase's context, so validation loss shifts
+  at the transitions. The equal-token eval marks at steps 500–4,000 fall in phase 1 (4k).
+
+**Launch guards:**
+- **Speed / memory check first** (`hybrid_v3speed128_mn5`, 20 steps each at 128 n, priority 101–102):
+  LDM in the three phase shapes. Phase 1 waits for `<run dir>/v3speed_p1_ok`, written once the
+  4k × mbs 16 arm (never run with the LDM kernels) reached step 20 without errors.
+- **Watchdog** (`main_run_watchdog.py`, MN5 login loop every 10 min, log
+  `monitor_logs/v3_watchdog.log`) over all three phase jobs. It cancels them, and the conservative run
+  (queued at priority 90) takes the host, on:
+  - the largest routed-expert output above 0.5 at 2 consecutive readings (the LDM runaway);
+  - the grad-norm median above max(1, 4× its steps-100–300 median);
+  - a NaN or a 0.2 loss jump;
+  - from step 300 (medians of 50 readings): more than 500 near-dead or 300 ghost (layer, expert)
+    slots, or worst-layer load entropy below 0.85 (the v2 failures);
+  - no new step for 150 min while a phase is RUNNING (crash / restart loops).
+  Checked on old runs: v1 stays clean over 2.6k steps; the first LDM main run trips at step 423.
+
+### More measurement lessons (2026-10-31)
+
+- **Configs that inherit production move with it.** The screens inherited the production config's
+  switch to 64k at micro-batch 1 while keeping their own micro-batch 2: every arm ran out of memory
+  in the first forward. Pin the sequence length, data, balancing, LDM width and new flags in every
+  screen config.
+- **`eval_iters: 0` with a separate validation blend asserts** ("no sample to consume: 0"); use 1.
+- **Screens without W&B:** a config with `wandb_project: null` logs only to TensorBoard; check it
+  before launch when the results should be in `flag_hybrid_experimental`.
+- **A new sequence length, data mix or validation size means a cold index build** (14–25 min for the
+  ~900-dataset mix). Prebuild, or keep screens at the main run's validation size.
+- **Small pool jobs fill freed nodes:** when large runs are cancelled for a new 128-node job, 4-node
+  runs can take part of the freed host first; preempt them, or enqueue the large job before freeing.
+- **A watchdog that cancels by job name** also hits a same-named replacement: stop it, or rename the
+  job, before enqueuing a replacement.
