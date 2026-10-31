@@ -21,6 +21,7 @@
 #     verify    new tree loads in Megatron, kept documents are unchanged
 #     audit     recall of the token matcher vs. a text matcher (agenttrove, megamath; 100k docs each)
 #     v8tree    datamix v8: the Megatron tree over the non-flag sources in $ROOT (scripts/datamix_v8/build_raw_tree.py)
+#     v8datamix datamix v8: the data_args_path file + per-source report (scripts/datamix_v8/build_datamix.py)
 set -euo pipefail
 step=$1; shift || true
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -30,8 +31,9 @@ OUT=${OUT:-/gpfs/projects/ehpc533/training-data-collection/flag-decon-v1}
 REFS=${REFS:-$WORK/refs/refs.jsonl.gz}
 mkdir -p "$WORK"
 cd "$HERE/../.."
-if [ "$step" = v8tree ]; then   # datamix v8: the tree over the non-flag sources (before $ROOT/datamix.txt exists)
-  python scripts/datamix_v8/build_raw_tree.py --out "$ROOT" "$@"
+if [ "$step" = v8tree ] || [ "$step" = v8datamix ]; then   # datamix v8 steps (need no $ROOT/datamix.txt)
+  if [ "$step" = v8tree ]; then python scripts/datamix_v8/build_raw_tree.py --out "$ROOT" "$@"
+  else python scripts/datamix_v8/build_datamix.py "$@"; fi
   echo "[$step] done"
   exit 0
 fi
