@@ -14,6 +14,7 @@
 #   mhc4_e360 / mhc4_pab_e360   the two mHC-4 arms at the v2 run's 360 experts (tables kept at
 #            40B; LDM at 360 does not fit 16 nodes: 0.86 memory at 216)
 #   mhc4_pab_seed2              mhc4_pab with seed 2 (other init + data order): the noise level
+#   ldm_pab_seed2               ldm_pab with seed 2: the same seed control on the LDM side
 # Same sample order in every arm (train_iters as v2's sample count); training loss only, no
 # saves / eval. Watch moe/routed_expert_output_rms_max (runaway), the router health and the loss.
 #   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
@@ -82,4 +83,6 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.seed: 2
+        - aux.arm: ldm_pab_seed2
           backend.megatron.seed: 2

@@ -154,5 +154,16 @@
    "seed2"
   ],
   "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 216 experts, seed 2 (noise level vs mhc4_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+ },
+ "x_ambresid__ldm_pab_seed2": {
+  "name": "ambresid_ldm_pab_seed2",
+  "tags": [
+   "ambresid",
+   "residual_test",
+   "ldm",
+   "pab",
+   "seed2"
+  ],
+  "notes": "Residual test for the ambitious v2 restart: LDM + pab, 216 experts, seed 2 (noise level vs ldm_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
  }
 }
