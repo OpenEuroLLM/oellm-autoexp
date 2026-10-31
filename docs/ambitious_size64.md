@@ -130,3 +130,33 @@ Conclusions:
   experts.
 - Multi-node EP does not reduce it at our ~262k tokens per GPU per step: token traffic outgrows the
   saved weight traffic (traffic table in the 2026-10-29 analysis).
+
+## Ambitious v2 at 128 nodes: memory and speed (2026-10-31)
+
+The v2 main run is 84B-A2.9B-E80B: 360 experts, Engram [2, 3, 4] + sign hash, quantile balancing + global aux loss 1e-5, FP8 expert gather, pab. Its first two starts at 16k taught two things:
+
+- **Start 1 (cap 0.80, 8 channels): out of memory in `ncclCuMemAlloc` after step 1.**
+  - The production env sets `MEGATRON_LAZY_SINGLETON_GROUPS=1`, so a single-rank group gets its NCCL communicator only at its first collective, at ~0.38 GiB.
+  - The MoE metric reductions over the size-1 PP group created it. They became active once `global_aux_loss` gave the tracker metrics; the health metrics would have triggered it at their first report.
+  - Fixed in Megatron 7ec909031: no collectives on single-rank groups.
+- **Start 2 (cap 0.78, 8 channels): stable but ~10 % slow** (32 vs 28.9 s per step).
+  - PyTorch sat at ~48.9 GiB, just under the cap's 49.7: allocator thrash.
+  - The cap is a ceiling for PyTorch, not memory set aside for NCCL. With 0.80 × 63.29 GiB + ~12 GiB outside PyTorch at 8 channels, NCCL is only guaranteed ~0.7 GiB once PyTorch fills its cap.
+
+**v2speed sweep** (`hybrid_v2speed128_mn5.yaml`): 128 nodes, 20 steps each on the prebuilt data index, Megatron f6b8d302d. That commit reports allocator retries per step. Every arm had 0 retries.
+
+| arm | context | channels | Engram step group | step | tok/s/GPU | PyTorch max reserved | free of 63.29 GiB |
+|---|---|---|---|---|---|---|---|
+| s32k_c80_n8_sg1 (**chosen**) | 32k | 8 | 1 | **29.9 s** | **4,378** | 48.3 | 3.35 |
+| s32k_c80_n8 | 32k | 8 | 2 | 30.1 s | 4,357 | 49.0 | 2.3 |
+| s32k_c80_n4 | 32k | 4 | 2 | 30.9 s | 4,241 | 48.5 | 4.0 |
+| s32k_c80_n8_sg1_async | 32k | 8 | 1 + async | 31.8 s | 4,128 | 49.4 | 2.0 |
+| s64k_c80_n4 | 64k | 4 | 2 | 31.7 s | 4,139 | 48.8 | 3.6 |
+
+All arms run cap 0.80.
+
+- **8 channels:** 2.6 % faster than 4, and they fit at 0.80 once the singleton fix is in.
+- **`ENGRAM_STEP_GROUP=1`** (Engram lookup per micro-batch): same speed as 2, 0.7 GiB less PyTorch memory.
+- **`ENGRAM_ASYNC_GROUPS=1`:** 6 % slower and more memory. Not used.
+- **Context length:** 64k costs +2.6 % over 32k at the same setting. 32k costs ~3.5 % over the 16k reference (size128 e360_cap80_eng80_nccl8, 28.9 s).
+- **Unmeasured:** memory at the first save (step 125) and the first validation.
