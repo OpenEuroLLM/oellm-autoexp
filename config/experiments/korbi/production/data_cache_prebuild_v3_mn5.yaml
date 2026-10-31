@@ -1,0 +1,89 @@
+# @package _global_
+# Build the Megatron dataset indices of the ambitious v3 main run's three curriculum phases on ONE
+# rank each, before a 128-node job needs them (otherwise every phase start and every speed arm pays
+# a 15-25 min cold build). The cache key is the data / schedule only -- blend (the phase's stage
+# datamix), split, seq, seed, tokenizer, train / valid / test samples -- inherited unchanged from
+# hybrid_ambitious_pab_128_mn5 (v3); the model is a 1-GPU stand-in (not part of the key).
+# Never touches the main run: no load / save, own output dirs, no pool singleton, W&B off.
+#
+# Phase sample counts: Megatron sizes the current phase from args.iteration, which the real phases
+# 2 / 3 take from their predecessor's checkpoint (4,737 / 23,691). A prebuild starts at iteration 0,
+# so phases 2 / 3 get ONE transition at their own phase length (18,954 / 213,042 iterations): the
+# first window from iteration 0 then has exactly the phase's sample count (77.6M / 218.2M); the
+# transition iterations are not part of the dataset key. train_iters stays 236,733 (validation
+# size). Validation at the training run's size (see data_cache_prebuild_ambitious_mn5.yaml).
+#
+#   scripts/korbi/mn5_autoexp_bg.sh prebuild_v3 scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/data_cache_prebuild_v3_mn5 --yes [aux.only=[p2]]
+# Afterwards: python scripts/check_data_cache.py /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
+defaults:
+  - hybrid_ambitious_pab_128_mn5
+  - _self_
+
+aux:
+  nodes: 1
+  ep: 1
+  topk: 2
+  expert_ffn: 256
+  pattern: "*E"
+  suite: data_cache_prebuild
+  arm: ambitious_v3
+
+backend:
+  torchrun_args:
+    nproc_per_node: 1
+  env:
+    WANDB_MODE: disabled
+  megatron:
+    skip_train: true
+    # the validation index at the training run's size: (train_iters // eval_interval + 1) x 10
+    # (10 = the main run's eval_iters; with skip_train Megatron sizes one evaluation only)
+    eval_iters: ${oc.eval:'(int(${backend.megatron.train_iters}) // int(${backend.megatron.eval_interval}) + 1) * 10'}
+    data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
+    distributed_timeout_minutes: 180
+    # --- stand-in model (not part of the cache key) ---
+    hidden_size: 256
+    ffn_hidden_size: 512
+    kv_channels: 64
+    num_attention_heads: 4
+    num_query_groups: 2
+    num_experts: 4
+    moe_router_topk: 2
+    # the v3 Engram tables (80B) do not fit one GPU; the table size is not part of the cache key
+    engram_table_size: 1024
+    # --- never the main run's checkpoints ---
+    load: null
+    save: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: data_cache_prebuild_v3_p${aux.phase}
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v3_p${aux.phase}
+  est_step_time_s: 60.0
+  metadata:
+    pool_singleton: null
+  # stop as soon as the indices are built (the evaluation skip_train still runs would take hours)
+  log_events:
+    - name: indices_built
+      pattern: "[after dataloaders are built]"
+      pattern_type: substring
+      match_once: true
+      action: {class_name: CancelAction, reason: "dataset indices built: the prebuild is done"}
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_ehpc
+    time: "01:30:00"
+
+# the three phases without the main run's start conditions (a prebuild never waits for a
+# checkpoint); phases 2 / 3 with one transition at their own phase length (see above)
+sweep:
+  groups:
+    - type: list
+      configs:
+        - {aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
+        - {aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4, backend.megatron.phase_transition_iterations: "18954"}
+        - {aux.phase: 3, aux.seq: 65536, aux.gbs: 1024, backend.megatron.micro_batch_size: 1, backend.megatron.phase_transition_iterations: "213042"}
