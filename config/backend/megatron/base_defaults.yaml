@@ -817,6 +817,7 @@ per_split_data_args_path: null  # Path to per-split-data-args. Instead of feedin
 perform_initialization: true  # Controls weights initialization. This option can be useful when you know you are going to load values from a checkpoint.
 perform_rl_step: false  # Use the RL training step.
 phase_transition_iterations: null  # Comma-separated list of iterations where phase transitions occur. Requires fixed global batch size across phases.
+phase_transition_variable_batch: false  # Allow another global batch size in each phase (e.g. constant tokens per step across a sequence-length curriculum): no global-batch-size check against the checkpoint; the LR scheduler (which counts samples) continues at the same iteration (num_steps = iteration x the current global batch size, its other settings from the arguments: implies --override-opt-param-scheduler). Requires --phase-transition-iterations.
 pin_cpu_grads: true  # Disable pinning of CPU memory for gradients.
 pin_cpu_params: true  # Disable pinning of CPU memory for parameters.
 pipeline_model_parallel_comm_backend: null  # choices: ['nccl', 'ucc'] | Configuring backend option of pipeline parallel communication (e.g., nccl, ucc) If None, the default backend will be used.

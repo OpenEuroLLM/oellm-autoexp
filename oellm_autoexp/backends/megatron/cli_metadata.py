@@ -6578,6 +6578,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "phase_transition_variable_batch": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Allow another global batch size in each phase (e.g. constant tokens per step across a sequence-length curriculum): no global-batch-size check against the checkpoint; the LR scheduler (which counts samples) continues at the same iteration (num_steps = iteration x the current global batch size, its other settings from the arguments: implies --override-opt-param-scheduler). Requires --phase-transition-iterations.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "pin_cpu_grads": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -14058,6 +14066,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "phase_transition_variable_batch": MegatronActionSpec(
+        option_strings=("--phase-transition-variable-batch",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "pin_cpu_grads": MegatronActionSpec(
         option_strings=("--no-pin-cpu-grads",),

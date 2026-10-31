@@ -3317,6 +3317,13 @@ class MegatronConfig(ConfigInterface):
     # batch size across phases.
     phase_transition_iterations: str | None = None
 
+    # Allow another global batch size in each phase (e.g. constant tokens per step across a
+    # sequence-length curriculum): no global-batch-size check against the checkpoint; the LR
+    # scheduler (which counts samples) continues at the same iteration (num_steps = iteration
+    # x the current global batch size, its other settings from the arguments: implies
+    # --override-opt-param-scheduler). Requires --phase-transition-iterations.
+    phase_transition_variable_batch: bool = False
+
     # Comma-separated list of proportions for training, validation, and test split. For
     # example the split `90,5,5` will use 90%% of data for training, 5%% for validation and
     # 5%% for test.
