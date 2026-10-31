@@ -17,7 +17,7 @@
 #   Compare steps 21-30 (lm loss, grad norm, load balancing, muown / LDM / router metrics) of
 #   cont / grow against ref, with ref vs ref2 as the tolerance.
 #
-#   ./sync_to_marenostrum.sh amb_rs
+#   ./sync_to_marenostrum.sh amb_rs2
 #   scripts/korbi/mn5_autoexp_bg.sh amb_rs_save scripts/run_autoexp.py \
 #       --config-name experiments/korbi/production/hybrid_ambitious_resume_test_mn5 --yes aux.phase=save
 #   ... aux.phase=resume   (after ref has written iter_0000020)
@@ -39,6 +39,11 @@ backend:
   env:
     # one Engram step group = the micro-batches of a step: 2 at 4 nodes (mbs 4), 1 at 8
     ENGRAM_STEP_GROUP: "${oc.eval:'str(max(1, ${aux.gbs} // (${aux.nodes} * 4 * 4)))'}"
+    # per rank and parameter: model / main param, optimizer states (sum of squares + position-
+    # weighted sum) at ref's step-20 save and after cont's / grow's load (Megatron checkpointing.py
+    # _debug_optimizer_state): the saved and the loaded state compare directly, not only via losses
+    MEGATRON_DEBUG_OPT_STATE: "1"
+    MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/opt_state/dump
   megatron:
     num_experts: 72
     engram_table_size: 811683
