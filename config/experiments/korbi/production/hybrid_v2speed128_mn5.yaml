@@ -1,0 +1,109 @@
+# @package _global_
+# Speed / memory of the ambitious v2 main run at 128 nodes, long context (user 2026-10-31: "We want
+# to optimize this now finally"). The 16k start (p132.0044) ran stably at cap 0.78 + 8 NCCL channels
+# but ~10 % slow (32 vs 28.9 s / step): PyTorch at ~48.9 of the cap's 49.7 GiB (allocator thrash).
+# v2's PyTorch peak is ~1-1.5 GiB above size128's e360_cap80_eng80_nccl8 (Engram [2, 3, 4]: 24
+# instead of 16 lookups per token held through the step by the step lookup, + the global aux loss),
+# and 0.80 x 63.5 GiB + 12.5 GiB outside PyTorch (8 channels) leaves ~0.2 GiB for NCCL once PyTorch
+# is at its cap. The arms: the planned production setting (cap 0.80, 4 channels) and ways to get
+# 8 channels back by cutting PyTorch's peak.
+#
+# - The main run's config (hybrid_ambitious_pab_128_mn5) with seq / gbs / mbs set explicitly per arm.
+# - 20 steps (exit_interval; train_iters, split and eval settings stay the main run's, so the data
+#   index is the prebuilt one: data_cache_prebuild_ambitious_s32768 / _s65536), no saves.
+# - MEM_BREAKDOWN_STEPS 20 (Megatron f6b8d302d): device total, reserved, max reserved and the
+#   allocator retries (num_alloc_retries) at every step, ranks 0, 8, 16, 24.
+# - Not the main run: own suite (production/v2speed/<arm>), no singleton, no restart loop.
+#
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p132 \
+#       --config-name experiments/korbi/production/hybrid_v2speed128_mn5 --yes
+defaults:
+  - hybrid_ambitious_pab_128_mn5
+  - _self_
+
+aux:
+  suite: v2speed
+  arm: s32k_c80_n4
+  seq: 32768
+  gbs: 2048
+  only: []
+
+backend:
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.80"
+    NCCL_MIN_NCHANNELS: "4"
+    NCCL_NCHANNELS_PER_PEER: "4"
+    MEM_BREAKDOWN: "1"
+    MEM_BREAKDOWN_STEPS: "20"
+  megatron:
+    micro_batch_size: 2
+    exit_interval: 20
+    log_interval: 1
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  array_group: null
+  metadata:
+    pool_singleton: null
+    # above the conservative run (90), below the ambitious main run (100)
+    pool_priority: 95
+  est_step_time_s: 32.0
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "speed test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+  env:
+    NCCL_MIN_NCHANNELS: "4"
+    NCCL_NCHANNELS_PER_PEER: "4"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # the planned production setting: cap 0.80, 4 NCCL channels, step lookup over the whole
+        # step (ENGRAM_STEP_GROUP 2 = both micro-batches)
+        - aux.arm: s32k_c80_n4
+        # 8 channels as is: does 0.80 + 8 fit (no restart loop here, a failure costs this arm)
+        - aux.arm: s32k_c80_n8
+          backend.env.NCCL_MIN_NCHANNELS: "8"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "8"
+          slurm.env.NCCL_MIN_NCHANNELS: "8"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
+        # the Engram lookup per micro-batch (ENGRAM_STEP_GROUP 1): about half the rows + fp32 row
+        # gradients held, one more exchange per Engram layer per step
+        - aux.arm: s32k_c80_n8_sg1
+          backend.env.ENGRAM_STEP_GROUP: "1"
+          backend.env.NCCL_MIN_NCHANNELS: "8"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "8"
+          slurm.env.NCCL_MIN_NCHANNELS: "8"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
+        # + the group exchanges issued one group ahead (ENGRAM_ASYNC_GROUPS 1): hides the extra one
+        - aux.arm: s32k_c80_n8_sg1_async
+          backend.env.ENGRAM_STEP_GROUP: "1"
+          backend.env.ENGRAM_ASYNC_GROUPS: "1"
+          backend.env.NCCL_MIN_NCHANNELS: "8"
+          backend.env.NCCL_NCHANNELS_PER_PEER: "8"
+          slurm.env.NCCL_MIN_NCHANNELS: "8"
+          slurm.env.NCCL_NCHANNELS_PER_PEER: "8"
+        # the 64k alternative (user choosing 32k vs 64k): same tokens per micro-batch and step
+        - aux.arm: s64k_c80_n4
+          aux.seq: 65536
+          aux.gbs: 1024
+          backend.megatron.micro_batch_size: 1
