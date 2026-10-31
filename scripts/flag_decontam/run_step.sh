@@ -42,7 +42,7 @@ t=.tmp.${SLURM_NODEID:-0}.$$                       # every node writes them: ren
 awk -v r="$ROOT" 'NF {print r "/" $2}' "$ROOT/datamix.txt" > "$WORK/shards_all.txt$t"
 grep -v -E '/(agenttrove|dolmino|swallow-math|finemath|openwebmath|megamath|nemotron-pretraining-specialized|nemotron-mind|mixture-vitae|finephrase)[^/]*/' \
     "$WORK/shards_all.txt$t" > "$WORK/shards_count.txt$t"
-grep -E '/(agenttrove|megamath|dclm)-' "$WORK/shards_all.txt$t" | awk -F/ '!seen[$7]++' > "$WORK/shards_roundtrip.txt$t"
+{ grep -E '/(agenttrove|megamath|dclm)-' "$WORK/shards_all.txt$t" || true; } | awk -F/ '!seen[$7]++' > "$WORK/shards_roundtrip.txt$t"   # none in other trees (v8_raw)
 for f in shards_all shards_count shards_roundtrip; do mv -f "$WORK/$f.txt$t" "$WORK/$f.txt"; done
 echo "[$step] node ${SLURM_NODEID:-0}/${SLURM_NNODES:-1} on $(hostname), work $WORK"
 case $step in
