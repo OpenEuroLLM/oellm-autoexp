@@ -18,10 +18,13 @@ decontamination:                               # identical to flag-decon-v2 (doc
   rule: {frac: 0.7, abs_run: 200, min_run: 20, max_docs: 20000}
   exclude_src: scripts/flag_decontam/exclude_v6.txt
   work: /gpfs/scratch/ehpc533/users/korbip/flag_decon_v8
-  result_2026-10-31:                           # 43 shards (all non-flag sources except stackv2)
-    tokens: 803.5B
-    dropped: {documents: 1122843, tokens: 11.93B, token_pct: 1.48}
-    by_part: {vtok: 2.71%, mv1sub: 0.87%, hftok: 0.58%}
+  result_2026-10-31:                           # all 101 shards of v8_raw (finalize job 48343748)
+    tokens: 3665.0B
+    dropped: {documents: 1249180, tokens: 62.67B, token_pct: 1.71}
+    by_part: {hftok: 1.68%, vtok: 2.54%, mv1sub: 0.87%}
+    common-pile-stackv2-0.1-full: {dropped_documents: 108121, dropped_tokens: 50.72B, pct: 1.79, note: "= flag-decon-v2's rate on the 710B release (1.79 %, 27k docs, 12.7B)"}
+    dolma-3-math (vtok/dolmino-math): {dropped_documents: 18216, dropped_tokens: 0.03B}
+    top_benchmarks: "APPS 37 % of items found, AIME 97 %, math_qa 93 %, CoQA 98 %, HellaSwag 57 %, Codeforces 63 %, MATH 29 %"
 #
 sources:
   # ---------------------------------------------------------------- origin groups
