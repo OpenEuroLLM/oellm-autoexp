@@ -1,9 +1,11 @@
-"""Configuration of the ambitious hybrid main run (Megatron HybridModel, mHC-4).
+"""Configuration of the ambitious hybrid main runs (Megatron HybridModel; residual mHC-4 or Linear
+Depth Memory).
 
 Unlike ``oellm_hybrid`` (one HF layer = mixer + MLP), the layers here are Megatron's own: one per
 pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram"} (not ``layer_types``:
-transformers validates that name against its own attention kinds), each wrapped by its mHC
-read / write over ``mhc_expansion_rate`` residual streams.
+transformers validates that name against its own attention kinds), each wrapped by its residual
+read / write: mHC over ``mhc_expansion_rate`` streams (``residual="mhc"``) or the Linear Depth
+Memory (``residual="ldm"``).
 """
 
 from transformers import PretrainedConfig
@@ -22,10 +24,16 @@ class OellmAmbitiousConfig(PretrainedConfig):
         rms_norm_eps: float = 1e-5,
         layernorm_zero_centered_gamma: bool = False,
         initializer_range: float = 0.02,
+        residual: str = "mhc",
         # mHC
         mhc_expansion_rate: int = 4,
         mhc_sinkhorn_iters: int = 20,
         mhc_eps: float = 1e-5,
+        # Linear Depth Memory (residual="ldm")
+        ldm_groups: int = 16,
+        ldm_key_dim: int = 8,
+        ldm_hidden_dim: int = 32,
+        ldm_alpha: float = 1.0,
         # attention (NoPE, qk-norm, output gate, exclusive self attention)
         num_attention_heads: int = 16,
         num_key_value_heads: int = 16,
@@ -43,6 +51,13 @@ class OellmAmbitiousConfig(PretrainedConfig):
         shared_expert_intermediate_size: int = 768,
         router_scaling_factor: float = 1.0,
         activation_clamp_value: float | None = 10.0,
+        # "expert_bias" (top-k on scores + bias) or "quantile" (top-k on logits - qb_beta)
+        router_balancing: str = "expert_bias",
+        # bounded post-activation norm (pab): h / max(rms(h), floor) in the routed / shared experts
+        moe_expert_post_act_norm: bool = False,
+        mlp_post_act_norm: bool = False,
+        post_act_norm_floor: float = 0.0,
+        post_act_norm_smooth: bool = False,
         # Engram
         engram_ngram_orders: list | None = None,
         engram_num_heads: int = 8,
@@ -53,6 +68,9 @@ class OellmAmbitiousConfig(PretrainedConfig):
         engram_token_map: bool = False,
         engram_gate_signed_sqrt: bool = False,
         engram_conv_prenorm: bool = False,
+        engram_sign_hash: bool = False,
+        engram_sign_table_size: int = 8192,
+        engram_sign_multipliers: dict | None = None,  # {layer index (str): [[...]]}
         engram_table_dtype: str | None = None,
         engram_scale_dtype: str = "fp32",
         tie_word_embeddings: bool = False,
@@ -73,6 +91,11 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.layernorm_zero_centered_gamma = layernorm_zero_centered_gamma
         self.initializer_range = initializer_range
+        if residual not in ("mhc", "ldm"):
+            raise ValueError(f"unknown residual {residual!r}")
+        self.residual = residual
+        self.ldm_groups, self.ldm_key_dim = ldm_groups, ldm_key_dim
+        self.ldm_hidden_dim, self.ldm_alpha = ldm_hidden_dim, ldm_alpha
         self.mhc_expansion_rate = mhc_expansion_rate
         self.mhc_sinkhorn_iters = mhc_sinkhorn_iters
         self.mhc_eps = mhc_eps
@@ -90,6 +113,13 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.shared_expert_intermediate_size = shared_expert_intermediate_size
         self.router_scaling_factor = router_scaling_factor
         self.activation_clamp_value = activation_clamp_value
+        if router_balancing not in ("expert_bias", "quantile"):
+            raise ValueError(f"unknown router_balancing {router_balancing!r}")
+        self.router_balancing = router_balancing
+        self.moe_expert_post_act_norm = moe_expert_post_act_norm
+        self.mlp_post_act_norm = mlp_post_act_norm
+        self.post_act_norm_floor = post_act_norm_floor
+        self.post_act_norm_smooth = post_act_norm_smooth
         self.engram_ngram_orders = list(engram_ngram_orders or [2, 3])
         self.engram_num_heads = engram_num_heads
         self.engram_embed_dim = engram_embed_dim
@@ -99,6 +129,9 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.engram_token_map = engram_token_map
         self.engram_gate_signed_sqrt = engram_gate_signed_sqrt
         self.engram_conv_prenorm = engram_conv_prenorm
+        self.engram_sign_hash = engram_sign_hash
+        self.engram_sign_table_size = engram_sign_table_size
+        self.engram_sign_multipliers = engram_sign_multipliers or {}
         self.engram_table_dtype = engram_table_dtype
         self.engram_scale_dtype = engram_scale_dtype
         self.sliding_window = None

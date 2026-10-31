@@ -1,17 +1,26 @@
 """HF port of the ambitious hybrid main run, a transcription of the Megatron modules it trains with.
 
-* residual: mHC (``megatron.core.transformer.mhc.MHCMixer``) over n streams. The embedding is copied
-  into n streams, every layer reads its input ``h_pre . streams`` and writes back
-  ``h_res @ streams + h_post (x) out``, and the trunk ends with the stream mean.
+* residual (``residual``):
+  - "mhc": mHC (``megatron.core.transformer.mhc.MHCMixer``) over n streams. The embedding is
+    copied into n streams, every layer reads its input ``h_pre . streams`` and writes back
+    ``h_res @ streams + h_post (x) out``, and the trunk ends with the stream mean.
+  - "ldm": Linear Depth Memory, the stream form of ``megatron.core.transformer.depth_memory``
+    (``DepthMemoryMixer``, ``DepthMemoryStreamBoundary``, the torch workspace's step). Per token,
+    next to the stream x, a matrix memory M [G, K, h/G] and inverse key covariances P [G, K, K]
+    (fp32) fit the layer outputs over depth by recursive least squares. Each layer reads
+    ``x + r`` (r: the pending read), writes its output ``o`` (``x <- x + o``, RLS step keyed by the
+    new x) and reads r' with the next layer's query; the embedding is written first, the last
+    read is added before the final norm. The state is per token, so decoding needs no cache.
 * layers, one per Megatron pattern symbol (``block_types``):
   - "attention" ``*``: NoPE softmax attention with qk-norm, exclusive self attention (XSA,
     ``fused_xsa.xsa_reference``) and the sigmoid output gate, behind ``linear_qkv``'s fused norm;
   - "ckda" ``L``: the FLA ComplexKimiDeltaAttention layer, as Megatron's ComplexKDA builds it;
-  - "moe" ``E``: Megatron's sigmoid router with expert bias (top-k on scores + bias, weights =
-    the unbiased scores normalised to 1), SwiGLU experts with the gpt-oss / DeepSeek-V4.1 clamp,
-    an ungated shared expert;
-  - "engram" ``N``: ``EngramLayer`` with the signed-sqrt gate, the conv pre-norm and per-layer
-    hash multipliers.
+  - "moe" ``E``: Megatron's sigmoid router, balanced by an expert bias (top-k on scores + bias) or
+    quantile balancing (top-k on logits - qb_beta); weights = the unbiased scores normalised to 1.
+    SwiGLU experts with the gpt-oss / DeepSeek-V4.1 clamp and optionally the bounded
+    post-activation norm (pab, ``fused_bias_swiglu.normed_swiglu``), an ungated shared expert;
+  - "engram" ``N``: ``EngramLayer`` with the signed-sqrt gate, the conv pre-norm, per-layer
+    hash multipliers and optionally the sign hash (``engram_sign_hash``).
 
 The mHC, CKDA and Engram pieces call the same math as Megatron (fp32 coefficients and Sinkhorn in
 log space, the same FLA layer). Decoding keeps a per-layer state (``OellmHybridCache``).
@@ -78,6 +87,102 @@ class OellmMHC(nn.Module):
         return mixed + h_post.unsqueeze(-1) * out.unsqueeze(-2)
 
 
+# --------------------------------------------------------------------------- Linear Depth Memory
+class OellmLDMNet(nn.Module):
+    """``depth_memory._AddressNetwork`` as the fused step evaluates it (``_site_addresses``):
+    RMS-normalise, fold the norm gain into W1 (bf16), SiLU, the L2-normalised address [G, K] and
+    the identity-centred gate 2 sigmoid [G], both fp32."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        h, hid = config.hidden_size, config.ldm_hidden_dim
+        self.groups, self.key_dim, self.eps = config.ldm_groups, config.ldm_key_dim, config.rms_norm_eps
+        self.norm_weight = nn.Parameter(torch.ones(h))
+        self.w1 = nn.Linear(h, hid)
+        self.address = nn.Linear(hid, self.groups * self.key_dim)
+        self.gate = nn.Linear(hid, self.groups)
+
+    def forward(self, x: torch.Tensor):
+        xf = x.float()
+        w1 = self.w1.weight
+        xn = (xf * torch.rsqrt(xf.square().mean(-1, keepdim=True) + self.eps)).to(w1.dtype)
+        hidden = F.silu(F.linear(xn, w1 * self.norm_weight.to(w1.dtype), self.w1.bias))
+        shape = (*x.shape[:-1], self.groups, self.key_dim)
+        address = F.normalize(self.address(hidden).float().view(shape), dim=-1, eps=1e-6)
+        return address, 2.0 * torch.sigmoid(self.gate(hidden).float())
+
+
+class OellmLDMWrite(nn.Module):
+    """``DepthMemoryWrite``: the key / weight network and the per-group forgetting."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        self.net = OellmLDMNet(config)
+        self.forget_logit = nn.Parameter(torch.zeros(config.ldm_groups))
+
+
+class OellmLDMRead(nn.Module):
+    """``DepthMemoryRead``: the query network and the per-group read gain."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        self.net = OellmLDMNet(config)
+        self.read_gain = nn.Parameter(torch.ones(config.ldm_groups))
+
+    def query(self, x: torch.Tensor) -> torch.Tensor:
+        q, gate = self.net(x)
+        return q * (gate * self.read_gain.float()).unsqueeze(-1)
+
+
+def ldm_step(write: OellmLDMWrite, read: OellmLDMRead, x, value, memory, covariance):
+    """One step (``TorchDepthMemoryWorkspace.forward``): the RLS write of ``value`` under the key
+    of ``x``, then the read with ``read``'s query of ``x``. Returns (read [.., h] in x's dtype,
+    memory, covariance)."""
+    key, weight = write.net(x)
+    g = key.shape[-2]
+    scale = weight.clamp_min(1e-6).sqrt()
+    kbar = key * scale.unsqueeze(-1)
+    vbar = value.float().reshape(*value.shape[:-1], g, value.shape[-1] // g) * scale.unsqueeze(-1)
+    lam = torch.sigmoid(write.forget_logit.float()).clamp_min(1e-6)
+    pk = torch.einsum("...gij,...gj->...gi", covariance, kbar)
+    kappa = pk / (lam + (kbar * pk).sum(-1)).unsqueeze(-1)
+    u = vbar - torch.einsum("...gkd,...gk->...gd", memory, kbar)
+    kp = torch.einsum("...gi,...gij->...gj", kbar, covariance)
+    memory = memory + kappa.unsqueeze(-1) * u.unsqueeze(-2)
+    covariance = (covariance - kappa.unsqueeze(-1) * kp.unsqueeze(-2)) / lam[:, None, None]
+    r = torch.einsum("...gkd,...gk->...gd", memory, read.query(x))
+    return r.reshape(x.shape).to(x.dtype), memory, covariance
+
+
+class OellmLDMMixer(nn.Module):
+    """``DepthMemoryMixer``: this layer's write and the following read's query."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        self.write_site = OellmLDMWrite(config)
+        self.next_query = OellmLDMRead(config)
+
+
+class OellmLDMBoundary(nn.Module):
+    """``DepthMemoryStreamBoundary``: the embedding write and the first layer's query."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        self.groups, self.key_dim, self.alpha = config.ldm_groups, config.ldm_key_dim, config.ldm_alpha
+        self.embed_write = OellmLDMWrite(config)
+        self.first_query = OellmLDMRead(config)
+
+    def enter(self, x: torch.Tensor):
+        """The embedding -> (x, r, memory, covariance)."""
+        prefix = x.shape[:-1]
+        g, k = self.groups, self.key_dim
+        memory = x.new_zeros((*prefix, g, k, x.shape[-1] // g), dtype=torch.float32)
+        eye = torch.eye(k, device=x.device, dtype=torch.float32) * self.alpha
+        covariance = eye.expand(*prefix, g, k, k)
+        r, memory, covariance = ldm_step(self.embed_write, self.first_query, x, x, memory, covariance)
+        return x, r, memory, covariance
+
+
 # --------------------------------------------------------------------------- attention
 class OellmXSAAttention(nn.Module):
     """Megatron ``SelfAttention`` as the main run uses it: no position embedding, qk-norm over the
@@ -137,10 +242,22 @@ class OellmXSAAttention(nn.Module):
 
 
 # --------------------------------------------------------------------------- MoE
-def _swiglu(gate: torch.Tensor, up: torch.Tensor, limit: float | None) -> torch.Tensor:
+def _swiglu(gate: torch.Tensor, up: torch.Tensor, limit: float | None, norm=None) -> torch.Tensor:
+    """SwiGLU with the clamp; ``norm`` = (eps, floor, smooth): the post-activation norm of
+    ``fused_bias_swiglu.normed_swiglu`` (fp32: h / max(rms(h), floor), floor 0: h / rms(h);
+    smooth: h / sqrt(1 + ms / floor^2)), cast back to the input dtype."""
     if limit is not None:  # fused_bias_swiglu.clamped_swiglu
         gate, up = gate.clamp(max=limit), up.clamp(min=-limit, max=limit)
-    return F.silu(gate) * up
+    if norm is None:
+        return F.silu(gate) * up
+    eps, floor, smooth = norm
+    act = F.silu(gate.float()) * up.float()
+    ms = act.square().mean(-1, keepdim=True)
+    if smooth:
+        scale = torch.rsqrt(1.0 + ms / (floor * floor))
+    else:
+        scale = torch.rsqrt((ms + eps).clamp(min=floor * floor))
+    return (act * scale).to(gate.dtype)
 
 
 class OellmMoE(nn.Module):
@@ -149,8 +266,15 @@ class OellmMoE(nn.Module):
         h, e, i = config.hidden_size, config.num_experts, config.moe_intermediate_size
         self.top_k, self.num_experts, self.scaling = config.num_experts_per_tok, e, config.router_scaling_factor
         self.limit = config.activation_clamp_value
+        pab = (config.rms_norm_eps, config.post_act_norm_floor, config.post_act_norm_smooth)
+        self.expert_norm = pab if config.moe_expert_post_act_norm else None
+        self.shared_norm = pab if config.mlp_post_act_norm else None
+        self.quantile = config.router_balancing == "quantile"
         self.gate = nn.Parameter(torch.zeros(e, h))  # router weight
-        self.register_buffer("e_score_correction_bias", torch.zeros(e, dtype=torch.float32))
+        if self.quantile:  # Router.qb_beta: selection on logits - qb_beta
+            self.register_buffer("qb_beta", torch.zeros(e, dtype=torch.float32))
+        else:
+            self.register_buffer("e_score_correction_bias", torch.zeros(e, dtype=torch.float32))
         self.gate_up_proj = nn.Parameter(torch.zeros(e, 2 * i, h))
         self.down_proj = nn.Parameter(torch.zeros(e, h, i))
         si = config.shared_expert_intermediate_size
@@ -163,7 +287,10 @@ class OellmMoE(nn.Module):
         t = x.reshape(-1, shape[-1])
         logits = F.linear(t.float(), self.gate.float())
         scores = torch.sigmoid(logits)
-        _, idx = torch.topk(scores + self.e_score_correction_bias.float(), self.top_k, dim=-1)
+        if self.quantile:  # moe_utils.qb_dual_update (no update at inference)
+            _, idx = torch.topk(logits - self.qb_beta.float(), self.top_k, dim=-1)
+        else:
+            _, idx = torch.topk(scores + self.e_score_correction_bias.float(), self.top_k, dim=-1)
         w = scores.gather(-1, idx)
         if self.top_k > 1:
             w = w / (w.sum(-1, keepdim=True) + 1e-20)
@@ -172,10 +299,12 @@ class OellmMoE(nn.Module):
         for e in torch.unique(idx).tolist():
             tok, slot = torch.where(idx == e)
             g, u = F.linear(t[tok], self.gate_up_proj[e]).chunk(2, dim=-1)
-            y = F.linear(_swiglu(g, u, self.limit), self.down_proj[e])
+            y = F.linear(_swiglu(g, u, self.limit, self.expert_norm), self.down_proj[e])
             out.index_add_(0, tok, (y * w[tok, slot, None]).to(out.dtype))
         if self.shared_gate_proj is not None:
-            out = out + self.shared_down_proj(_swiglu(self.shared_gate_proj(t), self.shared_up_proj(t), self.limit))
+            out = out + self.shared_down_proj(
+                _swiglu(self.shared_gate_proj(t), self.shared_up_proj(t), self.limit, self.shared_norm)
+            )
         return out.view(shape)
 
 
@@ -190,6 +319,28 @@ class OellmEngramV2(OellmEngram):
         super().__init__(cfg)
         self.signed_sqrt = config.engram_gate_signed_sqrt
         self.conv_norm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps) if config.engram_conv_prenorm else None
+        # engram_sign_hash: a +-1 pattern per (n-gram, lookup) from an independent hash into a fixed
+        # table (Megatron engram_sign_table; exported as a buffer)
+        self.sign_hash = bool(getattr(config, "engram_sign_hash", False))
+        if self.sign_hash:
+            self.sign_mult = [[int(a) for a in row] for row in config.engram_sign_multipliers[str(layer_idx)]]
+            self.sign_size = int(config.engram_sign_table_size)
+            self.register_buffer("sign_table", torch.ones(self.sign_size, config.engram_embed_dim))
+
+    def _sign_rows(self, shifted: torch.Tensor, s: int) -> torch.Tensor:
+        """Sign-table rows of the last ``s`` positions: ``engram_hash`` with the sign multipliers
+        and one table of ``engram_sign_table_size`` rows per lookup (no offsets)."""
+        p = max(self.orders) - 1
+        history = [shifted[:, p - i : p - i + s] for i in range(max(self.orders))]
+        out, lookup = [], 0
+        for n in self.orders:
+            for _ in range(self.num_heads):
+                hsh = torch.zeros_like(history[0])
+                for i in range(n):
+                    hsh = hsh ^ (history[i] * self.sign_mult[lookup][i])
+                out.append(torch.remainder(hsh, self.sign_size))
+                lookup += 1
+        return torch.stack(out, dim=-1)
 
     def forward(self, hidden_states, input_ids, token_mask=None, state=None):
         b, s, h = hidden_states.shape
@@ -203,7 +354,10 @@ class OellmEngramV2(OellmEngram):
             id_state = shifted.new_zeros(b, p)
         shifted = torch.cat([id_state, shifted], dim=1)
         new_id_state = shifted[:, shifted.shape[1] - p :]
-        e = self._lookup(self._rows(shifted, s), hidden_states.dtype).to(hidden_states.device).reshape(b, s, -1)
+        e = self._lookup(self._rows(shifted, s), hidden_states.dtype).to(hidden_states.device)
+        if self.sign_hash:
+            e = e * self.sign_table[self._sign_rows(shifted, s).to(self.sign_table.device)].to(e.device, e.dtype)
+        e = e.reshape(b, s, -1)
         k, v = self.key_proj(e), self.value_proj(e)
         gate = (self.hidden_norm(hidden_states).float() * self.key_norm(k).float()).sum(-1, keepdim=True) / h**0.5
         if self.signed_sqrt:
@@ -227,7 +381,11 @@ class OellmAmbitiousLayer(nn.Module):
     def __init__(self, config: OellmAmbitiousConfig, layer_idx: int) -> None:
         super().__init__()
         self.kind = config.block_types[layer_idx]
-        self.mhc = OellmMHC(config)
+        self.ldm = config.residual == "ldm"
+        if self.ldm:
+            self.ldm_mixer = OellmLDMMixer(config)
+        else:
+            self.mhc = OellmMHC(config)
         zcg = config.layernorm_zero_centered_gamma
         if self.kind == "attention":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
@@ -241,7 +399,27 @@ class OellmAmbitiousLayer(nn.Module):
         else:  # engram normalises internally
             self.mixer = OellmEngramV2(config, layer_idx)
 
+    def _sublayer(self, x, state, input_ids, token_mask, attention_mask):
+        new_state = None
+        if self.kind == "attention":
+            out, new_state = self.mixer(self.input_layernorm(x), state)
+        elif self.kind == "ckda":
+            out, new_state = self.mixer(self.input_layernorm(x), state, attention_mask)
+        elif self.kind == "moe":
+            out = self.mixer(self.input_layernorm(x))
+        else:
+            out, new_state = self.mixer(x, input_ids, token_mask, state)
+        return out, new_state
+
     def forward(self, streams, state=None, input_ids=None, token_mask=None, attention_mask=None):
+        if self.ldm:  # streams = (x, r, memory, covariance)
+            x, r, memory, covariance = streams
+            out, new_state = self._sublayer(x + r, state, input_ids, token_mask, attention_mask)
+            x = x + out
+            r, memory, covariance = ldm_step(
+                self.ldm_mixer.write_site, self.ldm_mixer.next_query, x, out, memory, covariance
+            )
+            return (x, r, memory, covariance), new_state
         x, pending = self.mhc.read(streams)
         new_state = None
         if self.kind == "attention":
@@ -272,6 +450,7 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
     def __init__(self, config: OellmAmbitiousConfig) -> None:
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.ldm_boundary = OellmLDMBoundary(config) if config.residual == "ldm" else None
         self.layers = nn.ModuleList(OellmAmbitiousLayer(config, i) for i in range(config.num_hidden_layers))
         self.norm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, config.layernorm_zero_centered_gamma)
         self.post_init()
@@ -299,16 +478,20 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         if attention_mask is not None:
             token_mask = attention_mask[:, -s:]
             x = x * token_mask[..., None].to(x.dtype)
-        streams = x.unsqueeze(-2).expand(b, s, self.config.mhc_expansion_rate, x.shape[-1]).contiguous()
+        ldm = self.ldm_boundary is not None
+        if ldm:
+            streams = self.ldm_boundary.enter(x)
+        else:
+            streams = x.unsqueeze(-2).expand(b, s, self.config.mhc_expansion_rate, x.shape[-1]).contiguous()
         hidden = []
         for i, layer in enumerate(self.layers):
             if output_hidden_states:
-                hidden.append(streams.mean(dim=-2))
+                hidden.append(streams[0] if ldm else streams.mean(dim=-2))
             st = past_key_values.states[i] if past_key_values is not None else None
             streams, new_state = layer(streams, st, input_ids, token_mask, attention_mask)
             if past_key_values is not None:
                 past_key_values.states[i] = new_state
-        h = self.norm(streams.mean(dim=-2))
+        h = self.norm(streams[0] + streams[1] if ldm else streams.mean(dim=-2))
         if past_key_values is not None:
             past_key_values.seen_tokens += s
         if output_hidden_states:

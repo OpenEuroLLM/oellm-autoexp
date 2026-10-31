@@ -1,6 +1,8 @@
-"""Export the ambitious hybrid main run (Megatron HybridModel: CKDA + gated NoPE XSA attention,
-mHC-4, MoE, Engram; ``fsdp_dtensor`` checkpoints) as a HF model (``oellm_ambitious/``,
-trust_remote_code). One HF layer per Megatron pattern symbol; see the modeling file.
+"""Export the ambitious hybrid main runs (Megatron HybridModel: CKDA + gated NoPE XSA attention,
+mHC-4 or Linear Depth Memory, MoE with expert-bias or quantile balancing and the optional bounded
+post-activation norm, Engram with the optional sign hash; ``fsdp_dtensor`` checkpoints) as a HF
+model (``oellm_ambitious/``, trust_remote_code). One HF layer per Megatron pattern symbol; see the
+modeling file.
 
     python -m oellm_autoexp.hf_export.export_ambitious --ckpt-dir <run>/ckpt_eval/iter_0000500 \\
         --config <run>/config-<job>.yaml --out-dir <exports>/ambitious_500 --tokenizer <tok>
@@ -29,6 +31,10 @@ _MHC = ("phi", "b_pre", "b_post", "b_res", "alpha_pre", "alpha_post", "alpha_res
 
 # megatron/core/ssm/engram.py
 _HASH_SEED = 0x5EED_E46A
+_SIGN_HASH_SEED = 0x516E_0BAD
+_SIGN_TABLE_SEED = 0x516E_7AB1
+_LDM_NET = ("net.norm_weight", "net.w1.weight", "net.w1.bias", "net.address.weight", "net.address.bias",
+            "net.gate.weight", "net.gate.bias")
 
 
 def _is_prime(n: int) -> bool:
@@ -52,12 +58,34 @@ def engram_table_sizes(m: dict) -> list[int]:
     return sizes
 
 
-def engram_hash_multipliers(m: dict, layer_number: int) -> list[list[int]]:
-    seed = _HASH_SEED + (10007 * int(layer_number) if m.get("engram_hash_per_layer") else 0)
+def engram_hash_multipliers(m: dict, layer_number: int, seed: int = _HASH_SEED) -> list[list[int]]:
+    seed = seed + (10007 * int(layer_number) if m.get("engram_hash_per_layer") else 0)
     rng = np.random.default_rng(seed)
     n = len(m["engram_ngram_orders"]) * int(m["engram_num_heads"])
     mult = rng.integers(1 << 20, 1 << 31, size=(n, max(m["engram_ngram_orders"])))
     return (mult | 1).astype(np.int64).tolist()
+
+
+def engram_sign_multipliers(m: dict, layer_number: int) -> list[list[int]]:
+    """Megatron ``engram_hash_multipliers(config, layer_number, seed=_SIGN_HASH_SEED)``."""
+    return engram_hash_multipliers(m, layer_number, seed=_SIGN_HASH_SEED)
+
+
+def engram_sign_table_np(m: dict) -> np.ndarray:
+    """Megatron ``engram_sign_table``: the fixed +-1 table [sign_table_size, embed_dim] (fp32)."""
+    rng = np.random.default_rng(_SIGN_TABLE_SEED)
+    bits = rng.integers(0, 2, size=(int(m.get("engram_sign_table_size", 8192)), int(m["engram_embed_dim"])))
+    return (2.0 * bits - 1.0).astype(np.float32)
+
+
+def _balancing(m: dict) -> str:
+    lb = m.get("moe_router_load_balancing_type")
+    types = lb if isinstance(lb, (list, tuple)) else [lb]
+    if "quantile_balancing" in types:  # the listed aux losses act in training only
+        return "quantile"
+    if not m.get("moe_router_enable_expert_bias"):
+        raise ValueError("expects quantile balancing or the expert bias")
+    return "expert_bias"
 
 
 def hf_config(m: dict, vocab: int) -> dict:
@@ -65,10 +93,17 @@ def hf_config(m: dict, vocab: int) -> dict:
     bad = sorted({c for c in syms if c not in _KINDS})
     if bad:
         raise ValueError(f"unsupported pattern symbols {bad}")
-    if not m.get("mhc") or m.get("mhc_routed_topk") or m.get("mhc_internal_attention", "none") != "none" or m.get("mhc_lerp"):
-        raise ValueError("expects plain mHC (no routed / internal-attention / lerp variants)")
-    if m.get("moe_router_score_function") != "sigmoid" or not m.get("moe_router_enable_expert_bias"):
-        raise ValueError("expects the sigmoid router with expert bias")
+    ldm = bool(m.get("depth_memory"))
+    if ldm:
+        if m.get("mhc"):
+            raise ValueError("depth_memory and mhc together")
+        if m.get("depth_memory_lerp") or m.get("depth_memory_sites", "all") != "all":
+            raise ValueError("expects LDM on every sublayer, additive residual (no lerp)")
+    elif not m.get("mhc") or m.get("mhc_routed_topk") or m.get("mhc_internal_attention", "none") != "none" or m.get("mhc_lerp"):
+        raise ValueError("expects plain mHC (no routed / internal-attention / lerp variants) or LDM")
+    if m.get("moe_router_score_function") != "sigmoid":
+        raise ValueError("expects the sigmoid router")
+    balancing = _balancing(m)
     if m.get("moe_shared_expert_gate"):
         raise ValueError("gated shared expert not ported")
     if m.get("position_embedding_type") not in (None, "none"):
@@ -78,8 +113,7 @@ def hf_config(m: dict, vocab: int) -> dict:
     heads = m["num_attention_heads"]
     types = [_KINDS[c] for c in syms]
     engram_layers = [i for i, t in enumerate(types) if t == "engram"]
-    if engram_layers and m.get("engram_sign_hash"):  # Megatron engram_sign_hash: not in HF yet
-        raise NotImplementedError("HF export of engram_sign_hash models is not implemented")
+    sign = bool(engram_layers and m.get("engram_sign_hash"))
     return {
         "architectures": ["OellmAmbitiousForCausalLM"],
         "model_type": "oellm_ambitious",
@@ -92,6 +126,11 @@ def hf_config(m: dict, vocab: int) -> dict:
         "block_types": types,
         "rms_norm_eps": float(m["layernorm_epsilon"]),
         "layernorm_zero_centered_gamma": bool(m.get("layernorm_zero_centered_gamma", False)),
+        "residual": "ldm" if ldm else "mhc",
+        "ldm_groups": int(m.get("depth_memory_groups", 16)),
+        "ldm_key_dim": int(m.get("depth_memory_key_dim", 8)),
+        "ldm_hidden_dim": int(m.get("depth_memory_hidden_dim", 32)),
+        "ldm_alpha": float(m.get("depth_memory_alpha", 1.0)),
         "mhc_expansion_rate": int(m["mhc_expansion_rate"]),
         "mhc_sinkhorn_iters": int(m.get("mhc_sinkhorn_iters", 20)),
         "mhc_eps": float(m["layernorm_epsilon"]),
@@ -110,6 +149,11 @@ def hf_config(m: dict, vocab: int) -> dict:
         "shared_expert_intermediate_size": m.get("moe_shared_expert_intermediate_size") or 0,
         "router_scaling_factor": float(m.get("moe_router_topk_scaling_factor") or 1.0),
         "activation_clamp_value": m.get("activation_func_clamp_value"),
+        "router_balancing": balancing,
+        "moe_expert_post_act_norm": bool(m.get("moe_expert_post_act_norm")),
+        "mlp_post_act_norm": bool(m.get("mlp_post_act_norm")),
+        "post_act_norm_floor": float(m.get("post_act_norm_floor") or 0.0),
+        "post_act_norm_smooth": bool(m.get("post_act_norm_smooth")),
         "engram_ngram_orders": list(m["engram_ngram_orders"]),
         "engram_num_heads": int(m["engram_num_heads"]),
         "engram_embed_dim": int(m["engram_embed_dim"]),
@@ -120,6 +164,9 @@ def hf_config(m: dict, vocab: int) -> dict:
         "engram_token_map": bool(m.get("engram_token_map")),
         "engram_gate_signed_sqrt": bool(m.get("engram_gate_signed_sqrt")),
         "engram_conv_prenorm": bool(m.get("engram_conv_prenorm")),
+        "engram_sign_hash": sign,
+        "engram_sign_table_size": int(m.get("engram_sign_table_size", 8192)),
+        "engram_sign_multipliers": {str(i): engram_sign_multipliers(m, i + 1) for i in engram_layers} if sign else {},
         "tie_word_embeddings": not m.get("untie_embeddings_and_output_weights", False),
         "torch_dtype": "bfloat16",
     }
@@ -139,6 +186,11 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             cfg = hf_config(m, vocab)
             cfg["engram_table_dtype"] = engram_table_dtype
             writer.add("model.embed_tokens.weight", t.pop("embedding.word_embeddings.weight").to(cast))
+            if cfg["residual"] == "ldm":  # the embedding write and the first query
+                for site in ("embed_write", "first_query"):
+                    names = _LDM_NET + (("forget_logit",) if site == "embed_write" else ("read_gain",))
+                    for n in names:
+                        writer.add(f"model.ldm_boundary.{site}.{n}", t.pop(f"decoder.ldm_stream_boundary.{site}.{n}").to(cast))
             writer.add("model.norm.weight", t.pop("decoder.final_norm.weight").to(cast))
             if not cfg["tie_word_embeddings"]:
                 writer.add("lm_head.weight", t.pop("output_layer.weight").to(cast))
@@ -150,8 +202,14 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
         g = lambda name: t.pop(p + name)  # noqa: E731
         mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
                  "engram": "residual_scheme.mhc_mixer"}[kind]
-        for n in _MHC:  # mHC coefficients stay fp32 (Megatron computes them in fp32)
-            writer.add(hp + f"mhc.{n}", g(f"{mixer}.{n}").float())
+        if cfg["residual"] == "ldm":  # this layer's write and the next read's query
+            for n in _LDM_NET + ("forget_logit",):
+                writer.add(hp + f"ldm_mixer.write_site.{n}", g(f"{mixer}.write_site.{n}").to(cast))
+            for n in _LDM_NET + ("read_gain",):
+                writer.add(hp + f"ldm_mixer.next_query.{n}", g(f"{mixer}.next_query.{n}").to(cast))
+        else:
+            for n in _MHC:  # mHC coefficients stay fp32 (Megatron computes them in fp32)
+                writer.add(hp + f"mhc.{n}", g(f"{mixer}.{n}").float())
         if kind == "attention":
             q, z, kk, v = _split_attention(g("self_attention.linear_qkv.weight"), cfg)
             for n, w in (("q_proj", q), ("gate_proj", z), ("k_proj", kk), ("v_proj", v)):
@@ -168,7 +226,10 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
         elif kind == "moe":
             writer.add(hp + "input_layernorm.weight", g("pre_mlp_layernorm.weight").to(cast))
             writer.add(hp + "mixer.gate", g("mlp.router.weight").float())
-            writer.add(hp + "mixer.e_score_correction_bias", g("mlp.router.expert_bias").float())
+            if cfg["router_balancing"] == "quantile":
+                writer.add(hp + "mixer.qb_beta", g("mlp.router.qb_beta").float())
+            else:
+                writer.add(hp + "mixer.e_score_correction_bias", g("mlp.router.expert_bias").float())
             gate = stack_experts(t, p + "mlp.experts.linear_fc1.weight", "_w")
             up = stack_experts(t, p + "mlp.experts.linear_fc1.weight", "_v")
             writer.add(hp + "mixer.gate_up_proj", torch.cat([gate, up], dim=1).to(cast))
@@ -189,6 +250,8 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
                 writer.add(hp + f"mixer.{n}", g(n).to(cast))
             if cfg["engram_conv_prenorm"]:
                 writer.add(hp + "mixer.conv_norm.weight", g("conv_norm.weight").to(cast))
+            if cfg["engram_sign_hash"]:  # not in the checkpoint: a function of Megatron's fixed seed
+                writer.add(hp + "mixer.sign_table", torch.from_numpy(engram_sign_table_np(m)))
             if cfg["engram_token_map"]:
                 # the map covers the padded tokenizer vocabulary; ids >= vocab never reach the model
                 tmap = np.load(m["engram_token_map"]).astype(np.int64)[: cfg["vocab_size"]]
