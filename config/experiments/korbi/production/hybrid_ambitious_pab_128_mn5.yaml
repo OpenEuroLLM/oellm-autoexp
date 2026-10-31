@@ -23,15 +23,24 @@ aux:
   # 128 n: 28.9 s / step, 4,535 tok/s/GPU, memory 0.956 with cap 0.80 + 8 NCCL channels (16 OOM)
   # own arm (fresh start); the v2 starts (v2_64k QB, v2b_64k per-sequence aux, v2c_64k broken
   # global aux) are not resumed
-  arm: ambitious_e360_eng80_v3_64k
-  # 64k context (user 2026-10-31), set before the run's first real steps: the sequence length
-  # sets the data index and order, so it can never change later. Same 67M tokens per step and
-  # per micro-batch (1 x 65536 = 4 x 16384: LDM kernel shapes, MoE dispatch, quantile balancing,
-  # activation memory unchanged), still 2 micro-batches per step at 128 nodes (the per-micro-batch
-  # FSDP expert gathers unchanged), train_iters unchanged. Cost: attention only (1 layer in 8,
-  # document-masked via cu_seqlens: only documents > 32k cost more). v2speed128 at 4 channels:
-  # 64k 31.7 vs 32k 30.9 s (+2.6 %); with 8 channels + ENGRAM_STEP_GROUP 1 expected ~30.7 s
-  # (32k measured 29.9). Own arm: never resumes the 16k start (ambitious_e360_eng80_v2).
+  arm: ambitious_e360_eng80_v3
+  # sequence-length curriculum (user 2026-10-31) at constant 67M tokens per step and per micro-batch
+  # (64k tokens per GPU and micro-batch, 2 micro-batches per step at 128 nodes), on the v8 +
+  # multilingual data split by document into three stages (scripts/datamix_v8/split_stages.py,
+  # the same per-source ratios in every stage, no document in two stages; stages_report.tsv):
+  #   phase 1   4k   gbs 16384  mbs 16   it      0 -  4,737     317.9B  (2.0 %)
+  #   phase 2  16k   gbs  4096  mbs  4   it  4,737 - 23,691   1,272.1B  (8.0 %)
+  #   phase 3  64k   gbs  1024  mbs  1   it 23,691 - 236,733  14,296.8B (90.0 %)   15.9T in total
+  # Megatron --phase-transition-iterations + --phase-transition-variable-batch (6cec40be3, as
+  # hybrid_ctxcurr_s3_mn5): a phase saves and exits at its last iteration; the next phase resumes
+  # the same checkpoint dir with its own sequence length, batch size and stage data, its dataloader
+  # at the phase's own sample 0 (the LR scheduler continues: constant lr). One job per phase, all
+  # three enqueued together: phases 2 / 3 wait (start_condition) until the previous phase's last
+  # checkpoint is written.
+  phase: 3
+  # enqueue a subset of the phases: 'aux.only=[p1]' (default: all three)
+  only: []
+  stage_datamix: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8ml_stage${aux.phase}_mn5.txt
   seq: 65536
   gbs: 1024
 
@@ -61,6 +70,11 @@ backend:
     ENGRAM_STEP_GROUP: "1"
   megatron:
     micro_batch_size: 1
+    # the curriculum (aux above): 15.9T tokens = 236,733 steps of 1024 x 65536
+    data_args_path: ${aux.stage_datamix}
+    train_iters: 236733
+    phase_transition_iterations: "4737,23691"
+    phase_transition_variable_batch: true
     # async rolling checkpoint every 100 steps (user 2026-10-31; inherited 125): ~52 min at 30.8 s
     # per step. A divisor of 500 and of save_interval 1000, so the equal-token eval marks at
     # 500 * 2^n still land on complete checkpoints
@@ -92,8 +106,9 @@ backend:
     moe_router_fusion: true
 
 job:
-  # v3: a new name, so nothing that acts on the cancelled v2 copies by name touches it
-  name: ambitious_v3_128n
+  # v3: a new name, so nothing that acts on the cancelled v2 copies by name touches it; one job
+  # per curriculum phase
+  name: ambitious_v3_128n_p${aux.phase}
   # size128 e360_cap80_eng80_nccl8: 28.9 s (the [2, 3, 4] cost: arm e360_eng80_v2)
   est_step_time_s: 29.0
 
@@ -108,3 +123,37 @@ slurm:
     # hybrid_size128_mn5
     NCCL_MIN_NCHANNELS: "8"
     NCCL_NCHANNELS_PER_PEER: "8"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"p\\${aux.phase}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - {aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
+        - aux.phase: 2
+          aux.seq: 16384
+          aux.gbs: 4096
+          backend.megatron.micro_batch_size: 4
+          # phase 1's last checkpoint (it saves and exits at 4,737)
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*4737\\s*$"
+            mode: regex
+            # passed once = passed: a restart in the phase (the file then holds a later iteration)
+            # must not wait again
+            persistent_pass: true
+        - aux.phase: 3
+          aux.seq: 65536
+          aux.gbs: 1024
+          backend.megatron.micro_batch_size: 1
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*23691\\s*$"
+            mode: regex
+            # passed once = passed: a restart in the phase (the file then holds a later iteration)
+            # must not wait again
+            persistent_pass: true

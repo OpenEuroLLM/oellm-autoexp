@@ -1,7 +1,8 @@
 # @package _global_
-# Speed / memory of the ambitious v3 main run at 128 nodes, both residuals (LDM with address width
-# 128 / mHC-4), at the production setting (64k, mbs 1, gbs 1024, cap 0.80, 8 NCCL channels,
-# ENGRAM_STEP_GROUP 1). mHC-4 never ran at this size: 360 experts + Engram 80B + 64k context.
+# Speed / memory of the ambitious v3 main run at 128 nodes: LDM (address width 128) in the three
+# curriculum phases (4k x mbs 16, 16k x mbs 4, 64k x mbs 1; each phase's stage data), and mHC-4 (the
+# fallback) at 64k. Production setting otherwise (cap 0.80, 8 NCCL channels, ENGRAM_STEP_GROUP 1).
+# mHC-4 never ran at this size: 360 experts + Engram 80B + 64k context.
 # - 20 steps (exit_interval), the main run's train_iters / split / eval (its data index), no saves.
 # - MEM_BREAKDOWN_STEPS 20: device total, reserved, max reserved, allocator retries per step.
 # - Not the main run: own suite (production/v3speed/<arm>), no singleton.
@@ -14,7 +15,7 @@ defaults:
 
 aux:
   suite: v3speed
-  arm: ldm
+  arm: ldm_p3
   only: []
 
 backend:
@@ -58,8 +59,11 @@ sweep:
   groups:
     - type: list
       configs:
-        - aux.arm: ldm
+        - {aux.arm: ldm_p1, aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
+        - {aux.arm: ldm_p2, aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4}
+        - {aux.arm: ldm_p3, aux.phase: 3}
         - aux.arm: mhc4
+          aux.phase: 3
           backend.megatron.depth_memory: false
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
