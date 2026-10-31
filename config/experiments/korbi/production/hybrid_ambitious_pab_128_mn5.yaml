@@ -43,6 +43,13 @@ backend:
     engram_ngram_orders: [2, 3, 4]
     engram_table_size: 25973845
     engram_sign_hash: true
+    # QB (EMA 0.9, hybrid_main_mn5) + a small global-batch balancing loss (user 2026-10-31: against
+    # dead / "ghost" experts at 5 of 360): its token fractions come from the router's raw top-k
+    # (no QB bias), so it pulls the raw preferences toward balance, without the per-sequence
+    # pressure of seq_aux_loss (not used: a batch-1 model). Watch moe/ghost_expert_layer_slots,
+    # moe/expert_mean_weight_ratio_min (Megatron with the per-expert routing-weight metric).
+    moe_router_load_balancing_type: [quantile_balancing, global_aux_loss]
+    moe_aux_loss_coeff: [0.0, 1.0e-5]
 
 job:
   name: ambitious_v2_128n
