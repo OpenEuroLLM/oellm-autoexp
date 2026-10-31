@@ -4,7 +4,9 @@
 # QB EMA 0.9 + global_aux_loss, Engram [2, 3, 4] + sign hash with TableAdam (rowwise v, bf16 m,
 # sparse grads, step lookup), muown_classical + head-wise QKV + compact ckpt, Megatron-FSDP
 # optim_grads_params + MoonEP EP4, fp8 expert gather, fsdp_dtensor, async rolling saves) at a size
-# that fits 4 nodes: 72 experts (360 / 5), Engram tables / 32 (811,683 rows per head: odd, as
+# that fits 4 nodes: 32 experts (72 OOMed in the first backward at 4 nodes under the 0.80 cap, job
+# 48326576: ~22 GB of parameter + optimizer state per GPU), no allocator cap (NCCL headroom only
+# matters at 64+ nodes), Engram tables / 32 (811,683 rows per head: odd, as
 # 25,973,845, so the DP shards stay uneven), gbs 128 x 16k.
 #
 #   phase save (4 nodes each, train_iters 40 for every arm: the same data order)
@@ -42,10 +44,11 @@ backend:
     # per rank and parameter: model / main param, optimizer states (sum of squares + position-
     # weighted sum) at ref's step-20 save and after cont's / grow's load (Megatron checkpointing.py
     # _debug_optimizer_state): the saved and the loaded state compare directly, not only via losses
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     MEGATRON_DEBUG_OPT_STATE: "1"
     MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/opt_state/dump
   megatron:
-    num_experts: 72
+    num_experts: 32
     engram_table_size: 811683
     train_iters: 40
     exit_interval: 30
