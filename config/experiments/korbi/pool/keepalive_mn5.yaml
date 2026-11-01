@@ -1,0 +1,39 @@
+# @package _global_
+# Keep-alive placeholder for a pool host (user 2026-11-01): one node that only sleeps, so a host
+# never goes idle while no real run is assigned (a second guard next to job.pool_host.hold_hosts /
+# pool_ctl hold). Lowest priority; 1 node, so a 128-node run still fits on a 132-node host.
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p132 \
+#       --config-name experiments/korbi/pool/keepalive_mn5 aux.tag=p132 aux.hours=10 \
+#       slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: none
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  tag: pool
+  hours: 12
+
+backend:
+  command: echo keepalive start; date; sleep ${oc.eval:'int(${aux.hours} * 3600)'}; date
+
+job:
+  name: keepalive_${aux.tag}
+  base_output_dir: "${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/keepalive/${job.name}"
+  est_steps: 1
+  est_step_time_s: ${oc.eval:'int(${aux.hours} * 3600)'}
+  metadata:
+    pool_priority: 0
+  state_events: []
+
+slurm:
+  launcher_cmd: ""
+  sbatch:
+    nodes: 1
+    time: ${oc.eval:'"%d:00:00" % int(${aux.hours} + 1)'}
+
+stage: keepalive
