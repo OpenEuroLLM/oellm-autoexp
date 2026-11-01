@@ -19,10 +19,14 @@ SHA=${SHA:-$(git -C "$SRC" rev-parse --short HEAD)}
 DEST=${DEST:-$R/pylibs_vllm_$SHA}
 VER=$(ls "$W"/vllm-*.whl | head -1 | sed -E 's|.*/vllm-([0-9.]+)-.*|\1|')
 if [ ! -f "$DEST/.installed_$VER" ]; then
+    # pip --target copies its tree file by file: onto node-local disk first (GPFS takes minutes per
+    # thousand small files under pip's copy), then one rsync to GPFS
+    LOCAL=$(mktemp -d "${LOCAL_TMP:-/tmp}/vllm_build_XXXX")
+    TMPDIR=$LOCAL python3 -m pip install --no-index --find-links "$W" --target "$LOCAL/target" "vllm==$VER" \
+        > "$R/.vllm_build_$SHA.log" 2>&1 || { tail -30 "$R/.vllm_build_$SHA.log"; exit 1; }
     rm -rf "$DEST.tmp"
-    python3 -m pip install --no-index --find-links "$W" --target "$DEST.tmp" "vllm==$VER" > "$R/.vllm_build_$SHA.log" 2>&1 \
-        || { tail -30 "$R/.vllm_build_$SHA.log"; exit 1; }
-    rm -rf "$DEST"; mv "$DEST.tmp" "$DEST"
+    rsync -a "$LOCAL/target/" "$DEST.tmp/"
+    rm -rf "$LOCAL" "$DEST"; mv "$DEST.tmp" "$DEST"
     touch "$DEST/.installed_$VER"
 fi
 # our Python on top (no binaries in the source tree; nothing deleted from the install)
