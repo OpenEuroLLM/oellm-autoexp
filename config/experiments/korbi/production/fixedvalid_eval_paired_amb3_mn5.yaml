@@ -380,7 +380,7 @@ backend:
     freeze_all_layers: false
     fsdp_db_use_persist_buf_on_alloc_fail: false
     fsdp_double_buffer: false
-    fsdp_fp8_param_gather: experts
+    fsdp_fp8_param_gather: none  # eval: bf16 experts, as the HF export (the conversion check)
     fsdp_manual_registration: false
     ft_num_warmup_iters: 5
     full_validation: false
@@ -725,7 +725,7 @@ backend:
     moe_shared_expert_overlap: true
     moe_single_grouped_bias: false
     moe_single_grouped_weight: false
-    moe_token_dispatcher_type: flex
+    moe_token_dispatcher_type: alltoall  # eval: MoonEP is intra-node only (EP 8 spans 2 nodes)
     moe_token_drop_policy: probs
     moe_upcycling_granularity: 1
     moe_use_upcycling: false
