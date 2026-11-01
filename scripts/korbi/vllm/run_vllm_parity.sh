@@ -14,7 +14,7 @@ export VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL:-WARNING} HF_HUB_OFFLINE=1 TRANSF
 mode=$1; shift
 case $mode in
   tiny)   python3 -m oellm_autoexp.hf_export.vllm_parity tiny --out "${1:-/tmp/vllm_parity_tiny}" ;;
-  components) python3 -m oellm_autoexp.hf_export.vllm_parity tiny --components --out /tmp/vllm_parity_comp ;;
+  components) python3 -m oellm_autoexp.hf_export.vllm_parity tiny --components --only "${1:-}" --out /tmp/vllm_parity_comp ;;
   export) python3 -m oellm_autoexp.hf_export.vllm_parity export "$1" --tp "${2:-1}" ;;
   *) echo "unknown mode $mode" >&2; exit 2 ;;
 esac

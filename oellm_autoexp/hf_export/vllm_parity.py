@@ -210,6 +210,7 @@ def main() -> None:
     t.add_argument("--out", required=True)
     t.add_argument("--components", action="store_true",
                    help="one model per layer kind (fp32): which component carries a difference")
+    t.add_argument("--only", default="", help="--components: a comma list of them")
     e = sub.add_parser("export")
     e.add_argument("export")
     e.add_argument("--tp", type=int, default=1)
@@ -217,11 +218,16 @@ def main() -> None:
     a = ap.parse_args()
     if a.cmd == "tiny" and a.components:
         base = dict(residual="mhc", sign_hash=True, quantile=True, pab=True)
+        # a model needs one cached layer (attention / CKDA / Engram), else vLLM allocates no KV cache
+        # and hangs at startup: the MoE models carry one attention layer (compare with "attention")
         comps = {"attention": dict(base, blocks=["attention"] * 3), "ckda": dict(base, blocks=["ckda"] * 3),
-                 "moe": dict(base, blocks=["moe"] * 3), "engram": dict(base, blocks=["engram"] * 2),
+                 "moe": dict(base, blocks=["attention", "moe", "moe"]), "engram": dict(base, blocks=["engram"] * 2),
                  "ldm_attention": dict(base, residual="ldm", blocks=["attention"] * 3),
-                 "ldm_moe": dict(base, residual="ldm", blocks=["moe"] * 3)}
+                 "ldm_moe": dict(base, residual="ldm", blocks=["attention", "moe", "moe"])}
+        only = [c for c in (a.only or "").split(",") if c]
         for name, kw in comps.items():
+            if only and name not in only:
+                continue
             r = check(build_tiny(Path(a.out) / f"comp_{name}", **kw), dtype="float32", tol=1e-2)
             print(f"component/{name}", json.dumps(r), flush=True)
         return
