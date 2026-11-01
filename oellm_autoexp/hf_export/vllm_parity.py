@@ -36,7 +36,7 @@ def _next_prime(n: int) -> int:
     return n
 
 
-def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool) -> dict:
+def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, blocks: list | None = None) -> dict:
     h, vocab = 256, 1024
     orders, heads = [2, 3, 4], 2
     sizes, c = [], 997
@@ -44,7 +44,7 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool) -> di
         c = _next_prime(c)
         sizes.append(c)
         c += 1
-    blocks = ["attention", "engram", "ckda", "moe", "ckda", "moe", "attention", "moe", "engram", "ckda", "moe"]
+    blocks = blocks or ["attention", "engram", "ckda", "moe", "ckda", "moe", "attention", "moe", "engram", "ckda", "moe"]
     rng = random.Random(0)
     mult = {str(i): [[rng.randrange(1, 1 << 20) * 2 + 1 for _ in range(max(orders))] for _ in sizes]
             for i, b in enumerate(blocks) if b == "engram"}
@@ -208,11 +208,23 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("tiny")
     t.add_argument("--out", required=True)
+    t.add_argument("--components", action="store_true",
+                   help="one model per layer kind (fp32): which component carries a difference")
     e = sub.add_parser("export")
     e.add_argument("export")
     e.add_argument("--tp", type=int, default=1)
     e.add_argument("--hf-device-map", default=None)
     a = ap.parse_args()
+    if a.cmd == "tiny" and a.components:
+        base = dict(residual="mhc", sign_hash=True, quantile=True, pab=True)
+        comps = {"attention": dict(base, blocks=["attention"] * 3), "ckda": dict(base, blocks=["ckda"] * 3),
+                 "moe": dict(base, blocks=["moe"] * 3), "engram": dict(base, blocks=["engram"] * 2),
+                 "ldm_attention": dict(base, residual="ldm", blocks=["attention"] * 3),
+                 "ldm_moe": dict(base, residual="ldm", blocks=["moe"] * 3)}
+        for name, kw in comps.items():
+            r = check(build_tiny(Path(a.out) / f"comp_{name}", **kw), dtype="float32", tol=1e-2)
+            print(f"component/{name}", json.dumps(r), flush=True)
+        return
     if a.cmd == "tiny":
         variants = {"mhc_bias": dict(residual="mhc", sign_hash=False, quantile=False, pab=False),
                     "ldm_qb_pab_sign": dict(residual="ldm", sign_hash=True, quantile=True, pab=True)}
