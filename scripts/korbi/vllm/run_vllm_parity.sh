@@ -15,6 +15,7 @@ mode=$1; shift
 case $mode in
   tiny)   python3 -m oellm_autoexp.hf_export.vllm_parity tiny --out "${1:-/tmp/vllm_parity_tiny}" ;;
   components) python3 -m oellm_autoexp.hf_export.vllm_parity tiny --components --only "${1:-}" --out /tmp/vllm_parity_comp ;;
+  score)  python3 -m oellm_autoexp.hf_export.vllm_parity score "$1" --datamix "$2" --tp "${3:-4}" --reference "${4:-}" ;;
   export) python3 -m oellm_autoexp.hf_export.vllm_parity export "$1" --tp "${2:-1}" ;;
   *) echo "unknown mode $mode" >&2; exit 2 ;;
 esac

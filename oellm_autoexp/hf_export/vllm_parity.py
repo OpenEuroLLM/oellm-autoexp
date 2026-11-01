@@ -205,6 +205,43 @@ def check(export: Path, tp: int = 1, vocab: int | None = None, lengths=(5, 37, 1
     return report
 
 
+def score(export: Path, datamix: Path, tp: int, num_docs: int = 64, seq_len: int = 4096, min_len: int = 256,
+          seed: int = 0, reference: Path | None = None, gpu_mem: float = 0.92) -> dict:
+    """``score_on_flag`` in vLLM: the same documents (its sampler and seed, BOS prepended, cut at
+    ``seq_len``), the mean next-token NLL from prompt log-probabilities; against the export's HF
+    score (``score_flag.json``) when given -- that one sits next to the Megatron run's training loss."""
+    import numpy as np
+    from transformers import AutoConfig
+    from vllm import LLM, SamplingParams
+
+    from .score_on_flag import sample_docs
+
+    cfg = AutoConfig.from_pretrained(export, trust_remote_code=True)
+    bos = cfg.bos_token_id
+    docs = sample_docs(datamix, num_docs, min_len, seed)
+    prompts = [np.concatenate([[bos], d[: seq_len - 1]]).astype(np.int64).tolist() for d in docs]
+    llm = LLM(model=str(export), trust_remote_code=True, dtype="bfloat16", enforce_eager=True,
+              skip_tokenizer_init=True, enable_prefix_caching=False, tensor_parallel_size=tp,
+              max_model_len=seq_len + 8, gpu_memory_utilization=gpu_mem, max_num_seqs=4,
+              max_num_batched_tokens=seq_len)
+    res = llm.generate([{"prompt_token_ids": p} for p in prompts],
+                       SamplingParams(max_tokens=1, prompt_logprobs=0, temperature=0.0), use_tqdm=False)
+    per_doc, total, count = [], 0.0, 0
+    for p, r in zip(prompts, res):
+        lp = [d[t].logprob for d, t in zip(r.prompt_logprobs[1:], p[1:])]
+        per_doc.append(-float(np.mean(lp)))
+        total -= float(np.sum(lp))
+        count += len(lp)
+    out = {"export": str(export), "docs": len(docs), "tokens": count, "mean_nll_vllm": total / count,
+           "doc_lengths": [len(p) for p in prompts], "doc_nll_vllm": per_doc}
+    if reference and Path(reference).exists():
+        ref = json.loads(Path(reference).read_text())
+        out["mean_nll_hf"] = ref["mean_nll"]
+        out["diff_vllm_minus_hf"] = out["mean_nll_vllm"] - ref["mean_nll"]
+        out["same_documents"] = ref.get("doc_lengths") == out["doc_lengths"] and ref.get("tokens") == count
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -217,6 +254,11 @@ def main() -> None:
     e.add_argument("export")
     e.add_argument("--tp", type=int, default=1)
     e.add_argument("--hf-device-map", default=None)
+    sc = sub.add_parser("score")
+    sc.add_argument("export")
+    sc.add_argument("--datamix", required=True)
+    sc.add_argument("--tp", type=int, default=4)
+    sc.add_argument("--reference", default=None, help="the export's HF score json (score_on_flag)")
     a = ap.parse_args()
     if a.cmd == "tiny" and a.components:
         base = dict(residual="mhc", sign_hash=True, quantile=True, pab=True)
@@ -246,6 +288,10 @@ def main() -> None:
                 results[f"{name}/{dtype}"] = r = check(d, dtype=dtype, tol=tol)
                 print(f"{name}/{dtype}", json.dumps(r), flush=True)
         print("PASS" if all(r["pass"] for r in results.values()) else "FAIL")
+    elif a.cmd == "score":
+        r = score(Path(a.export), Path(a.datamix), a.tp, reference=a.reference)
+        print(json.dumps({k: v for k, v in r.items() if k not in ("doc_lengths", "doc_nll_vllm")}, indent=1))
+        print(json.dumps(r))
     else:
         r = check(Path(a.export), tp=a.tp, hf_device_map=a.hf_device_map)
         print(json.dumps(r, indent=1))
