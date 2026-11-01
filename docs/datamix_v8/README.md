@@ -122,17 +122,23 @@ at 4k in every stage (`scripts/datamix_v8/build_valid_sets.py`, `/gpfs/projects/
 | `code` | category code |
 | `math` | category math |
 | `reasoning` | mixture-vitae instruct / reasoning subsets + the agent / reasoning SFT sets + nemotron-pretraining-specialized |
+| `long_64k` | every source, documents >= 32k tokens only, 1,024 x 65,536 tokens, evaluated at **64k** |
 
 - Exactly one batch each: 16,384 x 4,096 tokens = 2^26 (67M); standard error of a set's loss ~0.002-0.007 nats,
   changes between evaluations (same documents) much smaller.
 - Held-out documents only: the validation part of every stage-3 view (documents `[round(0.998 N), N)`, Megatron's
   split), which no stage trains on. Within a set every source in proportion to its mix weight (`<set>.info.json`),
   whole documents (`<set>.selection.npz`).
-- Megatron (cd193f5ed): `--fixed-valid-data-path <6 prefixes> --validation-set-names all web_en multilingual code
-  math reasoning --valid-seq-length 4096` -- implies `--multiple-validation-sets --full-validation` (each set
-  completely at every evaluation; W&B `lm loss validation-<name>` and `... ppl`); the eval micro / global batch
-  default to the training ones at the same tokens (16 / 16,384 at 4k). The training datasets and their cache key
-  are unchanged (the split's own validation part is built with 1 sample and not used), so the sets can be switched
-  on at any restart.
-- Cost at `eval_interval: 1000`: 6 x 2^26 = 0.4B tokens forward per evaluation, ~0.2 % of the training compute
+- Held-out = documents entirely inside the validation part of the stage-3 views: Megatron splits GPT data by
+  *sequence*, `[round(0.998 S), S)`; documents straddling the boundary are skipped (finephrase has several
+  sequences per document).
+- Megatron (cd193f5ed, 8e7bcc5f6): `--fixed-valid-data-path <7 prefixes> --validation-set-names all web_en
+  multilingual code math reasoning long_64k --fixed-valid-seq-lengths 4096 4096 4096 4096 4096 4096 65536` --
+  implies `--multiple-validation-sets --full-validation` (each set completely at every evaluation, each at its own
+  length whatever the phase's `--seq-length`; W&B `lm loss validation-<name>` and `... ppl`). Eval micro batch 1 /
+  eval global batch = data-parallel size are forced (full validation samples one sequence per rank per step); a
+  64k set takes the memory of a 64k training micro batch. The training datasets and their cache key are
+  unchanged (the split's own validation part is built with 1 sample and not used), so the sets can be switched on
+  at any restart or phase boundary.
+- Cost at `eval_interval: 1000`: 7 x 2^26 = 0.47B tokens forward per evaluation, ~0.25 % of the training compute
   (before: 10 x 2^26 every 2,000 steps, ~0.17 %, and ~80B validation tokens to index).
