@@ -36,9 +36,11 @@ backend:
     WANDB_MODE: disabled
   megatron:
     skip_train: true
-    # the validation index at the training run's size: (train_iters // eval_interval + 1) x 10
-    # (10 = the main run's eval_iters; with skip_train Megatron sizes one evaluation only)
-    eval_iters: ${oc.eval:'(int(${backend.megatron.train_iters}) // int(${backend.megatron.eval_interval}) + 1) * 10'}
+    # the validation index at the training run's size. With --phase-transition-variable-batch
+    # Megatron (>= 94964e088) sizes it for the PHASE's own evaluations (one per eval_interval
+    # multiple inside the phase + one at its exit) x eval_iters 10 x gbs; skip_train sizes
+    # eval_iters x gbs -- so eval_iters = 10 x the phase's evaluations, per phase in the sweep below
+    # (p1 3 evals -> 30 = 491,520 samples; p2 10 -> 100 = 409,600; p3 108 -> 1080 = 1,105,920)
     data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
     distributed_timeout_minutes: 180
     # --- stand-in model (not part of the cache key) ---
@@ -80,7 +82,7 @@ slurm:
   sbatch:
     account: ehpc533
     qos: acc_ehpc
-    time: "01:30:00"
+    time: "08:00:00"
 
 # the three phases without the main run's start conditions (a prebuild never waits for a
 # checkpoint); phases 2 / 3 with one transition at their own phase length (see above)
@@ -88,6 +90,6 @@ sweep:
   groups:
     - type: list
       configs:
-        - {aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16}
-        - {aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4, backend.megatron.phase_transition_iterations: "18954"}
-        - {aux.phase: 3, aux.seq: 65536, aux.gbs: 1024, backend.megatron.micro_batch_size: 1, backend.megatron.phase_transition_iterations: "213042"}
+        - {aux.phase: 1, aux.seq: 4096, aux.gbs: 16384, backend.megatron.micro_batch_size: 16, backend.megatron.eval_iters: 30}
+        - {aux.phase: 2, aux.seq: 16384, aux.gbs: 4096, backend.megatron.micro_batch_size: 4, backend.megatron.phase_transition_iterations: "18954", backend.megatron.eval_iters: 100}
+        - {aux.phase: 3, aux.seq: 65536, aux.gbs: 1024, backend.megatron.micro_batch_size: 1, backend.megatron.phase_transition_iterations: "213042", backend.megatron.eval_iters: 1080}
