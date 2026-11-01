@@ -16,6 +16,11 @@ aux:
   name: hf_export_${aux.model}_${aux.step}
   bench: "bash scripts/korbi/hf_export/export_main_run.sh ${aux.model} ${aux.step}"
 
+backend:
+  env:
+    # score_on_flag's device maps need accelerate, which the ep image lacks (pylibs_hfx: accelerate only)
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}:${aux.hybrid_env}/pylibs_hfx"
+
 job:
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/hf_exports/logs/${aux.name}"
   # export ~1 h (84B: the 160 GB fp32 Engram tables), score ~0.5 h
