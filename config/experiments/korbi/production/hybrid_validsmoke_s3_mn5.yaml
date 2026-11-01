@@ -1,0 +1,61 @@
+# @package _global_
+# Smoke test of the fixed held-out validation sets (docs/datamix_v8/README.md, Megatron >= 8e7bcc5f6) on the s3
+# production stack (hybrid_ctxlen_s3_mn5: 4 nodes, 1M tokens per step): a few training steps on a small blend
+# (3 stage-2 shards: a fast index build), then ONE full evaluation of all seven sets -- six 4k sets and long_64k
+# at 64k -- at the end. Two arms: training at 4k (the curriculum's phase 1: a 64k evaluation next to a 4k
+# training micro batch) and at 64k (phase 3: 4k evaluations next to 64k training). Checks: the sets build at
+# their lengths, every set is evaluated exactly once (eval iters = sequences / data-parallel size), finite
+# losses per set in the log and W&B, no OOM, training continues after the evaluation.
+# No checkpoints (save / load null), acc_debug (4 nodes, one arm at a time).
+#
+#   scripts/korbi/mn5_autoexp_bg.sh validsmoke scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_validsmoke_s3_mn5 --yes   # both arms, one after another
+defaults:
+  - hybrid_ctxlen_s3_mn5
+  - _self_
+
+aux:
+  suite: validsmoke_s3
+  valid_root: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid
+
+backend:
+  megatron:
+    data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/validsmoke_train_datamix.txt
+    fixed_valid_data_path:
+      - ${aux.valid_root}/all_text_document
+      - ${aux.valid_root}/web_en_text_document
+      - ${aux.valid_root}/multilingual_text_document
+      - ${aux.valid_root}/code_text_document
+      - ${aux.valid_root}/math_text_document
+      - ${aux.valid_root}/reasoning_text_document
+      - ${aux.valid_root}/long_64k_text_document
+    validation_set_names: [all, web_en, multilingual, code, math, reasoning, long_64k]
+    fixed_valid_seq_lengths: [4096, 4096, 4096, 4096, 4096, 4096, 65536]
+    train_iters: 6
+    exit_interval: 6
+    eval_interval: 6
+    save: null
+    load: null
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  metadata:
+    pool_priority: null
+
+slurm:
+  sbatch:
+    qos: acc_debug
+    time: "01:50:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: s4k
+          aux.seq: 4096
+          aux.gbs: 256
+          backend.megatron.micro_batch_size: 16
+        - aux.arm: s64k
+          aux.seq: 65536
+          aux.gbs: 16
+          backend.megatron.micro_batch_size: 1
