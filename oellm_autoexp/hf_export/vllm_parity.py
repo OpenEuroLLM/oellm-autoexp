@@ -36,7 +36,8 @@ def _next_prime(n: int) -> int:
     return n
 
 
-def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, blocks: list | None = None) -> dict:
+def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, blocks: list | None = None,
+                head_dim: int = 64, token_map: bool = False) -> dict:
     h, vocab = 256, 1024
     orders, heads = [2, 3, 4], 2
     sizes, c = [], 997
@@ -56,10 +57,10 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
         "vocab_size": vocab, "hidden_size": h, "block_types": blocks, "rms_norm_eps": 1e-5,
         "residual": residual, "mhc_expansion_rate": 4, "mhc_sinkhorn_iters": 20, "mhc_eps": 1e-5,
         "ldm_groups": 4, "ldm_key_dim": 8, "ldm_hidden_dim": 32, "ldm_alpha": 1.0,
-        "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 64, "qk_layernorm": True,
+        "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": head_dim, "qk_layernorm": True,
         "attention_output_gate": True, "exclusive_self_attention": True, "xsa_eps": 1e-6,
         "fla_layer": {"class": "fla.layers.complex_kda_layer.ComplexKimiDeltaAttention",
-                      "kwargs": {"hidden_size": h, "num_heads": 4, "head_dim": 64, "allow_neg_eigval": True,
+                      "kwargs": {"hidden_size": h, "num_heads": 4, "head_dim": head_dim, "allow_neg_eigval": True,
                                  "gate": "signed_sigmoid2", "gate_init_style": "shipped", "lower_bound": -5.0,
                                  "output_gate": "lowrank", "drop_silu": True, "conv_size": 4, "norm_eps": 1e-5}},
         "num_experts": 8, "num_experts_per_tok": 2, "moe_intermediate_size": 128,
@@ -68,7 +69,7 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
         "moe_expert_post_act_norm": pab, "mlp_post_act_norm": pab, "post_act_norm_floor": 1.0 if pab else 0.0,
         "engram_ngram_orders": orders, "engram_num_heads": heads, "engram_embed_dim": 16,
         "engram_conv_kernel_size": 4, "engram_table_sizes": sizes, "engram_hash_multipliers": mult,
-        "engram_token_map": False, "engram_gate_signed_sqrt": True, "engram_conv_prenorm": True,
+        "engram_token_map": token_map, "engram_gate_signed_sqrt": True, "engram_conv_prenorm": True,
         "engram_sign_hash": sign_hash, "engram_sign_table_size": 251,
         "engram_sign_multipliers": mult, "engram_table_dtype": "bf16",
         "tie_word_embeddings": False, "torch_dtype": "bfloat16",
@@ -119,6 +120,8 @@ def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
                 b.copy_(torch.randint(0, 2, b.shape).float() * 2 - 1)
             elif name.endswith(("qb_beta", "e_score_correction_bias")):
                 b.normal_(0.0, 0.1)
+            elif name.endswith("token_map"):
+                b.copy_(torch.randperm(b.numel()))
     model.save_pretrained(out, safe_serialization=True)
     _copy_code(out)
     return out
@@ -254,6 +257,7 @@ def main() -> None:
     t.add_argument("--components", action="store_true",
                    help="one model per layer kind (fp32): which component carries a difference")
     t.add_argument("--only", default="", help="--components: a comma list of them")
+    t.add_argument("--tp", type=int, default=1, help="vLLM tensor parallelism (the HF reference on one GPU)")
     e = sub.add_parser("export")
     e.add_argument("export")
     e.add_argument("--tp", type=int, default=1)
@@ -273,12 +277,18 @@ def main() -> None:
                  "ldm_attention": dict(base, residual="ldm", blocks=["attention"] * 3),
                  "ldm_moe": dict(base, residual="ldm", blocks=["attention", "moe", "moe"]),
                  # routing flips vs a mismatch: the MoE model with a router whose top-k margins are wide
-                 "moe_wide_router": dict(base, blocks=["attention", "moe", "moe"], router_std=2.0)}
+                 "moe_wide_router": dict(base, blocks=["attention", "moe", "moe"], router_std=2.0),
+                 # the v3 recipe in small: LDM, expert bias, pab, sign hash, token map, head dim 128, GQA 2
+                 "v3_attention_hd128": dict(base, residual="ldm", quantile=False, head_dim=128,
+                                            blocks=["attention"] * 3),
+                 "v3_recipe": dict(base, residual="ldm", quantile=False, head_dim=128, token_map=True,
+                                   blocks=["attention", "engram", "ckda", "moe", "ckda", "moe", "attention",
+                                           "moe", "engram", "ckda", "moe"], router_std=1.0)}
         only = [c for c in (a.only or "").split(",") if c]
         for name, kw in comps.items():
             if only and name not in only:
                 continue
-            r = check(build_tiny(Path(a.out) / f"comp_{name}", **kw), dtype="float32", tol=1e-2)
+            r = check(build_tiny(Path(a.out) / f"comp_{name}", **kw), dtype="float32", tol=1e-2, tp=a.tp)
             print(f"component/{name}", json.dumps(r), flush=True)
         return
     if a.cmd == "tiny":
