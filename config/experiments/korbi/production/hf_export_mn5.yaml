@@ -1,0 +1,31 @@
+# @package _global_
+# HF export of a main-run checkpoint (ambitious v3 / conservative q35) on one MN5 node, with the
+# conversion checks (check_export, score_on_flag on the fixed validation set): the convert
+# stage of the export -> eval chain. scripts/korbi/hf_export/export_main_run.sh does the work.
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/<pool> \
+#       --config-name experiments/korbi/production/hf_export_mn5 aux.model=ambitious aux.step=1400 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  model: ambitious     # ambitious | conservative
+  step: ???
+  name: hf_export_${aux.model}_${aux.step}
+  bench: "bash scripts/korbi/hf_export/export_main_run.sh ${aux.model} ${aux.step}"
+
+job:
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/hf_exports/logs/${aux.name}"
+  # export ~1 h (84B: the 160 GB fp32 Engram tables), score ~0.5 h
+  est_step_time_s: 10800
+  array_group: null
+  metadata:
+    pool_priority: 30
+
+slurm:
+  sbatch:
+    time: "04:00:00"
+    qos: acc_xehpc
+    account: ehpc533
