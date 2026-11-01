@@ -27,9 +27,13 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from oellm_autoexp.backends.megatron.config_schema import MegatronConfig  # noqa: E402
 
-VALID_ROOT = "/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid"
-SETS = ["all", "web_en", "multilingual", "code", "math", "reasoning", "long_64k"]
-LENGTHS = [4096] * 6 + [65536]
+# FVE_VALID_ROOT: v8ml-valid (tokenizer-256k-agent) or v8ml-valid-basetok (the same sets in tokenizer-256k,
+# scripts/datamix_v8/retok_valid_sets.py, for models trained on it); FVE_SETS: a subset (comma separated)
+VALID_ROOT = os.environ.get("FVE_VALID_ROOT", "/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid")
+_ALL = {"all": 4096, "web_en": 4096, "multilingual": 4096, "code": 4096, "math": 4096, "reasoning": 4096,
+        "long_64k": 65536}
+SETS = os.environ.get("FVE_SETS", ",".join(_ALL)).split(",")
+LENGTHS = [_ALL[s] for s in SETS]
 
 EVAL_PATCH = {
     "no_load_optim": True,
