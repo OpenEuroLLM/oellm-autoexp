@@ -84,7 +84,7 @@ def _copy_code(out: Path) -> None:
         shutil.copy(_HYB / f, out / f)
 
 
-def build_tiny(out: Path, **kw) -> Path:
+def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
     """A random tiny export (HF classes, save_pretrained, the code files next to it)."""
     from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -108,6 +108,8 @@ def build_tiny(out: Path, **kw) -> Path:
                 p.fill_(0.01)
             elif name.endswith(".table"):
                 p.normal_(0.0, 1.0)
+            elif name.endswith("mixer.gate") and p.dim() == 2:
+                p.normal_(0.0, router_std)  # large: wide top-k margins (no routing flips from noise)
             elif name.startswith("lm_head"):
                 p.normal_(0.0, 0.5)  # peaked next-token distributions: greedy decoding is meaningful
             else:
@@ -223,7 +225,9 @@ def main() -> None:
         comps = {"attention": dict(base, blocks=["attention"] * 3), "ckda": dict(base, blocks=["ckda"] * 3),
                  "moe": dict(base, blocks=["attention", "moe", "moe"]), "engram": dict(base, blocks=["engram"] * 2),
                  "ldm_attention": dict(base, residual="ldm", blocks=["attention"] * 3),
-                 "ldm_moe": dict(base, residual="ldm", blocks=["attention", "moe", "moe"])}
+                 "ldm_moe": dict(base, residual="ldm", blocks=["attention", "moe", "moe"]),
+                 # routing flips vs a mismatch: the MoE model with a router whose top-k margins are wide
+                 "moe_wide_router": dict(base, blocks=["attention", "moe", "moe"], router_std=2.0)}
         only = [c for c in (a.only or "").split(",") if c]
         for name, kw in comps.items():
             if only and name not in only:
