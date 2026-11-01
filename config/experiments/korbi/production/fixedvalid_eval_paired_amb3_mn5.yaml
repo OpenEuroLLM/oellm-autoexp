@@ -13,7 +13,7 @@ aux:
   experiment_group: fixedvalid_eval
   suite: paired_amb3
   arm: s1400
-  nodes: 4
+  nodes: 8  # v3 at 4 nodes OOMs in the FSDP all-gather (fp32 Engram shards); 32 DP ranks divide the 64 samples
   image: ep
   only: []
 backend:
@@ -1140,7 +1140,7 @@ job:
       reason: 'lost its node (eval: no retry)'
 slurm:
   sbatch:
-    nodes: 4
+    nodes: 8
     account: ehpc533
     qos: acc_xehpc
     time: 02:00:00
