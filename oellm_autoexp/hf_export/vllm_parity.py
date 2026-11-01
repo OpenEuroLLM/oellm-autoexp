@@ -206,10 +206,12 @@ def check(export: Path, tp: int = 1, vocab: int | None = None, lengths=(5, 37, 1
 
 
 def score(export: Path, datamix: Path, tp: int, num_docs: int = 64, seq_len: int = 4096, min_len: int = 256,
-          seed: int = 0, reference: Path | None = None, gpu_mem: float = 0.92) -> dict:
+          seed: int = 0, reference: Path | None = None, gpu_mem: float = 0.85) -> dict:
     """``score_on_flag`` in vLLM: the same documents (its sampler and seed, BOS prepended, cut at
     ``seq_len``), the mean next-token NLL from prompt log-probabilities; against the export's HF
-    score (``score_flag.json``) when given -- that one sits next to the Megatron run's training loss."""
+    score (``score_flag.json``) when given -- that one sits next to the Megatron run's training loss.
+    ``gpu_mem`` leaves room outside the KV budget for the prompt log-probs (1024-token chunks of
+    gathered [chunk, vocab] logits: 0.5 GiB bf16 + their fp32 softmax at 262k vocab; 0.92 OOMed)."""
     import numpy as np
     from transformers import AutoConfig
     from vllm import LLM, SamplingParams
