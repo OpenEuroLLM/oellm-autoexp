@@ -80,8 +80,8 @@ backend:
     # range, so never trained on), each evaluated in full at its own length in every phase (the
     # 4k sets stay at 4k in the 16k / 64k phases); W&B "lm loss validation-<name>". Implies
     # full / multiple validation sets (eval mbs 1, eval gbs = DP). Training indices unchanged; as
-    # data_cache_prebuild_v3_fixedvalid_mn5. Phases 2 / 3 only: phase 1 (p132.0158, started
-    # 2026-11-01 02:36) keeps the per-phase split validation every 2000 steps.
+    # data_cache_prebuild_v3_fixedvalid_mn5. All three phases (phase 1 since its ambv3e restart,
+    # p132.0170; the earlier p132.0158 had the per-phase split validation every 2000 steps).
     fixed_valid_data_path:
       - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/all_text_document
       - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/web_en_text_document
