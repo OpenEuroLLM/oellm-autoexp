@@ -6,10 +6,11 @@
 # are ambitious (LDM, suite main_ldm, 2026-10-28) and conservative (main_gqa).
 # conservative 59600 = 1.0T tokens (user 2026-11-01).
 # ambitious_v3 (suite main_ldm, arm ambitious_e360_eng80_v3; phase 1 also 67.1M tokens / step) 1400 and
-# conservative 10000: the first HF exports of the two (user 2026-11-01).
+# conservative 10000: the first HF exports of the two (user 2026-11-01). ambitious_v3 1500 + conservative 6000:
+# the FLAG downstream suite on MN5 (user 2026-11-01, with the first ambitious run's 2000).
 # <name>  <run dir on MN5>  <steps, comma-separated>
 ambitious_mha	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main/ambitious_e216_eng40	500,1000,2000,4000,8000,16000,32000,64000,128000
 conservative_mha	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/main	2000,4000,8000,16000,32000,64000,128000,256000,512000
 ambitious	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e216_eng40	500,1000,2000,4000,8000,16000,32000,64000,128000
-conservative	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/main_gqa/main	2000,4000,8000,10000,16000,32000,59600,64000,128000,256000,512000
-ambitious_v3	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v3	1000,1400,2000,4000,8000,16000,32000,64000,128000
+conservative	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/main_gqa/main	2000,4000,6000,8000,10000,16000,32000,59600,64000,128000,256000,512000
+ambitious_v3	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v3	1000,1400,1500,2000,4000,8000,16000,32000,64000,128000
