@@ -4,14 +4,16 @@
 Reads the check's output: one or more lines per node in scripts/nodecheck.sh's format,
 
     [nodecheck] FAIL <node>: <reason>
-    [nodecheck] OK <node> <metrics...>        (a metric gemm_tflops=<x> marks the node's speed)
+    [nodecheck] OK <node> <metrics...>        (speed metrics: gemm_tflops=<x>, ib_gbps=<x>)
 
 and prints the nodes to exclude, one per line:
   * every node that reported FAIL, or nothing at all (hung, or its task never ran);
-  * then, as far as the spare nodes allow (usable - need - failed), the slowest nodes whose
-    gemm_tflops is more than --slow-tolerance below the median of the reporting nodes.
-A slow node is only dropped while the run still fits, so the check never stops a run that a
-plain launch would have started. Stdlib only (runs with the system python3 in a batch shell).
+  * then, as far as the spare nodes allow (usable - need - failed), the slowest nodes: those
+    with any speed metric more than --slow-tolerance below that metric's median, worst first.
+The check never stops a run that a plain launch would have started: a slow node is only dropped
+while the run still fits, and a check that FAILs (or hears nothing from) more nodes than there
+are spares is not trusted at all -- a collective probe that breaks takes every node down with it
+(the run then starts without the check, and a warning says so). Stdlib only.
 """
 
 from __future__ import annotations
@@ -22,11 +24,12 @@ import statistics
 import sys
 
 LINE = re.compile(r"\[nodecheck\] (?P<verdict>OK|FAIL|WARN|SLOW) +(?P<node>[\w.-]+)(?P<rest>.*)")
-GEMM = re.compile(r"\bgemm_tflops=(?P<value>[0-9.]+)")
+METRICS = ("gemm_tflops", "ib_gbps")
+METRIC = re.compile(r"\b(?P<key>gemm_tflops|ib_gbps)=(?P<value>[0-9.]+)")
 
 
-def verdict(lines, nodes, need, tolerance):
-    failed, speed, seen = {}, {}, set()
+def verdict(lines, nodes, need, tolerance, warn=None):
+    failed, speed, seen = {}, {m: {} for m in METRICS}, set()
     for line in lines:
         m = LINE.search(line)
         if not m or m["node"] not in nodes:
@@ -35,20 +38,33 @@ def verdict(lines, nodes, need, tolerance):
         seen.add(node)
         if m["verdict"] == "FAIL":
             failed.setdefault(node, m["rest"].lstrip(": ").strip() or "FAIL")
-        g = GEMM.search(m["rest"])
-        if g:
-            speed[node] = min(float(g["value"]), speed.get(node, float("inf")))
+        for g in METRIC.finditer(m["rest"]):
+            per = speed[g["key"]]
+            per[node] = min(float(g["value"]), per.get(node, float("inf")))
     for node in nodes:
         if node not in seen:
             failed.setdefault(node, "no report (hung or not started)")
     exclude = [(n, f"FAIL: {failed[n]}") for n in nodes if n in failed]
     spare = len(nodes) - need - len(exclude)
-    healthy = {n: s for n, s in speed.items() if n not in failed}
-    if spare > 0 and len(healthy) >= 3:
+    if spare < 0:
+        if warn:
+            warn(
+                f"check not trusted: {len(exclude)} of {len(nodes)} node(s) FAILed or did not "
+                f"report, only {len(nodes) - need} spare(s) -- excluding nothing"
+            )
+        return []
+    deficit = {}  # node -> (worst relative shortfall, description)
+    for metric, values in speed.items():
+        healthy = {n: v for n, v in values.items() if n not in failed}
+        if len(healthy) < 3:
+            continue
         median = statistics.median(healthy.values())
-        slow = sorted((s, n) for n, s in healthy.items() if s < median * (1 - tolerance))
-        for s, n in slow[:spare]:
-            exclude.append((n, f"slow: gemm {s:.0f} TFLOP/s vs median {median:.0f}"))
+        for n, v in healthy.items():
+            short = 1 - v / median if median > 0 else 0.0
+            if short > tolerance and short > deficit.get(n, (0.0, ""))[0]:
+                deficit[n] = (short, f"slow: {metric} {v:.1f} vs median {median:.1f}")
+    for n, (_, why) in sorted(deficit.items(), key=lambda kv: -kv[1][0])[:max(spare, 0)]:
+        exclude.append((n, why))
     return exclude
 
 
@@ -62,7 +78,8 @@ def main():
     nodes = [n for n in args.nodes.split(",") if n]
     with open(args.log, errors="replace") as fh:
         lines = fh.readlines()
-    for node, why in verdict(lines, nodes, args.need, args.slow_tolerance):
+    warn = lambda msg: print(f"[precheck] WARNING {msg}", file=sys.stderr)  # noqa: E731
+    for node, why in verdict(lines, nodes, args.need, args.slow_tolerance, warn):
         print(node)
         print(f"[precheck] exclude {node}: {why}", file=sys.stderr)
 
