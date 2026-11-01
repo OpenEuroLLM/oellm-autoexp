@@ -1,0 +1,30 @@
+# @package _global_
+# The ambitious main run v4 (user 2026-11-01): the v3 recipe with mHC-4 instead of LDM, after the LDM v3
+# run destabilized in its front LDM sites (steps 1500-1750: write ratio up to 8x a tiny front stream,
+# reads ~65 % of the front sublayers' inputs, grad norm 0.2 -> 190, the router tipping over in the front
+# MoE layers; docs/hybrid_moe_3b_campaign.md). Everything else as v3:
+#   size       360 experts + Engram 80B ([2, 3, 4] + sign hash) = 84B-A2.9B-E80B
+#   residual   mHC-4, mixer lr x0.25 (the first ambitious run's; log-space Sinkhorn, 20 iterations)
+#   balancing  expert bias 1e-3 + global_aux_loss 1e-4 (Megatron >= 24a814eba)
+#   experts    pab
+#   optimizer  muown_classical, lr 8.5e-4 constant, no warmup; CKDA beta on Adam
+#   data       the 4k / 16k / 64k curriculum on the v8ml stages; fixed held-out validation sets
+# Runs next to ambitious_v4_ldm (its own singleton), on the cns144 host (user).
+defaults:
+  - hybrid_ambitious_v3_mhc4_128_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e360_eng80_v4
+
+backend:
+  megatron:
+    # 500 instead of 100: at 0.95-0.96 device memory the metric steps peaked at 0.99 (v3 OOMed at
+    # its step-500 metric pass before the subsampling fix); the watchdog does not need these
+    arch_metrics_interval: 500
+
+job:
+  name: ambitious_v4_128n_p${aux.phase}
+  metadata:
+    # own singleton: v4 and ambitious_v4_ldm run side by side
+    pool_singleton: ambitious_main_v4

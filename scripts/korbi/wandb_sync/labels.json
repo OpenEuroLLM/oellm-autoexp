@@ -201,5 +201,17 @@
    "global_aux"
   ],
   "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + quantile balancing (EMA 0.9) + global_aux_loss 1e-4. screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
+ },
+ "ambitious_v4_main": {
+  "name": "ambitious_v4_mhc4",
+  "tags": [
+   "v4",
+   "mhc4",
+   "curriculum",
+   "4k-16k-64k",
+   "bias_globalaux",
+   "pab"
+  ],
+  "notes": "Ambitious v4 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), mHC-4 (mixer lr x0.25), the 4k / 16k / 64k curriculum on the v8ml stages, fixed held-out validation sets, expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant. Replaces the LDM v3 run (front-LDM instability at step ~1750)."
  }
 }
