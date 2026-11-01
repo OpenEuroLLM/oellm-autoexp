@@ -1013,6 +1013,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "data_sampler_reference_dp_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="cyclic dataloader: serve the sample order of a reference layout of this many data-parallel ranks (x --data-sampler-reference-micro-batch-size), whatever the actual layout -- the same samples per step across a node-count change (MegatronPretrainingReferenceLayoutSampler). The global batch size must stay the same.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "data_sampler_reference_micro_batch_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="the reference layout's micro-batch size (default: the actual one); see --data-sampler-reference-dp-size",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "data_sharding": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -9414,6 +9430,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1.0,
+    ),
+    "data_sampler_reference_dp_size": MegatronActionSpec(
+        option_strings=("--data-sampler-reference-dp-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "data_sampler_reference_micro_batch_size": MegatronActionSpec(
+        option_strings=("--data-sampler-reference-micro-batch-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "data_sharding": MegatronActionSpec(
         option_strings=("--no-data-sharding",),

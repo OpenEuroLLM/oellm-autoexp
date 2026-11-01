@@ -3663,6 +3663,16 @@ class MegatronConfig(ConfigInterface):
     # Disable data sharding.
     data_sharding: bool = True
 
+    # cyclic dataloader: serve the sample order of a reference layout of this many data-
+    # parallel ranks (x --data-sampler-reference-micro-batch-size), whatever the actual layout
+    # -- the same samples per step across a node-count change
+    # (MegatronPretrainingReferenceLayoutSampler). The global batch size must stay the same.
+    data_sampler_reference_dp_size: int | None = None
+
+    # the reference layout's micro-batch size (default: the actual one); see --data-sampler-
+    # reference-dp-size
+    data_sampler_reference_micro_batch_size: int | None = None
+
     # learning rate multiplier for head during finetuning
     head_lr_mult: float = 1.0
 

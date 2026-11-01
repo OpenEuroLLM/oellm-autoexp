@@ -128,6 +128,8 @@ data_parallel_random_init: false  # Enable random initialization of params acros
 data_parallel_sharding_strategy: optim_grads_params  # choices: ['no_shard', 'optim', 'optim_grads', 'optim_grads_params'] | Sharding strategy of data parallelism.
 data_path: null  # The weight and prefix list for a set of train, validation, and testdatasets which split according to --split. The accepted formats are: (1) a single prefix, (2) a list of weight prefix pairs e.g. weight1 prefix1 weight2 prefix2, (3) a list of prefixes e.g. prefix1 prefix2. For (3), weights are inferred from the lengths of the contributing datasets. This argument is exclusive to the other independent --*-data-path arguments.
 data_per_class_fraction: 1.0  # training with fraction of data per class.
+data_sampler_reference_dp_size: null  # cyclic dataloader: serve the sample order of a reference layout of this many data-parallel ranks (x --data-sampler-reference-micro-batch-size), whatever the actual layout -- the same samples per step across a node-count change (MegatronPretrainingReferenceLayoutSampler). The global batch size must stay the same.
+data_sampler_reference_micro_batch_size: null  # the reference layout's micro-batch size (default: the actual one); see --data-sampler-reference-dp-size
 data_sharding: true  # Disable data sharding.
 dataloader_add_bos: false  # Prepend the tokenizer BOS token to every document at load time (the tokenized data carries only an EOD at each document end).
 dataloader_defer_npy_index_mmap: false  # Defer the mmap of the dataset indexes (.npy files) until the first access. Requires all the dataset caches to be built and stored in --data-cache-path.
