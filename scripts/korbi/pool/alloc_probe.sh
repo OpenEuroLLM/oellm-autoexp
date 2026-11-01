@@ -66,7 +66,8 @@ for m in $MAINS; do
   for p in $POOLS; do
     d=$P/mn5_pool_$p/runs
     [ -d "$d" ] || continue
-    for r in $(grep -l "\"name\": \"$m\"" "$d"/*/run.json 2>/dev/null | xargs -r -n1 dirname); do
+    # prefix match: a sweep job's run name carries an index suffix (ambitious_v3_128n_p1_0)
+    for r in $(grep -lE "\"name\": \"$m(_[0-9]+)?\"" "$d"/*/run.json 2>/dev/null | xargs -r -n1 dirname); do
       rid=$(basename "$r")
       if [ -e "$r/started" ] && [ ! -e "$r/rc" ]; then
         host=$(grep -o 'host=[^ ]*' "$r/started" 2>/dev/null | head -1)
