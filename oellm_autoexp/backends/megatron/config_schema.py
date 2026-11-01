@@ -3344,6 +3344,10 @@ class MegatronConfig(ConfigInterface):
     # only the split's validation part is not used.
     fixed_valid_data_path: list[str] | None = None
 
+    # A sequence length per --fixed-valid-data-path set (e.g. 4096 for short-context sets and
+    # 65536 for a long-context set); default: --valid-seq-length for every set.
+    fixed_valid_seq_lengths: list[int] | None = None
+
     # Sequence length of the validation sets and of evaluation (default: --seq-length), e.g.
     # one short-context validation set across the stages of a sequence-length curriculum. The
     # eval micro / global batch sizes default to the training ones at the same tokens.

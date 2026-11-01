@@ -2484,6 +2484,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs="*",
         element_type=str,
     ),
+    "fixed_valid_seq_lengths": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="A sequence length per --fixed-valid-data-path set (e.g. 4096 for short-context sets and 65536 for a long-context set); default: --valid-seq-length for every set.",
+        choices=None,
+        nargs="*",
+        element_type=int,
+    ),
     "flash_attention_version": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -10620,6 +10628,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "fixed_valid_data_path": MegatronActionSpec(
         option_strings=("--fixed-valid-data-path",),
+        action_type="store",
+        nargs="*",
+        const=None,
+        default=None,
+    ),
+    "fixed_valid_seq_lengths": MegatronActionSpec(
+        option_strings=("--fixed-valid-seq-lengths",),
         action_type="store",
         nargs="*",
         const=None,
