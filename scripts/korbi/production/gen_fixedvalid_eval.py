@@ -99,7 +99,7 @@ def main():
                  "action": {"class_name": "CancelAction", "reason": "lost its node (eval: no retry)"}},
             ],
         },
-        "slurm": {"sbatch": {"nodes": 4, "account": "ehpc533", "qos": "acc_ehpc", "time": "02:00:00"}},
+        "slurm": {"sbatch": {"nodes": 4, "account": "ehpc533", "qos": "acc_xehpc", "time": "02:00:00"}},
         "sweep": {
             "type": "product",
             "store_sweep_json": True,
