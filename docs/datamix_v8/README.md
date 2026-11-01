@@ -161,3 +161,17 @@ at 4k in every stage (`scripts/datamix_v8/build_valid_sets.py`, `/gpfs/projects/
   at any restart or phase boundary.
 - Cost at `eval_interval: 1000`: 7 x 2^26 = 0.47B tokens forward per evaluation, ~0.25 % of the training compute
   (before: 10 x 2^26 every 2,000 steps, ~0.17 %, and ~80B validation tokens to index).
+
+## Copy on JSC / JUPITER (2026-11-01)
+
+`/e/data1/datasets/playground/mmlaion/oellm_testing/` mirrors the MN5 data root for everything the v8ml mix uses
+(`flag-decon-v2-agenttok/`, `v8-decon-agenttok/`, `v8ml-stages/s1..s3/`, `v8ml-valid/`, `tokenizers/`), plus
+`datamix/datamix_v8ml{,_stage1,_stage2,_stage3}_jsc.txt` (JSC paths) and `docs/`. Built with
+`scripts/datamix_v8/jsc_export.py` from an inode manifest (2,669 files, 64.3 TB of distinct data):
+- 445 files (47.96 TB) already in `../oellm/` (flag collection, mixture-vitae subsets): relative symlinks (1,747
+  names) after SHA-256 checks on both sides (full .idx, 64 x 4 MiB ranges per .bin); `oellm/` itself is untouched
+  (hardlinks into it are not permitted for non-owners);
+- 58 GigaToken files (11.53 TB): copied from JUPITER scratch (same files MN5 received, hashes matched);
+- 2,166 new files (4.84 TB): transferred MN5 -> JUPITER with parallel hpctransfer sessions (~1.3 GB/s at 10 x 16);
+- further names of one file (stage views): hardlinks within `oellm_testing/`.
+`jsc_export.py verify`: every name with its manifest size; all 2,131 datamix / validation prefixes resolve.
