@@ -5,13 +5,13 @@
     python build_valid_sets.py --datamix datamix_v8ml_stage3_mn5.txt --report datamix_v8ml_mn5_report.tsv \\
         --out <data>/v8ml-valid
 
-Held-out documents only: the validation part of every stage-3 shard view under --split 998,2,0 -- documents
-[round(0.998 N), N) of the view, exactly Megatron's split -- which no stage trains on (stage 3 holds them
+Held-out documents only: documents entirely inside the validation part of every stage-3 shard view under
+--split 998,2,0 -- Megatron splits by sequence: sequences [round(0.998 S), S) -- which no stage trains on (stage 3 holds them
 out, stages 1 / 2 hold other documents). Sets (category = the report's category column):
   all           every source            web_en        category web          multilingual  category multilingual
   code          category code           math          category math         reasoning     mv1-instruct + other
 Within a set every source gets tokens in proportion to its mix weight; a source with fewer held-out tokens
-gives all it has and the rest goes to the others. Documents whole, shuffled (seeded), one sequence each.
+gives all it has and the rest goes to the others. Documents whole (all their sequences), shuffled (seeded).
 Writes <out>/<set>_text_document.{bin,idx}, <set>.info.json (per-source tokens / documents),
 <set>.selection.npz (stage-3 view prefix index, document) and valid_sets.txt ("name prefix" lines).
 """
@@ -59,9 +59,18 @@ def stage_view_dir(dir_, stage_root, data_root):
 
 
 def heldout_docs(idx, split=(0.998, 1.0)):
-    """Megatron's validation split of a dataset with one sequence per document: round(0.998 N) .. N."""
-    n = idx.seq_count
-    return np.arange(int(round(split[0] * n)), int(round(split[1] * n)), dtype=np.int64)
+    """Documents entirely inside Megatron's validation split. GPTDataset splits by SEQUENCE: sequences
+    round(0.998 S) .. S (S sequences); a document whose sequences straddle the boundary is left out."""
+    beg = int(round(split[0] * idx.seq_count))
+    first = np.asarray(idx.doc_idx[:-1], np.int64)
+    return np.flatnonzero(first >= beg).astype(np.int64)
+
+
+def doc_tokens(idx, docs):
+    lens = idx.lengths.astype(np.int64)
+    cum = np.concatenate([[0], np.cumsum(lens)])
+    d0 = np.asarray(idx.doc_idx, np.int64)
+    return cum[d0[docs + 1]] - cum[d0[docs]]
 
 
 def main():
@@ -95,9 +104,8 @@ def main():
         items = []
         for p in ps:
             idx = idx_cache.setdefault(p, Index(p + ".idx"))
-            assert idx.seq_count == idx.doc_count - 1, f"{p}: one sequence per document expected"
             docs = heldout_docs(idx)
-            items.append(np.stack([np.full(len(docs), pid[p]), docs, idx.lengths[docs].astype(np.int64)], 1))
+            items.append(np.stack([np.full(len(docs), pid[p]), docs, doc_tokens(idx, docs)], 1))
         pool[s] = np.concatenate(items) if items else np.zeros((0, 3), np.int64)
         np.random.default_rng([a.seed, len(s)] + [ord(ch) for ch in s]).shuffle(pool[s])
     os.makedirs(a.out, exist_ok=True)
@@ -128,24 +136,30 @@ def main():
         sel = np.concatenate(picked)
         np.random.default_rng([a.seed, 7] + [ord(ch) for ch in name]).shuffle(sel)
         prefix = os.path.join(a.out, f"{name}_text_document")
+        seq_lens, doc_starts = [], [0]
         with open(prefix + ".bin.tmp", "wb") as fo:
-            for p_i, d, n in sel:
+            for p_i, d, n in sel:                            # all sequences of the document, in order
                 idx = idx_cache[prefixes[p_i]]
-                t = np.fromfile(prefixes[p_i] + ".bin", np.int32, count=int(idx.lengths[d]),
-                                offset=int(idx.pointers[d]))
-                assert len(t) == n
-                fo.write(t.tobytes())
+                got = 0
+                for q in range(int(idx.doc_idx[d]), int(idx.doc_idx[d + 1])):
+                    t = np.fromfile(prefixes[p_i] + ".bin", np.int32, count=int(idx.lengths[q]),
+                                    offset=int(idx.pointers[q]))
+                    fo.write(t.tobytes())
+                    seq_lens.append(len(t))
+                    got += len(t)
+                assert got == n
+                doc_starts.append(len(seq_lens))
         os.replace(prefix + ".bin.tmp", prefix + ".bin")
-        lengths = sel[:, 2].astype(np.int32)
+        lengths = np.asarray(seq_lens, np.int32)
         pointers = np.concatenate([[0], np.cumsum(lengths[:-1].astype(np.int64) * 4)])
-        write_index(prefix + ".idx", 4, lengths, pointers, np.arange(len(sel) + 1))
+        write_index(prefix + ".idx", 4, lengths, pointers, np.asarray(doc_starts, np.int64))
         np.savez(os.path.join(a.out, f"{name}.selection.npz"), shard=sel[:, 0], doc=sel[:, 1], tokens=sel[:, 2],
                  prefixes=np.array(prefixes))
         info = {"set": name, "categories": sorted(cats) if cats else "all", "documents": int(len(sel)),
                 "tokens": int(lengths.astype(np.int64).sum()), "target_tokens": target,
                 "sequences_at": {"seq_length": a.seq_length,
                                  "samples": int((lengths.astype(np.int64).sum() - 1) // a.seq_length)},
-                "heldout": "documents [round(0.998 N), N) of the stage-3 views (Megatron --split 998,2,0)",
+                "heldout": "documents within sequences [round(0.998 S), S) of the stage-3 views (Megatron --split 998,2,0)",
                 "sources": per_src}
         json.dump(info, open(os.path.join(a.out, f"{name}.info.json"), "w"), indent=1)
         lines.append(f"{name} {prefix}")

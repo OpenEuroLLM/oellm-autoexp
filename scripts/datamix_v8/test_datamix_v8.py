@@ -288,9 +288,9 @@ def test_build_valid_sets():
             assert info["tokens"] >= 100 * 16 + 1 and info["sequences_at"]["samples"] >= 100, info
             sel = np.load(f"{d}/valid/{name}.selection.npz")
             pref = list(sel["prefixes"])
-            for sh, doc in zip(sel["shard"], sel["doc"]):         # held-out documents only
-                n = Index(pref[sh] + ".idx").seq_count
-                assert int(round(0.998 * n)) <= doc < n
+            for sh, doc in zip(sel["shard"], sel["doc"]):         # held-out documents only (whole)
+                ix_ = Index(pref[sh] + ".idx")
+                assert int(round(0.998 * ix_.seq_count)) <= ix_.doc_idx[doc] < ix_.seq_count
             docs = read_docs(f"{d}/valid/{name}_text_document")    # tokens copied unchanged
             sh, doc = int(sel["shard"][0]), int(sel["doc"][0])
             ix = Index(pref[sh] + ".idx")
