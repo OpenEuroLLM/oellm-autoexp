@@ -24,6 +24,9 @@ backend:
     load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ctxlen4n_s3/s4k/ckpt
     ckpt_step: 400
     diag_consumed_train_samples: 6400
+    # the lr scheduler counts samples (1000 x 256 at 4k vs 1000 x 16 at 64k): take this run's
+    # settings (lr is constant, so nothing changes)
+    override_opt_param_scheduler: true
     save: ${job.base_output_dir}/ckpt
 
 job:
