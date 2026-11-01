@@ -3705,3 +3705,76 @@ stages, the same per-source ratios; `v8ml-stages/stages_report.tsv`):
   runs can take part of the freed host first; preempt them, or enqueue the large job before freeing.
 - **A watchdog that cancels by job name** also hits a same-named replacement: stop it, or rename the
   job, before enqueuing a replacement.
+
+### Training context length from scratch at s3 (`ctxlen4n_s3`, 2026-10-31 – 11-01)
+
+**Why:**
+- The v2 main run at 64k (`ambitious_e360_eng80_v2_64k`) lagged the 16k runs from step ~35 on, at the same tokens per step.
+- The 16k v2 start, with the same model and data family, tracked the first LDM run step for step: 5.82 vs 5.85 at step 45. Data (−0.54 % openthoughts) and tokenizer (agent: same pieces and merges) are too small to explain it.
+- Lag of the 64k run against the first LDM run (16k): ~2 steps behind at step 45, ~9–12 at 125–175, ~8 at 225.
+- In nats it peaked at +0.21 (step 125) and narrowed to +0.05 (step 225).
+- The model has no position embedding: at the start, attention averages over whole documents of up to 64k tokens.
+
+**Setup:**
+- **Model and training:** the s3 production stack of `hybrid_fp8ag_s3_mn5`: LDM, CKDA 7:1, MoE 144 × 896 top-3, pab, QB, FP8 expert gather. 4 nodes per arm (one node runs out of memory: expert DP 1). lr 1.8e-3 constant, without-ot data mix, 1000 steps.
+- **Same tokens in every arm:** 64k tokens per micro-batch (mbs = 65536 / seq), 1M tokens per step, 1.05B tokens in total.
+- **Configs:**
+  - `hybrid_ctxlen_s3_mn5`: the four arms.
+  - `hybrid_ctxlen_branch_s3_mn5`: the warmup branches. They take the 4k / 16k step-400 checkpoint and continue at 64k to step 1000. Data is paired with the 64k arm via `diag_consumed_train_samples: 6400`, so steps 401–1000 see exactly its samples. They need `override_opt_param_scheduler`, because the scheduler counts samples.
+  - `hybrid_ctxlen_eval_s3_mn5`: same-length scoring. `--skip-train` builds the validation loader at position 0, so every checkpoint sees the same validation samples per length (50 batches, 52M tokens).
+
+**Validation at each arm's own length:**
+
+| step | 4k | 8k | 16k | 64k |
+|---|---:|---:|---:|---:|
+| 250 | 3.114 | 3.154 | 3.149 | 3.656 |
+| 500 | 2.635 | 2.612 | 2.679 | 2.734 |
+| 750 | 2.437 | 2.489 | 2.476 | 2.585 |
+| 1000 | 2.341 | 2.342 | 2.326 | 2.380 |
+
+**Same-length scoring of the step-1000 checkpoints** (identical validation samples per length):
+
+| schedule | at 4k | at 64k |
+|---|---:|---:|
+| 4k throughout | **2.350** | **2.329** |
+| 8k throughout | 2.377 | 2.340 |
+| 16k throughout | 2.405 | 2.363 |
+| 4k for 400 steps, then 64k | 2.464 | 2.412 |
+| 16k for 400 steps, then 64k | 2.475 | 2.424 |
+| 64k throughout | 2.507 | 2.452 |
+
+**Findings:**
+1. **Shorter learns faster early:** 4k < 8k < 16k ≪ 64k. At step 200 the training loss of the 64k arm is 0.83 above the 4k arm's.
+2. **64k from scratch does not catch up within 1B tokens,** even on the 64k sequences it trained on.
+3. **Long-context use transfers without long training.** Every short-trained model scores lower at 64k than at 4k (4k arm: 2.350 → 2.329). With no position embedding there is nothing to go out of range, and the CKDA layers carry state.
+4. **A short warmup helps.** On identical data for steps 401–1000, the 4k warmup beats 64k-from-scratch by −0.043 at 4k and −0.040 at 64k; the 16k warmup by −0.032 / −0.028. The 4k warmup is the better of the two.
+5. **The 64k phase itself still costs here:** +0.11 / +0.08 against staying at 4k. This is likely exaggerated at s3. A 64k step holds 16 sequences (vs 256 at 4k), so it has far fewer independent documents and a noisier gradient per token. The main run at 64k has 1024 sequences per step. That explanation is not tested; it needs a 64k s3 arm with more sequences per step.
+6. **Health:**
+   - Grad norm rises with length: 0.82 / 0.87 / 1.03 / 1.42 at steps 100–200.
+   - Early near-dead expert slots: 458 at 64k vs 69 at 4k at steps 100–200; all ~1–2 by step 1000.
+   - 64k is 6.6 % slower per token at s3; 4k–16k are within 1 %.
+
+**Decision:** short context first, then long. That is the v3 curriculum (4k → 16k → 64k, above). Measure the remaining 64k cost in the main run itself, via the long_64k validation set and the loss after the phase transitions.
+
+**Caveats:**
+- Average loss is dominated by short-range prediction. It does not test long-range retrieval, which agentic traces need; a per-position loss or a retrieval task would.
+- s3 scale with 1B tokens.
+
+**Code on the way:**
+- Megatron ebae68f5e: `--skip-train` keeps the Megatron-FSDP wrapper; fsdp_dtensor checkpoints load into the wrapped module only.
+- The ctxlen configs pin `depth_memory_hidden_dim: 32` and `linear_beta_adam: false`, the values they trained with, because `hybrid_main_mn5` changed both since.
+- Results: `production/ctxlen4n_eval_s3/<arm>_at{4k,64k}/slurm-*.log`.
+
+**The v3 main run's 7 validation sets at step 1000** (in-training, 4k), token-matched to the conservative run at step 4000 (67B tokens each):
+
+| set | q35 @4000 | v3 @1000 | v3 − q35 |
+|---|---:|---:|---:|
+| all | 1.680 | 1.605 | −0.074 |
+| web_en | 2.348 | 2.310 | −0.038 |
+| multilingual | 2.262 | 2.213 | −0.049 |
+| code | 0.982 | 0.969 | −0.014 |
+| math | 1.185 | 1.113 | −0.072 |
+| reasoning | 1.016 | 0.803 | −0.213 |
+| long_64k | 1.797 | 1.906 | +0.109 |
+
+v3 is ahead on every set except long_64k, where it is still in its 4k phase while q35 trains at 8k; this fits finding 3 of the s3 study above. Tokenizers differ (q35 base, v3 agent): identical ordinary tokens, different chat delimiters, which shift the reasoning set by ~0.04.
