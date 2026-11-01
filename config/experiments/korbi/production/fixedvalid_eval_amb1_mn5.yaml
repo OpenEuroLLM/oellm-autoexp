@@ -35,6 +35,7 @@ backend:
     RECOMPUTE_OFFLOAD: '1'
     RUN_DIR: ./submodules/Megatron-LM
     TOKENIZERS_PARALLELISM: 'false'
+    MEM_BREAKDOWN: '1'
   megatron:
     account_for_embedding_in_pipeline_split: false
     account_for_loss_in_pipeline_split: false
@@ -279,7 +280,7 @@ backend:
     - 2
     - 3
     engram_num_heads: 8
-    engram_table_fp32: true
+    engram_table_fp32: false
     engram_table_momentum_dtype: bf16
     engram_table_parallel: dp
     engram_table_rowwise_v: true
@@ -365,7 +366,7 @@ backend:
     fp8_wgrad: true
     freeze_all_layers: false
     fsdp_db_use_persist_buf_on_alloc_fail: false
-    fsdp_double_buffer: true
+    fsdp_double_buffer: false
     fsdp_manual_registration: false
     ft_num_warmup_iters: 5
     full_validation: false
@@ -604,8 +605,8 @@ backend:
     max_tokens_to_oom: 12000
     megatron_fsdp_enable_fine_grained_param_gather: false
     megatron_fsdp_grad_comm_dtype: fp32
-    megatron_fsdp_main_grads_dtype: fp32
-    megatron_fsdp_main_params_dtype: fp32
+    megatron_fsdp_main_grads_dtype: bf16
+    megatron_fsdp_main_params_dtype: bf16
     megatron_fsdp_max_pool_double_buffer: false
     memory_snapshot_path: snapshot.pickle
     merge_file: null
