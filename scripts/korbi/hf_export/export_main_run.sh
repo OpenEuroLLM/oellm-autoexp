@@ -10,7 +10,8 @@
 # - tokenizer: the config's tokenizer_model
 # - check_export (names / shapes), then score_on_flag on 64 documents of the fixed validation set
 #   "all" in the run's own tokenization (v8ml-valid, agent tokenizer; v8ml-valid-basetok, base)
-# Writes <export root>/<name>_<step>/ with .export_done / .check_done and <name>_<step>.score.json;
+# - paired_valid_check against Megatron's own fixed-validation loss on a 64-sample subset, if built
+# Writes <export root>/<name>_<step>/ with .export_done / .check_done, <name>_<step>.score.json / .paired.json;
 # finished parts are skipped on a rerun.
 set -euo pipefail
 model=$1; step=$2
@@ -56,5 +57,13 @@ if [ ! -f "$E/${name}_${step}.score.json" ]; then
   # shellcheck disable=SC2086
   python -m oellm_autoexp.hf_export.score_on_flag --model-dir "$out" --datamix "$mix" --num-docs 64 \
     --seq-len 4096 $score_args --out "$E/${name}_${step}.score.json"
+fi
+# paired check (paired_valid_check): the very samples of Megatron's fixed-validation eval on the 64-sample subset
+# of "all" (make_valid_subset; Megatron side: fixedvalid_eval_paired_*), when that subset exists
+sub=$E/paired/$(basename "$valid")-sub64/all_text_document
+if [ -f "$sub.idx" ] && [ ! -f "$E/${name}_${step}.paired.json" ]; then
+  # shellcheck disable=SC2086
+  python -m oellm_autoexp.hf_export.paired_valid_check --model-dir "$out" --config "$config" --prefix "$sub" \
+    --seq-len 4096 $score_args --out "$E/${name}_${step}.paired.json"
 fi
 echo "[export_main_run] done: $out"
