@@ -32,6 +32,11 @@ aux:
 backend:
   megatron:
     fsdp_fp8_param_gather: experts
+    # pinned to the values the ctxlen4n_s3 arms trained with (2026-10-31): hybrid_main_mn5 changed
+    # them later (LDM hidden 32 -> 128, linear_beta_adam), and the follow-ups (branches, eval)
+    # load these checkpoints
+    depth_memory_hidden_dim: 32
+    linear_beta_adam: false
     micro_batch_size: 8
     train_iters: 1000
     exit_interval: 1000
