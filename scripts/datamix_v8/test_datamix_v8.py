@@ -250,9 +250,63 @@ def test_split_stages():
         print("split_stages ok")
 
 
+def test_build_valid_sets():
+    try:
+        from common import Index, write_index
+    except ImportError as e:
+        print(f"build_valid_sets: SKIPPED ({e})")
+        return
+    import subprocess
+    with tempfile.TemporaryDirectory() as d:
+        data, s3 = f"{d}/data", f"{d}/data/v8ml-stages/s3"
+        rng = np.random.default_rng(0)
+
+        def shard(prefix, n):
+            os.makedirs(os.path.dirname(prefix), exist_ok=True)
+            docs = [rng.integers(3, 100, rng.integers(5, 30)) for _ in range(n)]
+            L = np.array([len(x) for x in docs], np.int32)
+            P = np.concatenate([[0], np.cumsum(L[:-1].astype(np.int64) * 4)])
+            np.concatenate(docs).astype(np.int32).tofile(prefix + ".bin")
+            write_index(prefix + ".idx", 4, L, P, np.arange(n + 1))
+        srcs = {"tree/webA/megatron-lm": ("web", 60.0), "tree/codeB/megatron-lm": ("code", 30.0),
+                "tree/mlC/megatron-lm": ("multilingual", 10.0)}
+        mix, rep = [], ["category\tname\tratio_pct\ttokens_B\tshards\tepochs\tdir"]
+        for k, (rel, (cat, w)) in enumerate(srcs.items()):
+            for j in range(2):
+                pfx = f"{s3}/{rel}/shard_000{j}_text_document"
+                shard(pfx, 40000)
+                mix.append(f"{w / 2} {pfx}")
+            rep.append(f"{cat}\t{rel.split('/')[1]}\t{w}\t0\t2\t0\t{data}/{rel}")
+        open(f"{d}/mix.txt", "w").write("\n".join(mix) + "\n")
+        open(f"{d}/rep.tsv", "w").write("\n".join(rep) + "\n")
+        subprocess.run([sys.executable, os.path.join(HERE, "build_valid_sets.py"), "--datamix", f"{d}/mix.txt",
+                        "--report", f"{d}/rep.tsv", "--stage-root", s3, "--data-root", data, "--out", f"{d}/valid",
+                        "--seq-length", "16", "--sequences", "100", "--sets", "all,web_en,code"],
+                       check=True, capture_output=True)
+        for name in ["all", "web_en", "code"]:
+            info = json.load(open(f"{d}/valid/{name}.info.json"))
+            assert info["tokens"] >= 100 * 16 + 1 and info["sequences_at"]["samples"] >= 100, info
+            sel = np.load(f"{d}/valid/{name}.selection.npz")
+            pref = list(sel["prefixes"])
+            for sh, doc in zip(sel["shard"], sel["doc"]):         # held-out documents only
+                n = Index(pref[sh] + ".idx").seq_count
+                assert int(round(0.998 * n)) <= doc < n
+            docs = read_docs(f"{d}/valid/{name}_text_document")    # tokens copied unchanged
+            sh, doc = int(sel["shard"][0]), int(sel["doc"][0])
+            ix = Index(pref[sh] + ".idx")
+            orig = np.fromfile(pref[sh] + ".bin", np.int32, count=int(ix.lengths[doc]), offset=int(ix.pointers[doc]))
+            assert docs[0] == orig.tolist()
+        src = json.load(open(f"{d}/valid/all.info.json"))["sources"]
+        share = {k: v["tokens"] / sum(x["tokens"] for x in src.values()) for k, v in src.items()}
+        assert abs(share["webA"] - 0.6) < 0.08 and abs(share["codeB"] - 0.3) < 0.08, share
+        assert set(json.load(open(f"{d}/valid/code.info.json"))["sources"]) == {"codeB"}
+        print("build_valid_sets ok")
+
+
 if __name__ == "__main__":
     test_chatml()
     test_tokenize()
     test_build_raw_tree()
     test_split_stages()
+    test_build_valid_sets()
     print("all run")
