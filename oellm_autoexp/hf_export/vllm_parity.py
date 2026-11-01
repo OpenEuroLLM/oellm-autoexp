@@ -108,6 +108,8 @@ def build_tiny(out: Path, **kw) -> Path:
                 p.fill_(0.01)
             elif name.endswith(".table"):
                 p.normal_(0.0, 1.0)
+            elif name.startswith("lm_head"):
+                p.normal_(0.0, 0.5)  # peaked next-token distributions: greedy decoding is meaningful
             else:
                 p.normal_(0.0, 0.05)
         for name, b in model.named_buffers():
@@ -160,7 +162,7 @@ def _vllm_greedy(llm, prompt, n) -> list[int]:
 
 
 def check(export: Path, tp: int = 1, vocab: int | None = None, lengths=(5, 37, 130, 300), n_gen: int = 16,
-          tol: float = 0.05, hf_device_map: str | None = None) -> dict:
+          tol: float = 0.05, hf_device_map: str | None = None, dtype: str = "bfloat16") -> dict:
     from transformers import AutoConfig, AutoModelForCausalLM
     from vllm import LLM
 
@@ -169,17 +171,17 @@ def check(export: Path, tp: int = 1, vocab: int | None = None, lengths=(5, 37, 1
     g = torch.Generator().manual_seed(1)
     prompts = [torch.randint(3, vocab, (n,), generator=g).tolist() for n in lengths]
     if hf_device_map:  # a real export over several GPUs (needs accelerate)
-        hf = AutoModelForCausalLM.from_pretrained(export, trust_remote_code=True, dtype=torch.bfloat16,
+        hf = AutoModelForCausalLM.from_pretrained(export, trust_remote_code=True, dtype=getattr(torch, dtype),
                                                   device_map=hf_device_map)
     else:
-        hf = AutoModelForCausalLM.from_pretrained(export, trust_remote_code=True, dtype=torch.bfloat16).cuda()
+        hf = AutoModelForCausalLM.from_pretrained(export, trust_remote_code=True, dtype=getattr(torch, dtype)).cuda()
     ref = _hf_logprobs(hf, prompts)
     ref_gen = _hf_greedy(hf, prompts[1], n_gen)
     del hf
     torch.cuda.empty_cache()
     report = {}
     for label, budget in (("prefill", None), ("chunked", 64)):
-        kw = dict(model=str(export), trust_remote_code=True, dtype="bfloat16", enforce_eager=True,
+        kw = dict(model=str(export), trust_remote_code=True, dtype=dtype, enforce_eager=True,
                   skip_tokenizer_init=True, enable_prefix_caching=False, tensor_parallel_size=tp,
                   max_model_len=max(lengths) + n_gen + 8, gpu_memory_utilization=0.5, max_num_seqs=8)
         if budget:
@@ -217,8 +219,10 @@ def main() -> None:
         results = {}
         for name, kw in variants.items():
             d = build_tiny(Path(a.out) / name, **kw)
-            results[name] = check(d)
-            print(name, json.dumps(results[name], indent=1), flush=True)
+            # fp32 decides (a correct port agrees to ~1e-4); bf16 shows the production precision's spread
+            for dtype, tol in (("float32", 1e-2), ("bfloat16", 0.05)):
+                results[f"{name}/{dtype}"] = r = check(d, dtype=dtype, tol=tol)
+                print(f"{name}/{dtype}", json.dumps(r), flush=True)
         print("PASS" if all(r["pass"] for r in results.values()) else "FAIL")
     else:
         r = check(Path(a.export), tp=a.tp, hf_device_map=a.hf_device_map)
