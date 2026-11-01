@@ -29,9 +29,7 @@ def main() -> None:
     pairs = [x.split("=", 1) for x in a.pairs]
     srcs = [IndexedDataset(s) for s, _ in pairs]
     n = len(srcs[0])
-    for d in srcs:  # one sequence per document (the v8ml sets)
-        if len(d.document_indices) != len(d) + 1:
-            raise ValueError("expects one sequence per document")
+    # GPTDataset packs sequences (the v8ml sets: one per non-empty document); the subset takes sequences
     if any(len(d) != n for d in srcs):
         raise ValueError(f"document counts differ: {[len(d) for d in srcs]}")
     order = np.random.default_rng(a.seed).permutation(n)
