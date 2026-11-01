@@ -192,7 +192,9 @@ def check(export: Path, tp: int = 1, vocab: int | None = None, lengths=(5, 37, 1
         got = _vllm_logprobs(llm, prompts)
         diffs = [float((a - b).abs().max()) for a, b in zip(ref, got)]
         means = [float((a - b).mean()) for a, b in zip(ref, got)]
-        report[label] = {"max_abs_diff": diffs, "mean_diff": means,
+        worst = [[int(i) for i in torch.topk((a - b).abs(), min(5, a.numel())).indices] for a, b in zip(ref, got)]
+        report[label] = {"max_abs_diff": diffs, "mean_diff": means, "worst_positions": worst,
+                         "n_over_0.5": [int(((a - b).abs() > 0.5).sum()) for a, b in zip(ref, got)],
                          "nll_hf": [float(-a.mean()) for a in ref], "nll_vllm": [float(-b.mean()) for b in got]}
         if label == "prefill":
             gen = _vllm_greedy(llm, prompts[1], n_gen)
