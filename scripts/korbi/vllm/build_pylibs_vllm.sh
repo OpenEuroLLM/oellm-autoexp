@@ -20,17 +20,17 @@ DEST=${DEST:-$R/pylibs_vllm_$SHA}
 VER=$(ls "$W"/vllm-*.whl | head -1 | sed -E 's|.*/vllm-([0-9.]+)-.*|\1|')
 if [ ! -f "$DEST/.installed_$VER" ]; then
     # pip --target copies its tree file by file: onto node-local disk first (GPFS takes minutes per
-    # thousand small files under pip's copy), then one rsync to GPFS
+    # thousand small files under pip's copy), then one tar copy to GPFS
     LOCAL=$(mktemp -d "${LOCAL_TMP:-/tmp}/vllm_build_XXXX")
     TMPDIR=$LOCAL python3 -m pip install --no-index --find-links "$W" --target "$LOCAL/target" "vllm==$VER" \
         > "$R/.vllm_build_$SHA.log" 2>&1 || { tail -30 "$R/.vllm_build_$SHA.log"; exit 1; }
-    rm -rf "$DEST.tmp"
-    rsync -a "$LOCAL/target/" "$DEST.tmp/"
+    rm -rf "$DEST.tmp"; mkdir -p "$DEST.tmp"
+    tar -C "$LOCAL/target" -cf - . | tar -C "$DEST.tmp" -xf -     # no rsync in the image
     rm -rf "$LOCAL" "$DEST"; mv "$DEST.tmp" "$DEST"
     touch "$DEST/.installed_$VER"
 fi
 # our Python on top (no binaries in the source tree; nothing deleted from the install)
-rsync -a --exclude '*.so' --exclude __pycache__ "$SRC/vllm/" "$DEST/vllm/"
+tar -C "$SRC/vllm" --exclude='*.so' --exclude=__pycache__ -cf - . | tar -C "$DEST/vllm" -xf -
 echo "$SHA" > "$DEST/VLLM_COMMIT"
 python3 - "$DEST" <<'PY'
 import sys
