@@ -1,0 +1,50 @@
+# @package _global_
+# Move a run's old persistent checkpoints from scratch to projects, leaving symlinks
+# (scripts/korbi/storage/move_ckpts.sh; user 2026-11-01: ehpc533 scratch 139 / 146 TB). Plain
+# bash on one node, no container: login nodes kill processes at 300 s CPU. Meant for a pool
+# host's spare node (low priority; it never blocks a main run):
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p129 \
+#       --config-name experiments/korbi/storage/move_ckpts_mn5 aux.max_step=20000 --yes
+# Re-enqueue to continue: moved checkpoints are symlinks and are skipped.
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: none
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  # the run dir on scratch and its mirror on projects
+  run: q35_conservative/main_gqa/main
+  src: /gpfs/scratch/ehpc533/hybrid_nucleus/${aux.run}
+  dst: /gpfs/projects/ehpc533/hybrid_nucleus/${aux.run}
+  max_step: 20000
+  parallel_ckpts: 4
+  parallel_files: 16
+  keep_steps: 5000
+  verify: size
+  time: "12:00:00"
+
+backend:
+  # the knobs inline: the bash backend does not export backend.env without a container
+  command: P=${aux.parallel_ckpts} J=${aux.parallel_files} KEEP_STEPS=${aux.keep_steps} VERIFY=${aux.verify} bash scripts/korbi/storage/move_ckpts.sh ${aux.src} ${aux.dst} ${aux.max_step}
+
+job:
+  name: move_ckpts_${oc.eval:'"${aux.run}".replace("/", "_")'}
+  base_output_dir: "${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/storage_moves/${job.name}"
+  est_steps: 1
+  est_step_time_s: 3600
+  metadata:
+    pool_priority: 1
+  # a failed or timed-out move is not resumed on its own (re-enqueue; it continues where it stopped)
+  state_events: []
+
+slurm:
+  launcher_cmd: ""
+  sbatch:
+    nodes: 1
+    time: ${aux.time}
+
+stage: storage
