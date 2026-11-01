@@ -26,3 +26,7 @@
 	path = submodules/MoonEP
 	url = git@github.com:OpenEuroLLM/MoonEP.git
 	branch = oellm/main
+[submodule "submodules/vllm"]
+	path = submodules/vllm
+	url = git@github.com:OpenEuroLLM/vllm.git
+	branch = oellm/main
