@@ -1,0 +1,47 @@
+# @package _global_
+# Overlay (list it after an ambitious main-run config in `defaults`): the two-phase sequence-length
+# curriculum 8k -> 64k (user 2026-11-02) instead of 4k -> 16k -> 64k, at the same constant 67M tokens per
+# step and per micro-batch, and the same phase boundary at 10 % of the tokens:
+#   phase 1   8k   gbs 8192  mbs 8   it      0 -  23,691   1,590.0B (10.0 %)   = the 3-stage split's s1 + s2
+#   phase 2  64k   gbs 1024  mbs 1   it 23,691 - 236,733  14,296.8B (90.0 %)   = the 3-stage phase 3
+# Data (scripts/datamix_v8/split_stages.py --fractions 0.10,0.90 --stages 1; docs/datamix_v8/README.md): a
+# document's stage is a fixed hash against the cumulative fractions, and 0.10 is the 3-stage boundary
+# 0.02 + 0.08 -- so phase 1's documents are exactly s1 + s2 (v8ml-stages-8k64k/s1, same per-source ratios)
+# and phase 2's exactly s3. Phase 2 therefore reads datamix_v8ml_stage3_mn5.txt itself: its dataset index
+# is the 3-stage phase 3's (prebuilt by data_cache_prebuild_v3_fixedvalid p3). The fixed validation sets
+# (held out from s3) stay as they are.
+backend:
+  megatron:
+    phase_transition_iterations: "23691"
+    phase_transition_variable_batch: true
+
+# literals in the entries: interpolations inside a sweep entry resolve against the base config
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.phase: 1
+          aux.seq: 8192
+          aux.gbs: 8192
+          backend.megatron.micro_batch_size: 8
+          aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_8k64k_stage1_mn5.txt
+          # as the 3-phase runs: phase 1 waits for the marker of a 128-node check of its shape (8k x mbs 8
+          # has not run at 128 nodes); write it by hand once checked
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${job.base_output_dir}/v3speed_p1_ok"
+            persistent_pass: true
+        - aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          backend.megatron.micro_batch_size: 1
+          aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_stage3_mn5.txt
+          # phase 1's last checkpoint (it saves and exits at 23,691)
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*23691\\s*$"
+            mode: regex
+            # passed once = passed: a restart in the phase (the file then holds a later iteration)
+            # must not wait again
+            persistent_pass: true

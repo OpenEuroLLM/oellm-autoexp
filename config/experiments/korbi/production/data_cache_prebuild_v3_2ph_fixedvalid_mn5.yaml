@@ -1,0 +1,21 @@
+# @package _global_
+# data_cache_prebuild_v3_fixedvalid_mn5 for the two-phase curriculum 8k -> 64k (curriculum_8k64k_mn5,
+# hybrid_ambitious_v4_2ph_mn5): the same fixed validation sets, training indices of
+#   p1   8k, gbs 8192, it 0 - 23,691 (one transition at 23,691): 194.1M samples of datamix_v8ml_8k64k_stage1
+#   p2   64k, the 3-phase p3's key (stage-3 data, one transition at its phase length 213,042) -- already built
+#        by data_cache_prebuild_v3_fixedvalid p3; enqueue it only to confirm the cache hit
+#   ... --config-name experiments/korbi/production/data_cache_prebuild_v3_2ph_fixedvalid_mn5 --yes 'aux.only=[p1]'
+defaults:
+  - data_cache_prebuild_v3_fixedvalid_mn5
+  - _self_
+
+job:
+  name: data_cache_prebuild_v3fv2ph_p${aux.phase}
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v3fv2ph_p${aux.phase}
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - {aux.phase: 1, aux.seq: 8192, aux.gbs: 8192, backend.megatron.micro_batch_size: 8, backend.megatron.phase_transition_iterations: "23691", aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_8k64k_stage1_mn5.txt}
+        - {aux.phase: 2, aux.seq: 65536, aux.gbs: 1024, backend.megatron.micro_batch_size: 1, backend.megatron.phase_transition_iterations: "213042", aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_stage3_mn5.txt}

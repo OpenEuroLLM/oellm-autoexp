@@ -1,0 +1,19 @@
+# @package _global_
+# The ambitious main run v4 (hybrid_ambitious_v4_mn5: mHC-4, 84B-A2.9B-E80B, bias + global aux, pab, fixed
+# validation sets) with the two-phase curriculum 8k -> 64k (user 2026-11-02; curriculum_8k64k_mn5):
+#   phase 1   8k   gbs 8192  mbs 8   it      0 -  23,691   (10 %)
+#   phase 2  64k   gbs 1024  mbs 1   it 23,691 - 236,733   (90 %, the 3-phase run's phase 3 data and index)
+# A fresh start in its own arm / directory; the same singleton as v4 (ambitious_main_v4), so it never runs
+# next to the 3-phase v4. Phase 1's dataset index: data_cache_prebuild_v3_2ph_fixedvalid_mn5 (p1).
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state --pool <pool> \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_2ph_mn5 --yes [aux.only=[p1]]
+defaults:
+  - hybrid_ambitious_v4_mn5
+  - curriculum_8k64k_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e360_eng80_v4_2ph
+
+job:
+  name: ambitious_v4_2ph_128n_p${aux.phase}
