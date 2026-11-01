@@ -160,6 +160,16 @@ def check(series, a):
     return None
 
 
+def _is_job(name, job):
+    """``name`` is ``job`` or ``job`` + a sweep-index suffix (autoexp names list-sweep points
+    ``<name>_<index>``: ambitious_v3_128n_p1_0, not ambitious_v3_128n_p1)."""
+    return name == job or (name.startswith(job + "_") and name[len(job) + 1:].isdigit())
+
+
+# the sweep-index suffixes a job name may carry (see _is_job); pool_ctl matches names exactly
+_SUFFIXES = ("",) + tuple(f"_{i}" for i in range(8))
+
+
 def running_jobs(a):
     """Names of a.job RUNNING in any of a.pool (pool_ctl status)."""
     found = set()
@@ -167,7 +177,7 @@ def running_jobs(a):
         r = subprocess.run(a.pool_ctl.split() + [pool, "status"], capture_output=True, text=True)
         for line in r.stdout.splitlines():
             parts = line.split()
-            if len(parts) >= 3 and parts[1] == "RUNNING" and parts[2] in a.job:
+            if len(parts) >= 3 and parts[1] == "RUNNING" and any(_is_job(parts[2], j) for j in a.job):
                 found.add(parts[2])
     return found
 
@@ -231,11 +241,15 @@ def main():
     if not a.dry_run:
         for pool in a.pool:
             for job in a.job:
-                cmd = a.pool_ctl.split() + [pool, "cancel", job, "--all"]
-                r = subprocess.run(cmd, capture_output=True, text=True)
-                report["cancel"].append({"pool": pool, "job": job, "rc": r.returncode,
-                                         "out": r.stdout[-500:] + r.stderr[-500:]})
-                print(f"  cancel {job} in {pool}: rc {r.returncode}", flush=True)
+                # every sweep-index variant: the 2026-11-01 trip cancelled only ..._p2 and missed
+                # the running ..._p1_0 (it trained on, unstable, for 2.3 h)
+                for name in (job + sfx for sfx in _SUFFIXES):
+                    cmd = a.pool_ctl.split() + [pool, "cancel", name, "--all"]
+                    r = subprocess.run(cmd, capture_output=True, text=True)
+                    if r.returncode == 0:
+                        report["cancel"].append({"pool": pool, "job": name, "rc": r.returncode,
+                                                 "out": r.stdout[-500:] + r.stderr[-500:]})
+                        print(f"  cancel {name} in {pool}: rc 0", flush=True)
         marker.write_text(json.dumps(report, indent=1))
     else:
         print(json.dumps(report, indent=1), flush=True)
