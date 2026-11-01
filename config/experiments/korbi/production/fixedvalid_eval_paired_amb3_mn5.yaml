@@ -315,7 +315,7 @@ backend:
     exp_avg_dtype: fp32
     exp_avg_sq_dtype: fp32
     experimental_attention_variant: complex_kda
-    expert_model_parallel_size: 4
+    expert_model_parallel_size: 8  # eval at 4 nodes: EP 4 OOMs at the build (90 experts per GPU before FSDP)
     expert_tensor_parallel_num_weight_shards: null
     expert_tensor_parallel_size: null
     external_cuda_graph: false
