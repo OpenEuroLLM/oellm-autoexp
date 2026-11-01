@@ -1,0 +1,85 @@
+# @package _global_
+# End-to-end check of the reference-layout sampler (Megatron 1ad67acd4, --data-sampler-reference-*;
+# user 2026-11-01: a possible 256-node job must keep the 128-node data order). The s3 production
+# stack (hybrid_fp8ag_s3_mn5) at 4k on p132's spare nodes, 20 steps, sample indices of every
+# rank dumped (MEGATRON_SAMPLE_DUMP_DIR, Megatron cd6db9446):
+#
+#   A_2n          2 nodes (dp 8) x mbs 8, 4 micro-batches per step -- the reference, plain sampler;
+#                 saves at step 10
+#   B_4n_ref      4 nodes (dp 16) x mbs 16, 1 micro-batch, reference layout 8 x 8: must train on
+#                 A's samples in every step (and track A's loss up to reduction-order noise)
+#   D_4n_plain    4 nodes x mbs 16, plain sampler: the control (other samples per step)
+#   C_4n_resume   A's step-10 checkpoint resumed on 4 nodes with the reference layout: resharding
+#                 512 -> 1024-like (8 -> 16 ranks) + A's samples from step 11 on (enqueue after A:
+#                 aux.only=[C_4n_resume])
+#
+# Data index as ctxlen4n_s3 s4k (seq 4096, gbs 256, train_iters 1000, split 998,2,0, eval 250 x 10,
+# the without-ot mix): prebuilt, no cold build. Steps end via exit_interval.
+defaults:
+  - hybrid_fp8ag_s3_mn5
+  - _self_
+
+aux:
+  suite: samplercheck_s3
+  arm: A_2n
+  nodes: 2
+  seq: 4096
+  gbs: 256
+
+backend:
+  env:
+    MEGATRON_SAMPLE_DUMP_DIR: ${job.base_output_dir}/samples
+    MEGATRON_SAMPLE_DUMP_N: "200"
+  megatron:
+    data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_decon_v2_agenttok_without_ot_datamix_mn5.txt
+    tokenizer_model: /gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent
+    split: "998,2,0"
+    fsdp_fp8_param_gather: experts
+    micro_batch_size: 8
+    train_iters: 1000
+    exit_interval: 20
+    eval_interval: 250
+    eval_iters: 10
+    log_interval: 1
+    save: null
+    save_interval: null
+    async_save: false
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  metadata:
+    pool_priority: 55
+  est_step_time_s: 10.0
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: A_2n
+          aux.nodes: 2
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.save: /gpfs/scratch/ehpc533/hybrid_nucleus/production/samplercheck_s3/A_2n/ckpt
+          backend.megatron.save_interval: 10
+        - aux.arm: B_4n_ref
+          aux.nodes: 4
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.data_sampler_reference_dp_size: 8
+          backend.megatron.data_sampler_reference_micro_batch_size: 8
+        - aux.arm: D_4n_plain
+          aux.nodes: 4
+          backend.megatron.micro_batch_size: 16
+        - aux.arm: C_4n_resume
+          aux.nodes: 4
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.data_sampler_reference_dp_size: 8
+          backend.megatron.data_sampler_reference_micro_batch_size: 8
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/samplercheck_s3/A_2n/ckpt
+          # A also saves at its exit (step 20): load step 10 explicitly
+          backend.megatron.ckpt_step: 10
