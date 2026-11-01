@@ -1,0 +1,31 @@
+# @package _global_
+# data_cache_prebuild_v3_mn5 with the fixed held-out validation sets (docs/datamix_v8/README.md; Megatron >=
+# 8e7bcc5f6): the v3 phases' training indices are unchanged (the same cache keys; phases 1 / 2 are built), the
+# split's own validation part becomes 1 sample (a new small key) and the seven fixed sets are indexed once each
+# (six 4k, long_64k at 64k). The same keys the v3 config uses once it carries these validation flags.
+#
+#   ... --config-name experiments/korbi/production/data_cache_prebuild_v3_fixedvalid_mn5 --yes [aux.only=[p3]]
+defaults:
+  - data_cache_prebuild_v3_mn5
+  - _self_
+
+aux:
+  valid_root: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid
+
+backend:
+  megatron:
+    fixed_valid_data_path:
+      - ${aux.valid_root}/all_text_document
+      - ${aux.valid_root}/web_en_text_document
+      - ${aux.valid_root}/multilingual_text_document
+      - ${aux.valid_root}/code_text_document
+      - ${aux.valid_root}/math_text_document
+      - ${aux.valid_root}/reasoning_text_document
+      - ${aux.valid_root}/long_64k_text_document
+    validation_set_names: [all, web_en, multilingual, code, math, reasoning, long_64k]
+    fixed_valid_seq_lengths: [4096, 4096, 4096, 4096, 4096, 4096, 65536]
+    eval_interval: 1000
+
+job:
+  name: data_cache_prebuild_v3fv_p${aux.phase}
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v3fv_p${aux.phase}
