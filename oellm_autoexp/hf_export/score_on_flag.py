@@ -54,7 +54,16 @@ def sample_docs(datamix: Path, num_docs: int, min_len: int, seed: int) -> list[n
     return docs
 
 
-def layer_device_map(cfg, gib: float) -> dict[str, int]:
+def _engram_tables(model) -> list[tuple[torch.nn.Module, str]]:
+    """(module, name) of the Engram tables and their fp8 scales (modules with ``offload_table``)."""
+    out = []
+    for mod in model.modules():
+        if hasattr(mod, "offload_table"):
+            out += [(mod, n) for n in ("table", "table_scale") if getattr(mod, n, None) is not None]
+    return out
+
+
+def layer_device_map(cfg, gib: float, engram_tables_cpu: bool = False) -> dict[str, int]:
     """Whole decoder layers filled onto the GPUs in order, ``gib`` of weights each (the last GPU 12
     GiB less: it holds the logits). accelerate's own map reserves the largest layer (an Engram
     table, ~41 GiB) on every GPU and offloads the rest to the CPU; offloaded weights only arrive
@@ -63,7 +72,8 @@ def layer_device_map(cfg, gib: float) -> dict[str, int]:
 
     with torch.device("meta"):
         model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, dtype=torch.bfloat16)
-    size = lambda m: sum(t.numel() * t.element_size() for t in [*m.parameters(), *m.buffers()])  # noqa: E731
+    skip = {id(getattr(m, n)) for m, n in _engram_tables(model)} if engram_tables_cpu else set()
+    size = lambda m: sum(t.numel() * t.element_size() for t in [*m.parameters(), *m.buffers()] if id(t) not in skip)  # noqa: E731
     n = torch.cuda.device_count()
     cap = [gib * 2**30 - (12 * 2**30 if i == n - 1 else 0) for i in range(n)]
     used, gpu, dmap = [0.0] * n, 0, {}
@@ -87,6 +97,27 @@ def layer_device_map(cfg, gib: float) -> dict[str, int]:
         dmap["lm_head"] = n - 1
     print("weights per GPU (GiB):", [round(u / 2**30, 1) for u in used], flush=True)
     return dmap
+
+
+def load_engram_tables_cpu(model_dir: Path, dmap: dict[str, int]):
+    """The model on the GPUs of ``dmap``, its Engram tables in host memory: v3's tables are 80 GB
+    each in bf16, more than one GPU. The lookup gathers the rows it needs on the table's device
+    (``OellmEngram._lookup``). Loads on the CPU first (the whole model in host memory), then
+    dispatches everything else; a 0-element stand-in keeps each table out of the moves."""
+    from accelerate import dispatch_model
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(model_dir, trust_remote_code=True, dtype=torch.bfloat16)
+    held = []
+    for mod, name in _engram_tables(model):
+        store = mod._parameters if name in mod._parameters else mod._buffers
+        t = store[name]
+        held.append((store, name, t))
+        store[name] = type(t)(t.new_empty(0), requires_grad=False) if isinstance(t, torch.nn.Parameter) else t.new_empty(0)
+    model = dispatch_model(model, device_map=dmap)
+    for store, name, t in held:
+        store[name] = t
+    return model
 
 
 def doc_nll(model, ids: torch.Tensor, chunk: int = 1024) -> float:
@@ -142,6 +173,8 @@ def main() -> None:
     p.add_argument("--gen-check", type=int, default=16, help="greedy tokens to compare cached decoding against a full forward (0: off)")
     p.add_argument("--gpu-mem-gib", type=float, default=None,
                    help="weights per GPU, whole layers in order (else device_map auto); the last GPU 12 GiB less")
+    p.add_argument("--engram-tables-cpu", action="store_true",
+                   help="keep the Engram tables in host memory (with --gpu-mem-gib; tables larger than a GPU)")
     p.add_argument("--out", type=Path)
     a = p.parse_args()
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -153,9 +186,14 @@ def main() -> None:
 
         bos = AutoTokenizer.from_pretrained(a.model_dir).bos_token_id
     t0 = time.time()
-    dmap = layer_device_map(cfg, a.gpu_mem_gib) if a.gpu_mem_gib else "auto"
-    model = AutoModelForCausalLM.from_pretrained(a.model_dir, trust_remote_code=True, dtype=torch.bfloat16,
-                                                 device_map=dmap).eval()
+    if a.engram_tables_cpu and not a.gpu_mem_gib:
+        p.error("--engram-tables-cpu needs --gpu-mem-gib")
+    dmap = layer_device_map(cfg, a.gpu_mem_gib, a.engram_tables_cpu) if a.gpu_mem_gib else "auto"
+    if a.engram_tables_cpu:
+        model = load_engram_tables_cpu(a.model_dir, dmap).eval()
+    else:
+        model = AutoModelForCausalLM.from_pretrained(a.model_dir, trust_remote_code=True, dtype=torch.bfloat16,
+                                                     device_map=dmap).eval()
     print(f"loaded {a.model_dir.name} in {time.time() - t0:.0f}s; bos {bos}", flush=True)
     docs = sample_docs(a.datamix, a.num_docs, a.min_len, a.seed)
     dev = next(model.parameters()).device
