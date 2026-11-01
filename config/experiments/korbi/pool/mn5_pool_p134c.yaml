@@ -31,11 +31,15 @@ job:
     handover_verify: true
     handover_healthy_steps: 20
     handover_verify_timeout_s: 5400
-    max_hosts_running: 1
-    max_own_hosts: 1
+    # ten 3-day host jobs kept submitted (user 2026-11-01: accumulate cns144 priority for the next
+    # 30 days); they start one after another as they reach the top -- acc_xehpc allows 3 running
+    # jobs per user (all accounts) at once. A finished host is replaced, so close the pool
+    # (`pool_ctl close`) when the 30 days are over.
+    max_hosts_running: 3
+    max_own_hosts: 10
     max_runs_per_host: 6
     keep_pending: 0
-    min_hosts: 1
+    min_hosts: 10
     handover: false
     idle_exit_s: 3600
     # 3 days with hold_hosts: hosts queued before the hold fix run a supervisor whose dead-man
