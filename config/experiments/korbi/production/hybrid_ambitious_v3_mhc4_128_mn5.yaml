@@ -1,5 +1,7 @@
 # @package _global_
-# The ambitious main run v3 with mHC-4 instead of LDM (the first ambitious run's residual: 4 streams,
+# The ambitious main run v3 with mHC-4 instead of LDM -- started 2026-11-01 after the LDM v3 run
+# destabilized in its front LDM sites (steps 1500-1750; the user's rule: if LDM fails, mHC-4 again).
+# Was: (the first ambitious run's residual: 4 streams,
 # mixer lr x0.25), everything else as hybrid_ambitious_pab_128_mn5. The choice after
 # campaign_3b/ambresid (LDM vs mHC-4 x pab at the ambrepro scale). Memory / speed at 128 nodes:
 # hybrid_v3speed128_mn5 arm mhc4.
@@ -12,7 +14,7 @@ defaults:
 
 aux:
   suite: main_mhc4
-  arm: ambitious_e360_eng80_v3_64k
+  arm: ambitious_e360_eng80_v3
 
 backend:
   megatron:
