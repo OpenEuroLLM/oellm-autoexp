@@ -3337,6 +3337,18 @@ class MegatronConfig(ConfigInterface):
     # pattern rules as --data-path.
     valid_data_path: list[str] | None = None
 
+    # Fixed held-out validation sets, one unweighted prefix each, evaluated independently and
+    # completely at every evaluation (implies --multiple-validation-sets and --full-
+    # validation; names: --validation-set-names). Training keeps its --data-path / --data-
+    # args-path and --split: its datasets (and their cache) are built as without this flag,
+    # only the split's validation part is not used.
+    fixed_valid_data_path: list[str] | None = None
+
+    # Sequence length of the validation sets and of evaluation (default: --seq-length), e.g.
+    # one short-context validation set across the stages of a sequence-length curriculum. The
+    # eval micro / global batch sizes default to the training ones at the same tokens.
+    valid_seq_length: int | None = None
+
     # The weight and prefix list for an independent test dataset. Follows the same pattern
     # rules as --data-path.
     test_data_path: list[str] | None = None

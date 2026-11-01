@@ -2476,6 +2476,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "fixed_valid_data_path": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="Fixed held-out validation sets, one unweighted prefix each, evaluated independently and completely at every evaluation (implies --multiple-validation-sets and --full-validation; names: --validation-set-names). Training keeps its --data-path / --data-args-path and --split: its datasets (and their cache) are built as without this flag, only the split's validation part is not used.",
+        choices=None,
+        nargs="*",
+        element_type=str,
+    ),
     "flash_attention_version": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -8296,6 +8304,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs="*",
         element_type=str,
     ),
+    "valid_seq_length": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Sequence length of the validation sets and of evaluation (default: --seq-length), e.g. one short-context validation set across the stages of a sequence-length curriculum. The eval micro / global batch sizes default to the training ones at the same tokens.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "validation_set_names": MegatronArgMetadata(
         arg_type=list,
         default=None,
@@ -10601,6 +10617,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "fixed_valid_data_path": MegatronActionSpec(
+        option_strings=("--fixed-valid-data-path",),
+        action_type="store",
+        nargs="*",
+        const=None,
+        default=None,
     ),
     "flash_attention_version": MegatronActionSpec(
         option_strings=("--flash-attention-version",),
@@ -15492,6 +15515,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         option_strings=("--valid-data-path",),
         action_type="store",
         nargs="*",
+        const=None,
+        default=None,
+    ),
+    "valid_seq_length": MegatronActionSpec(
+        option_strings=("--valid-seq-length",),
+        action_type="store",
+        nargs=None,
         const=None,
         default=None,
     ),
