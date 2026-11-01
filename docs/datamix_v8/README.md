@@ -106,3 +106,33 @@ global batch size per stage, the LR schedule continues at the same iteration; al
 context schedule at a fixed token budget), Dataset Decomposition (2024), GrowLength (2023), Shortformer (2021).
 Test at s3: `config/experiments/korbi/production/hybrid_ctxcurr_s3_mn5.yaml` (curriculum vs constant 64k on the same
 stage data, 1000 steps x 1M tokens, transitions at 20 / 100).
+
+## Fixed held-out validation sets (2026-11-01)
+
+Before: validation was the `--split 998,2,0` part of each stage's blend -- other documents in every stage, at the
+stage's sequence length, and each evaluation the *next* `eval_iters` batches of that stream (10 x 2^26 tokens every
+2,000 steps), so no two evaluations measured the same data. Now: six fixed sets, identical at every evaluation, all
+at 4k in every stage (`scripts/datamix_v8/build_valid_sets.py`, `/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid`):
+
+| set | content |
+|---|---|
+| `all` | the whole v8ml mix (80 / 20) |
+| `web_en` | category web (English web) |
+| `multilingual` | flag-ml |
+| `code` | category code |
+| `math` | category math |
+| `reasoning` | mixture-vitae instruct / reasoning subsets + the agent / reasoning SFT sets + nemotron-pretraining-specialized |
+
+- Exactly one batch each: 16,384 x 4,096 tokens = 2^26 (67M); standard error of a set's loss ~0.002-0.007 nats,
+  changes between evaluations (same documents) much smaller.
+- Held-out documents only: the validation part of every stage-3 view (documents `[round(0.998 N), N)`, Megatron's
+  split), which no stage trains on. Within a set every source in proportion to its mix weight (`<set>.info.json`),
+  whole documents (`<set>.selection.npz`).
+- Megatron (cd193f5ed): `--fixed-valid-data-path <6 prefixes> --validation-set-names all web_en multilingual code
+  math reasoning --valid-seq-length 4096` -- implies `--multiple-validation-sets --full-validation` (each set
+  completely at every evaluation; W&B `lm loss validation-<name>` and `... ppl`); the eval micro / global batch
+  default to the training ones at the same tokens (16 / 16,384 at 4k). The training datasets and their cache key
+  are unchanged (the split's own validation part is built with 1 sample and not used), so the sets can be switched
+  on at any restart.
+- Cost at `eval_interval: 1000`: 6 x 2^26 = 0.4B tokens forward per evaluation, ~0.2 % of the training compute
+  (before: 10 x 2^26 every 2,000 steps, ~0.17 %, and ~80B validation tokens to index).
