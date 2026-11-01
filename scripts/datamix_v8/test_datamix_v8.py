@@ -281,7 +281,7 @@ def test_build_valid_sets():
         open(f"{d}/rep.tsv", "w").write("\n".join(rep) + "\n")
         subprocess.run([sys.executable, os.path.join(HERE, "build_valid_sets.py"), "--datamix", f"{d}/mix.txt",
                         "--report", f"{d}/rep.tsv", "--stage-root", s3, "--data-root", data, "--out", f"{d}/valid",
-                        "--seq-length", "16", "--sequences", "100", "--sets", "all,web_en,code"],
+                        "--seq-length", "16", "--batch-tokens", "1600", "--sets", "all,web_en,code,long_64k"],
                        check=True, capture_output=True)
         for name in ["all", "web_en", "code"]:
             info = json.load(open(f"{d}/valid/{name}.info.json"))
@@ -296,6 +296,9 @@ def test_build_valid_sets():
             ix = Index(pref[sh] + ".idx")
             orig = np.fromfile(pref[sh] + ".bin", np.int32, count=int(ix.lengths[doc]), offset=int(ix.pointers[doc]))
             assert docs[0] == orig.tolist()
+        long = np.load(f"{d}/valid/long_64k.selection.npz")      # long documents only (min = seq_length / 2 here)
+        assert (long["tokens"] >= 8).all() and json.load(open(f"{d}/valid/long_64k.info.json"))["min_document_tokens"] == 8
+        assert [l.split()[0] for l in open(f"{d}/valid/valid_sets.txt")] == ["all", "web_en", "code", "long_64k"]
         src = json.load(open(f"{d}/valid/all.info.json"))["sources"]
         share = {k: v["tokens"] / sum(x["tokens"] for x in src.values()) for k, v in src.items()}
         assert abs(share["webA"] - 0.6) < 0.08 and abs(share["codeB"] - 0.3) < 0.08, share

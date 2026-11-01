@@ -1,6 +1,7 @@
 """Fixed held-out validation sets for the v8 + multilingual mix: one shard per set (Megatron
---fixed-valid-data-path needs one unweighted prefix per set), exactly one batch each at 4k
-(16,384 sequences x 4,096 tokens = 2^26), evaluated completely at every evaluation.
+--fixed-valid-data-path needs one unweighted prefix per set), exactly one batch (2^26 tokens) each -- six 4k
+sets (16,384 x 4,096) and long_64k (1,024 x 65,536, documents >= 32k tokens) -- evaluated completely at every
+evaluation (--fixed-valid-seq-lengths 4096 x 6, 65536).
 
     python build_valid_sets.py --datamix datamix_v8ml_stage3_mn5.txt --report datamix_v8ml_mn5_report.tsv \\
         --out <data>/v8ml-valid
@@ -10,10 +11,11 @@ Held-out documents only: documents entirely inside the validation part of every 
 out, stages 1 / 2 hold other documents). Sets (category = the report's category column):
   all           every source            web_en        category web          multilingual  category multilingual
   code          category code           math          category math         reasoning     mv1-instruct + other
+  long_64k      every source, documents >= 32k tokens only, at 64k
 Within a set every source gets tokens in proportion to its mix weight; a source with fewer held-out tokens
 gives all it has and the rest goes to the others. Documents whole (all their sequences), shuffled (seeded).
 Writes <out>/<set>_text_document.{bin,idx}, <set>.info.json (per-source tokens / documents),
-<set>.selection.npz (stage-3 view prefix index, document) and valid_sets.txt ("name prefix" lines).
+<set>.selection.npz (stage-3 view prefix index, document) and valid_sets.txt ("name seq_length prefix").
 """
 
 from __future__ import annotations
@@ -29,8 +31,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "flag_decontam"))
 from common import Index, write_index  # noqa: E402
 
-SETS = {"all": None, "web_en": {"web"}, "multilingual": {"multilingual"}, "code": {"code"}, "math": {"math"},
-        "reasoning": {"mv1-instruct", "other"}}
+# name -> (categories (None = all), sequence length, minimum document tokens)
+SETS = {"all": (None, 4096, 0), "web_en": ({"web"}, 4096, 0), "multilingual": ({"multilingual"}, 4096, 0),
+        "code": ({"code"}, 4096, 0), "math": ({"math"}, 4096, 0),
+        "reasoning": ({"mv1-instruct", "other"}, 4096, 0),
+        "long_64k": (None, 65536, 32768)}           # long documents only, evaluated at 64k
 
 
 def read_datamix(path):
@@ -80,12 +85,11 @@ def main():
     ap.add_argument("--stage-root", default="/gpfs/projects/ehpc533/users/korbip/data/v8ml-stages/s3")
     ap.add_argument("--data-root", default="/gpfs/projects/ehpc533/users/korbip/data")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--seq-length", type=int, default=4096)
-    ap.add_argument("--sequences", type=int, default=16384)
+    ap.add_argument("--seq-length", type=int, default=0, help="override every set's length (tests)")
+    ap.add_argument("--batch-tokens", type=int, default=1 << 26, help="tokens per set (one batch)")
     ap.add_argument("--sets", default=",".join(SETS))
     ap.add_argument("--seed", type=int, default=1234)
     a = ap.parse_args()
-    target = a.sequences * a.seq_length + 1                  # GPTDataset: a sample spans seq_length + 1 tokens
     rows = read_datamix(a.datamix)
     report = [(stage_view_dir(d, a.stage_root, a.data_root), s, c) for d, s, c in read_report(a.report)]
     src_w, src_cat, shards = {}, {}, {}
@@ -111,9 +115,13 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     lines = []
     for name in a.sets.split(","):
-        cats = SETS[name]
+        cats, seq_length, min_doc = SETS[name]
+        seq_length = a.seq_length or seq_length
+        min_doc = min(min_doc, seq_length // 2) if a.seq_length else min_doc
+        target = (a.batch_tokens // seq_length) * seq_length + 1   # a sample spans seq_length + 1 tokens
         srcs = [s for s in src_w if cats is None or src_cat[s] in cats]
-        avail = {s: int(pool[s][:, 2].sum()) for s in srcs}
+        spool = {s: pool[s][pool[s][:, 2] >= min_doc] for s in srcs}
+        avail = {s: int(spool[s][:, 2].sum()) for s in srcs}
         quota = {}
         left, open_ = target, [s for s in srcs if avail[s] > 0]
         while left > 0 and open_:                            # proportional, capped by what a source holds
@@ -128,9 +136,9 @@ def main():
         for s in srcs:
             if not quota.get(s):
                 continue
-            cum = np.cumsum(pool[s][:, 2])
+            cum = np.cumsum(spool[s][:, 2])
             k = int(np.searchsorted(cum, quota[s])) + 1      # whole documents, the last one may overshoot
-            sel = pool[s][:k]
+            sel = spool[s][:k]
             picked.append(sel)
             per_src[s] = {"documents": int(len(sel)), "tokens": int(sel[:, 2].sum()), "weight": src_w[s]}
         sel = np.concatenate(picked)
@@ -157,16 +165,21 @@ def main():
                  prefixes=np.array(prefixes))
         info = {"set": name, "categories": sorted(cats) if cats else "all", "documents": int(len(sel)),
                 "tokens": int(lengths.astype(np.int64).sum()), "target_tokens": target,
-                "sequences_at": {"seq_length": a.seq_length,
-                                 "samples": int((lengths.astype(np.int64).sum() - 1) // a.seq_length)},
+                "min_document_tokens": min_doc,
+                "sequences_at": {"seq_length": seq_length,
+                                 "samples": int((lengths.astype(np.int64).sum() - 1) // seq_length)},
                 "heldout": "documents within sequences [round(0.998 S), S) of the stage-3 views (Megatron --split 998,2,0)",
                 "sources": per_src}
         json.dump(info, open(os.path.join(a.out, f"{name}.info.json"), "w"), indent=1)
-        lines.append(f"{name} {prefix}")
-        print(f"{name}: {len(srcs)} sources, {len(sel)} documents, {info['tokens'] / 1e6:.1f}M tokens, "
-              f"{info['sequences_at']['samples']} samples at {a.seq_length}", flush=True)
-    with open(os.path.join(a.out, "valid_sets.txt"), "w") as f:
-        f.write("\n".join(lines) + "\n")
+        lines.append(f"{name} {seq_length} {prefix}")
+        print(f"{name}: {len(per_src)} sources, {len(sel)} documents, {info['tokens'] / 1e6:.1f}M tokens, "
+              f"{info['sequences_at']['samples']} samples at {seq_length}", flush=True)
+    vs = os.path.join(a.out, "valid_sets.txt")             # "name seq_length prefix"; merged with earlier runs
+    old_lines = {l.split()[0]: l.strip() for l in open(vs)} if os.path.exists(vs) else {}
+    old_lines.update({l.split()[0]: l for l in lines})
+    order = [n for n in SETS if n in old_lines] + [n for n in old_lines if n not in SETS]
+    with open(vs, "w") as f:
+        f.write("\n".join(old_lines[n] for n in order) + "\n")
 
 
 if __name__ == "__main__":
