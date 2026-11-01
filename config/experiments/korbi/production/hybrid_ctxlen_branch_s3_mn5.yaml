@@ -1,0 +1,43 @@
+# @package _global_
+# Short-then-long context at s3 (user 2026-11-01: "4k (seq warmup) for 1k steps, then 64k"):
+# the ctxlen4n_s3 4k / 16k arms' step-400 checkpoints continued at 64k to step 1000, against the
+# 64k-from-scratch arm (ctxlen4n_s3 s64k). Paired data: the 64k phase starts at the s64k arm's
+# data position of step 400 (diag_consumed_train_samples = 400 x 16), so steps 401-1000 see
+# exactly s64k's samples; the only difference is the first 400 steps (4k / 16k vs 64k).
+# Weights, optimizer state, iteration and lr (constant) carry over. Scored with
+# hybrid_ctxlen_eval_s3_mn5 (same validation samples at 4k and 64k for every arm).
+#
+#   ... --pool .../mn5_pool_p132 --config-name experiments/korbi/production/hybrid_ctxlen_branch_s3_mn5 --yes
+defaults:
+  - hybrid_ctxlen_s3_mn5
+  - _self_
+
+aux:
+  suite: ctxlen4n_s3
+  arm: b4k400_64k
+  seq: 65536
+  gbs: 16
+
+backend:
+  megatron:
+    micro_batch_size: 1
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ctxlen4n_s3/s4k/ckpt
+    ckpt_step: 400
+    diag_consumed_train_samples: 6400
+    save: ${job.base_output_dir}/ckpt
+
+job:
+  metadata:
+    pool_priority: 55
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: b4k400_64k
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ctxlen4n_s3/s4k/ckpt
+        - aux.arm: b16k400_64k
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ctxlen4n_s3/s16k/ckpt
