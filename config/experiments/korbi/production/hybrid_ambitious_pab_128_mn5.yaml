@@ -75,6 +75,24 @@ backend:
     train_iters: 236733
     phase_transition_iterations: "4737,23691"
     phase_transition_variable_batch: true
+    # fixed held-out validation sets (user 2026-11-01; Megatron >= 6953da2d1, scripts/datamix_v8/
+    # build_valid_sets.py): held-out stage-3 documents (inside the 998,2,0 split's validation
+    # range, so never trained on), each evaluated in full at its own length in every phase (the
+    # 4k sets stay at 4k in the 16k / 64k phases); W&B "lm loss validation-<name>". Implies
+    # full / multiple validation sets (eval mbs 1, eval gbs = DP). Training indices unchanged; as
+    # data_cache_prebuild_v3_fixedvalid_mn5. Phases 2 / 3 only: phase 1 (p132.0158, started
+    # 2026-11-01 02:36) keeps the per-phase split validation every 2000 steps.
+    fixed_valid_data_path:
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/all_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/web_en_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/multilingual_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/code_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/math_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/reasoning_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
+    validation_set_names: [all, web_en, multilingual, code, math, reasoning, long_64k]
+    fixed_valid_seq_lengths: [4096, 4096, 4096, 4096, 4096, 4096, 65536]
+    eval_interval: 1000
     # async rolling checkpoint every 100 steps (user 2026-10-31; inherited 125): ~52 min at 30.8 s
     # per step. A divisor of 500 and of save_interval 1000, so the equal-token eval marks at
     # 500 * 2^n still land on complete checkpoints
