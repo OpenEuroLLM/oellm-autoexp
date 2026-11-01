@@ -247,6 +247,23 @@ def test_split_stages():
             assert abs(sum(float(w) for w, p in rows if "/srcB/" in p) - 40) < 1e-6
         a = SS.stage_of_docs("srcA/x/shard_0000_text_document", 5000, [0.1, 0.2, 0.7])
         assert (a == SS.stage_of_docs("srcA/x/shard_0000_text_document", 5000, [0.1, 0.2, 0.7])).all()
+        # 2 stages at the 3-stage split's second boundary (0.3 = 0.1 + 0.2): stage 1 = s1 + s2, stage 2 = s3
+        com2 = ["--datamix", f"{d}/mix.txt", "--out", f"{d}/stages2", "--data-root", data, "--fractions", "0.3,0.7"]
+        subprocess.run(run + ["split"] + com2 + ["--stages", "1"], check=True, capture_output=True)
+        subprocess.run(run + ["split"] + com2 + ["--out", f"{d}/stages2full"], check=True, capture_output=True)
+        subprocess.run(run + ["datamix"] + com2 + ["--stages", "1", "--report", f"{d}/rep.tsv",
+                                                   "--datamix-out", f"{d}/mix2_s{{k}}.txt"], check=True, capture_output=True)
+        for n in docs:
+            p1 = f"{d}/stages2/s1/{n}_text_document"
+            assert not os.path.exists(f"{d}/stages2/s2/{n}_text_document.idx")      # not written
+            old = [tuple(x) for k in (1, 2) for x in read_docs(f"{d}/stages/s{k}/{n}_text_document", dense=False)]
+            assert sorted(tuple(x) for x in read_docs(p1, dense=False)) == sorted(old), n
+            assert (open(f"{d}/stages2full/s2/{n}_text_document.idx", "rb").read()
+                    == open(f"{d}/stages/s3/{n}_text_document.idx", "rb").read()), n
+        assert not os.path.exists(f"{d}/mix2_s2.txt")
+        rows = [l.split() for l in open(f"{d}/mix2_s1.txt")]
+        assert abs(sum(float(w) for w, p in rows if "/srcA/" in p) - 60) < 1e-6
+        assert abs(sum(float(w) for w, p in rows if "/srcB/" in p) - 40) < 1e-6
         print("split_stages ok")
 
 

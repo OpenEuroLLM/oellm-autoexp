@@ -6,6 +6,9 @@ stage has its own frozen dataset: the same per-source ratios, no document in two
     python split_stages.py split --datamix datamix_v8ml_mn5.txt --out <root> --fractions 0.02,0.08,0.90 --part i --nparts n
     # the stage datamix files: per source the same total weight, spread over its shards by the stage's tokens
     python split_stages.py datamix --datamix datamix_v8ml_mn5.txt --report datamix_v8ml_mn5_report.tsv --out <root> ...
+    # 8k / 64k = 10 / 90 %: the boundary 0.10 equals the cumulative 0.02 + 0.08, so stage 2 = the 3-stage split's s3
+    # (reused as is) and stage 1 = its s1 + s2 -- write stage 1 only:
+    python split_stages.py split ... --out <root2> --fractions 0.10,0.90 --stages 1
 
 A document's stage: a hash of (shard path relative to --data-root, document index) mapped to [0, 1), compared
 with the cumulative fractions -- deterministic and independent of the node split. Output prefixes:
@@ -64,8 +67,9 @@ def link_bin(src, dst):
         os.symlink(real, dst)
 
 
-def split_shard(prefix, rel, out, fractions):
-    meta_p = os.path.join(out, "s1", rel) + ".stage.json"
+def split_shard(prefix, rel, out, fractions, stages=None):
+    stages = stages or list(range(1, len(fractions) + 1))
+    meta_p = os.path.join(out, f"s{stages[0]}", rel) + ".stage.json"
     if os.path.exists(meta_p):
         return json.load(open(meta_p))
     idx = Index(prefix + ".idx")
@@ -75,12 +79,14 @@ def split_shard(prefix, rel, out, fractions):
     meta = {"source": prefix, "fractions": list(fractions), "stages": []}
     for k in range(len(fractions)):
         keep = stage == k
+        meta["stages"].append({"documents": int(keep.sum()), "tokens": int(doc_tokens[keep].sum())})
+        if k + 1 not in stages:                     # counted, not written (e.g. a stage reused from another split)
+            continue
         dst = os.path.join(out, f"s{k + 1}", rel)
         link_bin(prefix + ".bin", dst + ".bin")
         write_index(dst + ".idx", idx.dtype_code, *filter_index(idx, keep))
-        meta["stages"].append({"documents": int(keep.sum()), "tokens": int(doc_tokens[keep].sum())})
-    for k in range(len(fractions)):                 # the same record next to every stage's shard
-        p = os.path.join(out, f"s{k + 1}", rel) + ".stage.json"
+    for k in stages:                                # the same record next to every written stage's shard
+        p = os.path.join(out, f"s{k}", rel) + ".stage.json"
         with open(p + ".tmp", "w") as f:
             json.dump(meta, f, indent=1)
         os.replace(p + ".tmp", p)
@@ -95,7 +101,7 @@ def cmd_split(a):
     for i, (_, p) in enumerate(mine):
         rel = os.path.relpath(p, a.data_root)
         assert not rel.startswith(".."), p
-        m = split_shard(p, rel, a.out, fr)
+        m = split_shard(p, rel, a.out, fr, a.stage_list)
         print(f"[split {a.part}] {i + 1}/{len(mine)} {rel}: " +
               " / ".join(f"{s['tokens'] / 1e9:.2f}B" for s in m["stages"]), flush=True)
 
@@ -121,12 +127,12 @@ def cmd_datamix(a):
         src = next((n for d, n in dirs if p.startswith(d)), None)
         assert src is not None, f"no source for {p}"
         rel = os.path.relpath(p, a.data_root)
-        m = json.load(open(os.path.join(a.out, "s1", rel) + ".stage.json"))
+        m = json.load(open(os.path.join(a.out, f"s{a.stage_list[0]}", rel) + ".stage.json"))
         per.append((src, rel, m))
         src_w[src] = src_w.get(src, 0.0) + w
         for k, s in enumerate(m["stages"]):
             src_t[(src, k)] = src_t.get((src, k), 0) + s["tokens"]
-    for k in range(len(fr)):
+    for k in (s - 1 for s in a.stage_list):
         lines = []
         for src, rel, m in per:
             t = m["stages"][k]["tokens"]
@@ -154,9 +160,12 @@ def main():
     ap.add_argument("--datamix-out", default="", help="stage datamix files, '{k}' = stage number")
     ap.add_argument("--data-root", default=DATA)
     ap.add_argument("--fractions", default="0.02,0.08,0.90")
+    ap.add_argument("--stages", default="", help="stages to write (1-based, comma-separated; default all)")
     ap.add_argument("--part", type=int, default=int(os.environ.get("SLURM_NODEID", 0)))
     ap.add_argument("--nparts", type=int, default=int(os.environ.get("SLURM_NNODES", 1)))
     a = ap.parse_args()
+    nst = len(a.fractions.split(","))
+    a.stage_list = [int(x) for x in a.stages.split(",")] if a.stages else list(range(1, nst + 1))
     {"split": cmd_split, "datamix": cmd_datamix}[a.mode](a)
 
 
