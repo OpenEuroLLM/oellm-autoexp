@@ -89,6 +89,25 @@ hplt, 0.62 tower+, 2.25 finepdfs-edu, <= 1 for the rest; a few eng-X pair sets ~
 the current training mix -- `build_datamix.py --ml docs/datamix_v8/flag-ml_lumi.txt --en-share 0.8`. The English
 sources' epochs drop by a fifth (the instruct / reasoning sets ~4 -> ~3.2); no new tokenization or decontamination.
 
+## Check against the official option-8 recipe (2026-11-01)
+
+`OpenEuroLLM/oellm-util` (fcb5d1a) `utilities/dataset_mixture/examples/options/option8-incomplete.json`: 15T,
+english 0.8 (60 sources, budgets summing to 12T) + multilingual 0.2 (286 entries = `multilingual-option4.txt`),
+seven English sources "pending" (no tokenized copy located), tokenizer EOS 2. Against `datamix_v8ml_mn5.txt` (531
+shards) and its report:
+- multilingual: the same 286 entries with identical weights (sum 0.19999997) as `flag-ml_lumi.txt`;
+- english: all 60 sources present, realized share = budget / 15T within rounding (|rel| <= 0.3 %, only the
+  sub-0.02 % sources off by more than 0.05 %); English 80.00 %, multilingual 20.00 %; stage files keep the weights;
+- the seven pending sources (Cascade-2-SFT, SFT-Science-v2, SFT-Math-v4, marin open-thoughts-4 code / math /
+  science, Pretraining-Specialized-v1.2) are tokenized here from HF (GigaToken, EOS 2) with their full budgets;
+- explicit flat shard lists: the same counts (dclm 100, finephrase 5, specialized-1.0 4 / 1.1 1, megamath 4,
+  swallow-math 1, starcoder 3); the mv1 sources match the recipe's index-token guards (no v2 / GPT-OSS subdirectories);
+- deliberate deviations (decisions above): common-pile-stackv2 full 2.79T instead of the filtered 0.71T and
+  dolma-3-math both LUMI ingredients (22.2B instead of ingredient2 11.8B) -- same budgets, fewer epochs;
+  decontamination removed up to a few % of some sources (ling-coder-dpo -21 %, dart-math -6 %, misc_instruct -5 %,
+  nemo_science_math -3 %) at unchanged shares; tokenizer = `tokenizer-256k-agent` (agent re-tokenization, same 262,144
+  vocabulary, `<eos>` 2, `<bos>` 1; tokenizer.json differs from the recipe's sha256 by the agent tokens).
+
 ## Sequence-length curriculum stages (2026-10-31)
 
 The decided mix is `datamix_v8ml_mn5.txt` (80 % v8 + 20 % flag-ml). For a sequence-length curriculum (4k -> 16k -> 64k
