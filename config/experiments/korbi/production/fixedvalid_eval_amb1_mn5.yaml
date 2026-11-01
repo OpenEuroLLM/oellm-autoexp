@@ -280,7 +280,7 @@ backend:
     - 2
     - 3
     engram_num_heads: 8
-    engram_table_fp32: false
+    engram_table_fp32: true
     engram_table_momentum_dtype: bf16
     engram_table_parallel: dp
     engram_table_rowwise_v: true

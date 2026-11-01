@@ -9,7 +9,7 @@ dropped (printed). On top, eval-only patches: load the checkpoint at ckpt_step w
 RNG state, train_iters = ckpt_step (the loop does not run; the end-of-training evaluation does),
 no saves, a three-shard training blend (fast index; not used), the fixed sets. A normal FSDP setup
 (skip_train would build the model unwrapped; needs Megatron >= the --no-load-optim fix for
-Megatron-FSDP), with bf16 main weights / grads / Engram tables to fit 4 nodes.
+Megatron-FSDP), with bf16 main weights / grads to fit 4 nodes (the dp-sharded Engram tables must stay fp32).
 
     python scripts/korbi/production/gen_fixedvalid_eval.py NAME RESOLVED_CONFIG.yaml STEP=CKPT_DIR [...]
 
@@ -38,11 +38,10 @@ EVAL_PATCH = {
     # group (the checkpoint reshards)
     "num_distributed_optimizer_instances": 1,
     # memory (4 nodes; the first ambitious run OOMed at the load with fp32 buffers): the forward
-    # runs on the bf16-rounded weights / table rows either way, and DCP loads fp32 into bf16 with
+    # runs on the bf16-rounded weights either way, and DCP loads fp32 into bf16 with
     # exactly that rounding -- the evaluation is unchanged
     "megatron_fsdp_main_params_dtype": "bf16",
     "megatron_fsdp_main_grads_dtype": "bf16",
-    "engram_table_fp32": False,
     "fsdp_double_buffer": False,
     "save": None,
     "save_interval": None,
