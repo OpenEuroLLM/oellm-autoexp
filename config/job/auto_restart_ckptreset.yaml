@@ -633,6 +633,21 @@ log_events:
       cancel_first: true
       reason: "A task was killed by a signal — retrying"
 
+  # === THROUGHPUT FLOOR (pool runs) =========================================
+  # Off unless the job sets job.metadata.min_tokens_per_gpu_s. Below it 5 log points in a row
+  # (after 3 warm-up points of every run), the run is stopped with a checkpoint and its HOST
+  # released; the job keeps its place in the pool and resumes on the next allocation
+  # (JUPITER 2026-11-01: congested fabric, every host at half speed = double GPU hours).
+  - name: slow_throughput_release
+    pattern: "Tok/s/GPU\\): ([0-9.]+)"
+    pattern_type: threshold
+    threshold_below: ${oc.select:job.metadata.min_tokens_per_gpu_s,0}
+    threshold_consecutive: 5
+    threshold_skip_first: 3
+    action:
+      class_name: ReleaseHostAction
+      reason: "throughput below job.metadata.min_tokens_per_gpu_s 5 log points in a row"
+
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
   #
   # THE HOLE THESE CLOSE. Every event above waits for a STRING; `inactive` waits

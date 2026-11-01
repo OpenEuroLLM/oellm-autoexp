@@ -646,6 +646,14 @@ class MonitorLoop:
                     return effect
                 continue
 
+            if event_cfg.pattern_type == "threshold":
+                effect = self._process_threshold_event(
+                    job, event_cfg, idx, new_text=new_text, log_path=log_path
+                )
+                if effect in ("finished", "cancelled", "restart"):
+                    return effect
+                continue
+
             if not had_activity:
                 continue
 
@@ -679,6 +687,70 @@ class MonitorLoop:
                         return effect
 
         return "continue"
+
+    def _process_threshold_event(
+        self, job: JobRecord, event_cfg: LogEventConfig, idx: int, *, new_text: str, log_path: Path
+    ) -> str:
+        """Count consecutive values below ``threshold_below`` and fire once the streak reaches
+        ``threshold_consecutive``. State per event in ``runtime.condition_state``; a new log
+        path (a new run) starts it over, so warm-up skipping applies to every run."""
+        import re
+
+        if event_cfg.threshold_below <= 0 or not new_text:
+            return "continue"
+        runtime = job.runtime
+        key = f"threshold:{event_cfg.name}:{idx}"
+        state = runtime.condition_state.get(key) or {}
+        if state.get("log") != str(log_path):
+            state = {"log": str(log_path), "seen": 0, "streak": 0}
+        effect = "continue"
+        for m in re.finditer(event_cfg.pattern, new_text):
+            try:
+                value = float(m.group(event_cfg.threshold_group))
+            except (IndexError, ValueError):
+                continue
+            state["seen"] += 1
+            if state["seen"] <= event_cfg.threshold_skip_first:
+                continue
+            state["streak"] = state["streak"] + 1 if value < event_cfg.threshold_below else 0
+            if state["streak"] < event_cfg.threshold_consecutive:
+                continue
+            state["streak"] = 0
+            action_id = f"log:{event_cfg.name}:{idx}"
+            action_state = runtime.action_state.get(action_id, {})
+            payload = {
+                "value": value,
+                "below": event_cfg.threshold_below,
+                "consecutive": event_cfg.threshold_consecutive,
+            }
+            event = EventRecord(
+                event_id=build_event_id(job.job_id, event_cfg.name, {"seen": state["seen"]}),
+                name=event_cfg.name,
+                source="log",
+                payload=payload,
+                metadata={
+                    "job_id": job.job_id,
+                    "job_name": job.definition.name,
+                    "last_action_ts": float(action_state.get("last_action_ts", 0.0)),
+                },
+            )
+            LOGGER.warning(
+                "Job %s: %s -- %d values in a row below %s (last %s)",
+                job.job_id,
+                event_cfg.name,
+                event_cfg.threshold_consecutive,
+                event_cfg.threshold_below,
+                value,
+            )
+            action = event_cfg.action.instantiate(BaseMonitorAction)
+            if self._evaluate_event_condition(job, event, event_cfg.condition, action_id):
+                result = action.execute(self._action_context(event, job))
+                self._update_action_state(job, action_id, result)
+                effect = self._handle_action_result(job, result)
+                if effect in ("finished", "cancelled", "restart"):
+                    break
+        runtime.condition_state[key] = state
+        return effect
 
     def _process_inactivity_event(
         self,
@@ -1315,6 +1387,10 @@ class MonitorLoop:
         if result.special == "finish":
             return "finished"
 
+        if result.special == "release_host":
+            self._release_pool_host(job, result.message or "released by the job's policy")
+            return "continue"
+
         # Handle new job submissions using typed config
         if result.action_config is not None:
             if isinstance(result.action_config, NewJobActionConfig) and isinstance(
@@ -1329,6 +1405,27 @@ class MonitorLoop:
                 self._update_chain_excludes(result, job)
 
         return "continue"
+
+    def _release_pool_host(self, job: JobRecord, reason: str) -> None:
+        """ReleaseHostAction: the run's host preempts it (checkpoint) and releases its
+        allocation, as `pool_ctl exit-host` does; the job is requeued in its pool as for any
+        preemption and waits for the next host."""
+        pool_dir = getattr(job.definition, "pool_dir", None)
+        rid = job.runtime.runtime_job_id
+        if not pool_dir or not rid:
+            LOGGER.warning("ReleaseHostAction on %s: not a pool run, nothing to release", job.job_id)
+            return
+        from oellm_autoexp.monitor.pool import PoolLayout, read_run_state
+
+        layout = PoolLayout(pool_dir)
+        host = read_run_state(layout, rid).host
+        if not host:
+            LOGGER.warning("ReleaseHostAction on %s: run %s has no host yet", job.job_id, rid)
+            return
+        self._pool._control(layout, host, "exit", f"released by policy: {reason}")
+        LOGGER.warning(
+            "[pool %s] releasing host %s of run %s: %s", layout.root.name, host, rid, reason
+        )
 
     def _update_chain_excludes(self, result: ActionResult, current_job: JobRecord) -> None:
         """Set the current exclusion list on every pending sibling chain job.

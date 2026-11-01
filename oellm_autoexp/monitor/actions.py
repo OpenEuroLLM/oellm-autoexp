@@ -638,6 +638,29 @@ class CancelAction(BaseMonitorAction):
 
 
 @dataclass
+class ReleaseHostActionConfig(ConfigInterface):
+    class_name: str = "ReleaseHostAction"
+    reason: str = "released"
+
+
+@register
+class ReleaseHostAction(BaseMonitorAction):
+    """For a pool run: stop the run gracefully (checkpoint) and release its HOST, so the job
+    waits in the pool for the next allocation -- e.g. when the allocation trains too slowly
+    (network congestion) and running on would only burn GPU hours. Not a cancel: the job keeps
+    its queue place in the pool. Outside a pool it does nothing (logged)."""
+
+    config: ReleaseHostActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(
+            special="release_host",
+            status="success",
+            message=self.config.reason,
+        )
+
+
+@dataclass
 class EventConfig:
     name: str = ""
     action: BaseMonitorAction.cfgtype | None = None
@@ -650,7 +673,7 @@ class LogEventConfig(EventConfig):
     """Configuration for a log-triggered event and action."""
 
     pattern: str = ""
-    pattern_type: Literal["substring", "regex", "inactivity", "progress"] = "substring"
+    pattern_type: Literal["substring", "regex", "inactivity", "progress", "threshold"] = "substring"
     extract_groups: dict[str, int | str] = field(default_factory=dict)
     match_once: bool = True
     # For pattern_type == "inactivity": minimum number of consecutive polls
@@ -671,6 +694,16 @@ class LogEventConfig(EventConfig):
     # setup banners, so it is never inactive — job 1375720 grew a 251 MB log
     # over 4 h while pinned at iteration 100 — but its counter does not move.
     progress_group: int | str = 1
+    # For pattern_type == "threshold": ``pattern`` is a REGEX whose group ``threshold_group``
+    # holds a number (e.g. Megatron's `Tok/s/GPU\): ([0-9.]+)`). The action fires once
+    # ``threshold_consecutive`` values in a row are below ``threshold_below``; a value at or
+    # above it resets the count, and the count starts over with every new log (run). The first
+    # ``threshold_skip_first`` values of a log are ignored (warm-up after a start). A bound of
+    # 0 or less disables the event.
+    threshold_below: float = 0.0
+    threshold_consecutive: int = 5
+    threshold_skip_first: int = 0
+    threshold_group: int | str = 1
     # WHAT COUNTS AS PROGRESS, i.e. what resets the streak:
     #
     # any_change: ANY different value. A resume from checkpoint jumps the
@@ -729,7 +762,7 @@ class LogEvent:
         ``inactivity_qualifies`` / ``progress_qualifies``); this method only
         matches substring/regex patterns.
         """
-        if self.config.pattern_type in ("inactivity", "progress"):
+        if self.config.pattern_type in ("inactivity", "progress", "threshold"):
             return []
         triggers = []
         for match in self._iter_matches(log_text):

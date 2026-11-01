@@ -13,6 +13,11 @@ scripts/nodecheck.sh's format (scripts/pool/precheck_verdict.py drops the slow o
     [nodecheck] OK <node> ib_gbps=<best round> ib_rounds=<r1>,<r2>
     [nodecheck] FAIL <node>: ib probe: <error>
 
+POOL_PROBE_MODE=all instead measures the fabric under a training-like load: one all-reduce over
+ALL GPUs of the step (the gradient reduction's pattern, crossing every cell the job spans), and
+rank 0 prints `[probe] allreduce gpus=<n> mb=<size> busbw_gbps=<x> min/median/max ...` over
+POOL_PROBE_ITERS repetitions -- a fabric health figure without a training run.
+
 Rendezvous from SLURM: MASTER_ADDR = first node of the step, MASTER_PORT from the environment.
 Run inside the training container, e.g.
 
@@ -106,6 +111,27 @@ def main():
         )
         size = int(os.environ.get("POOL_PROBE_MB", "256")) * 2**20 // 2  # bf16 elements
         buf = torch.ones(size, dtype=torch.bfloat16, device="cuda")
+        if os.environ.get("POOL_PROBE_MODE") == "all":
+            iters = int(os.environ.get("POOL_PROBE_ITERS", "20"))
+            for _ in range(5):
+                dist.all_reduce(buf)
+            torch.cuda.synchronize()
+            times = []
+            for _ in range(iters):
+                t0 = time.perf_counter()
+                dist.all_reduce(buf)
+                torch.cuda.synchronize()
+                times.append(time.perf_counter() - t0)
+            nbytes = buf.numel() * buf.element_size()
+            bus = sorted(nbytes * 2 * (world - 1) / world / t / 1e9 for t in times)
+            if rank == 0:
+                print(
+                    f"[probe] allreduce gpus={world} mb={nbytes // 2**20} "
+                    f"busbw_gbps={bus[len(bus) // 2]:.1f} min={bus[0]:.1f} max={bus[-1]:.1f}",
+                    flush=True,
+                )
+            dist.destroy_process_group()
+            return
         rounds_bw = []
         for pairs in pair_rounds(len(nodes)):
             # every rank must create every group (new_group is collective), in the same order

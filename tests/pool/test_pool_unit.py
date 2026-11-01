@@ -344,6 +344,78 @@ def test_a_dying_host_does_not_cost_the_queued_successor(env):
     assert env.rec(successor).runtime.final_state is None, "the queued successor was cancelled"
 
 
+def _throughput_line(tok):
+    return (
+        "[default3]: [2026-11-01 05:00:00.0] iteration   305000/  894000 | elapsed time per "
+        f"iteration (ms): 8000.0 | Tokens per second per GPU (Tok/s/GPU): {tok} |\n"
+    )
+
+
+def _slow_guard(below=2000.0):
+    from oellm_autoexp.monitor.actions import LogEventConfig, ReleaseHostActionConfig
+
+    return LogEventConfig(
+        name="slow_throughput_release",
+        pattern=r"Tok/s/GPU\): ([0-9.]+)",
+        pattern_type="threshold",
+        threshold_below=below,
+        threshold_consecutive=5,
+        threshold_skip_first=2,
+        action=ReleaseHostActionConfig(reason="throughput below the floor"),
+    )
+
+
+def _running_with_guard(env, below=2000.0):
+    env.add_run("train")
+    rec = env.rec("train")
+    rec.definition.log_events = [_slow_guard(below)]
+    env.store.upsert(rec)
+    env.poll(3)
+    hid = env.host_up(env.hosts()[0])
+    env.poll()
+    rid = env.rec("train").runtime.runtime_job_id
+    env.start_run(rid, hid)
+    env.poll()
+    log = Path(env.rec("train").definition.log_path.replace("%j", rid))
+    log.parent.mkdir(parents=True, exist_ok=True)
+    return hid, rid, log
+
+
+def test_slow_throughput_releases_the_host_after_n_in_a_row(env):
+    # JUPITER 2026-11-01: the fabric was congested, runs trained at half speed on every host --
+    # stop them (checkpoint) and give the allocation back instead of burning double GPU hours
+    hid, rid, log = _running_with_guard(env)
+    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    log.write_text("".join(_throughput_line(v) for v in (300, 900)))  # warm-up: skipped
+    env.poll()
+    with log.open("a") as fh:
+        fh.write("".join(_throughput_line(v) for v in (1000, 1100, 950, 1200)))
+    env.poll()
+    assert not exit_file.exists()  # 4 in a row: not yet
+    with log.open("a") as fh:
+        fh.write(_throughput_line(1050))
+    env.poll()
+    assert exit_file.exists() and "throughput below the floor" in exit_file.read_text()
+    assert env.rec("train").runtime.final_state is None  # the job stays, only the host goes
+
+
+def test_a_fast_value_resets_the_count(env):
+    hid, rid, log = _running_with_guard(env)
+    log.write_text(
+        "".join(_throughput_line(v) for v in (300, 900, 1000, 1000, 1000, 1999, 2100))
+        + "".join(_throughput_line(v) for v in (1000, 1000, 1000, 1000))
+    )
+    env.poll()
+    assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
+
+
+def test_the_guard_is_off_at_zero(env):
+    hid, rid, log = _running_with_guard(env, below=0.0)
+    log.write_text("".join(_throughput_line(10) for _ in range(20)))
+    env.poll()
+    assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
+
+
 def test_no_work_no_host_and_min_hosts(env, tmp_path):
     env.poll(3)
     assert env.hosts() == []
