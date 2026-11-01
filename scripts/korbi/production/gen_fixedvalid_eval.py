@@ -33,6 +33,9 @@ LENGTHS = [4096] * 6 + [65536]
 EVAL_PATCH = {
     "no_load_optim": True,
     "no_load_rng": True,
+    # the run's hybrid sharding (q35: 16 replicas at 128 nodes) does not divide 4 nodes; one FSDP
+    # group (the checkpoint reshards)
+    "num_distributed_optimizer_instances": 1,
     "save": None,
     "save_interval": None,
     "save_retain_interval": None,

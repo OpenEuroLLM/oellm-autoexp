@@ -793,7 +793,7 @@ backend:
     num_channels: 3
     num_classes: 1000
     num_dataset_builder_threads: 32
-    num_distributed_optimizer_instances: 16
+    num_distributed_optimizer_instances: 1
     num_experts: 256
     num_layers: null
     num_layers_at_end_in_bf16: 1
