@@ -177,5 +177,29 @@
    "pab"
   ],
   "notes": "Ambitious v3 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), LDM (address width 128), sequence-length curriculum 4k / 16k / 64k (2 / 8 / 90 %, transitions at 4,737 / 23,691) at 67M tokens per step on the v8ml stage data, expert bias + global_aux_loss 1e-4 (fixed scaling), pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant."
+ },
+ "x_screen5qbg_s3__ldm_pab_bgaux": {
+  "name": "screen5qbg_s3_ldm_pab_bgaux",
+  "tags": [
+   "screen5qbg",
+   "s3",
+   "balancing",
+   "pab",
+   "bias",
+   "global_aux"
+  ],
+  "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + expert bias 1e-3 + global_aux_loss 1e-4 (the v3 balancing). screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
+ },
+ "x_screen5qbg_s3__ldm_pab_qbgaux": {
+  "name": "screen5qbg_s3_ldm_pab_qbgaux",
+  "tags": [
+   "screen5qbg",
+   "s3",
+   "balancing",
+   "pab",
+   "quantile_balancing",
+   "global_aux"
+  ],
+  "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + quantile balancing (EMA 0.9) + global_aux_loss 1e-4. screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
  }
 }

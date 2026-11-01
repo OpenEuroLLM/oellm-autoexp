@@ -113,3 +113,5 @@ x_ambresid__mhc4_e360	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/
 x_ambresid__mhc4_pab_e360	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/mhc4_pab_e360
 x_ambresid__mhc4_pab_seed2	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/mhc4_pab_seed2
 x_ambresid__ldm_pab_seed2	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/ldm_pab_seed2
+x_screen5qbg_s3__ldm_pab_bgaux	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5qbg_s3/ldm_pab_bgaux
+x_screen5qbg_s3__ldm_pab_qbgaux	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5qbg_s3/ldm_pab_qbgaux

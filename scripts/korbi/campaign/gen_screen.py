@@ -1890,6 +1890,30 @@ def arms5qb(size: str):
     ]
 
 
+def arms5qbg(size: str):
+    """Quantile balancing with the FIXED global-batch aux loss (user 2026-11-01; Megatron
+    24a814eba: before, global_aux_loss was 1 / DP as strong, ~1/16 at s3). QB was better at small
+    scale (screen5qb s3: -0.015) but at production scale its raw router drifted out of balance
+    (ghost experts); a working global aux loss may fix that. Against the v3 main run's balancing
+    (expert bias 1e-3 + global_aux_loss 1e-4), both with pab, on screen5stab's ldm_pab setting and
+    data (its index is cached). 4 nodes per arm (the idle p132 nodes next to v3), run one after
+    the other: the two arms pair with each other (same data, order and gbs), not with the 8-node
+    screen5stab arms."""
+    base = dict((n, kv) for n, _, kv in arms5stab(size))["ldm_pab"]
+    layout = {"slurm.sbatch.nodes": 4}
+    gaux = {B + "moe_aux_loss_coeff": [0.0, 1.0e-4]}
+    return [
+        ("ldm_pab_bgaux", "pab + expert bias 1e-3 + global_aux_loss 1e-4 (the v3 balancing)",
+         {**base, **layout, B + "moe_router_load_balancing_type": "global_aux_loss",
+          B + "moe_aux_loss_coeff": 1.0e-4, B + "moe_router_enable_expert_bias": True,
+          B + "moe_router_bias_update_rate": 1.0e-3, B + "moe_router_fusion": True}),
+        ("ldm_pab_qbgaux", "pab + quantile balancing (EMA 0.9) + global_aux_loss 1e-4",
+         {**base, **layout, B + "moe_router_load_balancing_type": ["quantile_balancing", "global_aux_loss"],
+          **gaux, B + "moe_router_quantile_balancing_ema": 0.9,
+          B + "moe_router_enable_expert_bias": False, B + "moe_router_fusion": False}),
+    ]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -2250,6 +2274,7 @@ def write5():
             *[(z, "screen5stab", arms5stab(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5qb", arms5qb(z)) for z in ("s1", "s3")],
             *[(z, "screen5v2", arms5v2(z)) for z in ("s2", "s3")],
+            ("s3", "screen5qbg", arms5qbg("s3")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
