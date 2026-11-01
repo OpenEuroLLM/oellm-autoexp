@@ -122,7 +122,8 @@ def cmd_stage(a):
     for r in rows:
         first = r["names"][0]
         if first.endswith(".bin") and r["size"] > BIG:
-            pairs.append(f"marenostrum_new:{MN5_DATA}/{first} jupiter:{JSC_T}/{first}")
+            # the real file: a name may be a symlink (re-tokenized trees), which rsync would copy as a link
+            pairs.append(f"marenostrum_new:{os.path.realpath(os.path.join(MN5_DATA, first))} jupiter:{JSC_T}/{first}")
         else:
             small.append((r["size"], first))
     small.sort(reverse=True)
@@ -133,7 +134,7 @@ def cmd_stage(a):
         dst = os.path.join(a.stage, f"b{k}", first)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if not os.path.exists(dst):
-            os.link(os.path.join(MN5_DATA, first), dst)
+            os.link(os.path.realpath(os.path.join(MN5_DATA, first)), dst)
     extra = os.path.join(a.stage, "b0")
     for sub in ("tokenizers/tokenizer-256k-agent",):
         for dp, _, fn in os.walk(os.path.join(MN5_DATA, sub)):
