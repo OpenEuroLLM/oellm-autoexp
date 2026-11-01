@@ -187,7 +187,7 @@ def check(export: Path, tp: int = 1, vocab: int | None = None, lengths=(5, 37, 1
     report = {}
     for label, budget in (("prefill", None), ("chunked", 64)):
         kw = dict(model=str(export), trust_remote_code=True, dtype=dtype, enforce_eager=True,
-                  skip_tokenizer_init=True, enable_prefix_caching=False, tensor_parallel_size=tp,
+                  skip_tokenizer_init=True, enable_prefix_caching=False, tensor_parallel_size=tp, enable_expert_parallel=tp > 1,
                   max_model_len=max(lengths) + n_gen + 8, gpu_memory_utilization=0.5, max_num_seqs=8)
         if budget:
             kw.update(enable_chunked_prefill=True, max_num_batched_tokens=budget)
@@ -228,7 +228,7 @@ def score(export: Path, datamix: Path, tp: int, num_docs: int = 64, seq_len: int
     docs = sample_docs(datamix, num_docs, min_len, seed)
     prompts = [np.concatenate([[bos], d[: seq_len - 1]]).astype(np.int64).tolist() for d in docs]
     llm = LLM(model=str(export), trust_remote_code=True, dtype="bfloat16", enforce_eager=True,
-              skip_tokenizer_init=True, enable_prefix_caching=False, tensor_parallel_size=tp,
+              skip_tokenizer_init=True, enable_prefix_caching=False, tensor_parallel_size=tp, enable_expert_parallel=tp > 1,
               max_model_len=seq_len + 8, gpu_memory_utilization=gpu_mem, max_num_seqs=4,
               max_num_batched_tokens=seq_len)
     res = llm.generate([{"prompt_token_ids": p} for p in prompts],
