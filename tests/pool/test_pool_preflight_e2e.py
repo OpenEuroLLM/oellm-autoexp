@@ -273,7 +273,7 @@ def test_a_held_queued_host_is_not_cancelled_when_the_work_is_gone(pool):  # noq
     assert state == "PENDING", (state, pool.debug())
 
 
-def _singleton_two_pools(pool, prefer: str):  # noqa: F811
+def _singleton_two_pools(pool, prefer: str, cns_hosts_nodes: int = 2, cns_extra=()):  # noqa: F811
     """A 1-node singleton running in the default pool; a second pool whose hosts are on account
     "cnsx" gets a host. Returns (first run, other pool dir, monitor process, running())."""
     import subprocess
@@ -291,6 +291,7 @@ def _singleton_two_pools(pool, prefer: str):  # noqa: F811
         "job.name=localpool_cns",
         f"job.base_output_dir={other}",
         "++slurm.sbatch.account=cnsx",
+        f"slurm.sbatch.nodes={cns_hosts_nodes}",
     )
     single = "+job.metadata.pool_singleton=sjob"
     pool.enqueue("s", "aux.iters=400", "aux.tick=0.1", "slurm.sbatch.nodes=1", single)
@@ -305,8 +306,19 @@ def _singleton_two_pools(pool, prefer: str):  # noqa: F811
         "aux.tick=0.1",
         "slurm.sbatch.nodes=1",
         "++slurm.sbatch.account=cnsx",
+        "++job.metadata.pool_priority=100",
         single,
     )
+    for extra in cns_extra:  # other work queued in the cns pool (lower priority)
+        pool.autoexp(
+            "--no-monitor",
+            "--pool",
+            str(other),
+            "--config-name",
+            "experiments/tests/pool_local_dummy",
+            "++slurm.sbatch.account=cnsx",
+            *extra,
+        )
     pool.start_monitor()
     first = pool.wait_for(lambda: pool.runs_of("dummy_s"), 30, "the first pool's run")[0]
     pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 20, 60, "20 iterations")
@@ -379,6 +391,37 @@ def test_without_a_preference_a_singleton_stays_at_the_same_node_count(pool):  #
         time.sleep(15)
         assert pool.run_state(first).status == "RUNNING"
         assert running() == [pool.layout.run_dir(first)], running()
+    finally:
+        mon.terminate()
+        mon.wait(timeout=20)
+
+
+def test_a_superseding_singleton_keeps_its_nodes_while_it_waits(pool):  # noqa: F811
+    """11-01 on MN5: the v3 copy superseded p132 for a fresh cns144 host and, while it waited for
+    p132's run to save, a lower-priority conservative copy took that host in the same pass. Now the
+    waiting run holds its nodes: the 2-node filler queued beside it (priority 90) does not start
+    on the 2-node preferred host, the singleton moves in once the old run has saved."""
+    filler = (
+        "aux.tag=filler",
+        "aux.iters=400",
+        "aux.tick=0.1",
+        "slurm.sbatch.nodes=2",
+        "++job.metadata.pool_priority=90",
+    )
+    first, other, mon, running = _singleton_two_pools(pool, "cnsx", cns_extra=[filler])
+    try:
+        deadline, moved = time.time() + 150, None
+        while time.time() < deadline and moved is None:
+            for rd in (other / "runs").iterdir() if (other / "runs").exists() else []:
+                txt = (rd / "run.json").read_text()
+                assert not ((rd / "started").exists() and "dummy_filler" in txt), (
+                    "the filler took the host the singleton was waiting for"
+                )
+                if (rd / "started").exists() and "dummy_s" in txt:
+                    moved = rd
+            time.sleep(0.2)
+        assert moved, "the singleton never got the preferred host"
+        assert pool.run_state(first).status == "PREEMPTED"
     finally:
         mon.terminate()
         mon.wait(timeout=20)

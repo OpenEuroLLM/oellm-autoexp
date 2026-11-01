@@ -72,6 +72,10 @@ LOGGER = logging.getLogger(__name__)
 # how long the preflight waits for a host's GPU probe (supervisor.sh) before it goes on without
 PREFLIGHT_PROBE_WAIT_S = 900.0
 
+# _claim_singleton: the key is reserved for this run, which waits for the superseded holder's run
+# to save and end -- its host keeps the nodes meanwhile (no other run takes them)
+CLAIM_WAITING = "waiting"
+
 # The rank processes Megatron's --exit-signal-handler listens on are the DIRECT
 # CHILDREN of the torchrun / ft_launcher elastic agents. Signalling the agents
 # instead makes them tear their workers down ~30 s later, before the exit
@@ -1287,9 +1291,27 @@ class PoolManager:
                 use_excl = run_meta(rid)[1]
                 cap = free + (free_excl if use_excl else 0)
                 if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
-                    if singleton and not self._claim_singleton(
-                        layout, singleton, rid, nodes, job_id, self._host_pref(cfg, host)
-                    ):
+                    claim = (
+                        self._claim_singleton(
+                            layout, singleton, rid, nodes, job_id, self._host_pref(cfg, host)
+                        )
+                        if singleton
+                        else True
+                    )
+                    if claim == CLAIM_WAITING:
+                        # this host waits for the run the key is reserved for: hold its nodes,
+                        # or a lower-priority run takes them in the same pass (11-01: a
+                        # conservative copy took the cns144 host v3 had superseded p132 for)
+                        free -= nodes
+                        LOGGER.info(
+                            "[pool %s] %s waits for its superseded run to end: %d node(s) of %s held",
+                            cfg.name,
+                            rid,
+                            nodes,
+                            host.hid,
+                        )
+                        continue
+                    if not claim:
                         continue
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
@@ -1571,7 +1593,7 @@ class PoolManager:
 
     def _claim_singleton(
         self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str, pref: int = 0
-    ) -> bool:
+    ) -> bool | str:
         """May run `rid` (`nodes` nodes) of the singleton job `key` start in this pool now?
 
         One run per key across every pool: the key is free (no holder, or its run ended, and no
@@ -1582,7 +1604,8 @@ class PoolManager:
         run's host is PREFERRED (``pref``, singleton_prefer_accounts) and the holder's is not:
         then on as many nodes it is superseded too.
         Checked and claimed under a mkdir lock (atomic on GPFS), so two monitors never both
-        start the job."""
+        start the job. Returns True (start now), False (not now), or CLAIM_WAITING (the key is
+        reserved for this run, which waits for the superseded run to end: hold its nodes)."""
         d = self._singleton_dir(layout, key)
         d.mkdir(parents=True, exist_ok=True)
         lock = d / "lock"
@@ -1641,6 +1664,10 @@ class PoolManager:
                     holder["superseded"] = time.time()
                     _atomic_write(d / "holder.json", json.dumps(holder))
                     _atomic_write(d / "reserved.json", json.dumps({**mine, "ts": time.time()}))
+                    return CLAIM_WAITING
+                res = self._singleton_reservation(d)
+                if res is not None and {k: res.get(k) for k in me} == me:
+                    return CLAIM_WAITING
             return False
         finally:
             shutil.rmtree(lock, ignore_errors=True)
