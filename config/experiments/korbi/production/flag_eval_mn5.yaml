@@ -35,10 +35,10 @@ aux:
   shards: [0, 1, 2, 3]
   num_shards: 4
   shard: 0
-  limit: ""                   # test runs: documents per row
+  limit: 0                    # test runs: documents per row (0: all)
   name_suffix: ""             # e.g. _test for a dev-queue run
   name: flag_${aux.export}_s${aux.shard}of${aux.num_shards}${aux.name_suffix}
-  bench: "bash scripts/korbi/flag_eval/run_flag_mn5.sh ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} '${aux.limit}' ${aux.flag_names}"
+  bench: "bash scripts/korbi/flag_eval/run_flag_mn5.sh ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} ${aux.limit} ${aux.flag_names}"
 
 job:
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_evals/logs/${aux.name}"

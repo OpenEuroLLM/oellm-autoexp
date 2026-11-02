@@ -4,7 +4,7 @@
 # lm-eval 0.4.13 (JUPITER: 0.4.12 + a DP patch; rows run TP + EP here, no DP), the eval
 # extras the image lacks from $R/pylibs_flag (ifeval, polymath, rouge), offline datasets from
 # the JUPITER HF_HOME copy.
-#   run_flag_mn5.sh <export dir> <out dir> <shard> <num shards> <limit or ""> <name> [<name> ...]
+#   run_flag_mn5.sh <export dir> <out dir> <shard> <num shards> <limit, 0 = all> <name> [<name> ...]
 set -euo pipefail
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 cd "$(dirname "$0")/../../.."
@@ -20,4 +20,4 @@ export HF_METRICS_CACHE=$HF_HOME/metrics/job_${SLURM_JOB_ID:-local}
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_EVALUATE_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export HF_ALLOW_CODE_EVAL=1 NLTK_DATA=$R/nltk_data TOKENIZERS_PARALLELISM=false
 python3 scripts/korbi/flag_eval/flag_lmeval.py --export "$export_dir" --out "$out" \
-    --shard "$shard" --num-shards "$nshards" ${limit:+--limit "$limit"} --names "$@"
+    --shard "$shard" --num-shards "$nshards" $([ "$limit" = 0 ] || echo --limit "$limit") --names "$@"
