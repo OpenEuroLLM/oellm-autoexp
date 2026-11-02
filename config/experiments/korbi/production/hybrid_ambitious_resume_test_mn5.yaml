@@ -116,14 +116,14 @@ sweep:
           backend.megatron.non_persistent_save_interval: 20
         - aux.arm: ref2
         - aux.arm: cont
-          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref/ckpt_rolling
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/${aux.suite}/ref/ckpt_rolling
         - aux.arm: grow
           aux.nodes: 8
-          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref/ckpt_rolling
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/${aux.suite}/ref/ckpt_rolling
         - aux.arm: ref_s
           backend.megatron.dataloader_type: single
           backend.megatron.non_persistent_save_interval: 20
         - aux.arm: grow_s
           aux.nodes: 8
           backend.megatron.dataloader_type: single
-          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/amb_rs/ref_s/ckpt_rolling
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/resume_tests/${aux.suite}/ref_s/ckpt_rolling
