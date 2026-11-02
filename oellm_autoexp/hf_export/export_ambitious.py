@@ -281,8 +281,12 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             table = g("table")
             if table.shape[0] < rows:
                 raise ValueError(f"layer {i}: table has {table.shape[0]} rows < {rows}")
-            writer.add(hp + "mixer.table", table[:rows].to(tcast))
+            # host memory: the fp32 table (160 GB for v3 / v4) goes before the cast copy is written
+            # (the writer's serialization copies it once more); peak ~385 -> ~240 GB
+            cast_table = table[:rows].to(tcast)
             del table
+            writer.add(hp + "mixer.table", cast_table)
+            del cast_table
             for n in ("key_proj.weight", "value_proj.weight", "hidden_norm.weight", "key_norm.weight", "conv1d.weight"):
                 writer.add(hp + f"mixer.{n}", g(n).to(cast))
             if cfg["engram_conv_prenorm"]:
