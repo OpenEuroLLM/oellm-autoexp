@@ -65,6 +65,20 @@ The step did not get shorter. After the profiler stopped, iteration 10 was 10.0 
 
 32 SMs is MoonEP's own default and did not move the step. Job 3829398, iterations 10–12: 9.89 s, 9.90 s, 10.92 s (63.3, 63.2, 57.3 TFLOP/s).
 
+### Weak scaling
+
+Config: `config/experiments/swagatam/alps/qwen3.5_moe_35B_A3B_gdn_weak_scaling.yaml`. HybridEP, pipeline 2, micro-batch 1, 32 micro-batches per GPU, so the global batch is `64 × nodes`. That is twice the tokens of the global-batch-128 table (131,072 tokens per GPU per step instead of 65,536). The 4-node step is about twice the 8.7 s HybridEP step, and the TFLOP/s matches it. Quoted numbers are the mean of iterations 10–30. The range is the slowest and fastest of those steps. 128 nodes (job 3829442) has no log.
+
+| Nodes | Global batch | Job | Step | TFLOP/s per GPU | Tokens/s per GPU | Memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 | 256 | 3829444 | 17.4 s (16.0–18.7) | 72.4 (67–78) | 3,790 | 0.84 |
+| 8 | 512 | 3829443 | 19.2 s (16.6–22.0) | 65.9 (57–76) | 3,450 | 0.71 |
+| 16 | 1024 | 3829440 | 19.9 s (16.8–24.3) | 63.6 (52–75) | 3,330 | 0.64 |
+| 32 | 2048 | 3829441 | 21.3 s (17.1–24.6) | 59.6 (51–73) | 3,120 | 0.61 |
+| 64 | 4096 | 3829439 | 21.8 s (17.8–26.2) | 58.5 (48–71) | 3,060 | 0.60 |
+
+Against the 4-node rate, 8 nodes holds 91%, 16 holds 88%, 32 holds 82%, and 64 holds 81%. The spread grows with the node count: a step is as long as the slowest rank, and the pipeline send plus the data-parallel collectives cross more of the Slingshot fabric. Memory falls because expert-DP grows (2 at 4 nodes, 32 at 64 nodes), so each GPU holds a smaller Adam shard.
+
 ## pretrain_hybrid
 
 Config: `config/experiments/swagatam/alps/qwen3.5_moe_35B_A3B_q35c_smoke.yaml`, taken from `config/experiments/korbi/production/q35_conservative_mn5.yaml`. Launcher: `submodules/Megatron-LM/pretrain_hybrid.py`. Logs: `output/qwen3.5_35B_A3B_q35c_smoke_MBS*_EP4_N4_clariden/`.
