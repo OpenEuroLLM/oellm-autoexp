@@ -15,7 +15,7 @@
 # Run on MareNostrum 5: bash alloc_probe.sh
 P=/gpfs/scratch/ehpc533/hybrid_nucleus/pools
 POOLS="p33 p129 p132 p264 o134e o134c o260c p134c"
-MAINS="q35c_main_gqa ambitious_v4_128n_p1 ambitious_v4_128n_p2 ambitious_v4_128n_p3 ambitious_v4_ldm"
+MAINS="q35c_main_gqa ambitious_v4_2ph_128n_p1 ambitious_v4_2ph_128n_p2 ambitious_v4_2ph_128n_p3 ambitious_v4_128n_p1 ambitious_v4_ldm"
 now=$(date +%s)
 
 squeue -u "$USER" -h -o "%i %j %T %D %a" 2>/dev/null | awk '$4 >= 32 {print "JOB", $0}' | sort
