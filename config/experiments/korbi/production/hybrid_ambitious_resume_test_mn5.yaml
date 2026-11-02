@@ -7,7 +7,7 @@
 # that fits 4 nodes: 32 experts (72 OOMed in the first backward at 4 nodes under the 0.80 cap, job
 # 48326576: ~22 GB of parameter + optimizer state per GPU), no allocator cap (NCCL headroom only
 # matters at 64+ nodes), Engram tables / 32 (811,683 rows per head: odd, as
-# 25,973,845, so the DP shards stay uneven), gbs 128 x 16k.
+# 25,973,845, so the DP shards stay uneven), gbs 128 x 16k (8k since 2026-11-02).
 #
 #   phase save (4 nodes each, train_iters 40 for every arm: the same data order)
 #     ref    trains to step 30; an ASYNC rolling (non-persistent global) save at step 20 into
@@ -39,9 +39,10 @@ aux:
   nodes: 4
   gbs: 128
   # the base's seq-length curriculum names its data mix by aux.phase (stage1..3), which this test
-  # uses for save / resume: pin the 16k stage and shape the test was written for (2026-11-02)
-  seq: 16384
-  stage_datamix: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8ml_stage2_mn5.txt
+  # uses for save / resume: pin a stage and shape. 8k x mbs 4, production's phase 1 (2026-11-02:
+  # 16k x mbs 4 now OOMs at 4 nodes, cuDNN attention at 0.99 memory, job 48392207)
+  seq: 8192
+  stage_datamix: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
   dev_queue: true
   only: []
 
