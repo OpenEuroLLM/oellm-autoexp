@@ -1,0 +1,37 @@
+# @package _global_
+# curriculum_8k64k_mn5 on the option8_1 mix (OpenEuroLLM, 2026-11-02; option8_1-15T-agenttok-20261102 /
+# option8_1_15T.txt, copied x100 as $HYBRID_ENV/data/datamix_v8ml_opt81_mn5.txt): the same 531 shards as
+# datamix_v8ml_mn5, other per-source totals (common-pile-stackv2 +5.86 pp, taken 1.46 pp each from
+# Nemotron-CC-high / -medium-high, hplt-4.0 eng ccc and dclm; the 63 other sources and the 20 % multilingual
+# part unchanged). The same document split -- phase 1 on v8ml-stages-8k64k/s1, phase 2 on v8ml-stages/s3 --
+# with option8_1's source totals spread over a source's shards by the stage's tokens (split_stages.py datamix).
+# The fixed validation sets stay excluded as before: held out from the s3 views by --split 998,2,0.
+# Both phases need their own dataset index (other blend weights): data_cache_prebuild_v3_2ph_opt81_fixedvalid_mn5.
+defaults:
+  - curriculum_8k64k_mn5
+  - _self_
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.phase: 1
+          aux.seq: 8192
+          aux.gbs: 8192
+          backend.megatron.micro_batch_size: 8
+          aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${job.base_output_dir}/v3speed_p1_ok"
+            persistent_pass: true
+        - aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          backend.megatron.micro_batch_size: 1
+          aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*23691\\s*$"
+            mode: regex
+            persistent_pass: true

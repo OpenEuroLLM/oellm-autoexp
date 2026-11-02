@@ -1,0 +1,20 @@
+# @package _global_
+# data_cache_prebuild_v3_2ph_fixedvalid_mn5 on the option8_1 mix (curriculum_8k64k_opt81_mn5): both phases need
+# their own index (other blend weights than datamix_v8ml):
+#   p1   8k, gbs 8192, one transition at 23,691: datamix_v8ml_opt81_8k64k_stage1_mn5.txt
+#   p2   64k, gbs 1024, one transition at its phase length 213,042: datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+#   ... --config-name experiments/korbi/production/data_cache_prebuild_v3_2ph_opt81_fixedvalid_mn5 --yes
+defaults:
+  - data_cache_prebuild_v3_2ph_fixedvalid_mn5
+  - _self_
+
+job:
+  name: data_cache_prebuild_v3fv2ph_opt81_p${aux.phase}
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_prebuild/ambitious_v3fv2ph_opt81_p${aux.phase}
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - {aux.phase: 1, aux.seq: 8192, aux.gbs: 8192, backend.megatron.micro_batch_size: 8, backend.megatron.phase_transition_iterations: "23691", aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt}
+        - {aux.phase: 2, aux.seq: 65536, aux.gbs: 1024, backend.megatron.micro_batch_size: 1, backend.megatron.phase_transition_iterations: "213042", aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt}
