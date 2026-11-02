@@ -39,9 +39,17 @@ while true; do
         echo "$id: ${#files[@]} fragment(s) -> $ENTITY/$PROJECT/$id"
         # one call per fragment, oldest first (the names sort by start time): a fragment cut off by a
         # crash ends mid-record, and in one multi-file call that error stops the later fragments
+        # a fragment unchanged since its last completed upload (size + mtime in <file>.synced) is
+        # skipped: only the live fragment of a run is re-sent. "Finished" or a truncated end
+        # ("unexpected EOF": live, or cut off by a crash) is a completed attempt; other errors
+        # (network) are not recorded and retried
         for f in "${files[@]}"; do
-            "$WANDB" beta sync --no-skip-synced -e "$ENTITY" -p "$PROJECT" --id "$id" "$f" </dev/null 2>&1 \
-                | grep -E "uploading history|Finished|rror|failed" | tail -2 | sed "s#^#  $(basename "$(dirname "$f")"): #"
+            sig=$(stat -c '%s %Y' "$f")
+            [ "$(cat "$f.synced" 2>/dev/null)" = "$sig" ] && continue
+            out=$("$WANDB" beta sync --no-skip-synced -e "$ENTITY" -p "$PROJECT" --id "$id" "$f" </dev/null 2>&1)
+            echo "$out" | grep -E "uploading history|Finished|rror|failed" | tail -2 \
+                | sed "s#^#  $(basename "$(dirname "$f")"): #"
+            echo "$out" | grep -qE "Finished syncing|unexpected EOF" && echo "$sig" > "$f.synced"
         done
     done
     # display names / tags / notes (labels.json): an upload can reset the name to the job name
