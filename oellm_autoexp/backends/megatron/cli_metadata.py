@@ -1798,6 +1798,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "embedding_multiplier": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Fixed scale on the word-embedding output (after the lookup, before the first layer), without muP (``mup_embedding_mult`` applies only with ``use_mup``). The embedding starts at init std ~0.02 and grows only lr-limited under Adam, so the first sublayers see a tiny residual stream: their pre-norm's backward gain ~1/rms is large there and, under Linear Depth Memory, the memory reads dominate the front inputs (the LDM v3 run's front-site instability). E.g. 50 brings the stream at the first site to rms ~1. Default 1.0 (no scaling).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "embedding_path": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -5410,6 +5418,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=None,
         help="Scaling factor for routing score in top-k selection, only works when moe_router_pre_softmax enabled. Defaults to None, which means no scaling.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "moe_router_wd_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Multiplier on --weight-decay for the MoE router weights (*router.weight). 0.0 excludes them from weight decay: under muown_classical the matrices get none, so a decayed router shrinks against the hidden states it scores (Laguna M.1, arXiv:2605.27605).",
         choices=None,
         nargs=None,
         element_type=None,
@@ -10113,6 +10129,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=1.0,
     ),
+    "embedding_multiplier": MegatronActionSpec(
+        option_strings=("--embedding-multiplier",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
+    ),
     "embedding_path": MegatronActionSpec(
         option_strings=("--embedding-path",),
         action_type="store",
@@ -13138,6 +13161,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "moe_router_wd_mult": MegatronActionSpec(
+        option_strings=("--moe-router-wd-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "moe_routing_trace_capture_hidden_states": MegatronActionSpec(
         option_strings=("--moe-routing-trace-capture-hidden-states",),

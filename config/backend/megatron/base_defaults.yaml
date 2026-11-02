@@ -225,6 +225,7 @@ dump_param_to_param_group_map: null  # Path to a file containing parameter-to-pa
 embedding_head_optimizer: adam  # choices: ['adam', 'sinkhorn'] | Optimizer of the word embedding and prediction head under a Muon-family optimizer (sinkhorn: DeepSeek-V4.1 Sinkhorn-balanced momentum).
 embedding_init_method_std: null  # Standard deviation of the zero mean normal for the default initialization method for the embedding layer. If None, will be set to init_method_std. Setting this to a value around 1.0 may avoid loss spikes in training. Setting this to any value will also skip applying weight decay on embedding weights to avoid shrinkage towards zero. See https://arxiv.org/abs/2312.16903 for more details.
 embedding_lr_mult: 1.0  # Learning-rate multiplier of the word-embedding matrix (max and min lr). Conflicts with --decoupled-lr.
+embedding_multiplier: 1.0  # Fixed scale on the word-embedding output (after the lookup, before the first layer), without muP (``mup_embedding_mult`` applies only with ``use_mup``). The embedding starts at init std ~0.02 and grows only lr-limited under Adam, so the first sublayers see a tiny residual stream: their pre-norm's backward gain ~1/rms is large there and, under Linear Depth Memory, the memory reads dominate the front inputs (the LDM v3 run's front-site instability). E.g. 50 brings the stream at the first site to rms ~1. Default 1.0 (no scaling).
 embedding_path: null  # Where to save/load Open-Retrieval Embedding data to/from
 embedding_wd_mult: 1.0  # Multiplier on --weight-decay for the word-embedding matrix (2-D param whose name contains word_embeddings). Default 1.0 = decay like every other weight. 0.0 excludes the embeddings from weight decay as OLMo 2/3 and Levanter/Marin do (decay erodes the rows of rare tokens). The untied output layer is not affected.
 empty_unused_memory_level: 0  # choices: [0, 1, 2] | Call torch.cuda.empty_cache() each iteration (training and eval), to reduce fragmentation. 0=off, 1=moderate, 2=aggressive.
@@ -673,6 +674,7 @@ moe_router_quantile_balancing_ema: 0.0  # EMA coefficient for the quantile-balan
 moe_router_score_function: softmax  # choices: ['softmax', 'sigmoid', 'sqrtsoftplus'] | Score function for MoE routing. Can be "softmax", "sigmoid" or "sqrtsoftplus".
 moe_router_topk: 2  # Number of experts to route to for each token.
 moe_router_topk_scaling_factor: null  # Scaling factor for routing score in top-k selection, only works when moe_router_pre_softmax enabled. Defaults to None, which means no scaling.
+moe_router_wd_mult: 1.0  # Multiplier on --weight-decay for the MoE router weights (*router.weight). 0.0 excludes them from weight decay: under muown_classical the matrices get none, so a decayed router shrinks against the hidden states it scores (Laguna M.1, arXiv:2605.27605).
 moe_routing_trace_capture_hidden_states: false  # Capture input hidden-state tensors for each router call.
 moe_routing_trace_capture_logits: false  # Capture pre-topk routing logits for each router call.
 moe_routing_trace_dump_weights: false  # Save router weight tensors to a .pt sidecar file.
