@@ -190,6 +190,10 @@ def filtered(old, bad, j0):
 
 
 def cmd_build(args):
+    done = Path(NEW_CACHE) / "build.json"
+    if done.exists() and not args.force:
+        sys.exit(f"[build] {done} exists (switch at iteration {json.load(open(done))['iteration']}); a run "
+                 "already trains on this index -- rebuilding moves its switch point. --force to override.")
     m = json.load(open(Path(WORK) / "mask.json"))
     bad = np.load(Path(WORK) / "bad_windows.npy")
     j0 = j0_for_iteration(OLD_CACHE, m["blend"], m["dataset_id"], args.iteration)
@@ -299,6 +303,7 @@ def main():
     sub.add_parser("mask")
     b = sub.add_parser("build")
     b.add_argument("--iteration", type=int, required=True, help="iteration of the resume checkpoint")
+    b.add_argument("--force", action="store_true", help="rebuild although build.json exists")
     v = sub.add_parser("verify")
     v.add_argument("--iteration", type=int, required=True)
     v.add_argument("--megatron", action="store_true", help="also query through Megatron's GPTDataset")
