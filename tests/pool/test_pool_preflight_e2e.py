@@ -91,6 +91,12 @@ def test_preflight_excludes_bad_nodes_before_any_run(pool, tmp_path):  # noqa: F
     log = pool.monitor_log.read_text()
     assert "excluding n1000-3" in log and "preflight host001: passed" in log
     assert not _host_exit(pool)
+    # every node's GPU count is kept for inspection, with a one-line summary in the host log
+    table = (pool.pool_dir / "hosts" / "host001" / "gpu_probe.txt").read_text()
+    counts = dict(line.split() for line in table.split("# raw srun output")[0].strip().splitlines())
+    assert counts == {"n1000-0": "4", "n1000-1": "2", "n1000-2": "4", "n1000-3": "4"}, table
+    host_logs = "".join(p.read_text() for p in pool.pool_dir.glob("slurm-*.log"))
+    assert "GPU probe: 3 of 4 node(s) show 4 GPU(s); excluded: n1000-1" in host_logs, host_logs[-2000:]
 
 
 def test_preflight_failure_releases_the_host(pool, tmp_path):  # noqa: F811

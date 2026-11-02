@@ -296,13 +296,20 @@ gpu_probe() {
     --ntasks="$n" --ntasks-per-node=1 --cpus-per-task=1 --job-name=gpu-probe \
     bash -c 'echo "GPU_PROBE ${SLURMD_NODENAME:-$(hostname -s)} $(eval "$POOL_PREFLIGHT_GPU_CMD")"' 2>&1)
   bad=""
+  local ok=0 table=""
   for node in $(printf '%s' "$nl" | tr ',' ' '); do
     count=$(printf '%s\n' "$out" | awk -v n="$node" '$1 == "GPU_PROBE" && $2 == n {print $3; exit}')
+    table="$table$node ${count:-no-answer}"$'\n'
     if ! [ "${count:-x}" -ge "$POOL_PREFLIGHT_GPUS" ] 2>/dev/null; then
       bad="$bad $node"
       log "GPU probe: $node has ${count:-no answer} GPU(s), expected $POOL_PREFLIGHT_GPUS: excluded"
+    else
+      ok=$((ok + 1))
     fi
   done
+  # every node's count ("<node> <gpus>") and the raw srun output (errors included), for inspection
+  atomic "$H/gpu_probe.txt" "$(printf '%s# raw srun output\n%s\n' "$table" "$out")"
+  log "GPU probe: $ok of $n node(s) show $POOL_PREFLIGHT_GPUS GPU(s)${bad:+; excluded:$bad} (per node: $H/gpu_probe.txt)"
   if [ -n "$bad" ]; then
     printf '%s\n' $bad >>"$H/exclude_nodes"
     ledger "-" "gpu probe excluded:$bad"
