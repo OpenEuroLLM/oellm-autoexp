@@ -882,6 +882,16 @@ class MegatronConfig(ConfigInterface):
     # width_mult=1.0). Set this to your base/proxy model's hidden size when scaling up.
     mup_base_hidden_size: int | None = None
 
+    # RMSNorm on the word-embedding output (after the lookup and any multiplier, before the
+    # first layer), with a learnable gain (init 1; a 1-D parameter: Adam, no weight decay).
+    # Fixes the first layers' residual stream at rms ~gain for every token, whatever the
+    # embedding rows' scale does over training -- unlike ``embedding_multiplier``, which
+    # scales with the rows and, under Adam, multiplies the embedding's effective lr. BLOOM's
+    # embedding LayerNorm, for stability. The LDM v3 run's front stream stayed at rms ~0.02
+    # (init std), where the first pre-norms' backward gain is ~1 / rms and the depth-memory
+    # reads dominated the front inputs.
+    embedding_norm: bool = False
+
     # Fixed scale on the word-embedding output (after the lookup, before the first layer),
     # without muP (``mup_embedding_mult`` applies only with ``use_mup``). The embedding starts
     # at init std ~0.02 and grows only lr-limited under Adam, so the first sublayers see a

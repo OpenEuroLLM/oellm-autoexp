@@ -236,9 +236,9 @@
    "8k-64k",
    "qb_ema0_globalaux",
    "pab",
-   "embedding_mult50",
+   "embedding_norm",
    "no_emb_router_wd"
   ],
-  "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding_multiplier 50 (front stream at O(1)), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum."
+  "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding RMSNorm (front stream at rms ~1), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum."
  }
 }
