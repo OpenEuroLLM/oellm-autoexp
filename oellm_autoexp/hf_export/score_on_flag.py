@@ -81,6 +81,9 @@ def layer_device_map(cfg, gib: float, engram_tables_cpu: bool = False) -> dict[s
     cap[n - 1] -= tail
     dmap["model.embed_tokens"] = 0
     used[0] += size(model.model.embed_tokens)
+    for name, t in [*model.model.named_parameters(recurse=False), *model.model.named_buffers(recurse=False)]:
+        dmap[f"model.{name}"] = 0  # tensors directly on the model (embed_norm), next to the embedding
+        used[0] += t.numel() * t.element_size()
     if getattr(model.model, "ldm_boundary", None) is not None:  # LDM: the embedding write / first query
         dmap["model.ldm_boundary"] = 0
         used[0] += size(model.model.ldm_boundary)
