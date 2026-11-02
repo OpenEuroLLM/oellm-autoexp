@@ -1,0 +1,15 @@
+# Alps Container Engine environment for Clariden (GH200, aarch64), used by
+# config/container/clariden.yaml through `srun --environment=<this file>`.
+# NeMo 26.08 (imported with: enroot import -o .../nemo-26.08.sqsh docker://nvcr.io#nvidia/nemo:26.08).
+# No PYTHONPATH and no workdir: the launcher cds to the submit dir and exports
+# PYTHONPATH=.:submodules/Megatron-LM so the submodule shadows the image's Megatron-Core.
+image = "/capstor/store/cscs/swissai/a0248/images/nemo-26.08.sqsh"
+mounts = ["/capstor:/capstor", "/iopsstor:/iopsstor", "/users:/users"]
+
+[env]
+PIP_CONSTRAINT = ""
+PMIX_MCA_psec = "^munge"
+
+[annotations]
+com.hooks.aws_ofi_nccl.enabled = "true"
+com.hooks.aws_ofi_nccl.variant = "cuda-dl"

@@ -1,0 +1,11 @@
+# CSCS Alps / Clariden. The Container Engine starts the image from an EDF
+# (`srun --environment=<toml>`, see config/slurm/clariden.yaml), so `image` is the
+# EDF path, not the .sqsh. Mounts live in the EDF; `bind` is unused here.
+class_name: Container
+image: ${oc.env:PROJECT_DIR,${oc.env:PWD}}/container/alps/nemo-26.08.toml
+runtime: edf
+bind: []
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "CLARIDEN"
+python: "python"

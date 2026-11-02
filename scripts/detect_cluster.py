@@ -41,6 +41,7 @@ _CLUSTERS: list[ClusterInfo] = [
     ClusterInfo("leonardo", "boost_usr_prod", "OELLM_prod2026", ["*.leonardo.local"]),
     ClusterInfo("juwels", "dc-gpu", "synthlaion", ["*.jureca", "*.juwels"]),
     ClusterInfo("snellius", "gpu_h100", "thomaso", ["*.snellius.surf.nl"]),
+    ClusterInfo("clariden", "normal", "a0248", ["clariden-ln*"]),
     ClusterInfo("mi325x", "amd-tw-verification", "", ["tus*"]),
     ClusterInfo("ci", "gpu", "test", ["ip-*", "[0-9]*-[0-9]*-[0-9]*-[0-9]*"]),
 ]

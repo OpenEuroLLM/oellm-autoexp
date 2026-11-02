@@ -1,0 +1,48 @@
+defaults:
+  - base
+  - _self_
+
+# CSCS Alps / Clariden: 4x GH200 per node (aarch64, 288 Grace cores), Slingshot.
+# The container is entered by `srun --environment=<EDF>` (srun_opts), so
+# bash -c already runs inside it: the launcher only cds to the repo and exports backend.env.
+# Multi-node NCCL goes through the aws_ofi_nccl hook in the EDF, which also sets
+# NCCL_NET / FI_CXI_* (docs.cscs.ch/software/communication/nccl).
+template_path: templates/clariden.sbatch
+
+launcher_cmd: "cd $SLURM_SUBMIT_DIR ; \\\n\
+ ${oc.join:' ',${oc.mapkeyvaltmpl:'export %k=%v ; \\\n',${backend.env}}}"
+
+# A string rather than srun_args so it also works on branches without srun_args;
+# the trailing space is required there (template has no space before `bash`).
+srun_opts: "--environment=${container.image} --cpus-per-task=288 --kill-on-bad-exit=1 "
+
+env:
+  HF_HOME: ${oc.env:HF_HOME,/iopsstor/scratch/cscs/${oc.env:USER}/hf_home}
+  MACHINE_NAME: CLARIDEN
+  HF_ALLOW_CODE_EVAL: "1"
+  SLURM_ARRAY_TASK_ID: "$(test -n \"$SLURM_ARRAY_TASK_ID\" && echo \"$SLURM_ARRAY_TASK_ID\" || echo 0)"
+  MASTER_ADDR: "$(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1)"
+  MASTER_PORT: "29500"
+  NUM_NODES: "$SLURM_JOB_NUM_NODES"
+  GPUS_PER_NODE: "4"
+  NUM_GPUS_PER_NODE: "4"
+  NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+  ARCH: "$(uname -m)"
+  CUDA_DEVICE_MAX_CONNECTIONS: 1
+  PYTHONUNBUFFERED: "1"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  MPICH_GPU_SUPPORT_ENABLED: 0
+  NCCL_DEBUG: WARN
+  WANDB_MODE: "offline"
+
+sbatch:
+  nodes: 1
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  cpus_per_task: 288
+  gres: null
+  exclusive: true
+  account: ${oc.env:SLURM_ACCOUNT,a0248}
+  partition: ${oc.env:SLURM_PARTITION,normal}
+  time: "01:00:00"
