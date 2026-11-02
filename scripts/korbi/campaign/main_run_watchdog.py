@@ -17,7 +17,12 @@ files with a stdlib-only reader (the login node has neither tensorboard nor prot
      or the worst layer's load entropy below ``--entropy-min`` (v1 healthy: < 10 near-dead,
      entropy > 0.99; the broken v2 starts: thousands of near-dead / hundreds of ghost slots);
   5. no progress: a job is RUNNING in a pool but the last logged step has not advanced for
-     ``--stall-min`` minutes (crash / restart loops; state in <run-dir>/watchdog_state.json).
+     ``--stall-min`` minutes (crash / restart loops; state in <run-dir>/watchdog_state.json);
+  6. extra rules (``--rule TAG:OP:LIMIT:MIN_STEP:WINDOW``, repeatable): the median of TAG's last
+     WINDOW readings from MIN_STEP on is beyond LIMIT (OP ``>`` or ``<``); a TAG ending in ``*``
+     is the max (``>``) / min (``<``) over every tag with that prefix, per step. For the LDM run
+     the v3 precursors: front-layer expert overload and the first site's write ratio moved
+     300-600 steps before the grad norm (docs/hybrid_moe_3b_campaign.md).
 On a trip it writes ``<run-dir>/watchdog_tripped.json`` and cancels ``--job`` in every ``--pool``
 (unless ``--dry-run``); later calls see the marker and do nothing.
 
@@ -72,9 +77,10 @@ def _fields(buf):
         yield fn, wt, v
 
 
-def read_scalars(path, tags):
+def read_scalars(path, tags, prefixes=()):
     """{tag: {step: value}} of the simple_value scalars in one tfevents file (Event.step = 2,
-    Event.summary = 5 -> Summary.value = 1 -> Value.tag = 1, Value.simple_value = 2)."""
+    Event.summary = 5 -> Summary.value = 1 -> Value.tag = 1, Value.simple_value = 2); ``tags``
+    exactly, plus every tag starting with one of ``prefixes``."""
     out = {t: {} for t in tags}
     data = Path(path).read_bytes()
     i = 0
@@ -102,17 +108,62 @@ def read_scalars(path, tags):
                     tag = v2.decode("utf-8", "replace")
                 elif f2 == 2 and w2 == 5:
                     (value,) = struct.unpack("<f", v2)
-            if tag in out and value is not None:
+            if value is None or tag is None:
+                continue
+            if tag in out:
                 out[tag][step] = value
+            elif prefixes and tag.startswith(prefixes):
+                out.setdefault(tag, {})[step] = value
     return out
 
 
-def load(run_dir):
-    merged = {t: {} for t in TAGS}
+def parse_rule(text):
+    tag, op, limit, min_step, window = text.rsplit(":", 4)
+    if op not in (">", "<"):
+        raise ValueError(f"rule {text!r}: OP must be > or <")
+    return tag, op, float(limit), int(min_step), int(window)
+
+
+def rule_tags(rules):
+    """(exact tags, prefixes) the rules read."""
+    exact = tuple(r[0] for r in rules if not r[0].endswith("*"))
+    return exact, tuple(r[0][:-1] for r in rules if r[0].endswith("*"))
+
+
+def load(run_dir, rules=()):
+    exact, prefixes = rule_tags(rules)
+    tags = TAGS + tuple(t for t in exact if t not in TAGS)
+    merged = {t: {} for t in tags}
     for path in sorted(glob.glob(os.path.join(run_dir, "tb", "events.out.tfevents.*"))):
-        for tag, series in read_scalars(path, TAGS).items():
-            merged[tag].update(series)
+        for tag, series in read_scalars(path, tags, prefixes).items():
+            merged.setdefault(tag, {}).update(series)
     return merged
+
+
+def rule_series(series, tag, op):
+    """{step: value} of a rule's tag; a prefix tag is the per-step max / min over its matches."""
+    if not tag.endswith("*"):
+        return series.get(tag, {})
+    pick = max if op == ">" else min
+    out = {}
+    for t, s in series.items():
+        if t.startswith(tag[:-1]):
+            for step, v in s.items():
+                out[step] = v if step not in out else pick(out[step], v)
+    return out
+
+
+def check_rules(series, rules):
+    """None, or the first rule the run is beyond."""
+    for tag, op, limit, min_step, window in rules:
+        s = rule_series(series, tag, op)
+        pts = [v for st, v in sorted(s.items()) if st >= min_step and math.isfinite(v)]
+        if len(pts) >= window:
+            m = median(pts[-window:])
+            if (m > limit) if op == ">" else (m < limit):
+                return (f"rule {tag} {op} {limit}: median {m:.4g} over the last {window} readings "
+                        f"(step {max(s)})")
+    return None
 
 
 def median(xs):
@@ -221,6 +272,8 @@ def main():
     ap.add_argument("--ghost-max", type=float, default=300)
     ap.add_argument("--entropy-min", type=float, default=0.85)
     ap.add_argument("--stall-min", type=float, default=0, help="minutes without a new step while RUNNING (0: off)")
+    ap.add_argument("--rule", action="append", default=[], type=parse_rule,
+                    help="TAG:OP:LIMIT:MIN_STEP:WINDOW (OP > or <; TAG* = max / min over a prefix); repeatable")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--once", action="store_true", help="one check (the default; kept for the loop)")
     a = ap.parse_args()
@@ -228,10 +281,13 @@ def main():
     marker = Path(a.run_dir) / "watchdog_tripped.json"
     if marker.exists():
         return 0
-    series = load(a.run_dir)
-    reason = check(series, a) or check_stall(series, a, time.time())
+    series = load(a.run_dir, a.rule)
+    reason = check(series, a) or check_rules(series, a.rule) or check_stall(series, a, time.time())
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    last = {t: (max(s), s[max(s)]) if s else None for t, s in series.items()}
+    last = {t: (max(s), s[max(s)]) if s else None for t, s in series.items() if t in TAGS}
+    for tag, op, *_ in a.rule:
+        s = rule_series(series, tag, op)
+        last[tag] = (max(s), s[max(s)]) if s else None
     if reason is None:
         print(f"[{stamp}] ok: {json.dumps(last)}", flush=True)
         return 0
