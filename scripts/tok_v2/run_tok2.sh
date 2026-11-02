@@ -4,6 +4,7 @@
 #   pilot           tests, then a few shards (dclm / chat / Greek / Czech) + the fixed validation sets on one node
 #   plan [parts]    the plan of every shard of datamix_v8ml_mn5.txt + the validation sets (default 4 parts)
 #   run <i,j,..>    plan parts, one per node (SLURM_NODEID)
+#   claim           production: every node takes the next unclaimed shard (largest first); unclaim after a kill
 #   check [args]    counts + decoded-text samples of every finished shard
 # New tree only: $OUT (the existing data is read, never written).
 set -euo pipefail
@@ -33,6 +34,11 @@ case "$mode" in
     $R plan --list "$W/shards.txt" --data-root "$D" --out "$OUT" --parts "${1:-4}" > "$W/plan.json" ;;
   run)
     $R run --plan "$W/plan.json" --parts-of "$1" --workers "$WORKERS" ;;
+  claim)       # the production run: any number of nodes / launches; each node takes the next unclaimed shard
+    shards > "$W/shards.txt"
+    $R claim --list "$W/shards.txt" --data-root "$D" --out "$OUT" --workers "$WORKERS" ;;
+  unclaim)     # before relaunching after a killed / preempted node: free its unfinished shards
+    $R unclaim --out "$OUT" ;;
   check)
     $R check --plan "$W/plan.json" "$@" ;;
   *) echo "unknown mode $mode"; exit 2 ;;

@@ -33,14 +33,16 @@ def plan(base_specials: dict) -> dict:
     return {FIRST_FREE + k: t for k, t in enumerate(missing)}
 
 
-def rename_sp(model_bytes: bytes, mapping: dict) -> bytes:
+def rename_sp(model_bytes: bytes, mapping: dict, expect: dict | None = None) -> bytes:
+    """The model with the given USER_DEFINED slots renamed (expected current names: <unused_N>, or `expect`)."""
     from sentencepiece import sentencepiece_model_pb2 as pb
     m = pb.ModelProto()
     m.ParseFromString(model_bytes)
     UD = pb.ModelProto.SentencePiece.USER_DEFINED
     for i, t in mapping.items():
         p = m.pieces[i]
-        assert p.type == UD and p.piece == f"<unused_{i - FIRST_FREE}>", (i, p.piece, p.type)
+        want = expect[i] if expect else f"<unused_{i - FIRST_FREE}>"
+        assert p.type == UD and p.piece == want, (i, p.piece, p.type)
         p.piece = t
     return m.SerializeToString()
 
@@ -85,6 +87,16 @@ def build(base, out):
                 + "".join(f"| {i} | `{t}` |\n" for i, t in sorted(present))
                 + "\nAdded (former `<unused_N>`):\n\n| id | token |\n|---:|---|\n"
                 + "".join(f"| {i} | `{t}` |\n" for i, t in mapping.items()))
+
+    # GigaToken runs ~7x slower with the DeepSeek delimiters (full-width bar + U+2581) as user-defined pieces:
+    # tokenizer_gigatoken.model has their slots renamed to unmatchable private-use strings, and
+    # gigatoken_split.json lists them -- retok_v2.py cuts the text at them and inserts their ids itself
+    slow = {i: t for i, t in mapping.items() if "｜" in t}
+    open(os.path.join(out, "tokenizer_gigatoken.model"), "wb").write(
+        rename_sp(open(os.path.join(out, "tokenizer.model"), "rb").read(),
+                  {i: f"{i}" for i in slow}, expect=mapping))
+    json.dump({t: i for i, t in slow.items()}, open(os.path.join(out, "gigatoken_split.json"), "w"),
+              ensure_ascii=False, indent=1)
 
     base_sp = spm.SentencePieceProcessor(model_file=os.path.join(base, "tokenizer.model"))
     sp = spm.SentencePieceProcessor(model_file=os.path.join(out, "tokenizer.model"))

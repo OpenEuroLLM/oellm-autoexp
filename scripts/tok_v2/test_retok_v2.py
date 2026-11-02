@@ -86,6 +86,14 @@ def main():
     assert R.split_incomplete("aü".encode()[:-1]) == (b"a", "ü".encode()[:1])
     assert R.split_incomplete("a😀".encode()[:-2]) == (b"a", "😀".encode()[:2])
     assert R.split_incomplete("aü".encode()) == ("aü".encode(), b"")
+    enc = R.Encoder(R.NEW_TOK)                 # the split DeepSeek delimiters: SentencePiece's ids exactly
+    ds = "<\uff5cbegin\u2581of\u2581sentence\uff5c>"
+    hard = TEXTS + [ds, ds + ds, " " + ds + " x", "a" + ds + "b", ds + "<|im_start|>" + ds, "\uff5c plain bar \uff5c",
+                    "<\uff5cUser\uff5c>hi<\uff5cAssistant\uff5c><think>x</think>", "", "  ", ds + " " * 3]
+    flat, cnt = enc(hard)
+    off = np.concatenate([[0], np.cumsum(cnt)])
+    for k, t in enumerate(hard):
+        assert flat[off[k]:off[k + 1]].tolist() == sp_new.encode(t), (t, flat[off[k]:off[k + 1]].tolist(), sp_new.encode(t))
     with tempfile.TemporaryDirectory() as d:
         view, docs, nseq = build_shards(d, sp_old)
         open(f"{d}/list.txt", "w").write(view + "\n")
@@ -123,6 +131,18 @@ def main():
         r = subprocess.run(run + ["run", "--plan", f"{d}/plan.json", "--part", "0", "--workers", "2"], check=True,
                            capture_output=True, text=True)                 # rerun: finished shard skipped
         assert "0 shards" in r.stdout, r.stdout
+        # claim mode: the same bytes as run; a claimed shard is left to its claimer
+        subprocess.run(run + ["claim", "--list", f"{d}/list.txt", "--data-root", f"{d}/data", "--out", f"{d}/out2",
+                              "--unit-tokens", "200", "--workers", "2"], check=True, capture_output=True)
+        out2 = f"{d}/out2/srcA/megatron-lm/shard_0000_text_document"
+        assert open(out2 + ".bin", "rb").read() == open(out + ".bin", "rb").read()
+        assert open(out2 + ".idx", "rb").read() == open(out + ".idx", "rb").read()
+        os.remove(out2 + ".tok2.json")
+        r = subprocess.run(run + ["claim", "--list", f"{d}/list.txt", "--data-root", f"{d}/data", "--out", f"{d}/out2",
+                                  "--workers", "2"], check=True, capture_output=True, text=True)
+        assert "done: 0 shards" in r.stdout, r.stdout                      # claimed (by the first run): skipped
+        r = subprocess.run(run + ["unclaim", "--out", f"{d}/out2"], check=True, capture_output=True, text=True)
+        assert "1 claims removed" in r.stdout, r.stdout
     print("retok_v2 ok")
 
 

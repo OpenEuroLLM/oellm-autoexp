@@ -123,10 +123,69 @@ def split_incomplete(b: bytes):
 _W = {}
 
 
+class Encoder:
+    """tokenizer-256k-v2-agent via GigaToken: texts -> (flat ids, ids per text). GigaToken runs ~7x slower with the
+    DeepSeek delimiters (full-width bar + U+2581) as user-defined pieces, so it encodes with
+    tokenizer_gigatoken.model (those slots unmatchable) and the text is cut at those delimiters here (longest
+    first, as SentencePiece matches user-defined pieces), their ids inserted -- SentencePiece's ids exactly."""
+
+    def __init__(self, tok_dir):
+        import gigatoken as gt
+        fast = os.path.join(tok_dir, "tokenizer_gigatoken.model")
+        split = os.path.join(tok_dir, "gigatoken_split.json")
+        self.tok = gt.Tokenizer.from_sentencepiece(fast if os.path.exists(fast) else
+                                                   os.path.join(tok_dir, "tokenizer.model"))
+        self.ids = json.load(open(split)) if os.path.exists(fast) else {}
+        self.rx = re.compile("|".join(re.escape(t) for t in sorted(self.ids, key=len, reverse=True))) \
+            if self.ids else None
+
+    def _gt(self, texts):
+        import awkward as ak
+        r = self.tok.encode_batch(texts, parallel=False)
+        return np.asarray(ak.to_numpy(ak.flatten(r)), np.int32), np.asarray(ak.to_numpy(ak.num(r)), np.int64)
+
+    def __call__(self, texts):
+        if not texts:
+            return np.zeros(0, np.int32), np.zeros(0, np.int64)
+        hit = [i for i, t in enumerate(texts) if self.rx is not None and "｜" in t and self.rx.search(t)]
+        if not hit:
+            return self._gt(texts)
+        segs, plan = [], {}
+        for i in hit:                                  # text -> [segment index | -(delimiter id) - 1]
+            t, pos, parts = texts[i], 0, []
+            for m in self.rx.finditer(t):
+                if m.start() > pos:
+                    parts.append(len(segs))
+                    segs.append(t[pos:m.start()])
+                parts.append(-self.ids[m.group()] - 1)
+                pos = m.end()
+            if pos < len(t):
+                parts.append(len(segs))
+                segs.append(t[pos:])
+            plan[i] = parts
+        hit_set = set(hit)
+        rest = [t for i, t in enumerate(texts) if i not in hit_set]
+        flat_r, cnt_r = self._gt(rest)
+        flat_s, cnt_s = self._gt(segs) if segs else (np.zeros(0, np.int32), np.zeros(0, np.int64))
+        off_r = np.concatenate([[0], np.cumsum(cnt_r)])
+        off_s = np.concatenate([[0], np.cumsum(cnt_s)])
+        out, cnt, j = [], np.empty(len(texts), np.int64), 0
+        for i in range(len(texts)):
+            if i in hit_set:
+                pieces = [flat_s[off_s[k]:off_s[k + 1]] if k >= 0 else np.array([-k - 1], np.int32)
+                          for k in plan[i]]
+                x = np.concatenate(pieces) if pieces else np.zeros(0, np.int32)
+            else:
+                x = flat_r[off_r[j]:off_r[j + 1]]
+                j += 1
+            out.append(x)
+            cnt[i] = len(x)
+        return np.concatenate(out), cnt
+
+
 def _worker_init():
-    import gigatoken as gt
     _W["dec"] = Decoder(OLD_TOK)
-    _W["enc"] = gt.Tokenizer.from_sentencepiece(os.path.join(NEW_TOK, "tokenizer.model"))
+    _W["enc"] = Encoder(NEW_TOK)
 
 
 def _shard(prefix):
@@ -166,12 +225,13 @@ def retok_unit(task):
                     parts.append(("c", int(ids[c])))
                 lo = c + 1
             layout.append(parts)
-    enc_ids = enc.encode_batch(texts, parallel=False) if texts else []
+    flat, cnt = enc(texts)
+    off = np.concatenate([[0], np.cumsum(cnt)])
     out, lens = [], np.empty(len(layout), np.int32)
     for i, parts in enumerate(layout):                # (a running count: re-summing `out` was quadratic)
         n = 0
         for kind, v in parts:
-            x = np.asarray(enc_ids[v], np.int32) if kind == "t" else np.array([v], np.int32)
+            x = flat[off[v]:off[v + 1]] if kind == "t" else np.array([v], np.int32)
             out.append(x)
             n += len(x)
         lens[i] = n
@@ -259,6 +319,75 @@ def cmd_run(a):
     print(f"[tok2 part {part}] done: {done_tok / 1e9:.1f}B tokens in {(time.time() - t0) / 60:.1f} min", flush=True)
 
 
+def finish_shard(src, out, lens_list, n_in, n_out, t0, old, new):
+    src_idx = Index(src + ".idx")
+    lens_all = np.concatenate(lens_list) if lens_list else np.zeros(0, np.int32)
+    assert len(lens_all) == src_idx.seq_count, (src, len(lens_all), src_idx.seq_count)
+    write_index(out + ".idx", lens_all, np.asarray(src_idx.doc_idx))
+    os.replace(out + ".bin.tmp", out + ".bin")
+    rec = {"source": src, "old_tokenizer": old, "new_tokenizer": new, "sequences": int(src_idx.seq_count),
+           "documents": int(src_idx.doc_count - 1), "tokens_old": n_in, "tokens_new": n_out,
+           "seconds": round(time.time() - t0, 1), "host": os.uname().nodename}
+    json.dump(rec, open(out + ".tok2.json", "w"), indent=1)
+
+
+def cmd_claim(a):
+    """Any number of nodes, joining at any time: each takes the next unfinished, unclaimed shard (largest first)
+    via an exclusive <out>.claim file and runs its units on all its workers."""
+    shards = []
+    for line in open(a.list):
+        line = line.split("#")[0].strip()
+        if line:
+            src = line.split()[0]
+            rel = os.path.relpath(src, a.data_root)
+            assert not rel.startswith(".."), src
+            shards.append((os.stat(src + ".bin").st_size, src, os.path.join(a.out, rel)))
+    shards.sort(key=lambda x: -x[0])
+    me = f"{os.uname().nodename} job {os.environ.get('SLURM_JOB_ID', '-')} step {os.environ.get('SLURM_STEP_ID', '-')}"
+    t0, done_tok, n_sh = time.time(), 0, 0
+    print(f"[tok2 {os.uname().nodename}] {len(shards)} shards in the list, {a.workers} workers", flush=True)
+    with Pool(a.workers, initializer=_worker_init) as pool:
+        for _, src, out in shards:
+            if os.path.exists(out + ".tok2.json"):
+                continue
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            try:
+                fd = os.open(out + ".claim", os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                continue
+            os.write(fd, f"{me} {time.strftime('%F %T')}\n".encode())
+            os.close(fd)
+            units, _ = units_of(src, a.unit_tokens)
+            ts, lens_l, n_in, n_out = time.time(), [], 0, 0
+            with open(out + ".bin.tmp", "wb") as f:
+                for _, _, _, lens, toks, ni in pool.imap(retok_unit, [(src, d0, d1) for d0, d1 in units], chunksize=1):
+                    f.write(toks.tobytes())
+                    lens_l.append(lens)
+                    n_in += ni
+                    n_out += len(toks)
+            finish_shard(src, out, lens_l, n_in, n_out, ts, OLD_TOK, NEW_TOK)
+            done_tok += n_in
+            n_sh += 1
+            el = time.time() - t0
+            print(f"[tok2 {os.uname().nodename}] {os.path.relpath(out, a.out)}: {n_in / 1e9:.2f}B -> {n_out / 1e9:.2f}B "
+                  f"({n_out / max(n_in, 1):.3f}x) in {time.time() - ts:.0f}s | node total {done_tok / 1e9:.1f}B in "
+                  f"{el / 60:.1f} min = {done_tok / el / 1e6:.1f}M tok/s", flush=True)
+    print(f"[tok2 {os.uname().nodename}] done: {n_sh} shards, {done_tok / 1e9:.1f}B tokens in "
+          f"{(time.time() - t0) / 60:.1f} min (no unclaimed shard left)", flush=True)
+
+
+def cmd_unclaim(a):
+    """Remove the claims of unfinished shards (after a node died / was preempted), then relaunch."""
+    n = 0
+    for dp, _, fn in os.walk(a.out):
+        for f in fn:
+            if f.endswith(".claim") and not os.path.exists(os.path.join(dp, f[:-6] + ".tok2.json")):
+                print("unclaim", os.path.join(dp, f), open(os.path.join(dp, f)).read().strip())
+                os.remove(os.path.join(dp, f))
+                n += 1
+    print(f"{n} claims removed")
+
+
 def cmd_check(a):
     import gigatoken  # noqa: F401  (the same environment as run)
     plan = json.load(open(a.plan))
@@ -298,7 +427,7 @@ def cmd_check(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=["plan", "run", "check"])
+    ap.add_argument("mode", choices=["plan", "run", "claim", "unclaim", "check"])
     ap.add_argument("--list", help="plan: shard prefixes ('prefix [rel]' per line)")
     ap.add_argument("--data-root", default="/gpfs/projects/ehpc533/users/korbip/data")
     ap.add_argument("--out", help="plan: the new tree's root")
@@ -311,7 +440,8 @@ def main():
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--sample", type=int, default=50)
     a = ap.parse_args()
-    sys.exit({"plan": cmd_plan, "run": cmd_run, "check": cmd_check}[a.mode](a) or 0)
+    sys.exit({"plan": cmd_plan, "run": cmd_run, "claim": cmd_claim, "unclaim": cmd_unclaim,
+              "check": cmd_check}[a.mode](a) or 0)
 
 
 if __name__ == "__main__":
