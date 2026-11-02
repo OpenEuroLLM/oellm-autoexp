@@ -3,10 +3,10 @@
 	url = https://github.com/OpenEuroLLM/NVIDIA-Megatron-LM.git
 [submodule "submodules/titan-oellm"]
 	path = submodules/titan-oellm
-	url = git@github.com:OpenEuroLLM/titan-oellm.git
+	url = https://github.com/OpenEuroLLM/titan-oellm.git
 [submodule "submodules/oellm_evals"]
 	path = submodules/oellm_evals
-	url = git@github.com:OpenEuroLLM/oellm-evals.git
+	url = https://github.com/OpenEuroLLM/oellm-evals.git
 [submodule "submodules/Megatron-Bridge"]
 	path = submodules/Megatron-Bridge
-	url = git@github.com:NVIDIA-NeMo/Megatron-Bridge.git
+	url = https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
