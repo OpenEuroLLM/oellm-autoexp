@@ -1,0 +1,61 @@
+# @package _global_
+# FLAG evals (config/eval_tasks/flag_evals.yaml, the JUPITER suite of oellm_32b_dense) on
+# MareNostrum 5, lm-eval rows on vLLM: one node per shard, ONE engine per node (TP 4 + EP), the
+# shard's rows in sequence (scripts/korbi/flag_eval/run_flag_mn5.sh -> flag_lmeval.py).
+# Results: <aux.out>/<export name>[_limit<l>]/{results,done,summary_shard<i>.tsv}.
+#
+#   pool (buffer nodes of a host):
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/<pool> \
+#       --config-name experiments/korbi/production/flag_eval_mn5 aux.export=q35c_gqa_59600 --yes
+#   dev queue test (one node, 20 documents per row):
+#   scripts/korbi/mn5_autoexp_bg.sh flagtest scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/flag_eval_mn5 aux.export=q35c_gqa_10000 \
+#       aux.dev_queue=true 'aux.shards=[0]' aux.num_shards=1 aux.limit=20 aux.name_suffix=_test --yes
+#
+# The default subset (aux.flag_names, 21 rows): English MC (arc, hellaswag, piqa, winogrande,
+# boolq, mmlu), German / multilingual MC (arc_mt, hellaswag_de, global_mmlu, belebele, sib200,
+# global_piqa, include, xcsqa), generation (gsm8k, global_mgsm, polymath, ifeval, mbpp),
+# lambada, multiblimp. Any lm-eval row of the suite by name (half/task/n_shot), space-separated.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  export: ???                 # a directory in export_root
+  export_root: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  export_dir: ${aux.export_root}/${aux.export}
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals
+  flag_names: >-
+    vllm/arc_challenge/25 vllm/hellaswag/0 vllm/piqa/10 vllm/winogrande/0 vllm/boolq/10 vllm/mmlu/5
+    vllm/arc_challenge_mt_de/25 vllm/hellaswag_de/0 vllm/global_mmlu_full_de/5 vllm/belebele_deu_Latn/5
+    vllm/sib200_deu_Latn/0 vllm/global_piqa_completions_deu_latn/0 vllm/include_base_44_german/0
+    vllm/xcsqa_deu_Latn/0 vllm/gsm8k/4 vllm/global_mgsm_de/5 vllm/polymath_en_low/0 vllm/ifeval/0
+    vllm/mbpp/3 vllm/lambada_openai/0 vllm/multiblimp_deu/0
+  shards: [0, 1, 2, 3]
+  num_shards: 4
+  shard: 0
+  limit: ""                   # test runs: documents per row
+  name_suffix: ""             # e.g. _test for a dev-queue run
+  name: flag_${aux.export}_s${aux.shard}of${aux.num_shards}${aux.name_suffix}
+  bench: "bash scripts/korbi/flag_eval/run_flag_mn5.sh ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} '${aux.limit}' ${aux.flag_names}"
+
+job:
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_evals/logs/${aux.name}"
+  est_step_time_s: 7200
+  array_group: null
+  metadata:
+    pool_priority: 30
+
+slurm:
+  sbatch:
+    time: ${oc.if:${aux.dev_queue},"02:00:00","04:00:00"}
+    qos: ${oc.if:${aux.dev_queue},acc_debug,acc_xehpc}
+    account: ehpc533
+
+sweep:
+  type: product
+  groups:
+    - type: product
+      params:
+        aux.shard: ${aux.shards}
