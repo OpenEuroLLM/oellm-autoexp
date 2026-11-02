@@ -693,7 +693,12 @@ class MonitorLoop:
     ) -> str:
         """Count consecutive values below ``threshold_below`` and fire once the streak reaches
         ``threshold_consecutive``. State per event in ``runtime.condition_state``; a new log
-        path (a new run) starts it over, so warm-up skipping applies to every run."""
+        path (a new run) starts it over, so warm-up skipping applies to every run.
+
+        Only the streak as it stands at the NEWEST value counts: a streak that already ended
+        inside ``new_text`` never fires. A monitor catching up on a backlog (restarted after a
+        login-node outage) must not act on a slow phase the run has since left -- that released
+        a healthy 1950 tok/s run on 2026-11-02 for a slow stretch two hours earlier."""
         import re
 
         if event_cfg.threshold_below <= 0 or not new_text:
@@ -703,18 +708,19 @@ class MonitorLoop:
         state = runtime.condition_state.get(key) or {}
         if state.get("log") != str(log_path):
             state = {"log": str(log_path), "seen": 0, "streak": 0}
-        effect = "continue"
+        value = None
         for m in re.finditer(event_cfg.pattern, new_text):
             try:
-                value = float(m.group(event_cfg.threshold_group))
+                v = float(m.group(event_cfg.threshold_group))
             except (IndexError, ValueError):
                 continue
             state["seen"] += 1
             if state["seen"] <= event_cfg.threshold_skip_first:
                 continue
-            state["streak"] = state["streak"] + 1 if value < event_cfg.threshold_below else 0
-            if state["streak"] < event_cfg.threshold_consecutive:
-                continue
+            value = v
+            state["streak"] = state["streak"] + 1 if v < event_cfg.threshold_below else 0
+        effect = "continue"
+        if value is not None and state["streak"] >= event_cfg.threshold_consecutive:
             state["streak"] = 0
             action_id = f"log:{event_cfg.name}:{idx}"
             action_state = runtime.action_state.get(action_id, {})
@@ -747,8 +753,6 @@ class MonitorLoop:
                 result = action.execute(self._action_context(event, job))
                 self._update_action_state(job, action_id, result)
                 effect = self._handle_action_result(job, result)
-                if effect in ("finished", "cancelled", "restart"):
-                    break
         runtime.condition_state[key] = state
         return effect
 

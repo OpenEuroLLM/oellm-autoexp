@@ -409,6 +409,25 @@ def test_a_fast_value_resets_the_count(env):
     assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
 
 
+def test_a_slow_phase_that_ended_in_a_backlog_does_not_release(env):
+    # JUPITER 2026-11-02: the login nodes went down for 2 h; the restarted monitor read the whole
+    # backlog at once, found a slow stretch from mid-maintenance and released a host that was
+    # back at full speed. Only a streak still running at the newest value counts.
+    hid, rid, log = _running_with_guard(env)
+    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    log.write_text(
+        "".join(_throughput_line(v) for v in (300, 900))
+        + "".join(_throughput_line(1000) for _ in range(8))  # long slow phase ...
+        + "".join(_throughput_line(2500) for _ in range(3))  # ... over by now
+    )
+    env.poll()
+    assert not exit_file.exists()
+    with log.open("a") as fh:  # a slow phase that is still going does fire
+        fh.write("".join(_throughput_line(1000) for _ in range(5)))
+    env.poll()
+    assert exit_file.exists()
+
+
 def test_the_guard_is_off_at_zero(env):
     hid, rid, log = _running_with_guard(env, below=0.0)
     log.write_text("".join(_throughput_line(10) for _ in range(20)))
