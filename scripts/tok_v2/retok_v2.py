@@ -168,11 +168,13 @@ def retok_unit(task):
             layout.append(parts)
     enc_ids = enc.encode_batch(texts, parallel=False) if texts else []
     out, lens = [], np.empty(len(layout), np.int32)
-    for i, parts in enumerate(layout):
-        n0 = sum(len(x) for x in out)
+    for i, parts in enumerate(layout):                # (a running count: re-summing `out` was quadratic)
+        n = 0
         for kind, v in parts:
-            out.append(np.asarray(enc_ids[v], np.int32) if kind == "t" else np.array([v], np.int32))
-        lens[i] = sum(len(x) for x in out) - n0
+            x = np.asarray(enc_ids[v], np.int32) if kind == "t" else np.array([v], np.int32)
+            out.append(x)
+            n += len(x)
+        lens[i] = n
     toks = np.concatenate(out) if out else np.zeros(0, np.int32)
     return prefix, d0, d1, lens, toks, int(idx.lengths[int(di[d0]):int(di[d1])].astype(np.int64).sum())
 
@@ -301,7 +303,7 @@ def main():
     ap.add_argument("--data-root", default="/gpfs/projects/ehpc533/users/korbip/data")
     ap.add_argument("--out", help="plan: the new tree's root")
     ap.add_argument("--parts", type=int, default=4)
-    ap.add_argument("--unit-tokens", type=int, default=64 << 20)
+    ap.add_argument("--unit-tokens", type=int, default=16 << 20)
     ap.add_argument("--plan")
     ap.add_argument("--part", type=int, default=0)
     ap.add_argument("--parts-of", default="", help="run: comma-separated plan parts, indexed by SLURM_NODEID")
