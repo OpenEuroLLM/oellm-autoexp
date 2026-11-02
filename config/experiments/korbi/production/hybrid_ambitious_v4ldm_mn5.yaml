@@ -12,7 +12,7 @@
 #   arch metrics every 50 steps (LDM per site, pab, gates): the run is meant to be read closely
 defaults:
   - hybrid_ambitious_pab_128_mn5
-  - curriculum_8k64k_mn5
+  - curriculum_8k64k_opt81_mn5  # option8_1 mix since 2026-11-02 (user: continue, no restart)
   - _self_
 
 aux:

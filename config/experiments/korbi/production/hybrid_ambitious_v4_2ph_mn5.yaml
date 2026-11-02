@@ -9,7 +9,7 @@
 #       --config-name experiments/korbi/production/hybrid_ambitious_v4_2ph_mn5 --yes [aux.only=[p1]]
 defaults:
   - hybrid_ambitious_v4_mn5
-  - curriculum_8k64k_mn5
+  - curriculum_8k64k_opt81_mn5  # option8_1 mix since 2026-11-02 (user: continue, no restart)
   - _self_
 
 aux:

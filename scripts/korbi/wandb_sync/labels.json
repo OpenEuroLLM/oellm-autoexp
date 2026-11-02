@@ -223,9 +223,10 @@
    "8k-64k",
    "bias_globalaux",
    "pab",
-   "no_emb_router_wd"
+   "no_emb_router_wd",
+   "opt81"
   ],
-  "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets."
+  "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets; option8_1 data mix (opt81) from step ~100 on, resumed in place (user 2026-11-02)."
  },
  "ambitious_v4_ldm_main": {
   "name": "ambitious_v4_ldm",
@@ -237,8 +238,9 @@
    "qb_ema0_globalaux",
    "pab",
    "embedding_norm",
-   "no_emb_router_wd"
+   "no_emb_router_wd",
+   "opt81"
   ],
-  "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding RMSNorm (front stream at rms ~1), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum."
+  "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding RMSNorm (front stream at rms ~1), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum; option8_1 data mix (opt81) from step 0 on, resumed in place (user 2026-11-02)."
  }
 }
