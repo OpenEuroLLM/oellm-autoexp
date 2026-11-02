@@ -38,6 +38,10 @@ aux:
   phase: save
   nodes: 4
   gbs: 128
+  # the base's seq-length curriculum names its data mix by aux.phase (stage1..3), which this test
+  # uses for save / resume: pin the 16k stage and shape the test was written for (2026-11-02)
+  seq: 16384
+  stage_datamix: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/datamix_v8ml_stage2_mn5.txt
   dev_queue: true
   only: []
 
@@ -53,6 +57,12 @@ backend:
     MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/opt_state/dump
   megatron:
     num_experts: 32
+    micro_batch_size: 4
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    validation_set_names: null
     engram_table_size: 811683
     train_iters: 40
     exit_interval: 30
