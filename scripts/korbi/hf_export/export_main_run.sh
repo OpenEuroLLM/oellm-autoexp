@@ -2,7 +2,9 @@
 # HF export of a main-run checkpoint, then the conversion checks: the convert stage of an
 # export -> eval chain (config/experiments/korbi/production/hf_export_mn5.yaml runs it).
 #
-#   export_main_run.sh <ambitious|conservative> <step> [<export root>]
+#   export_main_run.sh <ambitious|ambitious_v4|ambitious_v4_ldm|conservative> <step> [<export root>]
+#   EXPERT_DTYPE=fp8: the ambitious runs' routed experts as the run's fsdp_fp8_param_gather tiles (E4M3,
+#   1 x 128 fp32 scales), the export named <name>_<step>_fp8
 #
 # - checkpoint: <run>/ckpt_eval/iter_N, else ckpt/, else ckpt_rolling/ (link it into ckpt_eval
 #   first via scripts/korbi/eval_marks/marks.tsv when it is a rolling one)
@@ -18,15 +20,25 @@ model=$1; step=$2
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
 D=/gpfs/projects/ehpc533/users/korbip/data
 E=${3:-$R/hf_exports}
+expert_dtype=${EXPERT_DTYPE:-bf16}
+# the ambitious runs' Engram tables (80 GB each in bf16) stay in host memory when scoring
+amb_score="--gpu-mem-gib 54 --engram-tables-cpu"
 case $model in
-  ambitious)    run=$R/production/main_ldm/ambitious_e360_eng80_v3; name=ambitious_v3
-                exporter=export_ambitious; valid=$D/v8ml-valid
-                # v3's Engram tables (80 GB each in bf16) stay in host memory
-                score_args="--gpu-mem-gib 54 --engram-tables-cpu" ;;
-  conservative) run=$R/q35_conservative/main_gqa/main; name=q35c_gqa
-                exporter=export_q35; valid=$D/v8ml-valid-basetok; score_args="" ;;
+  ambitious)        run=$R/production/main_ldm/ambitious_e360_eng80_v3; name=ambitious_v3
+                    exporter=export_ambitious; score_args=$amb_score ;;
+  ambitious_v4)     run=$R/production/main_mhc4/ambitious_e360_eng80_v4_2ph; name=ambitious_v4_2ph
+                    exporter=export_ambitious; score_args=$amb_score ;;
+  ambitious_v4_ldm) run=$R/production/main_ldm/ambitious_e360_eng80_v4_ldm; name=ambitious_v4_ldm
+                    exporter=export_ambitious; score_args=$amb_score ;;
+  conservative)     run=$R/q35_conservative/main_gqa/main; name=q35c_gqa
+                    exporter=export_q35; score_args="" ;;
   *) echo "unknown model $model" >&2; exit 2 ;;
 esac
+export_args=""
+if [ "$expert_dtype" = fp8 ]; then
+  [ "$exporter" = export_ambitious ] || { echo "fp8 experts: the ambitious runs only" >&2; exit 2; }
+  export_args="--expert-dtype fp8"; name=${name}_fp8
+fi
 it=$(printf 'iter_%07d' "$step")
 ckpt=""
 for sub in ckpt_eval ckpt ckpt_rolling; do
@@ -40,11 +52,18 @@ from oellm_autoexp.hf_export.export_q35 import megatron_args
 print(megatron_args(sys.argv[1])["tokenizer_model"])
 PY
 )
+# the fixed validation sets in the run's own tokenization
+case $(basename "$tok") in
+  tokenizer-256k-agent) valid=$D/v8ml-valid ;;
+  tokenizer-256k)       valid=$D/v8ml-valid-basetok ;;
+  *) echo "no validation set in the tokenization of $tok" >&2; exit 2 ;;
+esac
 out=$E/${name}_${step}
 echo "[export_main_run] $model step $step: $ckpt, config $config, tokenizer $tok -> $out"
 if [ ! -f "$out/.export_done" ]; then
   rm -rf "$out"
-  python -m oellm_autoexp.hf_export.$exporter --ckpt-dir "$ckpt" --config "$config" --out-dir "$out" --tokenizer "$tok"
+  # shellcheck disable=SC2086
+  python -m oellm_autoexp.hf_export.$exporter --ckpt-dir "$ckpt" --config "$config" --out-dir "$out" --tokenizer "$tok" $export_args
   touch "$out/.export_done"
 fi
 if [ ! -f "$out/.check_done" ]; then

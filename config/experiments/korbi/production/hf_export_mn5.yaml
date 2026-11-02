@@ -5,16 +5,17 @@
 #
 #   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
 #       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/<pool> \
-#       --config-name experiments/korbi/production/hf_export_mn5 aux.model=ambitious aux.step=1400 --yes
+#       --config-name experiments/korbi/production/hf_export_mn5 aux.model=ambitious_v4 aux.step=1000 aux.expert_dtype=fp8 --yes
 defaults:
   - ../hybrid_speed/kernel_tests_mn5
   - _self_
 
 aux:
-  model: ambitious     # ambitious | conservative
+  model: ambitious     # ambitious (v3) | ambitious_v4 (v4_2ph) | ambitious_v4_ldm | conservative
   step: ???
-  name: hf_export_${aux.model}_${aux.step}
-  bench: "bash scripts/korbi/hf_export/export_main_run.sh ${aux.model} ${aux.step}"
+  expert_dtype: bf16   # bf16 | fp8 (the ambitious runs: the run's fsdp_fp8_param_gather tiles)
+  name: hf_export_${aux.model}_${aux.step}_${aux.expert_dtype}
+  bench: "EXPERT_DTYPE=${aux.expert_dtype} bash scripts/korbi/hf_export/export_main_run.sh ${aux.model} ${aux.step}"
 
 backend:
   env:

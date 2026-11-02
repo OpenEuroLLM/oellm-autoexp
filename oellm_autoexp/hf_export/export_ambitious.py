@@ -78,6 +78,25 @@ def engram_sign_table_np(m: dict) -> np.ndarray:
     return (2.0 * bits - 1.0).astype(np.float32)
 
 
+FP8_BLOCK = 128
+FP8_MAX = 448.0  # E4M3 (float8_e4m3fn) largest finite value
+
+
+def fp8_tiles(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Megatron's fsdp_fp8_param_gather quantization of a bf16 weight (fp8_param_gather.quantize_pack):
+    1 x 128 tiles along the last dim, scale = amax / 448 (1 for an all-zero tile), E4M3 of
+    clamp(w / scale). The gathered shards' tiles are these rows' tiles: every expert tensor and every
+    rank shard starts at a multiple of 128 elements, and the rows (2048 / 768) are multiples of 128.
+    Returns (E4M3 bytes as uint8, fp32 scales [..., last / 128])."""
+    if w.dtype != torch.bfloat16 or w.shape[-1] % FP8_BLOCK:
+        raise ValueError(f"expects bf16 rows of a multiple of {FP8_BLOCK}, got {w.dtype} {tuple(w.shape)}")
+    xb = w.float().reshape(-1, FP8_BLOCK)
+    amax = xb.abs().amax(dim=1, keepdim=True)
+    scale = torch.where(amax > 0, amax / FP8_MAX, torch.ones_like(amax))
+    q = (xb / scale).clamp_(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn).view(torch.uint8)
+    return q.view(w.shape), scale.view(*w.shape[:-1], w.shape[-1] // FP8_BLOCK)
+
+
 def _balancing(m: dict) -> str:
     lb = m.get("moe_router_load_balancing_type")
     types = lb if isinstance(lb, (list, tuple)) else [lb]
@@ -108,6 +127,8 @@ def hf_config(m: dict, vocab: int) -> dict:
         raise ValueError("gated shared expert not ported")
     if m.get("position_embedding_type") not in (None, "none"):
         raise ValueError("expects NoPE attention")
+    if m.get("use_mup"):
+        raise ValueError("muP embedding / output scaling not ported")
     if m.get("linear_xsa"):
         raise ValueError("linear XSA in CKDA not ported")
     heads = m["num_attention_heads"]
@@ -167,13 +188,15 @@ def hf_config(m: dict, vocab: int) -> dict:
         "engram_sign_hash": sign,
         "engram_sign_table_size": int(m.get("engram_sign_table_size", 8192)),
         "engram_sign_multipliers": {str(i): engram_sign_multipliers(m, i + 1) for i in engram_layers} if sign else {},
+        "embedding_multiplier": float(m.get("embedding_multiplier") or 1.0),
+        "embedding_norm": bool(m.get("embedding_norm")),
         "tie_word_embeddings": not m.get("untie_embeddings_and_output_weights", False),
         "torch_dtype": "bfloat16",
     }
 
 
 def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | None, dtype: str = "bf16",
-            engram_table_dtype: str = "bf16") -> Path:
+            engram_table_dtype: str = "bf16", expert_dtype: str = "bf16") -> Path:
     m = megatron_args(config_yaml)
     cast = {"bf16": torch.bfloat16, "fp32": torch.float32}[dtype]
     tcast = {"bf16": torch.bfloat16, "fp32": torch.float32}[engram_table_dtype]
@@ -185,7 +208,12 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             vocab = t["embedding.word_embeddings.weight"].shape[0]
             cfg = hf_config(m, vocab)
             cfg["engram_table_dtype"] = engram_table_dtype
+            cfg["expert_weight_dtype"] = expert_dtype
+            if expert_dtype == "fp8" and dtype != "bf16":
+                raise ValueError("fp8 experts are the bf16 weights' tiles: --dtype bf16")
             writer.add("model.embed_tokens.weight", t.pop("embedding.word_embeddings.weight").to(cast))
+            if cfg["embedding_norm"]:
+                writer.add("model.embed_norm", t.pop("embedding.embedding_norm_weight").to(cast))
             if cfg["residual"] == "ldm":  # the embedding write and the first query
                 for site in ("embed_write", "first_query"):
                     names = _LDM_NET + (("forget_logit",) if site == "embed_write" else ("read_gain",))
@@ -232,9 +260,18 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
                 writer.add(hp + "mixer.e_score_correction_bias", g("mlp.router.expert_bias").float())
             gate = stack_experts(t, p + "mlp.experts.linear_fc1.weight", "_w")
             up = stack_experts(t, p + "mlp.experts.linear_fc1.weight", "_v")
-            writer.add(hp + "mixer.gate_up_proj", torch.cat([gate, up], dim=1).to(cast))
+            # Megatron's linear_fc1 rows: gate then up, as here
+            experts = {"gate_up_proj": torch.cat([gate, up], dim=1).to(cast)}
             del gate, up
-            writer.add(hp + "mixer.down_proj", stack_experts(t, p + "mlp.experts.linear_fc2.weight").to(cast))
+            experts["down_proj"] = stack_experts(t, p + "mlp.experts.linear_fc2.weight").to(cast)
+            for n, w in experts.items():
+                if expert_dtype == "fp8":
+                    q, sc = fp8_tiles(w)
+                    writer.add(hp + f"mixer.{n}", q)
+                    writer.add(hp + f"mixer.{n}_scale", sc)
+                else:
+                    writer.add(hp + f"mixer.{n}", w)
+            del experts
             if cfg["shared_expert_intermediate_size"]:
                 writer.add(hp + "mixer.shared_gate_proj.weight", g("mlp.shared_experts.linear_fc1.weight_w").to(cast))
                 writer.add(hp + "mixer.shared_up_proj.weight", g("mlp.shared_experts.linear_fc1.weight_v").to(cast))
@@ -292,9 +329,11 @@ def main() -> None:
     p.add_argument("--tokenizer", type=Path)
     p.add_argument("--dtype", default="bf16", choices=["bf16", "fp32"])
     p.add_argument("--engram-table-dtype", default="bf16", choices=["bf16", "fp32"])
+    p.add_argument("--expert-dtype", default="bf16", choices=["bf16", "fp8"],
+                   help="routed experts; fp8 = the run's fsdp_fp8_param_gather tiles (E4M3, 1 x 128 fp32 scales)")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    convert(a.ckpt_dir, a.config, a.out_dir, a.tokenizer, a.dtype, a.engram_table_dtype)
+    convert(a.ckpt_dir, a.config, a.out_dir, a.tokenizer, a.dtype, a.engram_table_dtype, a.expert_dtype)
 
 
 if __name__ == "__main__":

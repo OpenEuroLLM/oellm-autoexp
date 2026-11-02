@@ -275,12 +275,43 @@ class OellmMoE(nn.Module):
             self.register_buffer("qb_beta", torch.zeros(e, dtype=torch.float32))
         else:
             self.register_buffer("e_score_correction_bias", torch.zeros(e, dtype=torch.float32))
-        self.gate_up_proj = nn.Parameter(torch.zeros(e, 2 * i, h))
-        self.down_proj = nn.Parameter(torch.zeros(e, h, i))
+        self.fp8 = getattr(config, "expert_weight_dtype", "bf16") == "fp8"
+        if self.fp8:  # E4M3 bytes + one fp32 scale per `block` elements of a row, dequantized per use
+            self.block = int(config.expert_scale_block)
+            self.register_buffer("gate_up_proj", torch.zeros(e, 2 * i, h, dtype=torch.uint8))
+            self.register_buffer("gate_up_proj_scale", torch.ones(e, 2 * i, h // self.block, dtype=torch.float32))
+            self.register_buffer("down_proj", torch.zeros(e, h, i, dtype=torch.uint8))
+            self.register_buffer("down_proj_scale", torch.ones(e, h, i // self.block, dtype=torch.float32))
+        else:
+            self.gate_up_proj = nn.Parameter(torch.zeros(e, 2 * i, h))
+            self.down_proj = nn.Parameter(torch.zeros(e, h, i))
         si = config.shared_expert_intermediate_size
         self.shared_gate_proj = nn.Linear(h, si, bias=False) if si else None
         self.shared_up_proj = nn.Linear(h, si, bias=False) if si else None
         self.shared_down_proj = nn.Linear(si, h, bias=False) if si else None
+
+    def _apply(self, fn, recurse=True):
+        """Keep the fp32 expert scales out of the model's dtype casts (device moves still apply)."""
+        if not self.fp8:
+            return super()._apply(fn, recurse)
+        held = [(n, self._buffers.pop(n)) for n in ("gate_up_proj_scale", "down_proj_scale")]
+        try:
+            super()._apply(fn, recurse)
+        finally:
+            dev = self.gate_up_proj.device
+            for n, t in held:
+                self._buffers[n] = t.to(dev) if t.device != dev else t
+        return self
+
+    def _expert(self, name: str, e: int, dtype: torch.dtype) -> torch.Tensor:
+        """Expert e's weight in the compute dtype; fp8: Megatron's dequantization (E4M3 -> fp32,
+        times the tile's fp32 scale, rounded once to bf16; fp8_param_gather.dequantize_unpack)."""
+        w = getattr(self, name)[e]
+        if not self.fp8:
+            return w
+        q = w.view(torch.float8_e4m3fn).float()
+        s = getattr(self, name + "_scale")[e].float()
+        return (q.view(*q.shape[:-1], -1, self.block) * s[..., None]).view(q.shape).to(torch.bfloat16).to(dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
@@ -298,8 +329,8 @@ class OellmMoE(nn.Module):
         out = torch.zeros_like(t)
         for e in torch.unique(idx).tolist():
             tok, slot = torch.where(idx == e)
-            g, u = F.linear(t[tok], self.gate_up_proj[e]).chunk(2, dim=-1)
-            y = F.linear(_swiglu(g, u, self.limit, self.expert_norm), self.down_proj[e])
+            g, u = F.linear(t[tok], self._expert("gate_up_proj", e, t.dtype)).chunk(2, dim=-1)
+            y = F.linear(_swiglu(g, u, self.limit, self.expert_norm), self._expert("down_proj", e, t.dtype))
             out.index_add_(0, tok, (y * w[tok, slot, None]).to(out.dtype))
         if self.shared_gate_proj is not None:
             out = out + self.shared_down_proj(
@@ -450,6 +481,9 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
     def __init__(self, config: OellmAmbitiousConfig) -> None:
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.embed_scale = float(getattr(config, "embedding_multiplier", 1.0))
+        # LanguageModelEmbedding.embedding_norm_weight: an fp32 RMSNorm of the (scaled) embedding output
+        self.embed_norm = nn.Parameter(torch.ones(config.hidden_size)) if getattr(config, "embedding_norm", False) else None
         self.ldm_boundary = OellmLDMBoundary(config) if config.residual == "ldm" else None
         self.layers = nn.ModuleList(OellmAmbitiousLayer(config, i) for i in range(config.num_hidden_layers))
         self.norm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, config.layernorm_zero_centered_gamma)
@@ -471,6 +505,10 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         if use_cache and past_key_values is None:
             past_key_values = OellmHybridCache(len(self.layers))
         x = self.embed_tokens(input_ids) if inputs_embeds is None else inputs_embeds
+        if self.embed_scale != 1.0:
+            x = x * self.embed_scale
+        if self.embed_norm is not None:
+            x = F.rms_norm(x.float(), (x.shape[-1],), self.embed_norm.float(), self.config.rms_norm_eps).to(x.dtype)
         b, s, _ = x.shape
         if attention_mask is not None and bool(attention_mask.all()):
             attention_mask = None

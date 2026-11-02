@@ -37,7 +37,8 @@ def _next_prime(n: int) -> int:
 
 
 def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, blocks: list | None = None,
-                head_dim: int = 64, token_map: bool = False) -> dict:
+                head_dim: int = 64, token_map: bool = False, embedding_norm: bool = False,
+                expert_fp8: bool = False) -> dict:
     h, vocab = 256, 1024
     orders, heads = [2, 3, 4], 2
     sizes, c = [], 997
@@ -72,6 +73,7 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
         "engram_token_map": token_map, "engram_gate_signed_sqrt": True, "engram_conv_prenorm": True,
         "engram_sign_hash": sign_hash, "engram_sign_table_size": 251,
         "engram_sign_multipliers": mult, "engram_table_dtype": "bf16",
+        "embedding_norm": embedding_norm, "expert_weight_dtype": "fp8" if expert_fp8 else "bf16",
         "tie_word_embeddings": False, "torch_dtype": "bfloat16",
         "bos_token_id": 1, "eos_token_id": 2, "pad_token_id": 2,
     }
@@ -90,7 +92,10 @@ def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
     from transformers import AutoConfig, AutoModelForCausalLM
 
     out.mkdir(parents=True, exist_ok=True)
-    (out / "config.json").write_text(json.dumps(tiny_config(**kw), indent=1))
+    tc = tiny_config(**kw)
+    fp8 = tc["expert_weight_dtype"] == "fp8"
+    # fp8 experts: a bf16 model is initialised, its experts quantized (export_ambitious.fp8_tiles)
+    (out / "config.json").write_text(json.dumps(dict(tc, expert_weight_dtype="bf16"), indent=1))
     _copy_code(out)
     cfg = AutoConfig.from_pretrained(out, trust_remote_code=True)
     torch.manual_seed(0)
@@ -99,7 +104,7 @@ def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
         for name, p in model.named_parameters():
             if name.endswith("forget_logit"):
                 p.uniform_(2.0, 5.0)
-            elif name.endswith(("norm_weight", "read_gain")) or "norm.weight" in name or name.endswith("layernorm.weight"):
+            elif name.endswith(("norm_weight", "read_gain", "embed_norm")) or "norm.weight" in name or name.endswith("layernorm.weight"):
                 p.uniform_(0.7, 1.3)
             elif name.endswith("A_log"):
                 p.uniform_(-1.0, 1.0)
@@ -122,6 +127,19 @@ def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
                 b.normal_(0.0, 0.1)
             elif name.endswith("token_map"):
                 b.copy_(torch.randperm(b.numel()))
+    if fp8:
+        from .export_ambitious import fp8_tiles
+
+        sd = {}
+        for k, v in model.state_dict().items():
+            if k.endswith(("mixer.gate_up_proj", "mixer.down_proj")):
+                sd[k], sd[k + "_scale"] = fp8_tiles(v.to(torch.bfloat16))
+            else:
+                sd[k] = v
+        (out / "config.json").write_text(json.dumps(tc, indent=1))
+        cfg = AutoConfig.from_pretrained(out, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, dtype=torch.bfloat16)
+        model.load_state_dict(sd, strict=True)
     model.save_pretrained(out, safe_serialization=True)
     _copy_code(out)
     return out
@@ -293,7 +311,12 @@ def main() -> None:
         return
     if a.cmd == "tiny":
         variants = {"mhc_bias": dict(residual="mhc", sign_hash=False, quantile=False, pab=False),
-                    "ldm_qb_pab_sign": dict(residual="ldm", sign_hash=True, quantile=True, pab=True)}
+                    "ldm_qb_pab_sign": dict(residual="ldm", sign_hash=True, quantile=True, pab=True),
+                    # v4_ldm in small: + embedding_norm, and the experts as fp8 tiles
+                    "v4ldm_fp8": dict(residual="ldm", sign_hash=True, quantile=True, pab=True,
+                                      embedding_norm=True, expert_fp8=True),
+                    "mhc_bias_fp8": dict(residual="mhc", sign_hash=True, quantile=False, pab=True,
+                                         expert_fp8=True)}
         results = {}
         for name, kw in variants.items():
             d = build_tiny(Path(a.out) / name, **kw)
