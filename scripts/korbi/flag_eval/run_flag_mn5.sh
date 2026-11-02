@@ -14,6 +14,9 @@ export DEST=/tmp/pylibs_vllm_$SHA
 bash scripts/korbi/vllm/build_pylibs_vllm.sh
 export PYTHONPATH="$DEST:$PWD:$PWD/flash-linear-attention:$R/pylibs_flag"
 export VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL:-WARNING} VLLM_WORKER_MULTIPROC_METHOD=spawn
+# a row's first step compiles / autotunes the Triton kernels for its batch shapes: hellaswag's
+# first step (40k requests) passed vLLM's 300 s step timeout and killed the engine (2026-11-02)
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800}
 export HF_HOME=${FLAG_HF_HOME:-/gpfs/projects/ehpc533/users/korbip/data/flag_evals/hf_home}
 export HF_HUB_CACHE=$HF_HOME/hub HF_DATASETS_CACHE=$HF_HOME/datasets
 export HF_METRICS_CACHE=$HF_HOME/metrics/job_${SLURM_JOB_ID:-local}
