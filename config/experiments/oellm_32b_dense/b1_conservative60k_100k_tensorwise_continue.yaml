@@ -93,6 +93,15 @@ backend:
     # over the parameters/gradients plus a collective, paid on EVERY step otherwise); loss, lr,
     # grad norm and throughput stay at log_interval 5, the per-layer diagnostics at 100.
     log_params_norm_and_zeros_interval: 100
+    # DECONTAMINATED AGENTTROVE FROM 326513 (2026-11-02, resumed from iter 326512). Same mix file,
+    # same order: a symlink tree of the read-only cache (jj1/data_cache_link) in which only the
+    # agenttrove-0.0 train shuffle_index is replaced -- identical for the 7196168 agenttrove
+    # samples drawn before, then the old order minus every window touching one of the 4192
+    # documents absent from agenttrove-0.0-pure (60107 windows). All other datasets and the
+    # blend tables are the old files. scripts/korbi/agenttrove_pure_shuffle.py builds and
+    # verifies it; build.json in the directory records the switch. Do NOT rebuild it for a later
+    # iteration: it already holds the switch point.
+    data_cache_path: /e/scratch/e-ext-2025e02-108/oellm_32b_dense_b1/data_cache_agenttrove_pure
 
 sweep:
   type: list
