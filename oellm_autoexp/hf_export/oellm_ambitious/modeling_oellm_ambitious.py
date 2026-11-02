@@ -508,7 +508,9 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         if self.embed_scale != 1.0:
             x = x * self.embed_scale
         if self.embed_norm is not None:
-            x = F.rms_norm(x.float(), (x.shape[-1],), self.embed_norm.float(), self.config.rms_norm_eps).to(x.dtype)
+            # on the input's device: device maps (accelerate) place modules, not this bare gain
+            g = self.embed_norm.to(device=x.device, dtype=torch.float32)
+            x = F.rms_norm(x.float(), (x.shape[-1],), g, self.config.rms_norm_eps).to(x.dtype)
         b, s, _ = x.shape
         if attention_mask is not None and bool(attention_mask.all()):
             attention_mask = None
