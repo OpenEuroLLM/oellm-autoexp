@@ -477,13 +477,26 @@ class OellmAmbitiousPreTrainedModel(PreTrainedModel):
         return
 
 
+class OellmEmbedNorm(nn.Module):
+    """Megatron's embedding_norm: an fp32 RMSNorm of the embedding output with a learnable gain (a
+    module, so device maps place it)."""
+
+    def __init__(self, hidden: int, eps: float) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.rms_norm(x.float(), (x.shape[-1],), self.weight.float(), self.eps).to(x.dtype)
+
+
 class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
     def __init__(self, config: OellmAmbitiousConfig) -> None:
         super().__init__(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.embed_scale = float(getattr(config, "embedding_multiplier", 1.0))
         # LanguageModelEmbedding.embedding_norm_weight: an fp32 RMSNorm of the (scaled) embedding output
-        self.embed_norm = nn.Parameter(torch.ones(config.hidden_size)) if getattr(config, "embedding_norm", False) else None
+        self.embed_norm = OellmEmbedNorm(config.hidden_size, config.rms_norm_eps) if getattr(config, "embedding_norm", False) else None
         self.ldm_boundary = OellmLDMBoundary(config) if config.residual == "ldm" else None
         self.layers = nn.ModuleList(OellmAmbitiousLayer(config, i) for i in range(config.num_hidden_layers))
         self.norm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, config.layernorm_zero_centered_gamma)
@@ -508,9 +521,7 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         if self.embed_scale != 1.0:
             x = x * self.embed_scale
         if self.embed_norm is not None:
-            # on the input's device: device maps (accelerate) place modules, not this bare gain
-            g = self.embed_norm.to(device=x.device, dtype=torch.float32)
-            x = F.rms_norm(x.float(), (x.shape[-1],), g, self.config.rms_norm_eps).to(x.dtype)
+            x = self.embed_norm(x)
         b, s, _ = x.shape
         if attention_mask is not None and bool(attention_mask.all()):
             attention_mask = None

@@ -81,6 +81,9 @@ def layer_device_map(cfg, gib: float, engram_tables_cpu: bool = False) -> dict[s
     cap[n - 1] -= tail
     dmap["model.embed_tokens"] = 0
     used[0] += size(model.model.embed_tokens)
+    if getattr(model.model, "embed_norm", None) is not None:  # embedding_norm (v4_ldm)
+        dmap["model.embed_norm"] = 0
+        used[0] += size(model.model.embed_norm)
     if getattr(model.model, "ldm_boundary", None) is not None:  # LDM: the embedding write / first query
         dmap["model.ldm_boundary"] = 0
         used[0] += size(model.model.ldm_boundary)

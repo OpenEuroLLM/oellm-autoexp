@@ -213,7 +213,7 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
                 raise ValueError("fp8 experts are the bf16 weights' tiles: --dtype bf16")
             writer.add("model.embed_tokens.weight", t.pop("embedding.word_embeddings.weight").to(cast))
             if cfg["embedding_norm"]:
-                writer.add("model.embed_norm", t.pop("embedding.embedding_norm_weight").to(cast))
+                writer.add("model.embed_norm.weight", t.pop("embedding.embedding_norm_weight").to(cast))
             if cfg["residual"] == "ldm":  # the embedding write and the first query
                 for site in ("embed_write", "first_query"):
                     names = _LDM_NET + (("forget_logit",) if site == "embed_write" else ("read_gain",))

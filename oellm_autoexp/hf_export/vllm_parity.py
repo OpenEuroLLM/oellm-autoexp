@@ -104,7 +104,7 @@ def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
         for name, p in model.named_parameters():
             if name.endswith("forget_logit"):
                 p.uniform_(2.0, 5.0)
-            elif name.endswith(("norm_weight", "read_gain", "embed_norm")) or "norm.weight" in name or name.endswith("layernorm.weight"):
+            elif name.endswith(("norm_weight", "read_gain")) or "norm.weight" in name or name.endswith("layernorm.weight"):
                 p.uniform_(0.7, 1.3)
             elif name.endswith("A_log"):
                 p.uniform_(-1.0, 1.0)
