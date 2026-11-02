@@ -1,13 +1,16 @@
 # @package backend.megatron
 # The decontaminated "flag" mix (docs/flag_post_decontamination.md): flag-decon-v1 =
-# /gpfs/projects/ehpc533/training-data-collection/flag-decon-v1 -- the same 452 shards (symlinked .bin)
+# /gpfs/projects/ehpc533/users/korbip/data/flag-decon-v1 (moved out of training-data-collection by the
+# user 2026-11-02; its .bin are absolute symlinks into training-data-collection/flag, which stays) --
+# the same 452 shards (symlinked .bin)
 # with rewritten .idx files that leave out every document holding a benchmark item verbatim (longest
 # run >= 90 % of the item or >= 200 tokens; v4 references, 2026-10-24). Weights unchanged (datamix.txt).
 # Everything else as data_flag_mn5.yaml. NOTE: a different document count -> a different data order and
 # validation split than "flag": switch at a clean boundary, never inside a comparison.
-# Datamix file: python3 scripts/korbi/flag_datamix_mn5.py --root .../flag-decon-v1 \
-#     --out $HYBRID_ENV/data/flag_decon_v1_datamix_mn5.txt --require-complete
-data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v1_datamix_mn5.txt
+# Datamix file: python3 scripts/korbi/flag_datamix_mn5.py --root /gpfs/projects/ehpc533/users/korbip/data/flag-decon-v1 \
+#     --out $HYBRID_ENV/data/flag_decon_v1_users_datamix_mn5.txt --require-complete
+# (identical to the old flag_decon_v1_datamix_mn5.txt apart from the root: same shards, weights, order)
+data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_decon_v1_users_datamix_mn5.txt
 data_path: null
 split: "998,2,0"
 tokenizer_type: HuggingFaceTokenizer
