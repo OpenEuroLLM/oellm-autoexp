@@ -1,0 +1,68 @@
+# @package _global_
+#
+# Weak scaling of the pretrain_hybrid Qwen3.5-35B-A3B smoke
+# (qwen3.5_moe_35B_A3B_q35c_smoke): same pattern as the GPT schedule,
+# MoonEP, pipeline 1, Megatron-FSDP, micro-batch 4, sequence 4096.
+#
+# PP=1, so the data-parallel size is 4 * nodes. Expert parallelism stays
+# inside the node. Four micro-batches per GPU at every scale:
+#   GBS = 4 * 4 * 4 * nodes = 64 * nodes
+#   4 nodes -> 256, 8 -> 512, 16 -> 1024, 32 -> 2048, 64 -> 4096, 128 -> 8192
+# Each GPU therefore sees 16 sequences (16 * 4096 tokens) per step.
+# The 4-node MoonEP run at this batch was about 14.7 s and 83 TFLOP/s
+# (job 3834529). The time limit uses 18 s/step and does not shrink with nodes.
+#
+# FSDP sharding follows the parent: one ZeRO-3 group while nodes < 16, then
+# groups of 8 nodes (num_distributed_optimizer_instances = nodes // 8) with
+# the groups replicated. Four nodes is the smallest point that has fit;
+# memory there was about 0.92 full, and larger shard groups hold less per GPU.
+#
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/qwen3.5_moe_35B_A3B_q35c_weak_scaling --dry-run
+
+defaults:
+  - /experiments/swagatam/alps/qwen3.5_moe_35B_A3B_q35c_smoke
+  - _self_
+
+stage: q35c_weak_scaling
+
+aux:
+  # Flat across nodes. Measured ~14.7 s at 4 nodes, micro-batch 4, MoonEP.
+  step_time_s: 18
+  gas: 4
+  gpus_per_node: 4
+
+job:
+  name: "qwen3.5_35B_A3B_${stage}_GBS${backend.megatron.global_batch_size}_MBS${backend.megatron.micro_batch_size}_EP${backend.megatron.expert_model_parallel_size}_N${slurm.sbatch.nodes}_it${backend.megatron.train_iters}_clariden"
+  est_step_time_s: ${aux.step_time_s}
+  est_startup_min: 15
+
+backend:
+  megatron:
+    micro_batch_size: 4
+    # 64 * nodes. Resolved per sweep point, after slurm.sbatch.nodes is overridden.
+    global_batch_size: ${oc.eval:'${aux.gas} * ${backend.megatron.micro_batch_size} * ${aux.gpus_per_node} * ${slurm.sbatch.nodes} // (${backend.megatron.tensor_model_parallel_size} * ${backend.megatron.pipeline_model_parallel_size})'}
+    train_iters: 20
+    exit_interval: ${.train_iters}
+    lr_decay_iters: ${.train_iters}
+    log_interval: 1
+    wandb_project: qwen3.5_moe_35B_A3B_q35c_clariden_scaling
+  env:
+    WANDB_TAGS: "clariden,qwen3.5,35B-A3B,GDN,MoE,q35c,moonep,fsdp,weak-scaling,mock"
+
+slurm:
+  sbatch:
+    partition: normal
+    # 15 min startup + steps. Work per GPU is constant, so the limit does not shrink with nodes.
+    time: ${oc.slurmtime:${oc.eval:'int(900 + ${backend.megatron.train_iters} * ${aux.step_time_s} / 0.75)'}}
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - { slurm.sbatch.nodes: 4 }
+        - { slurm.sbatch.nodes: 8 }
+        - { slurm.sbatch.nodes: 16 }
+        - { slurm.sbatch.nodes: 32 }
+        - { slurm.sbatch.nodes: 64 }
+        - { slurm.sbatch.nodes: 128 }

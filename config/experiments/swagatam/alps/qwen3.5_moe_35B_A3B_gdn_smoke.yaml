@@ -1,0 +1,188 @@
+# @package _global_
+#
+# Clariden smoke of Qwen3.5-35B-A3B with Gated DeltaNet, inlined from
+# collab/moe-router-lumi:
+#   config/backend/megatron/qwen3.5_moe_35B_A3B.yaml
+#   config/experiments/risto/qwen3.5_moe_35B_A3B_gdn_smoke.yaml
+# That backend group is not on this branch, and its parent qwen3_moe there uses
+# norm_epsilon, which this schema calls layernorm_epsilon.
+#
+# Architecture: 40 layers, 3 Gated DeltaNet + 1 full attention (linear_attention_freq 4),
+# H=2048, 256 experts, top-8, one shared expert. HF reference:
+# https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/config.json
+#
+# 4 nodes x 4 GPU. TP=1, PP=2, EP=4. PP halves the layers on each GPU, which is
+# what cuts the 10.6B parameters per rank; EP=4 keeps the expert all-to-all on
+# NVLink. TP stays 1: expert tensor parallel is 1, so TP does not split expert
+# weights, and on 16 GPUs it would drop expert-DP to 1 (Adam unsharded).
+# LUMI's TP=2 PP=2 EP=8 used 64 GCDs, so it still had expert-DP 2.
+# MBS=1, GBS=16 (2 microbatches; data-parallel size is 8). Mock data. 10 iterations.
+# 4 nodes x 20 min stays inside the debug node-hour cap.
+#
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/qwen3.5_moe_35B_A3B_gdn_smoke --dry-run
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: clariden
+  - /slurm: clariden
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: gdn_smoke
+
+job:
+  name: "qwen3.5_35B_A3B_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}_N${slurm.sbatch.nodes}_clariden"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  data_integrity_check: false
+  megatron:
+    # --- model: Qwen3.5-35B-A3B text ---
+    num_layers: 40
+    hidden_size: 2048
+    ffn_hidden_size: 8192
+    num_attention_heads: 16
+    num_query_groups: 2
+    group_query_attention: true
+    kv_channels: 256
+    untie_embeddings_and_output_weights: true
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    add_qkv_bias: false
+    normalization: RMSNorm
+    layernorm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    attention_softmax_in_fp32: true
+    bf16: true
+    use_flash_attn: true
+    attention_backend: flash
+
+    # Partial RoPE: 64 of 256 channels. Fused RoPE is off; this pattern is interleaved.
+    position_embedding_type: rope
+    use_rotary_position_embeddings: true
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+    apply_rope_fusion: false
+
+    # 3x Gated DeltaNet + 1x full attention, repeated.
+    experimental_attention_variant: gated_delta_net
+    linear_attention_freq: 4
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 16
+    linear_num_value_heads: 32
+
+    # MoE: 256 routed experts, top-8, one shared expert. No MTP (the builder
+    # does not support it together with an experimental attention variant).
+    num_experts: 256
+    moe_ffn_hidden_size: 512
+    moe_shared_expert_intermediate_size: 512
+    moe_shared_expert_gate: true
+    moe_router_topk: 8
+    moe_router_load_balancing_type: global_aux_loss
+    moe_router_dtype: fp32
+    moe_router_pre_softmax: false
+    moe_aux_loss_coeff: 1.0e-3
+    moe_layer_freq: 1
+    moe_grouped_gemm: true
+    moe_token_dispatcher_type: alltoall
+    mtp_num_layers: null
+
+    # TE cross-entropy fusion asserts on the container this config came from.
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+
+    # --- data: mock, until the 256k tokenizer is on Alps ---
+    mock_data: true
+    tokenizer_type: NullTokenizer
+    vocab_size: 262144
+    data_args_path: null
+    per_split_data_args_path: null
+    data_path: null
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    seq_length: 4096
+    max_position_embeddings: 262144
+    num_workers: 2
+    encoder_seq_length: null
+    dataloader_type: cyclic
+    create_attention_mask_in_dataloader: false
+
+    micro_batch_size: 1
+    global_batch_size: 16
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 2
+    context_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 4
+    sequence_parallel: true
+    use_distributed_optimizer: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+    train_iters: 10
+    # exit_interval: 10
+    eval_iters: 0
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    lr: 1.0e-4
+    min_lr: 0.0
+    lr_warmup_iters: 2
+    lr_decay_style: constant
+
+    log_progress: false
+    log_throughput: true
+    log_interval: 1
+
+    wandb_project: qwen3.5_moe_35B_A3B_gdn_clariden
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 60
+    ckpt_format: torch_dist
+
+    aux:
+      model_name: "Qwen3.5-35B-A3B"
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    PATH: "/opt/venv/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
+    OMP_NUM_THREADS: "1"
+    WANDB_TAGS: "clariden,qwen3.5,35B-A3B,GDN,MoE,smoke,mock"
+  torchrun_args:
+    numa_binding: node
+    rdzv_backend: static
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    TRITON_HOME: /tmp/triton_cache
+  sbatch:
+    nodes: 4
+    partition: ${oc.env:SLURM_PARTITION,debug}
+    time: "00:20:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

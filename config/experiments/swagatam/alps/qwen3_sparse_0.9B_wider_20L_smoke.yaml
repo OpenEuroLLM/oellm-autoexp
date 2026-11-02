@@ -1,0 +1,191 @@
+# @package _global_
+#
+# Clariden (CSCS Alps, GH200) port of
+#   experiments/swagatam/mn5/qwen3_sparse_0.9B_wider_20L_smoke.yaml
+# Same 10B-A0.9B wider 20-layer Qwen3 MoE (20 layers, H=2048, moe FFN 1280, E64/K4),
+# on MOCK data with a 256k NullTokenizer until the tokenizer and data are on Alps.
+#
+# 1 node by default (EP4 on NVLink); 2 nodes: slurm.sbatch.nodes=2 (expert DP 2).
+# 50 iters, no checkpoints, debug partition.
+#
+# From the repo root on a Clariden login node:
+#   export OUTPUT_DIR=/capstor/scratch/cscs/$USER/autoexp PROJECT_DIR=$PWD
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/qwen3_sparse_0.9B_wider_20L_smoke --dry-run
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: clariden
+  - /slurm: clariden
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: smoke
+
+job:
+  name: "qwen3_sparse_10B_A0.9B_L${backend.megatron.num_layers}_H${backend.megatron.hidden_size}_E${backend.megatron.num_experts}_K${backend.megatron.moe_router_topk}_${stage}_${backend.megatron.moe_token_dispatcher_type}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}_N${slurm.sbatch.nodes}_clariden"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  data_integrity_check: false
+  megatron:
+    # --- model: wider 20L, ~0.9B active non-embedding, E64/K4 ---
+    num_layers: 20
+    hidden_size: 2048
+    ffn_hidden_size: 6144
+    moe_ffn_hidden_size: 1280
+    kv_channels: 128
+    num_attention_heads: 16
+    num_query_groups: 8
+    group_query_attention: true
+    swiglu: true
+    add_bias_linear: false
+    init_method_std: 0.02
+    attention_softmax_in_fp32: false
+    use_flash_attn: true
+    position_embedding_type: rope
+    rotary_base: 10000
+    rotary_percent: 1.0
+    untie_embeddings_and_output_weights: false
+    normalization: RMSNorm
+    layernorm_epsilon: 1.0e-5
+    qk_layernorm: true
+    bf16: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    clip_grad: 1.0
+    weight_decay: 0.1
+
+    num_experts: 64
+    moe_router_topk: 4
+    moe_router_dtype: fp32
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 1.0e-2
+    moe_z_loss_coeff: 1.0e-3
+    moe_per_layer_logging: true
+    moe_grouped_gemm: true
+    moe_router_force_load_balancing: false
+
+    # --- data: mock, 256k vocab (EOD id = vocab_size - 1; embedding padded to a multiple of 128) ---
+    mock_data: true
+    tokenizer_type: NullTokenizer
+    vocab_size: 262144
+    data_args_path: null
+    per_split_data_args_path: null
+    data_path: null
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    seq_length: 4096
+    max_position_embeddings: 4096
+    num_workers: 6
+    encoder_seq_length: null
+    dataloader_type: cyclic
+    create_attention_mask_in_dataloader: false
+
+    micro_batch_size: 1
+    global_batch_size: 128
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 4
+    sequence_parallel: true
+    use_distributed_optimizer: true
+
+    moe_token_dispatcher_type: alltoall
+    overlap_moe_expert_parallel_comm: true
+    delay_wgrad_compute: true
+    high_priority_a2a_comm_stream: false
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    bias_swiglu_fusion: false
+    tp_comm_overlap: false
+    apply_rope_fusion: true
+    use_te_activation_func: true
+    moe_router_fusion: true
+    moe_permute_fusion: true
+
+    train_iters: 50
+    exit_interval: 50
+    eval_iters: 0
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    lr: 1.0e-3
+    min_lr: 0.0
+    lr_warmup_iters: 5
+    lr_decay_iters: 20
+    lr_decay_style: constant
+
+    optimizer: muon
+    muon_scalar_optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    muon_momentum: 0.95
+    muon_nesterov: true
+    muon_scale_mode: spectral
+    muon_coefficient_type: polar_express
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: true
+    muon_extra_scale_factor: 0.2
+
+    log_progress: false
+    log_throughput: true
+    log_interval: 1
+    log_timers_to_tensorboard: true
+    timing_log_level: 2
+
+    wandb_project: qwen3_sparse_10B_A0.9B_clariden
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    yarn_correction_range_round_to_int: false
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 60
+    recompute_activations: false
+    use_torch_fsdp2: false
+    ckpt_format: torch_dist
+
+    aux:
+      model_name: "0.9B_ne_wider_20L"
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    # The NeMo venv's torchrun/python, not /usr/local/bin/torchrun.
+    PATH: "/opt/venv/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
+    OMP_NUM_THREADS: "1"
+    WANDB_TAGS: "clariden,qwen3,10B,0.9B-active,sparse,E64,K4,L20,H2048,smoke,mock"
+  torchrun_args:
+    numa_binding: node
+    rdzv_backend: static
+
+slurm:
+  env:
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
+    NVTE_CUTLASS_GROUPED_GEMM_WARN_FALLBACK: "0"
+    CUDA_DEVICE_MAX_CONNECTIONS: "32"
+    TRITON_HOME: /tmp/triton_cache
+    TORCHINDUCTOR_CACHE_DIR: "${oc.env:TORCHINDUCTOR_CACHE_DIR,${oc.env:OUTPUT_DIR}/torch_inductor_cache}"
+  sbatch:
+    nodes: 1
+    partition: ${oc.env:SLURM_PARTITION,debug}
+    time: "00:20:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

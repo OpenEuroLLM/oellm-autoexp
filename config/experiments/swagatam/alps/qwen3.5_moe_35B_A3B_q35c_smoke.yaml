@@ -1,0 +1,230 @@
+# @package _global_
+#
+# Clariden smoke of Korbinian's Qwen3.5-35B-A3B "conservative" run
+# (config/experiments/korbi/production/q35_conservative_mn5.yaml), on mock data.
+#
+# Copied from that file and from the speed_base_mn5 it inherits: HybridModel with
+# the GPT layer pattern (3 Gated DeltaNet + 1 attention), sigmoid router with a
+# sequence aux loss and expert bias, MoonEP, pipeline 1, Megatron-FSDP ZeRO-3,
+# micro-batch 1, sequence 4096, full recompute of 2 layers, shared-expert overlap,
+# CUDA_DEVICE_MAX_CONNECTIONS=8. The Liger LM-head is off; the loss is the normal
+# cross-entropy, so this smoke does not need liger-kernel.
+#
+# Scaled for a 4-node smoke. His production micro-batch is 4 and sequence 8192;
+# that OOM'd in the Gated DeltaNet Triton autotune, so this smoke uses micro-batch
+# 1 and sequence 4096. GBS 256 on 16 GPUs is 16 micro-batches per GPU.
+# The FSDP shard group is this whole job (16 GPUs). His is 8 nodes (32 GPUs);
+# num_distributed_optimizer_instances stays max(1, nodes // 8), so 8 nodes is the
+# same shard width as production if 4 nodes runs out of memory.
+#
+# Not copied: the flag-decon data, document masking, the 807k-iter schedule, and
+# the MareNostrum NCCL channel counts. RoPE is interleaved and the RMSNorm
+# epsilon is 1e-6, matching the GPT smoke. Attention softmax is requested in fp32.
+#
+# Needs the MoonEP package already built at pylibs_moonep_pkg
+# (MOONEP_MULTICAST=0: a 4-GPU GH200 node has no NVLink multicast).
+#
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/qwen3.5_moe_35B_A3B_q35c_smoke --dry-run
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: clariden
+  - /slurm: clariden
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: q35c_smoke
+
+job:
+  name: "qwen3.5_35B_A3B_${stage}_MBS${backend.megatron.micro_batch_size}_EP${backend.megatron.expert_model_parallel_size}_N${slurm.sbatch.nodes}_clariden"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  launcher_script: ./submodules/Megatron-LM/pretrain_hybrid.py
+  data_integrity_check: false
+  megatron:
+    # --- model: HybridModel, pattern from q35_conservative_mn5 ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    # 3 Gated DeltaNet (L) + 1 attention (*), repeated, every block MoE (E).
+    # Attention on layers 4, 8, ..., 40. Same schedule as linear_attention_freq=4.
+    hybrid_layer_pattern: "LELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*E"
+    num_layers: null
+    hidden_size: 2048
+    ffn_hidden_size: 6144
+    num_attention_heads: 16
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 256
+    untie_embeddings_and_output_weights: true
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    layernorm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 16
+    linear_num_value_heads: 32
+
+    num_experts: 256
+    moe_ffn_hidden_size: 512
+    moe_shared_expert_intermediate_size: 512
+    moe_shared_expert_gate: true
+    moe_router_topk: 8
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: moonep
+    moe_flex_dispatcher_num_sms: 64
+    expert_model_parallel_size: 4
+    moe_shared_expert_overlap: true
+
+    # Pipeline 1 + Megatron-FSDP. ZeRO-3 inside one group at this node count.
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    overlap_p2p_comm: false
+    use_distributed_optimizer: true
+    use_megatron_fsdp: true
+    data_parallel_sharding_strategy: optim_grads_params
+    num_distributed_optimizer_instances: ${oc.eval:'max(1, ${slurm.sbatch.nodes} // 8)'}
+    outer_dp_sharding_strategy: no_shard
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    fsdp_double_buffer: true
+    megatron_fsdp_main_grads_dtype: fp32
+    megatron_fsdp_grad_comm_dtype: fp32
+    ckpt_format: fsdp_dtensor
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 2
+    cuda_graph_impl: none
+    cuda_graph_modules: []
+
+    # Fusions from speed_base_mn5, except the Liger LM-head. Fused QK-norm+RoPE stays off.
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    gradient_accumulation_fusion: true
+    fused_qk_norm_rope: false
+    fused_residual_rmsnorm: true
+    fused_short_conv: true
+    gdn_fused_out_norm: true
+    check_for_nan_in_loss_and_grad: false
+    rerun_mode: disabled
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: mock. His run uses flag-decon-v2, seq 8192, document masking. ---
+    mock_data: true
+    tokenizer_type: NullTokenizer
+    vocab_size: 262144
+    data_args_path: null
+    per_split_data_args_path: null
+    data_path: null
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    seq_length: 4096
+    max_position_embeddings: 4096
+    num_workers: 2
+    dataloader_type: cyclic
+    create_attention_mask_in_dataloader: false
+
+    micro_batch_size: 4
+    # 16 micro-batches per GPU: 1 x 4 GPUs x 4 nodes x 16 = 256.
+    global_batch_size: 256
+
+    train_iters: 20
+    exit_interval: 20
+    eval_iters: 0
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    optimizer: adam
+    lr: 1.0e-3
+    min_lr: 0.0
+    lr_warmup_iters: 2
+    lr_decay_style: constant
+    weight_decay: 0.1
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    clip_grad: 1.0
+
+    log_progress: false
+    log_throughput: true
+    log_interval: 1
+
+    wandb_project: qwen3.5_moe_35B_A3B_q35c_clariden
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 60
+
+    aux:
+      model_name: "Qwen3.5-35B-A3B"
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    PYTHONPATH: "/capstor/store/cscs/swissai/a0248/users/swagatam/pylibs_moonep_pkg:.:submodules/Megatron-LM"
+    PATH: "/opt/venv/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
+    OMP_NUM_THREADS: "1"
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    MEGATRON_LAZY_SINGLETON_GROUPS: "1"
+    FLA_TENSOR_CACHE_SIZE: "64"
+    WANDB_TAGS: "clariden,qwen3.5,35B-A3B,GDN,MoE,q35c,moonep,fsdp,mock"
+  torchrun_args:
+    numa_binding: node
+    rdzv_backend: static
+
+slurm:
+  env:
+    # FSDP refuses CUDA_DEVICE_MAX_CONNECTIONS=1, which is the Clariden default.
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    MOONEP_MULTICAST: "0"
+    TRITON_HOME: /tmp/triton_cache
+  sbatch:
+    nodes: 4
+    partition: ${oc.env:SLURM_PARTITION,normal}
+    time: "01:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

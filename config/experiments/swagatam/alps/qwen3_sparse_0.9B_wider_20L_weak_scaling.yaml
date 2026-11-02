@@ -1,0 +1,68 @@
+# @package _global_
+#
+# Weak (batch) scaling on Clariden for the 10B-A0.9B wider 20L Qwen3 MoE.
+# Same model as qwen3_sparse_0.9B_wider_20L_strong_scaling, but the work per GPU
+# stays fixed and the global batch grows with the node count.
+#
+# MBS=1, GAS=16, 4 GPU/node, TP=PP=CP=1:
+#   data-parallel size = 4 * nodes
+#   GBS = GAS * MBS * data-parallel size = 16 * 1 * 4 * nodes = 64 * nodes
+#   1 node -> 64, 2 -> 128, 4 -> 256, ... 128 nodes -> 8192
+# Each GPU therefore sees 16 sequences (16 * 4096 tokens) per optimizer step at every scale.
+# EP4 stays node-local; only the data-parallel gradient exchange grows with nodes.
+#
+# Step time is about the 2-node smoke at this same GAS (GBS 128, ~5.5 s/step), so it does
+# not shrink with nodes. 100 iterations is ~15 min of compute plus the startup buffer.
+#   ... backend.megatron.train_iters=100
+#
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/qwen3_sparse_0.9B_wider_20L_weak_scaling --dry-run
+
+defaults:
+  - /experiments/swagatam/alps/qwen3_sparse_0.9B_wider_20L_smoke
+  - _self_
+
+stage: weak_scaling
+
+aux:
+  # 2-node smoke, GBS 128, which is GAS 16. Flat across nodes; comms add a little at large scale.
+  step_time_s: 6
+  gas: 16
+  gpus_per_node: 4
+
+job:
+  name: "qwen3_sparse_10B_A0.9B_L${backend.megatron.num_layers}_E${backend.megatron.num_experts}_K${backend.megatron.moe_router_topk}_${stage}_GBS${backend.megatron.global_batch_size}_MBS${backend.megatron.micro_batch_size}_EP${backend.megatron.expert_model_parallel_size}_N${slurm.sbatch.nodes}_it${backend.megatron.train_iters}_clariden"
+  est_step_time_s: ${aux.step_time_s}
+  est_startup_min: 5
+
+backend:
+  megatron:
+    micro_batch_size: 1
+    # 64 * nodes. Resolved per sweep point, after slurm.sbatch.nodes is overridden.
+    global_batch_size: ${oc.eval:'${aux.gas} * ${backend.megatron.micro_batch_size} * ${aux.gpus_per_node} * ${slurm.sbatch.nodes}'}
+    train_iters: 60
+    exit_interval: ${.train_iters}
+    lr_decay_iters: ${.train_iters}
+    log_interval: 1
+    wandb_project: qwen3_sparse_10B_A0.9B_clariden_scaling
+  env:
+    WANDB_TAGS: "clariden,qwen3,10B,0.9B-active,sparse,E64,K4,L20,H2048,weak-scaling,mock"
+
+slurm:
+  sbatch:
+    partition: normal
+    # Startup buffer + steps. Work per GPU is constant, so the limit does not shrink with nodes.
+    time: ${oc.slurmtime:${oc.eval:'int(900 + ${backend.megatron.train_iters} * ${aux.step_time_s} / 0.75)'}}
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - { slurm.sbatch.nodes: 1 }
+        - { slurm.sbatch.nodes: 2 }
+        - { slurm.sbatch.nodes: 4 }
+        - { slurm.sbatch.nodes: 8 }
+        - { slurm.sbatch.nodes: 16 }
+        - { slurm.sbatch.nodes: 32 }
+        - { slurm.sbatch.nodes: 64 }
+        - { slurm.sbatch.nodes: 128 }

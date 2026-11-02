@@ -1,0 +1,83 @@
+# @package _global_
+#
+# Weak scaling of Qwen3.5-35B-A3B Gated DeltaNet on Clariden.
+# Same model and the HybridEP setup from the 4-node throughput runs
+# (job 3828590, about 72 TFLOP/s/GPU at global batch 128).
+#
+# Layout stays TP=1, PP=2, EP=4, full recompute, MBS=1.
+# EP=4 stays inside the node. PP=2 is the cross-node traffic.
+# Data-parallel size = 4 * nodes / (TP * PP) = 2 * nodes.
+# Expert-DP = nodes / 2 (2 at 4 nodes, 64 at 128 nodes).
+#
+# GAS=32, so each GPU sees 32 sequences per step at every scale:
+#   GBS = 32 * 1 * 2 * nodes = 64 * nodes
+#   4 nodes -> 256, 8 -> 512, 16 -> 1024, 32 -> 2048, 64 -> 4096, 128 -> 8192
+# The 72 TFLOP/s run was GBS 128 on 4 nodes (16 microbatches, pipeline bubble ~6%).
+# GBS 256 is 32 microbatches, bubble ~3%, so a step is a bit under twice that
+# ~8.7 s. The time limit uses 20 s/step and does not shrink with nodes.
+#
+# 1 node cannot run this layout: PP=2 and EP=4 need 8 GPUs.
+# 2 nodes is the smallest legal size, and it was not run. Expert-DP would be 1,
+# so the expert Adam shard that is split across 2 ranks at 4 nodes (~20 GB of the
+# ~64 GB reserved there) would sit on every GPU. The sweep starts at 4 nodes,
+# which is the smallest layout that has fit.
+#
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/qwen3.5_moe_35B_A3B_gdn_weak_scaling --dry-run
+#   ... backend.megatron.train_iters=30
+
+defaults:
+  - /experiments/swagatam/alps/qwen3.5_moe_35B_A3B_gdn_smoke
+  - _self_
+
+stage: weak_scaling
+
+aux:
+  # Flat across nodes. HybridEP at GBS 128 was ~8.7 s; GBS 256 has twice the microbatches.
+  step_time_s: 20
+  gas: 32
+  gpus_per_node: 4
+
+job:
+  name: "qwen3.5_35B_A3B_${stage}_GBS${backend.megatron.global_batch_size}_MBS${backend.megatron.micro_batch_size}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}_N${slurm.sbatch.nodes}_it${backend.megatron.train_iters}_clariden"
+  est_step_time_s: ${aux.step_time_s}
+  est_startup_min: 15
+
+backend:
+  megatron:
+    micro_batch_size: 1
+    # 64 * nodes. Resolved per sweep point, after slurm.sbatch.nodes is overridden.
+    global_batch_size: ${oc.eval:'${aux.gas} * ${backend.megatron.micro_batch_size} * ${aux.gpus_per_node} * ${slurm.sbatch.nodes} // (${backend.megatron.tensor_model_parallel_size} * ${backend.megatron.pipeline_model_parallel_size})'}
+    # HybridEP, the fastest 4-node dispatcher. Grouped GEMM stays on (parent) and
+    # the Cutlass kernel is selected by slurm.env below.
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_permute_fusion: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    train_iters: 30
+    exit_interval: ${.train_iters}
+    lr_decay_iters: ${.train_iters}
+    log_interval: 1
+    wandb_project: qwen3.5_moe_35B_A3B_gdn_clariden_scaling
+  env:
+    WANDB_TAGS: "clariden,qwen3.5,35B-A3B,GDN,MoE,hybridep,weak-scaling,mock"
+
+slurm:
+  env:
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
+  sbatch:
+    partition: normal
+    # 15 min startup + steps. Work per GPU is constant, so the limit does not shrink with nodes.
+    time: ${oc.slurmtime:${oc.eval:'int(900 + ${backend.megatron.train_iters} * ${aux.step_time_s} / 0.75)'}}
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - { slurm.sbatch.nodes: 4 }
+        - { slurm.sbatch.nodes: 8 }
+        - { slurm.sbatch.nodes: 16 }
+        - { slurm.sbatch.nodes: 32 }
+        - { slurm.sbatch.nodes: 64 }
+        - { slurm.sbatch.nodes: 128 }
