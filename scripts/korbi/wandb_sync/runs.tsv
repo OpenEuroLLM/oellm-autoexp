@@ -13,3 +13,5 @@ ambitious_v2b_64k	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambit
 ambitious_v2c_64k	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v2c_64k
 ambitious_v3_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v3
 ambitious_v4_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4
+ambitious_v4_2ph_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph
+ambitious_v4_ldm_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v4_ldm

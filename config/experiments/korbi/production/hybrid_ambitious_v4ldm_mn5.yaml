@@ -1,0 +1,33 @@
+# @package _global_
+# ambitious_v4_ldm (user 2026-11-02): one last LDM try at full scale, next to ambitious_v4 (mHC-4),
+# watched closely and stopped on anything off. The v3 LDM recipe on the 8k -> 64k curriculum with:
+#   embedding_multiplier 50   the front stream at O(1) (init std 0.02 -> rms ~1 at the first site):
+#                             v3's front stream stayed at rms ~0.02 (its pre-norm's backward gain
+#                             ~1 / rms, the memory reads ~65 % of the front inputs) while s3's grew
+#   no wd on the embedding / routers (inherited, as v4)
+#   QB EMA 0 + global_aux_loss 1e-4 (user): quantile balancing with the fixed global loss (s3:
+#                             0 ghost / near-dead slots, -0.003 vs the expert bias)
+#   arch metrics every 50 steps (LDM per site, pab, gates): the run is meant to be read closely
+defaults:
+  - hybrid_ambitious_pab_128_mn5
+  - curriculum_8k64k_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e360_eng80_v4_ldm
+
+backend:
+  megatron:
+    embedding_multiplier: 50.0
+    moe_router_load_balancing_type: [quantile_balancing, global_aux_loss]
+    moe_aux_loss_coeff: [0.0, 1.0e-4]
+    moe_router_quantile_balancing_ema: 0.0
+    moe_router_enable_expert_bias: false
+    moe_router_fusion: false
+    arch_metrics_interval: 50
+
+job:
+  name: ambitious_v4ldm_128n_p${aux.phase}
+  metadata:
+    # own singleton: runs next to ambitious_v4
+    pool_singleton: ambitious_main_v4_ldm

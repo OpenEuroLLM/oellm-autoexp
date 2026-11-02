@@ -213,5 +213,32 @@
    "pab"
   ],
   "notes": "Ambitious v4 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), mHC-4 (mixer lr x0.25), the 4k / 16k / 64k curriculum on the v8ml stages, fixed held-out validation sets, expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant. Replaces the LDM v3 run (front-LDM instability at step ~1750)."
+ },
+ "ambitious_v4_2ph_main": {
+  "name": "ambitious_v4_2ph_mhc4",
+  "tags": [
+   "v4",
+   "mhc4",
+   "curriculum",
+   "8k-64k",
+   "bias_globalaux",
+   "pab",
+   "no_emb_router_wd"
+  ],
+  "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets."
+ },
+ "ambitious_v4_ldm_main": {
+  "name": "ambitious_v4_ldm",
+  "tags": [
+   "v4",
+   "ldm",
+   "curriculum",
+   "8k-64k",
+   "qb_ema0_globalaux",
+   "pab",
+   "embedding_mult50",
+   "no_emb_router_wd"
+  ],
+  "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding_multiplier 50 (front stream at O(1)), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum."
  }
 }
