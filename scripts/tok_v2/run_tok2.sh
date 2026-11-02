@@ -16,7 +16,7 @@ W=${TOK2_WORK:-/gpfs/scratch/ehpc533/korbip_tok2}
 export PYTHONPATH="${PYTHONPATH:-}:$H/pylibs_gigatoken"
 mkdir -p "$W"
 R="python $HERE/retok_v2.py"
-WORKERS=$(( $(nproc) - 2 ))
+WORKERS=$(( $(python -c "import os; print(len(os.sched_getaffinity(0)))") - 2 ))   # not nproc: it follows OMP_NUM_THREADS
 shards() {   # every shard of the mix + the validation sets
   awk 'NF && $1 !~ /^#/ {print $2}' "$H/data/datamix_v8ml_mn5.txt"
   awk '{print $3}' "$D/v8ml-valid/valid_sets.txt"
