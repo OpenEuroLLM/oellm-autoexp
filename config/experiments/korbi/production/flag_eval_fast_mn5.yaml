@@ -1,0 +1,23 @@
+# @package _global_
+# Separate fast entry point. Reference runner/config stay available.
+# One four-GPU node: TP1 + DP4 + EP4, shared RAM-prefetched mmap Engram tables.
+defaults:
+  - flag_eval_mn5
+  - _self_
+
+aux:
+  tp: 1
+  dp: 4
+  max_num_seqs: 32
+  token_budget: 2048
+  request_batch_size: 256
+  mhc_impl: triton
+  engram_tables: ram
+  name: flag_fast_${aux.export}_s${aux.shard}of${aux.num_shards}${aux.name_suffix}
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_fast
+  bench: >-
+    FLAG_TP=${aux.tp} FLAG_DP=${aux.dp} FLAG_MAX_NUM_SEQS=${aux.max_num_seqs}
+    FLAG_TOKEN_BUDGET=${aux.token_budget} FLAG_REQUEST_BATCH_SIZE=${aux.request_batch_size}
+    OELLM_MHC_IMPL=${aux.mhc_impl} OELLM_ENGRAM_TABLES=${aux.engram_tables}
+    bash scripts/korbi/flag_eval/run_flag_fast_mn5.sh
+    ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} ${aux.limit} ${aux.flag_names}
