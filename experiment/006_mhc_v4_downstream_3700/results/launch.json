@@ -1,0 +1,70 @@
+{
+  "checkpoint": 3700,
+  "pool": "/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p132",
+  "export": "ambitious_v4_2ph_fp8_3700",
+  "records": [
+    {
+      "job_id": "kernel_tests_hf_export_ambitious_v4_3700_fp8_9d0466",
+      "name": "kernel_tests_hf_export_ambitious_v4_3700_fp8",
+      "start_condition": null,
+      "run": "mn5-pool-p132.0233",
+      "status": "RUNNING"
+    },
+    {
+      "job_id": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s1of4_1_9f61fc",
+      "name": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s1of4_1",
+      "start_condition": {
+        "class_name": "FileExistsCondition",
+        "persistent_pass": true,
+        "persistent_fail": false,
+        "path": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700/.downstream_ready"
+      },
+      "run": null,
+      "status": null
+    },
+    {
+      "job_id": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s3of4_4e9212",
+      "name": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s3of4",
+      "start_condition": {
+        "class_name": "FileExistsCondition",
+        "persistent_pass": true,
+        "persistent_fail": false,
+        "path": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700/.downstream_ready"
+      },
+      "run": null,
+      "status": null
+    },
+    {
+      "job_id": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s0of4_0_54a61c",
+      "name": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s0of4_0",
+      "start_condition": {
+        "class_name": "FileExistsCondition",
+        "persistent_pass": true,
+        "persistent_fail": false,
+        "path": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700/.downstream_ready"
+      },
+      "run": null,
+      "status": null
+    },
+    {
+      "job_id": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s2of4_f923a3",
+      "name": "kernel_tests_flag_ambitious_v4_2ph_fp8_3700_s2of4",
+      "start_condition": {
+        "class_name": "FileExistsCondition",
+        "persistent_pass": true,
+        "persistent_fail": false,
+        "path": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700/.downstream_ready"
+      },
+      "run": null,
+      "status": null
+    }
+  ],
+  "runs": [
+    {
+      "run": "mn5-pool-p132.0233",
+      "name": "kernel_tests_hf_export_ambitious_v4_3700_fp8",
+      "log": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/logs/hf_export_ambitious_v4_3700_fp8/slurm-mn5-pool-p132.0233.log",
+      "started": "host=host002\njob=48335386\nstep_index=3\nnodes=as05r5b06\nts=1793695705\n"
+    }
+  ]
+}

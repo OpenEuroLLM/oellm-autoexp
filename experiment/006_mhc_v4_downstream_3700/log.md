@@ -21,3 +21,5 @@ Run the established downstream suite on the latest complete checkpoint requested
 - Export: `/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700`.
 - Downstream: `/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals/ambitious_v4_2ph_fp8_3700`.
 - Per-task JSON and per-shard TSV summaries are written by the existing evaluator.
+
+- 2026-11-03 09:48 CET: submitted export `kernel_tests_hf_export_ambitious_v4_3700_fp8_9d0466` and four full-suite eval shard records. Export is RUNNING as `mn5-pool-p132.0233` on spare node `as05r5b06` in allocation 48335386. All four eval records have the `.downstream_ready` FileExistsCondition and are waiting; the pool monitor will start them automatically after successful export/validation. Launch manifest: `results/launch.json`. LDM retains its 128 nodes in run .0232; no new allocation was submitted.
