@@ -141,6 +141,7 @@ def main(argv=None):
                                  source / "model_executor/layers/oellm_mhc.py"] if f.exists()},
             "settings": {k: os.environ.get(k) for k in ["OELLM_MOE", "OELLM_MHC_IMPL",
                          "OELLM_ENGRAM_TABLES", "OELLM_ENGRAM_LOOKUP", "OELLM_ENGRAM_MADVISE",
+                         "OELLM_ENGRAM_DECODE_IMPL",
                          "OELLM_LOCAL_EXPERT_LOAD", "OELLM_ENGRAM_MODEL_DIR"]},
         }
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:20]
