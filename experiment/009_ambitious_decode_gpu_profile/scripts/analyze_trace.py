@@ -96,7 +96,7 @@ def analyze(path):
         api = next((a for a in candidates if a['start']<=r['start']),None)
         if api is None:
             unmatched += 1
-        kind = 'collective' if any(x in name.lower() for x in ['nccl','allreduce','all_reduce','reduce_scatter','allgather','all_gather']) else 'compute'
+        kind = 'collective' if any(x in name.lower() for x in ['nccl','allreduce','all_reduce','reduce_scatter','allgather','all_gather','cross_device_reduce']) else 'compute'
         events[r['deviceId']].append({'start':a,'end':b,'kind':kind,'name':short,
                                      'owner':owner(api),'launch_start':api['start'] if api else None})
         v = kernels[(r['deviceId'],name)]; v[0]+=1; v[1]+=b-a
@@ -141,11 +141,19 @@ def analyze(path):
                 'copy':(busy-compute_collective)/1e6/nsteps,'idle':(wall-busy)/1e6/nsteps},
             'idle_before_next_launch_api_ms_per_step':launch_wait/1e6/nsteps,
             'largest_idle_gaps':sorted(gaps,key=lambda r:r['duration_us'],reverse=True)[:15]})
+    scope_summary = defaultdict(lambda:[0,0])
+    for tid, ranges in scopes.items():
+        for r in ranges:
+            if r['start'] < end and r['end'] > start:
+                v = scope_summary[(tid & ~((1<<24)-1), r['name'].split('/')[1])]
+                v[0] += 1
+                v[1] += min(end,r['end'])-max(start,r['start'])
     result = {'path':str(path),'label':label,'window_ns':[start,end],'decode_steps':nsteps,
         'step_ms':wall/1e6/nsteps,'individual_step_ms':[(by_count[i+1]['start']-by_count[i]['start'])/1e6 for i in range(11,19)],
         'devices':devices,'unmatched_kernel_launches':unmatched,
         'kernels':[{'device':d,'name':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (d,name),v in sorted(kernels.items(),key=lambda kv:kv[1][1],reverse=True)],
         'module_kernel_sums':[{'device':d,'owner':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (d,name),v in sorted(owners.items(),key=lambda kv:kv[1][1],reverse=True)],
+        'cpu_module_sums':[{'globalPid':pid,'owner':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (pid,name),v in sorted(scope_summary.items(),key=lambda kv:kv[1][1],reverse=True)],
         'cuda_apis':[{'table':t,'name':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (t,name),v in sorted(api_summary.items(),key=lambda kv:kv[1][1],reverse=True)],
         'copies':[{'device':d,'kind':kind,'count_per_step':v[0]/nsteps,'ms_per_step':v[1]/1e6/nsteps,'bytes_per_step':v[2]/nsteps} for (d,kind),v in copy_details.items()]}
     # Plot the first middle step only; trace offsets retain exact measured positions.
