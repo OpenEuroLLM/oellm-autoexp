@@ -1,0 +1,28 @@
+
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+/home/korbip/.miniconda3/envs/oellm/lib/python3.12/site-packages/torch/cuda/__init__.py:1007: UserWarning: Can't initialize NVML
+  raw_cnt = _raw_device_count_nvml()
+[Gloo] Rank 0 is connected to 3[Gloo] Rank 1 peer ranks. Expected number of connected peer ranks is :  is connected to 3[Gloo] Rank 3[Gloo] Rank 23
+ peer ranks. Expected number of connected peer ranks is :  is connected to 3 is connected to 33
+ peer ranks. Expected number of connected peer ranks is :  peer ranks. Expected number of connected peer ranks is : 3
+3
+[Gloo] Rank 0[Gloo] Rank 1 is connected to 1 is connected to 1[Gloo] Rank 0 peer ranks. Expected number of connected peer ranks is : [Gloo] Rank 1 peer ranks. Expected number of connected peer ranks is :  is connected to 11
+ is connected to 11
+ peer ranks. Expected number of connected peer ranks is :  peer ranks. Expected number of connected peer ranks is : 1
+1
+[Gloo] Rank [Gloo] Rank [Gloo] Rank 0[Gloo] Rank 01 is connected to 1 is connected to  is connected to 1 is connected to 11 peer ranks. 1 peer ranks.  peer ranks. Expected number of connected peer ranks is :  peer ranks. Expected number of connected peer ranks is : Expected number of connected peer ranks is : 1Expected number of connected peer ranks is : 11
+1
+
+
+/home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/submodules/Megatron-LM/megatron/training/checkpointing.py:1608: FutureWarning: `load_state_dict` is deprecated and will be removed in future versions. Please use `load` instead.
+  torch.distributed.checkpoint.load_state_dict(
+/home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/submodules/Megatron-LM/megatron/training/checkpointing.py:1608: FutureWarning: `load_state_dict` is deprecated and will be removed in future versions. Please use `load` instead.
+  torch.distributed.checkpoint.load_state_dict(
+/home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/submodules/Megatron-LM/megatron/training/checkpointing.py:1608: FutureWarning: `load_state_dict` is deprecated and will be removed in future versions. Please use `load` instead.
+  torch.distributed.checkpoint.load_state_dict(
+/home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/submodules/Megatron-LM/megatron/training/checkpointing.py:1608: FutureWarning: `load_state_dict` is deprecated and will be removed in future versions. Please use `load` instead.
+  torch.distributed.checkpoint.load_state_dict(
+PASS: world=4 local_plans=False exact tensors/scalars; 0.010s
+PASS: world=4 local_plans=True exact tensors/scalars; 0.103s

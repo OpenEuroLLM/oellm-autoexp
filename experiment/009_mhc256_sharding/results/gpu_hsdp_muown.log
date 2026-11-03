@@ -1,0 +1,73 @@
+load bsc/1.0 (PATH, MANPATH)
+load SINGULARITY/4.1.5 (PATH)
+load CUDA/12.8 (PATH, MANPATH, LD_LIBRARY_PATH, LIBRARY_PATH, C_INCLUDE_PATH,
+CPLUS_INCLUDE_PATH, CUDA_HOME, CUDA_VERSION, CUDA_INC, CUDA_INSTALL_PATH) 
+load CUDNN/9.6.0/cuda12 (LD_LIBRARY_PATH, LIBRARY_PATH, C_INCLUDE_PATH,
+CPLUS_INCLUDE_PATH, CUDNN_LIB_DIR, CUDNN_LIBRARY, CUDNN_INCLUDE_DIR) 
+load NCCL/2.24.3-1 (LD_LIBRARY_PATH, LIBRARY_PATH, C_INCLUDE_PATH,
+CPLUS_INCLUDE_PATH) 
+load GIT-LFS/3.4.1 (PATH)
+load GIT/2.43.0 (PATH)
+load NANO/8.0 (PATH, MANPATH)
+load NCURSES/6.4 (PATH, LD_LIBRARY_PATH, LIBRARY_PATH, C_INCLUDE_PATH,
+CPLUS_INCLUDE_PATH) 
+load tmux/3.3a (LD_LIBRARY_PATH)
+/usr/bin/rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+W1103 20:38:02.026000 66921 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.026000 66922 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.026000 66920 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.026000 66919 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.027000 66921 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.027000 66922 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.027000 66920 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.027000 66921 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.027000 66919 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.027000 66922 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.027000 66920 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.027000 66919 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.028000 66922 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.029000 66920 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.029000 66919 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.029000 66922 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.029000 66920 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.029000 66921 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.029000 66922 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.029000 66920 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.029000 66919 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.029000 66921 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.029000 66919 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.029000 66921 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.031000 66922 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.031000 66919 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.031000 66921 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.031000 66922 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.031000 66919 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.031000 66920 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.031000 66921 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.031000 66922 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.031000 66919 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.031000 66921 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.031000 66920 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.031000 66920 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.031000 66921 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.031000 66922 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.031000 66919 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.032000 66921 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.031000 66920 torch/_library/opaque_object.py:381] is_opaque_value_type is deprecated, use is_opaque_constant_type instead
+W1103 20:38:02.032000 66922 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.032000 66919 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.032000 66921 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.032000 66922 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.032000 66920 torch/_library/opaque_object.py:288] register_opaque_type is deprecated, use register_custom_class instead
+W1103 20:38:02.032000 66919 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+W1103 20:38:02.032000 66920 torch/_library/opaque_object.py:211] typ='value' is deprecated, use typ='constant' instead
+/usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+PASS: HSDP2 Muown four updates, uneven/empty shards, full-tensor reference
