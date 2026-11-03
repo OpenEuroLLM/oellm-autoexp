@@ -26,3 +26,5 @@ Full-scale restart is gated on small-scale resume/sampler checks and a concrete 
 ## Related
 - `experiment/005_fsdp_init_metadata/log.md`
 - `docs/pp_vs_fsdp.md`
+- 20:36 CET: enqueued three 4-node jobs on existing held cns264 allocation48203953. Ref started as mn5-pool-p264.0014; control/HSDP wait for rolling20. Production .0013 continues independently. Exact CPU HSDP load passed both default and rank-local planning. Production checkpoint4807 metadata is463MiB, so startup I/O/deserialization remains material; no quick-restart guarantee.
+- Full production comparison should use original `autoexp_v4move_20261103` code paths with only the new config added, to retain path-sensitive compiler caches; do not deploy a changed Megatron tree over the running job. Fresh same-layout checkpoint is required before any production handover.
