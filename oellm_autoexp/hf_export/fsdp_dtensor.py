@@ -90,6 +90,11 @@ def iter_layers(ckpt_dir: Path) -> Iterator[tuple[int | None, dict[str, torch.Te
     yield None, load(reader, by_layer.pop(None, {}))
     for i in sorted(by_layer):
         yield i, load(reader, by_layer[i])
+    if hasattr(reader, "metadata_disk_reads"):
+        LOGGER.info(
+            "Export reader: metadata_disk_reads=%d metadata_seconds=%.3f read_seconds=%.3f threads=%d",
+            reader.metadata_disk_reads, reader.metadata_seconds, reader.read_seconds, reader.threads,
+        )
 
 
 def stack_experts(tensors: dict[str, torch.Tensor], prefix: str, suffix: str = "") -> torch.Tensor:

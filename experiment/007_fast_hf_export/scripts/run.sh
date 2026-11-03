@@ -4,7 +4,9 @@ export HF_EXPORT_READER=fast HF_EXPORT_READ_THREADS=8 EXPERT_DTYPE=fp8
 RESULT=$PWD/experiment/007_fast_hf_export/results
 BASE=/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700
 CROOT=/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007
-mkdir -p "$RESULT"
+mkdir -p "$RESULT" "$CROOT"
+# Keep the paired-validation workload identical to baseline; its input is read-only.
+[ -e "$CROOT/paired" ] || ln -s /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/paired "$CROOT/paired"
 python -m pytest --confcutdir=tests/unit -p no:cacheprovider -o addopts='' -q tests/unit/test_hf_export_reader.py 2>&1 | tee "$RESULT/unit.log"
 python experiment/007_fast_hf_export/scripts/reader_benchmark.py 2>&1 | tee "$RESULT/reader_benchmark.log"
 # Time the same export + shape checks + validation scoring + paired scoring as baseline.
