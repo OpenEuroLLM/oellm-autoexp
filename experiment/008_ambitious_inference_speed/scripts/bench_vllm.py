@@ -49,7 +49,7 @@ def worker(rank, dp, tp, port, args, prompts, barrier):
                           'seconds':elapsed,'prompts':len(selected)}),flush=True)
     barrier.wait(timeout=1800)
     started = time.perf_counter()
-    llm.generate(records, SamplingParams(temperature=0,max_tokens=1,ignore_eos=True), use_tqdm=False)
+    llm.generate(records, SamplingParams(temperature=0,max_tokens=1,prompt_logprobs=0,ignore_eos=True), use_tqdm=False)
     torch.cuda.synchronize()
     prefill_seconds = time.perf_counter()-started
     out = Path(args.out);out.mkdir(parents=True,exist_ok=True)
