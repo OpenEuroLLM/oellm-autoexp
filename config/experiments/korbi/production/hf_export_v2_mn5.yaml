@@ -1,0 +1,13 @@
+# @package _global_
+# Cached/parallel DCP reader and concurrent validation on two separate GPU pairs.
+# Tested architecture: ambitious_v4 / v4_2ph_mhc, FP8 routed experts, four GPUs.
+# Existing hf_export_mn5 remains the sequential legacy entry point.
+defaults:
+  - hf_export_mn5
+  - _self_
+
+aux:
+  model: ambitious_v4
+  expert_dtype: fp8
+  name: hf_export_v2_${aux.model}_${aux.step}_${aux.expert_dtype}
+  bench: "EXPERT_DTYPE=${aux.expert_dtype} bash scripts/korbi/hf_export/export_main_run_v2.sh ${aux.model} ${aux.step}"

@@ -34,3 +34,17 @@ bash experiment/007_fast_hf_export/scripts/export_main_run_v2.sh ambitious_v4 37
 ```
 
 v2 is scoped to the tested ambitious_v4 architecture, with FP8 routed experts. It uses the same four-GPU node budget as baseline and runs ordinary scoring on one two-GPU pair and paired scoring on the other.
+
+## Reusable v2 entry point
+
+The reusable pipeline is `scripts/korbi/hf_export/export_main_run_v2.sh`; its timer is a byte-identical copy of the tested standard-library helper. Compared with the tested experimental pipeline, the reusable script changes the timer path, defaults the reader to fast/8 threads and experts to FP8 (the tested settings), and rejects unsupported model/dtype combinations early. The existing legacy entry point is unchanged.
+
+```bash
+scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --yes --no-monitor \
+  --monitor-state-dir "$R/pool_state" \
+  --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p132 \
+  --config-name experiments/korbi/production/hf_export_v2_mn5 \
+  aux.step=<checkpoint-step>
+```
+
+This uses the normal export root and completion markers, with the baseline's external accelerate dependency inherited from `hf_export_mn5`.
