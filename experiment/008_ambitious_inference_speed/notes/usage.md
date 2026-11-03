@@ -26,7 +26,7 @@ scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --yes --no-monitor \
 
 This submits four independent one-node shards using the inherited sweep. To use a running pool, add the existing `--pool <pool-directory>` argument; to test on one debug node, set `aux.dev_queue=true 'aux.shards=[0]' aux.num_shards=1 aux.limit=17`. This document is an invocation recipe, not a record that a full suite was submitted.
 
-Fast config: TP1 + DP4 + EP4, aggregate max 32 sequences, aggregate 2048 scheduled tokens, finite request batches, per-rank durable response cache, local-expert-only loading, RAM-prefetched mmap tables, fused mHC. TP4 remains available with `aux.tp=4 aux.dp=1`.
+Fast config: TP1 + DP4 + EP4, aggregate max 256 sequences, aggregate 32768 scheduled tokens, finite request batches, per-rank durable response cache, local-expert-only loading, RAM-prefetched mmap tables, batched Engram decode, fused mHC. TP4 remains available with `aux.tp=4 aux.dp=1`.
 
 The runner starts real distributed vLLM engines; it does not use lm-eval's Ray multi-model data-parallel mode. CPU Gloo combines uneven evaluator shards. Model traffic and EP are confined to the node. No training allocation was preempted by these tests.
 
@@ -46,8 +46,16 @@ A completed task has a done marker. Interrupted tasks resume saved responses fro
 - Full lm-eval artifacts: `/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_infer008_{smoke,reference}/ambitious_v4_2ph_fp8_3700_limit17`.
 - `summarize.py` regenerates `results/comparison.json` from the downloaded JSON artifacts with the standard library. The 17-example tests are smoke checks, not sufficient evidence of benchmark-level quality equivalence.
 
-## Layout selection from the measured probes
+## Current layout and batching recommendation
 
-Use the default TP1/DP4 for mixed/decode workloads. The matched larger-budget test gave TP1/DP4 2.777 s versus TP4/DP1 3.506 s for 32 prompts with 8 outputs each. For prefill-heavy multiple-choice scoring, TP4 was better: 1.234 s versus EP4's 2.630 s for prefill plus one output. Override the fast config with `aux.tp=4 aux.dp=1 aux.token_budget=8192` for that profile. Both profiles still use EP across the four GPUs of a single node. No cross-node collectives are required.
+Use TP1/DP4/EP4 with a 256-sequence upper cap and 32768-token aggregate budget for this checkpoint. All 64/128/256 caps passed the saturated 1024-request tests. Pure EP outperformed TP4 for both scoring and generation under this queued workload; the older 32-prompt probe was too small to establish a general layout recommendation. Do not extrapolate its TP4 prefill advantage to the saturated case.
+
+At budget 8192, original EP4 generation throughput was 168 / 262 / 382 / 494 output tokens/s at concurrency 32 / 64 / 128 / 256. The same-loaded-model Engram optimization improved batch-256 generation from 478 to 1059 output tokens/s at budget 32768, and its decode-window rate from 533 to 1427 tokens/s. All figures are aggregate across the four-GPU node. They exclude model loading; end-to-end request throughput includes prefill, whereas the decode-window metric excludes first-token latency.
+
+Single-request decode remains ~6.7 tokens/s, far below the user's ~168-token/s target. Batched Engram fixes the dominant batch bottleneck, while a delayed single-request profile distributes worker wall time across MoE, CKDA and MHC. Reaching the single-request target needs further GPU/launch/collective profiling and fusion work; this experiment does not claim that target is met.
+
+256 is the largest tested cap, not the absolute hardware maximum. The saturation test uses 256-token inputs and 32 outputs; scaling diagnostics use 128 outputs. Long contexts may lower actual cache admission. TP4/256/65536 used essentially all device memory and was slower, so it is not recommended. Tables and per-case memory are in `results/batching/summary.md`.
+
+The original reference entry point is still available. Within the fast config, `aux.engram_decode_impl=reference` selects the old Engram path. Use the same batch/token settings for numerical comparisons. Real-module states/outputs matched bitwise in all 96 component cases. Full EP generations are not bit-reproducible: 84.5% token agreement across the optimization versus 84.8% between separate reference-mode controls. The 17-document smoke test matched aggregate metrics, but two HellaSwag items changed correctness; it does not establish full-suite quality equivalence.
 
 HF mapped-table validation: setting `OELLM_ENGRAM_MODEL_DIR` to the original GPFS export produced exactly identical 8160 scored logprobs and 32 greedy tokens to the optimized RAM-table run. Warm prefill was 6.613 versus 6.495 s. This loader currently materializes the CPU model before replacing its Engram tensors with file-backed mappings; it does not eliminate the initial peak host-memory requirement. The operating system can keep recently used mapped pages resident, so this test does not establish cold-disk throughput.

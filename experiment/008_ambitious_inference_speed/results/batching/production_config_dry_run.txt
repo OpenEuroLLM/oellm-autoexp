@@ -1,0 +1,12 @@
+2026-11-03 19:57:52 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/config/loader.py: Loading Hydra config: experiments/korbi/production/flag_eval_fast_mn5 from config
+2026-11-03 19:57:53 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/expander.py: Using composable sweep format
+2026-11-03 19:57:53 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/expander.py: Sweep expansion complete: 1 points
+2026-11-03 19:57:53 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/dag_resolver.py: Starting DAG resolution for 1 sweep points
+2026-11-03 19:57:53 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/dag_resolver.py: Built DAG with 1 nodes and 0 edges
+2026-11-03 19:57:53 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/dag_resolver.py: Resolving 1 chains with 1 worker(s)
+2026-11-03 19:57:53 [INFO] /home/korbip/Work/Research/Projects/oellm-autoexp-hybrid/oellm_autoexp/hydra_staged_sweep/config/loader.py: Loading Hydra config: experiments/korbi/production/flag_eval_fast_mn5 from config
+2026-11-03 19:57:53 [INFO] oellm_autoexp.orchestrator: Rendered script: /tmp/infer008_fast_final_dry/mnt/data/training_outputs/flag_evals/logs/flag_fast_ambitious_v4_2ph_fp8_3700_s0of1/job.sbatch
+Plan: 1 job(s) — estimated 8 GPU-h total (est_step_time_s)
+  runtime 2h/segment  [est_step_time_s]  kernel_tests_flag_fast_ambitious_v4_2ph_fp8_3700_s0of1
+Rendered 1 script(s) (not submitted) below /tmp/infer008_fast_final_dry:
+  /tmp/infer008_fast_final_dry/mnt/data/training_outputs/flag_evals/logs/flag_fast_ambitious_v4_2ph_fp8_3700_s0of1/job.sbatch

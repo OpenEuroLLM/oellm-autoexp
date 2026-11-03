@@ -1,6 +1,6 @@
 # Saturated batch sweep
 
-This extends the earlier 32-prompt probe to 1024 distinct fixed prompts. The sequence cap is aggregate per node: pure EP4/DP4 divides it by four, while TP4/DP1 uses the full cap in one scheduler. Submitted request count remains 1024 in every case; the scheduler admits work up to its sequence and token limits. Prefix caching is disabled.
+This extends the earlier 32-prompt probe to 1024 fixed requests (996 unique 256-token prefixes). The sequence cap is aggregate per node: pure EP4/DP4 divides it by four, while TP4/DP1 uses the full cap in one scheduler. Submitted request count remains 1024 in every case; the scheduler admits work up to its sequence and token limits. Prefix caching is disabled.
 
 Each request has 256 input tokens from the seeded validation corpus. Scoring requests full prompt logprobs and one generated token. After a warmup, two full scoring passes are recorded. Generation requests no prompt logprobs and exactly 32 output tokens regardless of EOS. After warming up on two concurrency waves, a full 1024-request generation pass is measured. Generation throughput includes its prefill time; it is not a decode-only kernel rate.
 
@@ -20,3 +20,7 @@ Driver: `../scripts/bench_batching.py`. Launcher: `../scripts/run_batching.sh`. 
 Downloaded artifacts are summarized by `../scripts/summarize_batching.py`, generating `../results/batching/summary.json` and `summary.md`. Case failures/timeouts are retained rather than silently omitted. Initial cold loading is excluded from throughput; startup seconds are reported separately.
 
 Retry/provenance correction: allocation 48460908 yielded no measurements because the initial callable memory RPC was rejected. Its artifacts are isolated in `results/batching_attempt1`. Corrected allocation 48461862 runs on as04r3b02 / as04r3b04; each layout's `allocation.txt` records the assignment. The named worker extension preserves the default serialization policy. Cold loading repeats on these hosts and is again excluded from throughput.
+
+Completed results: all 16 baseline cases passed, including the extra 256/65536 cases. See `results/batching/summary.md` and `summary.json`. The later Engram candidate is isolated in `autoexp_infer008_engram`, runtime source ID `7055a88eda71d9f1`, vLLM commit 0f684e9f4c. It uses the same loaded model for reference/batched comparisons, with all timings saved before the flag changes. Full numerical/quality comparison: `results/engram_candidate/comparison.json`.
+
+The baseline profiling window includes initial prefill. The analysis excludes at least five seconds, extending that exclusion beyond the longest first-token latency measured in the matching diagnostic. The TP4/256 window has insufficient confirmed decode-tail samples after this exclusion; its FLA index-construction samples must not be attributed to pure decode. The EP4/256 tail remains ~71% Engram. A separate delayed profiling-only single request is stored under `results/engram_single_profile`; it is excluded from throughput claims.

@@ -1,0 +1,4 @@
+py-spy> Sampling process 49 times a second for 8 seconds. Press Control-C to exit.
+
+py-spy> Wrote speedscope file to '/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_infer008_batch/experiment/008_ambitious_inference_speed/results/batching/tp4/s256_t32768/profile_b256_rank0_pid2022015.json'. Samples: 1540 Errors: 6
+py-spy> Visit https://www.speedscope.app/ to view

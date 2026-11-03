@@ -1,0 +1,298 @@
+{
+  "layout": "ep4",
+  "max_seqs": 128,
+  "token_budget": 32768,
+  "dp": 4,
+  "tp": 1,
+  "startup_seconds": 110.66584452381358,
+  "prompt_sha256": "119c54acf582acaf185777805dafdef74f196a99c92738d8f748e91f7e7362df",
+  "trials": [
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "mode": "scoring",
+      "trial": 0,
+      "seconds": 13.140970077831298,
+      "requests_per_second": 77.92423192009844,
+      "input_tokens_per_second": 19948.6033715452,
+      "output_tokens_per_second": 77.92423192009844,
+      "mean_nll": 1.6886092171183953,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 23,
+            "waiting": 223,
+            "cache_usage": 0.14743589743589747,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 18,
+            "waiting": 222,
+            "cache_usage": 0.11538461538461542,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 18,
+            "waiting": 223,
+            "cache_usage": 0.11538461538461542,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 17,
+            "waiting": 223,
+            "cache_usage": 0.10897435897435892,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1554791,
+            "device": 0,
+            "free_bytes": 6002049024,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220802560,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56666808320,
+            "peak_reserved_bytes": 58854473728
+          }
+        ],
+        [
+          {
+            "pid": 1554789,
+            "device": 1,
+            "free_bytes": 5999951872,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220800512,
+            "reserved_bytes": 58856570880,
+            "peak_allocated_bytes": 56621935616,
+            "peak_reserved_bytes": 58856570880
+          }
+        ],
+        [
+          {
+            "pid": 1554790,
+            "device": 2,
+            "free_bytes": 6004146176,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220802560,
+            "reserved_bytes": 58852376576,
+            "peak_allocated_bytes": 56621935616,
+            "peak_reserved_bytes": 58852376576
+          }
+        ],
+        [
+          {
+            "pid": 1554792,
+            "device": 3,
+            "free_bytes": 6002049024,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220800512,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56595588608,
+            "peak_reserved_bytes": 58854473728
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "mode": "scoring",
+      "trial": 1,
+      "seconds": 11.866756403818727,
+      "requests_per_second": 86.29148228495501,
+      "input_tokens_per_second": 22090.619464948482,
+      "output_tokens_per_second": 86.29148228495501,
+      "mean_nll": 1.6884838669362547,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 32,
+            "waiting": 222,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 223,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 223,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 223,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1554791,
+            "device": 0,
+            "free_bytes": 6002049024,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220800512,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56522228736,
+            "peak_reserved_bytes": 58854473728
+          }
+        ],
+        [
+          {
+            "pid": 1554789,
+            "device": 1,
+            "free_bytes": 5999951872,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220800512,
+            "reserved_bytes": 58856570880,
+            "peak_allocated_bytes": 56504138240,
+            "peak_reserved_bytes": 58856570880
+          }
+        ],
+        [
+          {
+            "pid": 1554790,
+            "device": 2,
+            "free_bytes": 6004146176,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220800512,
+            "reserved_bytes": 58852376576,
+            "peak_allocated_bytes": 56513445888,
+            "peak_reserved_bytes": 58852376576
+          }
+        ],
+        [
+          {
+            "pid": 1554792,
+            "device": 3,
+            "free_bytes": 6002049024,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220800512,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56513445888,
+            "peak_reserved_bytes": 58854473728
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 32768,
+      "mode": "generation",
+      "trial": 0,
+      "seconds": 84.4942184551619,
+      "requests_per_second": 12.119172396906666,
+      "input_tokens_per_second": 3102.5081336081066,
+      "output_tokens_per_second": 387.8135167010133,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 32,
+            "waiting": 224,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 224,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 224,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 224,
+            "cache_usage": 0.20512820512820518,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1554791,
+            "device": 0,
+            "free_bytes": 5999951872,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220804608,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56737477632,
+            "peak_reserved_bytes": 58854473728
+          }
+        ],
+        [
+          {
+            "pid": 1554789,
+            "device": 1,
+            "free_bytes": 5997854720,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220802560,
+            "reserved_bytes": 58856570880,
+            "peak_allocated_bytes": 56684044800,
+            "peak_reserved_bytes": 58856570880
+          }
+        ],
+        [
+          {
+            "pid": 1554790,
+            "device": 2,
+            "free_bytes": 5999951872,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220802560,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56692798464,
+            "peak_reserved_bytes": 58854473728
+          }
+        ],
+        [
+          {
+            "pid": 1554792,
+            "device": 3,
+            "free_bytes": 5999951872,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55220802560,
+            "reserved_bytes": 58854473728,
+            "peak_allocated_bytes": 56710714368,
+            "peak_reserved_bytes": 58854473728
+          }
+        ]
+      ]
+    }
+  ]
+}
