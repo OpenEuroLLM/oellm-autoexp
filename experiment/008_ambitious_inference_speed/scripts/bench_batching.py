@@ -37,18 +37,6 @@ class SchedulerPeaks:
         pass
 
 
-def gpu_memory(worker, reset=False):
-    import torch
-    if reset:
-        torch.cuda.reset_peak_memory_stats()
-    free, total = torch.cuda.mem_get_info()
-    return {'device': torch.cuda.current_device(), 'free_bytes': free,
-            'total_bytes': total, 'allocated_bytes': torch.cuda.memory_allocated(),
-            'reserved_bytes': torch.cuda.memory_reserved(),
-            'peak_allocated_bytes': torch.cuda.max_memory_allocated(),
-            'peak_reserved_bytes': torch.cuda.max_memory_reserved()}
-
-
 def atomic_json(path, data):
     path = Path(path)
     tmp = path.with_suffix('.tmp')
@@ -74,13 +62,14 @@ def worker(rank, dp, tp, port, args, barrier):
               max_num_seqs=args.max_seqs // dp, max_model_len=4096,
               max_num_batched_tokens=args.token_budget // dp,
               enforce_eager=True, enable_prefix_caching=False,
-              disable_log_stats=False, seed=42)
+              disable_log_stats=False, seed=42,
+              worker_extension_cls='scripts.korbi.vllm.batch_memory.BatchMemoryProbe')
     result['startup_seconds'] = time.perf_counter() - started
     atomic_json(out / f'rank{rank}.json', result)
     peaks = SchedulerPeaks()
     assert llm.llm_engine.logger_manager is not None
     llm.llm_engine.logger_manager.stat_loggers.append(peaks)
-    result['memory_after_init'] = llm.collective_rpc(gpu_memory)
+    result['memory_after_init'] = llm.collective_rpc('batching_memory', timeout=30)
     atomic_json(out / f'rank{rank}.json', result)
     for mode in ['scoring', 'generation']:
         params = SamplingParams(temperature=0, max_tokens=1 if mode == 'scoring' else args.decode,
@@ -97,7 +86,7 @@ def worker(rank, dp, tp, port, args, barrier):
         for trial in range(repeats):
             barrier.wait(timeout=1800)
             peaks.reset()
-            llm.collective_rpc(gpu_memory, kwargs={'reset': True})
+            llm.collective_rpc('batching_memory', timeout=30, kwargs={'reset': True})
             begin = time.perf_counter()
             outputs = llm.generate(records, params, use_tqdm=False)
             elapsed = time.perf_counter() - begin
@@ -107,7 +96,7 @@ def worker(rank, dp, tp, port, args, barrier):
                      'requests': len(outputs), 'input_tokens': sum(map(len, prompts)),
                      'output_tokens': sum(len(x.outputs[0].token_ids) for x in outputs),
                      'scheduler_peaks': peaks.engines,
-                     'worker_memory': llm.collective_rpc(gpu_memory)}
+                     'worker_memory': llm.collective_rpc('batching_memory', timeout=30)}
             if mode == 'scoring':
                 values = []
                 sentinels = []
