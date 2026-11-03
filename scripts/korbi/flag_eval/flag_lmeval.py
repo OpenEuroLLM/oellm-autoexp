@@ -121,13 +121,18 @@ def main(argv=None):
     cache_prefix = None
     if a.response_cache:
         import vllm
+        import torch
+        import lm_eval
 
         source = Path(vllm.__file__).parent
         identity = {
             "export": str(export), "tp": a.tp, "dp": a.dp, "ep": a.ep,
             "max_num_seqs": a.max_num_seqs, "request_batch": a.request_batch_size,
             "max_num_batched_tokens": a.max_num_batched_tokens,
-            "vllm_version": vllm.__version__,
+            "vllm_version": vllm.__version__, "torch_version": torch.__version__,
+            "harness_version": getattr(lm_eval, "__version__", "unknown"),
+            "tokenizer": {f.name: hashlib.sha256(f.read_bytes()).hexdigest()
+                          for f in export.glob("*token*.json")},
             "files": [(f.name, f.stat().st_size, f.stat().st_mtime_ns)
                       for f in sorted(export.glob("*.safetensors"))],
             "config": hashlib.sha256((export / "config.json").read_bytes()).hexdigest(),

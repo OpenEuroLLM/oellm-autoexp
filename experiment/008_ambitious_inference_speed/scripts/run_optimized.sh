@@ -36,3 +36,4 @@ for layout in ep4 tp4; do
     --model "$BASE" --layout "$layout" --out "$RESULT/$layout" \
     2>&1 | tee "$RESULT/$layout.log"
 done
+bash experiment/008_ambitious_inference_speed/scripts/run_eval_smoke.sh
