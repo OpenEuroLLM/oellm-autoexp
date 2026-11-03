@@ -71,53 +71,67 @@ def worker(rank, dp, tp, port, args, barrier):
     llm.llm_engine.logger_manager.stat_loggers.append(peaks)
     result['memory_after_init'] = llm.collective_rpc('batching_memory', timeout=30)
     atomic_json(out / f'rank{rank}.json', result)
-    for mode in ['scoring', 'generation']:
-        params = SamplingParams(temperature=0, max_tokens=1 if mode == 'scoring' else args.decode,
-                                prompt_logprobs=0 if mode == 'scoring' else None,
-                                ignore_eos=True)
-        barrier.wait(timeout=1800)
-        # Warm full decode shapes on up to two complete concurrency waves.
-        begin = time.perf_counter()
-        warm = llm.generate(records[:2 * args.max_seqs // dp], params, use_tqdm=False)
-        assert all(len(x.outputs[0].token_ids) == params.max_tokens for x in warm)
-        result[f'{mode}_warmup_seconds'] = time.perf_counter() - begin
-        del warm
-        repeats = 2 if mode == 'scoring' else 1
-        for trial in range(repeats):
+    if args.engram_compare:
+        result['engram_checks'] = llm.collective_rpc('check_batched_engram', timeout=300)
+        atomic_json(out / f'rank{rank}.json', result)
+    for variant in (['reference', 'batched'] if args.engram_compare else ['baseline']):
+        if args.engram_compare:
+            configured = llm.collective_rpc('configure_engram_decode', timeout=30,
+                                            kwargs={'batched': variant == 'batched'})
+            assert all(count > 0 for count in configured)
+        for mode in ['scoring', 'generation']:
+            params = SamplingParams(temperature=0, max_tokens=1 if mode == 'scoring' else args.decode,
+                                    prompt_logprobs=0 if mode == 'scoring' else None,
+                                    ignore_eos=True)
             barrier.wait(timeout=1800)
-            peaks.reset()
-            llm.collective_rpc('batching_memory', timeout=30, kwargs={'reset': True})
+            # Warm full decode shapes on up to two complete concurrency waves.
             begin = time.perf_counter()
-            outputs = llm.generate(records, params, use_tqdm=False)
-            elapsed = time.perf_counter() - begin
-            assert len(outputs) == len(records)
-            assert all(len(x.outputs[0].token_ids) == params.max_tokens for x in outputs)
-            entry = {'mode': mode, 'trial': trial, 'seconds': elapsed,
-                     'requests': len(outputs), 'input_tokens': sum(map(len, prompts)),
-                     'output_tokens': sum(len(x.outputs[0].token_ids) for x in outputs),
-                     'scheduler_peaks': peaks.engines,
-                     'worker_memory': llm.collective_rpc('batching_memory', timeout=30)}
-            if mode == 'scoring':
-                values = []
-                sentinels = []
-                for i, (ids, output) in enumerate(zip(prompts, outputs, strict=True)):
-                    lp = [part[ids[j]].logprob for j, part in
-                          enumerate(output.prompt_logprobs) if part is not None]
-                    assert len(lp) == len(ids) - 1
-                    values.extend(lp)
-                    if i < 8:
-                        sentinels.append({'index': rank + i * dp, 'logprobs': lp})
-                entry.update(logprob_sum=sum(values), scored_tokens=len(values), sentinels=sentinels)
-            else:
-                entry['generated'] = [{'index': rank + i * dp, 'tokens': x.outputs[0].token_ids}
-                                      for i, x in enumerate(outputs)]
-            result['trials'].append(entry)
+            warm = llm.generate(records[:2 * args.max_seqs // dp], params, use_tqdm=False)
+            assert all(len(x.outputs[0].token_ids) == params.max_tokens for x in warm)
+            result[f'{mode}_warmup_seconds'] = time.perf_counter() - begin
+            del warm
+            repeats = 2 if mode == 'scoring' else 1
+            for trial in range(repeats):
+                barrier.wait(timeout=1800)
+                peaks.reset()
+                llm.collective_rpc('batching_memory', timeout=30, kwargs={'reset': True})
+                begin = time.perf_counter()
+                outputs = llm.generate(records, params, use_tqdm=False)
+                elapsed = time.perf_counter() - begin
+                assert len(outputs) == len(records)
+                assert all(len(x.outputs[0].token_ids) == params.max_tokens for x in outputs)
+                entry = {'variant': variant, 'mode': mode, 'trial': trial, 'seconds': elapsed,
+                         'requests': len(outputs), 'input_tokens': sum(map(len, prompts)),
+                         'output_tokens': sum(len(x.outputs[0].token_ids) for x in outputs),
+                         'scheduler_peaks': peaks.engines,
+                         'worker_memory': llm.collective_rpc('batching_memory', timeout=30)}
+                if mode == 'scoring':
+                    values = []
+                    sentinels = []
+                    for i, (ids, output) in enumerate(zip(prompts, outputs, strict=True)):
+                        lp = [part[ids[j]].logprob for j, part in
+                              enumerate(output.prompt_logprobs) if part is not None]
+                        assert len(lp) == len(ids) - 1
+                        values.extend(lp)
+                        if i < 8:
+                            sentinels.append({'index': rank + i * dp, 'logprobs': lp})
+                    entry.update(logprob_sum=sum(values), scored_tokens=len(values), sentinels=sentinels)
+                else:
+                    entry['generated'] = [{'index': rank + i * dp, 'tokens': x.outputs[0].token_ids}
+                                          for i, x in enumerate(outputs)]
+                result['trials'].append(entry)
+                atomic_json(out / f'rank{rank}.json', result)
+                print(json.dumps({'rank': rank, 'mode': mode, 'trial': trial,
+                                  'seconds': elapsed, 'max_seqs': args.max_seqs,
+                                  'token_budget': args.token_budget}), flush=True)
+                del outputs
+        if args.engram_compare:
+            from decode_diagnostics import measure_decode
+            scaling = measure_decode(llm, rank, dp, records, args, barrier,
+                                     batches=[1, 32, 256], profile=False, label=variant)
+            result.setdefault('decode_scaling_by_variant', {})[variant] = scaling
             atomic_json(out / f'rank{rank}.json', result)
-            print(json.dumps({'rank': rank, 'mode': mode, 'trial': trial,
-                              'seconds': elapsed, 'max_seqs': args.max_seqs,
-                              'token_budget': args.token_budget}), flush=True)
-            del outputs
-    if args.max_seqs == 256 and args.token_budget == 32768:
+    if not args.engram_compare and args.max_seqs == 256 and args.token_budget == 32768:
         from decode_diagnostics import measure_decode
         result['decode_diagnostics'] = measure_decode(
             llm, rank, dp, records, args, barrier)
@@ -179,7 +193,8 @@ def run_case(args):
         elapsed = max(t['seconds'] for t in trials)
         entry = {key: sum(t[key] for t in trials)
                  for key in ['requests', 'input_tokens', 'output_tokens']}
-        entry.update(mode=trials[0]['mode'], trial=trials[0]['trial'], seconds=elapsed,
+        entry.update(variant=trials[0].get('variant', 'baseline'),
+                     mode=trials[0]['mode'], trial=trials[0]['trial'], seconds=elapsed,
                      requests_per_second=entry['requests'] / elapsed,
                      input_tokens_per_second=entry['input_tokens'] / elapsed,
                      output_tokens_per_second=entry['output_tokens'] / elapsed)
@@ -192,6 +207,12 @@ def run_case(args):
         from decode_diagnostics import combine
         result['decode_scaling'] = combine([r['decode_diagnostics'] for r in ranks])
         atomic_json(out / 'decode_scaling.json', result['decode_scaling'])
+    if args.engram_compare:
+        from decode_diagnostics import combine
+        result['engram_checks_by_rank'] = [r['engram_checks'] for r in ranks]
+        result['decode_scaling_by_variant'] = {
+            variant: combine([r['decode_scaling_by_variant'][variant] for r in ranks])
+            for variant in ['reference', 'batched']}
     atomic_json(out / 'summary.json', result)
     print(json.dumps(result), flush=True)
 
@@ -219,10 +240,12 @@ def run_sweep(args):
         reader.read_index = functools.lru_cache(maxsize=None)(reader.read_index)
         docs = reader.sample_docs(mix, args.requests, 512, 0)
         atomic_json(prompts_file, [[1] + d[:255].tolist() for d in docs])
-    cases = ([(256, 65536)] if args.extra_only else
+    cases = ([(256, 32768)] if args.engram_compare else
+             [(256, 65536)] if args.extra_only else
              [(32, 8192)] + [(size, budget) for budget in [8192, 32768]
                              for size in [64, 128, 256]])
-    status_path = out / ('status_extra.json' if args.extra_only else 'status.json')
+    status_path = out / ('candidate_status.json' if args.engram_compare else
+                         'status_extra.json' if args.extra_only else 'status.json')
     status = []
     for size, budget in cases:
         case_out = out / f's{size}_t{budget}'
@@ -240,6 +263,8 @@ def run_sweep(args):
                    '--model', args.model, '--out', str(case_out), '--max-seqs', str(size),
                    '--token-budget', str(budget), '--prompts-file', str(prompts_file),
                    '--decode', str(args.decode)]
+        if args.engram_compare:
+            command.append('--engram-compare')
         stop, samples = threading.Event(), []
         monitor = threading.Thread(target=memory_sampler, args=(stop, samples), daemon=True)
         monitor.start()
@@ -283,6 +308,7 @@ def main():
     p.add_argument('--case-timeout', type=int, default=1500)
     p.add_argument('--case', action='store_true')
     p.add_argument('--extra-only', action='store_true')
+    p.add_argument('--engram-compare', action='store_true')
     p.add_argument('--max-seqs', type=int)
     p.add_argument('--token-budget', type=int)
     p.add_argument('--prompts-file')

@@ -12,11 +12,14 @@ def save(path, value):
     tmp.replace(path)
 
 
-def measure_decode(llm, rank, dp, records, args, barrier):
+def measure_decode(llm, rank, dp, records, args, barrier,
+                   batches=None, profile=True, label=""):
     from vllm import SamplingParams
     out = Path(args.out)
-    data = {'rank': rank, 'measurements': [], 'profiles': []}
-    for batch in [1, 8, 32, 64, 128, 256]:
+    data = {'rank': rank, 'variant': label, 'measurements': [], 'profiles': []}
+    prefix = label + '_' if label else ''
+    data_path = out / f'diagnostic_{prefix}rank{rank}.json'
+    for batch in (batches if batches is not None else [1, 8, 32, 64, 128, 256]):
         chosen = [records[i // dp] for i in range(rank, batch, dp)]
         # Start every DP frontend. After the first step only the real request
         # remains in the batch-one decode interval; idle ranks run dummy steps.
@@ -47,9 +50,11 @@ def measure_decode(llm, rank, dp, records, args, barrier):
                      'tokens_per_request': tokens, 'request_timings': timings,
                      'dummy_start_requests': int(dummy)}
             data['measurements'].append(entry)
-            save(out / f'diagnostic_rank{rank}.json', data)
+            save(data_path, data)
             print(json.dumps({'diagnostic': 'decode_scaling', 'rank': rank,
                               'batch': batch, 'seconds': seconds}), flush=True)
+    if not profile:
+        return data
     # Profiling is a separate workload, excluded from every throughput measurement.
     spy = '/gpfs/projects/ehpc533/users/korbip/hybrid_v019/tools/py-spy'
     workers = llm.collective_rpc('batching_memory', timeout=30)
@@ -78,7 +83,7 @@ def measure_decode(llm, rank, dp, records, args, barrier):
             log.close()
             data['profiles'].append({'batch': batch, 'pid': pid, 'path': path.name,
                                      'exit_code': code})
-        save(out / f'diagnostic_rank{rank}.json', data)
+        save(data_path, data)
     return data
 
 
