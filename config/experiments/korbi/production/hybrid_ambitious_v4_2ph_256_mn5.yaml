@@ -1,0 +1,41 @@
+# @package _global_
+# Prepared migration only (2026-11-03); do not enqueue before the user's execution go.
+# Resume v4 mHC on 256 compute nodes inside mn5_pool_p264 (264 cns144 nodes).
+# Same arm, checkpoint roots, optimizer, data/index and 67,108,864 tokens/step.
+# TP=PP=CP=1: DP 512 -> 1024; keep mbs 8 / 1 in phases 1 / 2, hence 2 -> 1
+# micro-batches/step. The reference sampler keeps the OLD 512-rank cyclic buckets,
+# including their shuffles and checkpoint cursor; it redistributes the same samples
+# per global step (floating-point reduction order can still change).
+#
+# After approval: hold both hosts; gracefully stop the old mHC run and wait for its
+# final checkpoint and process exit; enqueue ONLY p1 here; verify checkpoint iteration,
+# consumed samples and >=20 stable training steps before touching the old allocation.
+# Keep that old cns132 host for the subsequent LDM move. Do not release it.
+defaults:
+  - hybrid_ambitious_v4_2ph_mn5
+  - _self_
+
+aux:
+  nodes: 256
+
+backend:
+  env:
+    # Default DCP global load planning is an identity operation, but gathers
+    # ~33 GB of serialized plans on rank 0 at DP1024. Read each rank's shard
+    # independently from the same global metadata; checkpoint resharding stays on.
+    FSDP_DCP_LOCAL_LOAD_PLAN: "1"
+  megatron:
+    # The reference-layout options apply to the cyclic sampler. Preserve the
+    # running job's sharded cyclic order explicitly across the DP-size change.
+    dataloader_type: cyclic
+    data_sharding: true
+    data_sampler_reference_dp_size: 512
+    # Explicit ORIGINAL phase geometry; do not derive from a future mbs tuning.
+    data_sampler_reference_micro_batch_size: "${oc.eval:'8 if ${aux.phase} == 1 else 1'}"
+
+job:
+  name: ambitious_v4_2ph_256n_p${aux.phase}
+
+slurm:
+  sbatch:
+    account: cns144
