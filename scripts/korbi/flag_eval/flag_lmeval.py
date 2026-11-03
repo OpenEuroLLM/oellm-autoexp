@@ -13,7 +13,9 @@ the next one runs (exit status 1 at the end). <out>/<export name>/summary_shard<
 per (row, metric)."""
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 import time
 import traceback
@@ -35,11 +37,17 @@ def main():
     p.add_argument("--ep", type=int, default=1, help="enable_expert_parallel (needed for the MoE bound)")
     p.add_argument("--gpu-mem", type=float, default=0.85)
     p.add_argument("--max-num-seqs", type=int, default=32)
+    p.add_argument("--max-num-batched-tokens", type=int, default=None)
+    p.add_argument("--request-batch-size", default="auto")
+    p.add_argument("--response-cache", action="store_true",
+                   help="durable per-request SQLite cache; requires a finite request batch size")
     p.add_argument("--limit", type=float, default=None, help="test runs only (lm-eval --limit)")
     p.add_argument("--suite", default=str(REPO / "config/eval_tasks/flag_evals.yaml"))
     p.add_argument("--include-path",
                    default=str(REPO / "submodules/oellm-eval/oellm/resources/custom_lm_eval_tasks"))
     a = p.parse_args()
+    if a.response_cache and a.request_batch_size == "auto":
+        p.error("--response-cache requires --request-batch-size (e.g. 256)")
 
     suite = {t["name"]: t for t in yaml.safe_load(open(a.suite))["tasks"]}
     rows = []
@@ -67,12 +75,41 @@ def main():
     from lm_eval.tasks import TaskManager
 
     t0 = time.time()
-    lm = VLLM(pretrained=str(export), trust_remote_code=True, dtype="bfloat16", batch_size="auto",
+    engine_extra = {}
+    if a.max_num_batched_tokens is not None:
+        engine_extra["max_num_batched_tokens"] = a.max_num_batched_tokens
+    lm = VLLM(pretrained=str(export), trust_remote_code=True, dtype="bfloat16", batch_size=a.request_batch_size,
               tensor_parallel_size=a.tp, enable_expert_parallel=bool(a.ep) and a.tp > 1,
-              gpu_memory_utilization=a.gpu_mem, max_num_seqs=a.max_num_seqs, enforce_eager=True)
+              gpu_memory_utilization=a.gpu_mem, max_num_seqs=a.max_num_seqs, enforce_eager=True,
+              **engine_extra)
     print(f"[flag_lmeval] engine up in {time.time() - t0:.0f} s", flush=True)
     tm = TaskManager(include_path=a.include_path)
     summary = out / f"summary_shard{a.shard}.tsv"
+    cache_prefix = None
+    if a.response_cache:
+        import vllm
+
+        source = Path(vllm.__file__).parent
+        identity = {
+            "export": str(export), "tp": a.tp, "ep": a.ep,
+            "max_num_seqs": a.max_num_seqs, "request_batch": a.request_batch_size,
+            "max_num_batched_tokens": a.max_num_batched_tokens,
+            "vllm_version": vllm.__version__,
+            "files": [(f.name, f.stat().st_size, f.stat().st_mtime_ns)
+                      for f in sorted(export.glob("*.safetensors"))],
+            "config": hashlib.sha256((export / "config.json").read_bytes()).hexdigest(),
+            "source": {str(f.relative_to(source)): hashlib.sha256(f.read_bytes()).hexdigest()
+                       for f in [source / "model_executor/models/oellm_ambitious.py",
+                                 source / "model_executor/layers/oellm_mhc.py"] if f.exists()},
+            "settings": {k: os.environ.get(k) for k in ["OELLM_MOE", "OELLM_MHC_IMPL",
+                         "OELLM_ENGRAM_TABLES", "OELLM_ENGRAM_LOOKUP", "OELLM_ENGRAM_MADVISE",
+                         "OELLM_LOCAL_EXPERT_LOAD", "OELLM_ENGRAM_MODEL_DIR"]},
+        }
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:20]
+        cache_dir = out / "response_cache" / digest
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
+        cache_prefix = str(cache_dir / f"shard{a.shard}")
     failed = []
     for t in todo:
         key = f"{t['task']}_{t['n_shot']}"
@@ -80,9 +117,9 @@ def main():
         print(f"[flag_lmeval] --- {t['name']}", flush=True)
         try:
             tracker = EvaluationTracker(output_path=str(out / "results" / key))
-            res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size="auto",
+            res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size=a.request_batch_size,
                                   log_samples=True, evaluation_tracker=tracker, task_manager=tm,
-                                  confirm_run_unsafe_code=True, limit=a.limit)
+                                  confirm_run_unsafe_code=True, limit=a.limit, use_cache=cache_prefix)
             samples = res.pop("samples")
             tracker.save_results_aggregated(results=res, samples=samples)
             for task_name in res["configs"]:
@@ -93,7 +130,8 @@ def main():
                         if isinstance(v, (int, float)) and m != "alias":
                             f.write(f"{t['name']}\t{task_name}\t{m}\t{v}\t{a.limit or ''}\n")
             (done / f"{key}.ok").write_text(json.dumps({"time_s": round(time.time() - t1, 1),
-                                                       "limit": a.limit, "results": res["results"]}) + "\n")
+                                                       "limit": a.limit, "response_cache": cache_prefix,
+                                                       "results": res["results"]}) + "\n")
             print(f"[flag_lmeval] {t['name']} done in {time.time() - t1:.0f} s: "
                   f"{json.dumps(res['results'].get(t['task'], {}), default=str)[:400]}", flush=True)
         except Exception:
