@@ -1,5 +1,8 @@
 """Render exported aggregates, preserving per-GPU and per-step units."""
 import argparse
+import gzip
+import os
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/profile009-mpl")
 import json
 from pathlib import Path
 import matplotlib
@@ -34,12 +37,14 @@ fig.savefig(a.directory/'gpu_activity.svg')
 plt.close(fig)
 fig,axes=plt.subplots(len(data),1,figsize=(13,2.1*len(data)),layout='constrained',squeeze=False)
 for ax,r in zip(axes[:,0],data):
-    for device,rows in r['timeline'].items():
+    with gzip.open(a.directory/(r['label']+'.timeline.json.gz'), 'rt') as f:
+        timeline = json.load(f)
+    for device,rows in timeline.items():
         for kind,color in colors.items():
             if kind=='idle':
                 continue
             spans=[(e['start'],e['end']-e['start']) for e in rows if e['kind']==kind]
-            ax.broken_barh(spans,(int(device)-.3,.6),facecolors=color,linewidths=0)
+            ax.broken_barh(spans,(int(device)-.3,.6),facecolors=color,linewidths=0,rasterized=True)
     ax.set_yticks(range(4),[f'GPU {i}' for i in range(4)])
     ax.set_xlim(0,r['individual_step_ms'][0])
     ax.set_title(r['label'].replace('_b',' / batch '),loc='left',fontsize=11)

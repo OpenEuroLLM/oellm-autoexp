@@ -1,5 +1,6 @@
 """Aggregate bounded Nsight traces. Durations are unions where overlap matters."""
 import argparse
+import gzip
 from bisect import bisect_right
 from collections import defaultdict
 import json
@@ -168,7 +169,7 @@ def analyze(path):
         'copies':[{'device':d,'kind':kind,'count_per_step':v[0]/nsteps,'ms_per_step':v[1]/1e6/nsteps,'bytes_per_step':v[2]/nsteps} for (d,kind),v in copy_details.items()]}
     # Plot the first middle step only; trace offsets retain exact measured positions.
     step_end = by_count[eligible[0]+1]['start']
-    result['timeline'] = {d:[{**r,'start':(max(start,r['start'])-start)/1e6,'end':(min(step_end,r['end'])-start)/1e6} for r in rows if r['start']<step_end and r['end']>start] for d,rows in events.items()}
+    result['timeline'] = {d:[{'kind':r['kind'],'start':(max(start,r['start'])-start)/1e6,'end':(min(step_end,r['end'])-start)/1e6} for r in rows if r['start']<step_end and r['end']>start] for d,rows in events.items()}
     return result
 
 
@@ -181,6 +182,9 @@ def main():
     for path in args.traces:
         result=analyze(path)
         target=args.out/(result['label']+'.json')
+        timeline = result.pop('timeline')
+        with gzip.open(target.with_suffix('.timeline.json.gz'), 'wt') as f:
+            json.dump(timeline, f, separators=(',',':'))
         target.write_text(json.dumps(result,indent=2)+'\n')
         print(result['label'],round(result['step_ms'],2),[(d['device'],round(d['busy_pct'],1)) for d in result['devices']])
 
