@@ -29,6 +29,7 @@ log space, the same FLA layer). Decoding keeps a per-layer state (``OellmHybridC
 from __future__ import annotations
 
 import copy
+import os
 
 import torch
 import torch.nn.functional as F
@@ -45,6 +46,15 @@ from .modeling_oellm_hybrid import OellmEngram, OellmFLALayer, OellmHybridCache,
 
 # --------------------------------------------------------------------------- mHC
 def _sinkhorn(logits: torch.Tensor, iters: int) -> torch.Tensor:
+    if (
+        os.environ.get("OELLM_MHC_IMPL", "reference") == "triton"
+        and logits.is_cuda
+        and logits.shape[-2:] == (4, 4)
+        and not logits.requires_grad
+    ):
+        from .mhc_kernels import sinkhorn4
+
+        return sinkhorn4(logits, iters)
     x = logits.float()
     for _ in range(iters):
         x = x - torch.logsumexp(x, dim=-2, keepdim=True)
@@ -263,6 +273,9 @@ def _swiglu(gate: torch.Tensor, up: torch.Tensor, limit: float | None, norm=None
 class OellmMoE(nn.Module):
     def __init__(self, config: OellmAmbitiousConfig) -> None:
         super().__init__()
+        self.impl = os.environ.get("OELLM_HF_MOE", "reference")
+        if self.impl not in ("reference", "grouped"):
+            raise ValueError(f"Unknown OELLM_HF_MOE: {self.impl}")
         h, e, i = config.hidden_size, config.num_experts, config.moe_intermediate_size
         self.top_k, self.num_experts, self.scaling = config.num_experts_per_tok, e, config.router_scaling_factor
         self.limit = config.activation_clamp_value
@@ -313,6 +326,44 @@ class OellmMoE(nn.Module):
         s = getattr(self, name + "_scale")[e].float()
         return (q.view(*q.shape[:-1], -1, self.block) * s[..., None]).view(q.shape).to(torch.bfloat16).to(dtype)
 
+    def prepare_grouped_experts(self) -> None:
+        """Expand FP8 experts once, before dispatching the BF16-sized model."""
+        if not self.fp8:
+            return
+        with torch.no_grad():
+            for name in ("gate_up_proj", "down_proj"):
+                q = getattr(self, name).view(torch.float8_e4m3fn).float()
+                scale = getattr(self, name + "_scale").float()
+                value = q.view(*q.shape[:-1], -1, self.block) * scale[..., None]
+                self._buffers[name] = value.reshape(q.shape).to(torch.bfloat16)
+                self._buffers.pop(name + "_scale")
+        self.fp8 = False
+
+    def _grouped_experts(self, t, idx, weights):
+        if self.fp8:
+            raise RuntimeError(
+                "Call prepare_grouped_experts() before device dispatch; "
+                "the grouped backend needs a BF16-sized device map"
+            )
+        if not t.is_cuda:
+            raise ValueError("The grouped MoE backend requires CUDA")
+        flat = idx.flatten()
+        order = torch.argsort(flat, stable=True)
+        tokens = order // self.top_k
+        counts = torch.bincount(flat, minlength=self.num_experts)
+        offsets = counts.cumsum(0).to(torch.int32)
+        gu = torch._grouped_mm(
+            t[tokens], self.gate_up_proj.transpose(-1, -2), offs=offsets
+        )
+        gate, up = gu.chunk(2, dim=-1)
+        act = _swiglu(gate, up, self.limit, self.expert_norm)
+        y = torch._grouped_mm(
+            act, self.down_proj.transpose(-1, -2), offs=offsets
+        )
+        out = torch.zeros_like(t)
+        out.index_add_(0, tokens, (y * weights.flatten()[order, None]).to(t.dtype))
+        return out
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         t = x.reshape(-1, shape[-1])
@@ -326,12 +377,15 @@ class OellmMoE(nn.Module):
         if self.top_k > 1:
             w = w / (w.sum(-1, keepdim=True) + 1e-20)
         w = (w * self.scaling).to(t.dtype)
-        out = torch.zeros_like(t)
-        for e in torch.unique(idx).tolist():
-            tok, slot = torch.where(idx == e)
-            g, u = F.linear(t[tok], self._expert("gate_up_proj", e, t.dtype)).chunk(2, dim=-1)
-            y = F.linear(_swiglu(g, u, self.limit, self.expert_norm), self._expert("down_proj", e, t.dtype))
-            out.index_add_(0, tok, (y * w[tok, slot, None]).to(out.dtype))
+        if self.impl == "grouped":
+            out = self._grouped_experts(t, idx, w)
+        else:
+            out = torch.zeros_like(t)
+            for e in torch.unique(idx).tolist():
+                tok, slot = torch.where(idx == e)
+                g, u = F.linear(t[tok], self._expert("gate_up_proj", e, t.dtype)).chunk(2, dim=-1)
+                y = F.linear(_swiglu(g, u, self.limit, self.expert_norm), self._expert("down_proj", e, t.dtype))
+                out.index_add_(0, tok, (y * w[tok, slot, None]).to(out.dtype))
         if self.shared_gate_proj is not None:
             out = out + self.shared_down_proj(
                 _swiglu(self.shared_gate_proj(t), self.shared_up_proj(t), self.limit, self.shared_norm)

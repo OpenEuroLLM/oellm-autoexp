@@ -302,7 +302,7 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
         LOGGER.info("layer %d (%s) done", i, kind)
     writer.close()
     write_config(out_dir, cfg, tokenizer)
-    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py"):
+    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py"):
         shutil.copy2(_PKG / f, out_dir / f)
     # the reused modules (CKDA wrapper, Engram base, norm, cache) and their config
     for f in ("modeling_oellm_hybrid.py", "configuration_oellm_hybrid.py"):

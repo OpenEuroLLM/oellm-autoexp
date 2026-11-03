@@ -39,6 +39,7 @@ cached and uncached generation agree.
 from __future__ import annotations
 
 import contextlib
+import os
 
 import torch
 import torch.nn.functional as F
@@ -946,6 +947,18 @@ class OellmEngram(nn.Module):
     def _lookup(self, rows: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
         """Table rows ``[..., L] -> [..., L, dim]``; fp8 rows are dequantized
         here."""
+        mode = os.environ.get("OELLM_HF_ENGRAM_LOOKUP", "reference")
+        if mode not in ("reference", "sorted"):
+            raise ValueError(f"Unknown OELLM_HF_ENGRAM_LOOKUP: {mode}")
+        if mode == "sorted" and self.table.device.type == "cpu" and rows.is_cuda:
+            unique, inverse = torch.unique(rows.flatten().cpu(), return_inverse=True)
+            if self.table_dtype == "fp8":
+                q = self.table[unique].view(torch.float8_e4m3fn).float()
+                got = (q * self.table_scale[unique].float().unsqueeze(-1)).to(dtype)
+            else:
+                got = F.embedding(unique, self.table).to(dtype)
+            got = got.to(rows.device, non_blocking=True)
+            return got[inverse.to(rows.device)].view(*rows.shape, got.shape[-1])
         idx = rows.to(self.table.device)
         if self.table_dtype == "fp8":
             q = self.table[idx].view(torch.float8_e4m3fn).to(torch.float32)
