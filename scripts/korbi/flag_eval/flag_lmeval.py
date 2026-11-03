@@ -26,7 +26,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[3]
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--export", required=True)
     p.add_argument("--out", required=True)
@@ -34,6 +34,8 @@ def main():
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--tp", type=int, default=4)
+    p.add_argument("--dp", type=int, default=1,
+                   help="node-local DP frontends; TP1/DP4/EP runs pure expert parallelism")
     p.add_argument("--ep", type=int, default=1, help="enable_expert_parallel (needed for the MoE bound)")
     p.add_argument("--gpu-mem", type=float, default=0.85)
     p.add_argument("--max-num-seqs", type=int, default=32)
@@ -45,9 +47,24 @@ def main():
     p.add_argument("--suite", default=str(REPO / "config/eval_tasks/flag_evals.yaml"))
     p.add_argument("--include-path",
                    default=str(REPO / "submodules/oellm-eval/oellm/resources/custom_lm_eval_tasks"))
-    a = p.parse_args()
+    a = p.parse_args(argv)
+    if a.dp < 1 or a.tp < 1:
+        p.error("TP and DP sizes must be positive")
+    if a.dp > 1 and not a.ep:
+        p.error("node-local DP requires expert parallelism")
+    if a.request_batch_size != "auto":
+        try:
+            if int(a.request_batch_size) < 1:
+                raise ValueError()
+        except ValueError:
+            p.error("request batch size must be auto or a positive integer")
     if a.response_cache and a.request_batch_size == "auto":
         p.error("--response-cache requires --request-batch-size (e.g. 256)")
+    if a.dp > 1 and "FLAG_DP_RANK" not in os.environ:
+        from scripts.korbi.flag_eval.node_ep import launch
+
+        launch(a.dp, list(sys.argv[1:] if argv is None else argv))
+        return
 
     suite = {t["name"]: t for t in yaml.safe_load(open(a.suite))["tasks"]}
     rows = []
@@ -65,6 +82,12 @@ def main():
     done = out / "done"
     done.mkdir(parents=True, exist_ok=True)
     todo = [t for t in rows if not (done / f"{t['task']}_{t['n_shot']}.ok").exists()]
+    if a.dp > 1:
+        import torch.distributed as dist
+
+        shared = [todo if int(os.environ["FLAG_DP_RANK"]) == 0 else None]
+        dist.broadcast_object_list(shared, src=0)
+        todo = shared[0]
     print(f"[flag_lmeval] {export.name} shard {a.shard}/{a.num_shards}: {len(rows)} rows, {len(todo)} to run", flush=True)
     if not todo:
         return
@@ -74,14 +97,24 @@ def main():
     from lm_eval.models.vllm_causallms import VLLM
     from lm_eval.tasks import TaskManager
 
+    if a.dp > 1:
+        from scripts.korbi.flag_eval.node_ep import distributed_adapter
+
+        VLLM = distributed_adapter(VLLM)
     t0 = time.time()
     engine_extra = {}
     if a.max_num_batched_tokens is not None:
-        engine_extra["max_num_batched_tokens"] = a.max_num_batched_tokens
+        engine_extra["max_num_batched_tokens"] = max(1, a.max_num_batched_tokens // a.dp)
     lm = VLLM(pretrained=str(export), trust_remote_code=True, dtype="bfloat16", batch_size=a.request_batch_size,
-              tensor_parallel_size=a.tp, enable_expert_parallel=bool(a.ep) and a.tp > 1,
-              gpu_memory_utilization=a.gpu_mem, max_num_seqs=a.max_num_seqs, enforce_eager=True,
+              tensor_parallel_size=a.tp, enable_expert_parallel=bool(a.ep) and (a.tp * a.dp > 1),
+              gpu_memory_utilization=a.gpu_mem, max_num_seqs=max(1, a.max_num_seqs // a.dp), enforce_eager=True,
               **engine_extra)
+    if a.dp > 1:
+        import torch
+
+        lm._rank = int(os.environ["FLAG_DP_RANK"])
+        lm._world_size = a.dp
+        lm._device = torch.device("cpu")
     print(f"[flag_lmeval] engine up in {time.time() - t0:.0f} s", flush=True)
     tm = TaskManager(include_path=a.include_path)
     summary = out / f"summary_shard{a.shard}.tsv"
@@ -91,7 +124,7 @@ def main():
 
         source = Path(vllm.__file__).parent
         identity = {
-            "export": str(export), "tp": a.tp, "ep": a.ep,
+            "export": str(export), "tp": a.tp, "dp": a.dp, "ep": a.ep,
             "max_num_seqs": a.max_num_seqs, "request_batch": a.request_batch_size,
             "max_num_batched_tokens": a.max_num_batched_tokens,
             "vllm_version": vllm.__version__,
@@ -108,7 +141,10 @@ def main():
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:20]
         cache_dir = out / "response_cache" / digest
         cache_dir.mkdir(parents=True, exist_ok=True)
-        (cache_dir / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
+        if lm.rank == 0:
+            (cache_dir / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
+        if a.dp > 1:
+            lm.barrier()
         cache_prefix = str(cache_dir / f"shard{a.shard}")
     failed = []
     for t in todo:
@@ -120,6 +156,9 @@ def main():
             res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size=a.request_batch_size,
                                   log_samples=True, evaluation_tracker=tracker, task_manager=tm,
                                   confirm_run_unsafe_code=True, limit=a.limit, use_cache=cache_prefix)
+            if res is None:
+                lm.barrier()
+                continue
             samples = res.pop("samples")
             tracker.save_results_aggregated(results=res, samples=samples)
             for task_name in res["configs"]:
@@ -134,11 +173,17 @@ def main():
                                                        "results": res["results"]}) + "\n")
             print(f"[flag_lmeval] {t['name']} done in {time.time() - t1:.0f} s: "
                   f"{json.dumps(res['results'].get(t['task'], {}), default=str)[:400]}", flush=True)
+            if a.dp > 1:
+                lm.barrier()
         except Exception:
             traceback.print_exc()
+            if a.dp > 1:
+                raise
             failed.append(t["name"])
             print(f"[flag_lmeval] {t['name']} FAILED after {time.time() - t1:.0f} s", flush=True)
     print(f"[flag_lmeval] shard {a.shard}: {len(todo) - len(failed)} ok, failed: {failed}; {time.time() - t0:.0f} s", flush=True)
+    if a.dp > 1:
+        lm.model.llm_engine.engine_core.shutdown()
     sys.exit(1 if failed else 0)
 
 
