@@ -138,10 +138,13 @@ def main(argv=None):
             "config": hashlib.sha256((export / "config.json").read_bytes()).hexdigest(),
             "source": {str(f.relative_to(source)): hashlib.sha256(f.read_bytes()).hexdigest()
                        for f in [source / "model_executor/models/oellm_ambitious.py",
-                                 source / "model_executor/layers/oellm_mhc.py"] if f.exists()},
+                                 source / "model_executor/layers/oellm_mhc.py",
+                                 source / "model_executor/layers/oellm_fusion.py",
+                                 source / "model_executor/layers/oellm_graph.py"] if f.exists()},
             "settings": {k: os.environ.get(k) for k in ["OELLM_MOE", "OELLM_MHC_IMPL",
                          "OELLM_ENGRAM_TABLES", "OELLM_ENGRAM_LOOKUP", "OELLM_ENGRAM_MADVISE",
-                         "OELLM_ENGRAM_DECODE_IMPL",
+                         "OELLM_ENGRAM_DECODE_IMPL", "OELLM_FUSION_IMPL", "OELLM_DECODE_GRAPHS",
+                         "OELLM_GRAPH_MAX_ROWS",
                          "OELLM_LOCAL_EXPERT_LOAD", "OELLM_ENGRAM_MODEL_DIR"]},
         }
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:20]
