@@ -28,3 +28,12 @@ class FusionProbe(BatchMemoryProbe):
         import importlib
         check=importlib.import_module('experiment.010_ambitious_fusion_graphs.scripts.check_ckda')
         return check.check(self.model_runner)
+
+    def check_engram_graphs(self):
+        import torch
+        from vllm.forward_context import set_forward_context, get_forward_context
+        config=self.model_runner.vllm_config
+        with set_forward_context({},config,num_tokens=1,
+            num_tokens_across_dp=torch.ones(config.parallel_config.data_parallel_size,dtype=torch.int32)):
+            get_forward_context().additional_kwargs['oellm_decode_graph']=True
+            return self.check_batched_engram()

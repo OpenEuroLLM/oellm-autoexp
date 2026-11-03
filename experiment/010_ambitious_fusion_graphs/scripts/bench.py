@@ -30,6 +30,7 @@ def worker(rank,args,port,barrier):
         worker_extension_cls='scripts.korbi.vllm.fusion_probe.FusionProbe')
     result['startup_seconds']=time.perf_counter()-start
     result['ckda_checks']=llm.collective_rpc('check_ckda_graphs',timeout=600)
+    result['engram_checks']=llm.collective_rpc('check_engram_graphs',timeout=600)
     save(path,result)
     for variant,fused,graphs in [('reference0',False,False),('reference1',False,False),
                                  ('fused',True,False),('graphs',True,True),('graphs_repeat',True,True)]:
