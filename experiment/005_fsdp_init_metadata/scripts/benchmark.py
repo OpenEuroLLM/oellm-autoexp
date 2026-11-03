@@ -1,4 +1,6 @@
 """Four-node NCCL A/B benchmark of existing vs batched initialization finalization."""
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,6 +18,14 @@ from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
     validate_uneven_dtensor,
     validate_uneven_dtensors,
 )
+
+baseline_path = Path(os.environ.get(
+    'FSDP_BASELINE_MEGATRON',
+    '/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_rowmeta2/submodules/Megatron-LM',
+)) / 'megatron/core/distributed/fsdp/src/megatron_fsdp/uneven_dtensor.py'
+spec = importlib.util.spec_from_file_location('fsdp_metadata_baseline', baseline_path)
+original = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(original)
 
 torch.cuda.set_device(int(os.environ['LOCAL_RANK']))
 dist.init_process_group('nccl')
@@ -52,8 +62,8 @@ def measure(fn):
 
 def baseline():
     for d in cases:
-        validate_uneven_dtensor(d)
-        update_uneven_dtensor_chunk_metadata(d)
+        original.validate_uneven_dtensor(d)
+        original.update_uneven_dtensor_chunk_metadata(d)
 
 def batched():
     metadata = gather_and_compute_chunk_metadata_batched(cases)
@@ -68,7 +78,9 @@ assert [d._local_tensor.__create_chunk_list__()[0] for d in cases] == expected
 assert old['all_gather_object'] == 128 and old['all_reduce'] == 64
 assert new['all_gather_object'] == 2 and new['all_reduce'] == 2
 if dist.get_rank() == 0:
-    result = {'ranks': world, 'tensors': len(cases), 'baseline': old, 'batched': new,
+    result = {'ranks': world, 'tensors': len(cases), 'baseline_source': str(baseline_path),
+              'baseline_sha256': hashlib.sha256(baseline_path.read_bytes()).hexdigest(),
+              'baseline': old, 'batched': new,
               'speedup': old['max_rank_seconds'] / new['max_rank_seconds']}
     path = Path('experiment/005_fsdp_init_metadata/results/benchmark.json')
     path.write_text(json.dumps(result, indent=2) + '\n')
