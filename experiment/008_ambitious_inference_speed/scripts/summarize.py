@@ -65,11 +65,35 @@ def task_results(directory):
     return results
 
 
+def task_comparison():
+    result = {}
+    for task in ['hellaswag', 'gsm8k']:
+        samples = []
+        for mode in ['reference', 'fast']:
+            files = list((ROOT / f'lmeval_{mode}').rglob(f'samples_{task}_*.jsonl'))
+            if not files:
+                break
+            assert len(files) == 1
+            rows = [json.loads(line) for line in files[0].read_text().splitlines()]
+            samples.append({(row['doc_id'], row['filter']): row for row in rows})
+        if len(samples) != 2:
+            continue
+        a, b = samples
+        assert a.keys() == b.keys()
+        assert all(a[k]['prompt_hash'] == b[k]['prompt_hash'] for k in a)
+        result[task] = {'unique_docs': len({k[0] for k in a}),
+            'doc_filter_records': len(a), 'all_prompt_hashes_match': True,
+            'records_with_identical_correctness': sum(
+                all(a[k][metric] == b[k][metric] for metric in a[k]['metrics']) for k in a)}
+    return result
+
+
 def main():
     result = {'hf': {}, 'vllm': {}, 'numerics': {}, 'tasks': {}}
     reference = load('optimized/hf_reference.json')
     for name, path in [('fast', 'optimized/hf_fast.json'),
-                       ('grouped_reference_mhc', 'quality/hf_grouped_only.json')]:
+                       ('grouped_reference_mhc', 'quality/hf_grouped_only.json'),
+                       ('mapped_tables', 'final/hf_mmap.json')]:
         if (ROOT / path).exists():
             result['hf'][name] = hf_comparison(reference, load(path))
     for path in sorted(ROOT.rglob('summary.json')):
@@ -83,6 +107,10 @@ def main():
         'optimized/ep4', 'optimized/ep4', 0, 1)
     for name in ['lmeval_fast', 'lmeval_reference']:
         result['tasks'][name] = task_results(name)
+    result['task_comparison'] = task_comparison()
+    if (ROOT / 'final/hf_mmap.json').exists():
+        result['hf']['mapped_vs_fast'] = hf_comparison(
+            load('optimized/hf_fast.json'), load('final/hf_mmap.json'))
     (ROOT / 'comparison.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: result[k] for k in ['hf', 'numerics', 'tasks']}, indent=2))
 
