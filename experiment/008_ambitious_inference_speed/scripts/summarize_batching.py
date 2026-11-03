@@ -10,6 +10,9 @@ def summarize():
     for layout in ['ep4', 'tp4']:
         status_path = ROOT / layout / 'status.json'
         statuses = json.loads(status_path.read_text()) if status_path.exists() else []
+        extra_path = ROOT / layout / 'status_extra.json'
+        if extra_path.exists():
+            statuses += json.loads(extra_path.read_text())
         status_map = {(s['max_seqs'], s['token_budget']): s for s in statuses}
         for directory in sorted((ROOT / layout).glob('s*_t*')):
             size, budget = map(int, directory.name[1:].split('_t'))

@@ -16,3 +16,10 @@ printf '%s\n' "job=$SLURM_JOB_ID node=$(hostname) layout=$layout" > "$RESULT/all
 "$INFER_PY" experiment/008_ambitious_inference_speed/scripts/bench_batching.py \
  --model /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700 \
  --layout "$layout" --out "$RESULT" --requests 1024 --decode 32
+# Token budget must reach 256 * 256 to test a full 256-sequence scoring step.
+# Capacity failure here is an outcome to record, without aborting the peer node.
+if ! "$INFER_PY" experiment/008_ambitious_inference_speed/scripts/bench_batching.py \
+ --model /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700 \
+ --layout "$layout" --out "$RESULT" --requests 1024 --decode 32 --extra-only; then
+ echo "Extra 65536-token case failed or timed out; see status_extra.json"
+fi

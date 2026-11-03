@@ -210,8 +210,10 @@ def run_sweep(args):
         reader.read_index = functools.lru_cache(maxsize=None)(reader.read_index)
         docs = reader.sample_docs(mix, args.requests, 512, 0)
         atomic_json(prompts_file, [[1] + d[:255].tolist() for d in docs])
-    cases = [(32, 8192)] + [(size, budget) for budget in [8192, 32768]
-                            for size in [64, 128, 256]]
+    cases = ([(256, 65536)] if args.extra_only else
+             [(32, 8192)] + [(size, budget) for budget in [8192, 32768]
+                             for size in [64, 128, 256]])
+    status_path = out / ('status_extra.json' if args.extra_only else 'status.json')
     status = []
     for size, budget in cases:
         case_out = out / f's{size}_t{budget}'
@@ -222,7 +224,7 @@ def run_sweep(args):
         remaining = end - time.time() if end else args.case_timeout
         if remaining < 210:
             status.append({'max_seqs': size, 'token_budget': budget, 'status': 'insufficient_allocation_time'})
-            atomic_json(out / 'status.json', status)
+            atomic_json(status_path, status)
             continue
         case_out.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, __file__, '--case', '--layout', args.layout,
@@ -256,7 +258,7 @@ def run_sweep(args):
                 'status': 'timeout' if timed_out else 'ok' if code == 0 else 'failed',
                 'wall_seconds': time.time() - started}
         status.append(item)
-        atomic_json(out / 'status.json', status)
+        atomic_json(status_path, status)
         print(json.dumps(item), flush=True)
     if any(x['status'] not in ['ok', 'previously_completed'] for x in status):
         sys.exit(1)
@@ -271,6 +273,7 @@ def main():
     p.add_argument('--decode', type=int, default=32)
     p.add_argument('--case-timeout', type=int, default=1500)
     p.add_argument('--case', action='store_true')
+    p.add_argument('--extra-only', action='store_true')
     p.add_argument('--max-seqs', type=int)
     p.add_argument('--token-budget', type=int)
     p.add_argument('--prompts-file')
