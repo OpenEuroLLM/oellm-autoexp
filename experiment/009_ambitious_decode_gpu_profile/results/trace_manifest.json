@@ -1,0 +1,88 @@
+{
+  "job": 48469958,
+  "node": "as01r5b21",
+  "vllm_source": "0f684e9f4c",
+  "runtime_source_id": "7055a88eda71d9f1",
+  "files": [
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.1.nsys-rep",
+      "bytes": 23182076,
+      "sha256": "b6a414b7e4b975a93c08e2c580f16bba36fe3734ab18a7386a90b37e28feaae3"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.1.sqlite",
+      "bytes": 60162048,
+      "sha256": "cd4d84d6800e1f266517c2db8e77dbfb5b955430203a423541ea24b7ca3c6462"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.2.nsys-rep",
+      "bytes": 25599126,
+      "sha256": "19624fd12ab98c13218eff3625d022952cb244c4f144b73b00e77c3f1ed3ce20"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.2.sqlite",
+      "bytes": 65232896,
+      "sha256": "4e3a6953e81b6deaa07eab74804de1047bd1b210298d335636ace34b7cd11462"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.3.nsys-rep",
+      "bytes": 25913774,
+      "sha256": "e8cbb559dc52d1cccc8844e19ca461f77da80b87a62430a90f8e5383cb6e116b"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.3.sqlite",
+      "bytes": 65724416,
+      "sha256": "71be6264a1c3bcd04591f7f4fb10cd897a7fc029d033f5ff268be574a5b64b29"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/tp4/capture.1.nsys-rep",
+      "bytes": 22410956,
+      "sha256": "9ff1413160a385de7811aa56a541ca8ad8a52712669084095566f9304bd72be1"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/tp4/capture.1.sqlite",
+      "bytes": 58404864,
+      "sha256": "c5dbe4441f844023a565ddf9682525f5ec8a71a869dd7d1c148cdd64a3743b07"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/tp4/capture.2.nsys-rep",
+      "bytes": 22704088,
+      "sha256": "56b0fb5de90d14d3f4f4179c1008cb413d1c4ed1e2fe91391950dc005bb4cf2f"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/tp4/capture.2.sqlite",
+      "bytes": 57892864,
+      "sha256": "a02b1a38512c432d63d12e9725cd685facab19a8e3bba1f78e13cf4c770422cc"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/tp4/capture.3.nsys-rep",
+      "bytes": 20930147,
+      "sha256": "a3c0c47adf44e11a2da7966c0a14996898ce7e3e80574ef897fd166957fb6418"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/tp4/capture.3.sqlite",
+      "bytes": 52883456,
+      "sha256": "fa46a17a36502dbb45fd4f66091f9fd5ef42d3dce9488e50e063d82aa8d5452e"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/scripts/profile_decode.py",
+      "bytes": 5161,
+      "sha256": "6148a0f7f70dfcfd4f64e1dfcb5b9dc73a3a4a7fb6953dfaf2c1ca1732693384"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/scripts/run_profile.sh",
+      "bytes": 1763,
+      "sha256": "08e1c78b3998eaf14c47f969518079a0d933f54147949e4b986b926e49de0479"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/scripts/korbi/vllm/gpu_profile.py",
+      "bytes": 4564,
+      "sha256": "126b6080ce41a4c8209784a7b82faf7901d61381cbd9f02ad22e2921e8ca1016"
+    },
+    {
+      "path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/submodules/vllm/vllm/model_executor/models/oellm_ambitious.py",
+      "bytes": 58543,
+      "sha256": "af12f3e63d9fd9abea6596deea43fef93227e19f1acff2f781b3593c2360cae3"
+    }
+  ]
+}

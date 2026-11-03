@@ -41,8 +41,9 @@ def analyze(path):
     by_count = {int(re.search(r'/decode(\d+)/', r['name'])[1]):r for r in steps}
     coverage = [dict(r) for r in db.execute('select deviceId,min(start) as first_kernel_ns,max(end) as last_kernel_ns,count(*) as kernels from CUPTI_ACTIVITY_KIND_KERNEL group by deviceId')]
     assert len(coverage) == 4, coverage
+    common_start = max(r['first_kernel_ns'] for r in coverage)
     common_end = min(r['last_kernel_ns'] for r in coverage)
-    eligible = [i for i in range(11,19) if i in by_count and i+1 in by_count and by_count[i+1]['start'] < common_end]
+    eligible = [i for i in range(11,19) if i in by_count and i+1 in by_count and common_start < by_count[i]['start'] and by_count[i+1]['start'] < common_end]
     assert len(eligible) >= 2, (path, coverage, sorted(by_count))
     assert eligible == list(range(eligible[0],eligible[-1]+1))
     start, end = by_count[eligible[0]]['start'], by_count[eligible[-1]+1]['start']
@@ -151,6 +152,8 @@ def analyze(path):
                 'copy':(busy-compute_collective)/1e6/nsteps,'idle':(wall-busy)/1e6/nsteps},
             'idle_before_next_launch_api_ms_per_step':launch_wait/1e6/nsteps,
             'largest_idle_gaps':sorted(gaps,key=lambda r:r['duration_us'],reverse=True)[:15]})
+    counts = [d['kernel_count_per_step'] for d in devices]
+    assert (max(counts)-min(counts))/max(counts) < 0.02, ('incomplete/asymmetric kernel coverage', path, counts)
     scope_summary = defaultdict(lambda:[0,0])
     for tid, ranges in scopes.items():
         for r in ranges:

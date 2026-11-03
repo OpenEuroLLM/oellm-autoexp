@@ -1,0 +1,128 @@
+[
+  {
+    "layout": "ep4",
+    "batch": 1,
+    "requests": 1,
+    "mean_request_itl_ms": 150.36953624528576,
+    "decode_window_output_tok_s": 6.650283195452436,
+    "trace_step_ms": 208.79366025,
+    "trace_vs_control_ratio": 1.3885369700775805,
+    "gpu_busy_pct": [
+      51.24747316172403,
+      13.84427487663625,
+      85.72070341393423,
+      86.65764170394633
+    ],
+    "kernels_per_gpu_step": [
+      9639.0,
+      9662.0,
+      9661.75,
+      9661.0
+    ]
+  },
+  {
+    "layout": "ep4",
+    "batch": 32,
+    "requests": 32,
+    "mean_request_itl_ms": 176.7956719034366,
+    "decode_window_output_tok_s": 177.68911685502957,
+    "trace_step_ms": 202.45363925,
+    "trace_vs_control_ratio": 1.1451278024530906,
+    "gpu_busy_pct": [
+      46.33506730109323,
+      20.38182057525054,
+      66.40626700910244,
+      73.93113223574716
+    ],
+    "kernels_per_gpu_step": [
+      9687.0,
+      9687.75,
+      9687.75,
+      9688.0
+    ]
+  },
+  {
+    "layout": "ep4",
+    "batch": 256,
+    "requests": 256,
+    "mean_request_itl_ms": 184.5588606241316,
+    "decode_window_output_tok_s": 1267.4988436454482,
+    "trace_step_ms": 214.20826475,
+    "trace_vs_control_ratio": 1.160650125524191,
+    "gpu_busy_pct": [
+      53.432713898122365,
+      47.29206789393965,
+      81.52915222660661,
+      83.13206890398472
+    ],
+    "kernels_per_gpu_step": [
+      9687.0,
+      9688.0,
+      9687.25,
+      9686.25
+    ]
+  },
+  {
+    "layout": "tp4",
+    "batch": 1,
+    "requests": 1,
+    "mean_request_itl_ms": 147.59161819769875,
+    "decode_window_output_tok_s": 6.77545251018592,
+    "trace_step_ms": 188.73842575,
+    "trace_vs_control_ratio": 1.2787882405163766,
+    "gpu_busy_pct": [
+      91.20707326340514,
+      10.722705601458584,
+      93.86884310705871,
+      93.75404163028524
+    ],
+    "kernels_per_gpu_step": [
+      9670.75,
+      9662.5,
+      9669.0,
+      9669.0
+    ]
+  },
+  {
+    "layout": "tp4",
+    "batch": 32,
+    "requests": 32,
+    "mean_request_itl_ms": 173.05070978835022,
+    "decode_window_output_tok_s": 175.75062858023392,
+    "trace_step_ms": 190.86454225,
+    "trace_vs_control_ratio": 1.1029399560593367,
+    "gpu_busy_pct": [
+      90.70048787440507,
+      17.626447978972376,
+      93.76235661183946,
+      93.64629917267936
+    ],
+    "kernels_per_gpu_step": [
+      9673.25,
+      9674.25,
+      9671.25,
+      9671.25
+    ]
+  },
+  {
+    "layout": "tp4",
+    "batch": 256,
+    "requests": 256,
+    "mean_request_itl_ms": 184.12780734730387,
+    "decode_window_output_tok_s": 1161.331112570736,
+    "trace_step_ms": 193.376097,
+    "trace_vs_control_ratio": 1.050227555446049,
+    "gpu_busy_pct": [
+      90.07735980247169,
+      40.689403303035945,
+      93.56644649484953,
+      93.47572225192513
+    ],
+    "kernels_per_gpu_step": [
+      9741.0,
+      9733.0,
+      9739.0,
+      9739.0
+    ]
+  }
+]

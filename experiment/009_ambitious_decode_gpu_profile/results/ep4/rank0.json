@@ -1,0 +1,466 @@
+{
+  "rank": 0,
+  "layout": "ep4",
+  "cases": [
+    {
+      "batch": 1,
+      "real_requests": 1,
+      "dummy_start_requests": 0,
+      "unprofiled_wall_seconds": 21.754715665243566,
+      "timings": [
+        {
+          "first_token_ts": 2467518.996752256,
+          "last_token_ts": 2467538.093683359,
+          "first_token_latency": 0.20995259284973145
+        }
+      ],
+      "arm": [
+        {
+          "pid": 1847115,
+          "rank": 0,
+          "controller": true,
+          "label": "ep4_b1",
+          "skip_decode_steps": 8,
+          "capture_decode_steps": 12
+        }
+      ],
+      "disarm": [
+        {
+          "pid": 1847115,
+          "label": "ep4_b1",
+          "decode_steps_seen": 79,
+          "controller": true,
+          "capture_completed": true
+        }
+      ]
+    },
+    {
+      "batch": 32,
+      "real_requests": 8,
+      "dummy_start_requests": 0,
+      "unprofiled_wall_seconds": 25.875749533995986,
+      "timings": [
+        {
+          "first_token_ts": 2467600.83115176,
+          "last_token_ts": 2467623.411592455,
+          "first_token_latency": 0.35842180252075195
+        },
+        {
+          "first_token_ts": 2467600.83115176,
+          "last_token_ts": 2467623.411592455,
+          "first_token_latency": 0.35805726051330566
+        },
+        {
+          "first_token_ts": 2467600.83115176,
+          "last_token_ts": 2467623.411592455,
+          "first_token_latency": 0.35787200927734375
+        },
+        {
+          "first_token_ts": 2467601.277137349,
+          "last_token_ts": 2467623.702357699,
+          "first_token_latency": 0.8035104274749756
+        },
+        {
+          "first_token_ts": 2467601.277137349,
+          "last_token_ts": 2467623.702357699,
+          "first_token_latency": 0.8033716678619385
+        },
+        {
+          "first_token_ts": 2467601.277137349,
+          "last_token_ts": 2467623.702357699,
+          "first_token_latency": 0.8032307624816895
+        },
+        {
+          "first_token_ts": 2467601.277137349,
+          "last_token_ts": 2467623.702357699,
+          "first_token_latency": 0.8031008243560791
+        },
+        {
+          "first_token_ts": 2467601.277137349,
+          "last_token_ts": 2467623.702357699,
+          "first_token_latency": 0.8029661178588867
+        }
+      ],
+      "arm": [
+        {
+          "pid": 1847115,
+          "rank": 0,
+          "controller": true,
+          "label": "ep4_b32",
+          "skip_decode_steps": 8,
+          "capture_decode_steps": 12
+        }
+      ],
+      "disarm": [
+        {
+          "pid": 1847115,
+          "label": "ep4_b32",
+          "decode_steps_seen": 78,
+          "controller": true,
+          "capture_completed": true
+        }
+      ]
+    },
+    {
+      "batch": 256,
+      "real_requests": 64,
+      "dummy_start_requests": 0,
+      "unprofiled_wall_seconds": 28.114611423108727,
+      "timings": [
+        {
+          "first_token_ts": 2467688.971907348,
+          "last_token_ts": 2467713.823399423,
+          "first_token_latency": 0.24002718925476074
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.7742025852203369
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.7740163803100586
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.773857593536377
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.7737138271331787
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.7735788822174072
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.7734456062316895
+        },
+        {
+          "first_token_ts": 2467689.50621977,
+          "last_token_ts": 2467714.004664121,
+          "first_token_latency": 0.7733161449432373
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9240648746490479
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9239201545715332
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9237821102142334
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.923642873764038
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9235126972198486
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9233832359313965
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.923252820968628
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9231231212615967
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9229958057403564
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9228715896606445
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9227406978607178
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9226124286651611
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9224839210510254
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9223530292510986
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9222238063812256
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.922093152999878
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9219605922698975
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9218292236328125
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9216885566711426
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9215524196624756
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9214158058166504
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.921281099319458
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9211361408233643
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.921001672744751
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9208745956420898
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.920738935470581
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9206104278564453
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.920483112335205
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9203548431396484
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9202263355255127
+        },
+        {
+          "first_token_ts": 2467690.658063027,
+          "last_token_ts": 2467714.312334737,
+          "first_token_latency": 1.9200949668884277
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0831046104431152
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.082979202270508
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0828473567962646
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0827202796936035
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.082592725753784
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0824649333953857
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.082336664199829
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0822110176086426
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0820868015289307
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.081955909729004
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.08182430267334
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.081697702407837
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0815722942352295
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.081444025039673
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0813190937042236
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.081193685531616
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.081068277359009
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.080942392349243
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0808143615722656
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0806450843811035
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.080515146255493
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.080387592315674
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.080264091491699
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0801382064819336
+        },
+        {
+          "first_token_ts": 2467691.820767738,
+          "last_token_ts": 2467714.621833806,
+          "first_token_latency": 3.0799317359924316
+        }
+      ],
+      "arm": [
+        {
+          "pid": 1847115,
+          "rank": 0,
+          "controller": true,
+          "label": "ep4_b256",
+          "skip_decode_steps": 8,
+          "capture_decode_steps": 12
+        }
+      ],
+      "disarm": [
+        {
+          "pid": 1847115,
+          "label": "ep4_b256",
+          "decode_steps_seen": 76,
+          "controller": true,
+          "capture_completed": true
+        }
+      ]
+    }
+  ],
+  "startup_seconds": 636.4727146150544,
+  "workers": [
+    {
+      "pid": 1847115,
+      "parent_pid": 1846926,
+      "device": 0,
+      "free_bytes": 6968770560,
+      "total_bytes": 67952836608,
+      "allocated_bytes": 55225990144,
+      "reserved_bytes": 58837696512,
+      "peak_allocated_bytes": 57656850432,
+      "peak_reserved_bytes": 58837696512
+    }
+  ]
+}

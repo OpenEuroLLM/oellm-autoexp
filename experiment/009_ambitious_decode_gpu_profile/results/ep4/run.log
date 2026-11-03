@@ -1,0 +1,594 @@
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+W1103 23:30:30.735000 1846743 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.735000 1846744 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.735000 1846742 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.735000 1846741 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.802000 1846743 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.802000 1846744 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.802000 1846742 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:30.802000 1846741 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:38 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 42, 'max_model_len': 4096, 'enable_expert_parallel': True, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.85, 'max_num_batched_tokens': 8192, 'max_num_seqs': 64, 'enforce_eager': True, 'worker_extension_cls': 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe', 'model': '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700'}
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:38 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 42, 'max_model_len': 4096, 'enable_expert_parallel': True, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.85, 'max_num_batched_tokens': 8192, 'max_num_seqs': 64, 'enforce_eager': True, 'worker_extension_cls': 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe', 'model': '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700'}
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:38 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 42, 'max_model_len': 4096, 'enable_expert_parallel': True, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.85, 'max_num_batched_tokens': 8192, 'max_num_seqs': 64, 'enforce_eager': True, 'worker_extension_cls': 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe', 'model': '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700'}
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:38 [api_utils.py:286] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'seed': 42, 'max_model_len': 4096, 'enable_expert_parallel': True, 'enable_prefix_caching': False, 'gpu_memory_utilization': 0.85, 'max_num_batched_tokens': 8192, 'max_num_seqs': 64, 'enforce_eager': True, 'worker_extension_cls': 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe', 'model': '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700'}
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [model.py:733] Resolved architecture: OellmAmbitiousForCausalLM
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [model.py:733] Resolved architecture: OellmAmbitiousForCausalLM
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [model.py:2152] Using max model len 4096
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [model.py:733] Resolved architecture: OellmAmbitiousForCausalLM
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [model.py:733] Resolved architecture: OellmAmbitiousForCausalLM
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [model.py:2152] Using max model len 4096
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [model.py:2152] Using max model len 4096
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [model.py:2152] Using max model len 4096
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [scheduler.py:307] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [scheduler.py:307] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [scheduler.py:307] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [scheduler.py:307] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [vllm.py:1651] Disabling NCCL for DP synchronization when using async scheduling.
+(SpawnProcess-2 pid=1846742) WARNING 11-03 23:30:39 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [vllm.py:1651] Disabling NCCL for DP synchronization when using async scheduling.
+(SpawnProcess-4 pid=1846744) WARNING 11-03 23:30:39 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [vllm.py:1651] Disabling NCCL for DP synchronization when using async scheduling.
+(SpawnProcess-3 pid=1846743) WARNING 11-03 23:30:39 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [vllm.py:1651] Disabling NCCL for DP synchronization when using async scheduling.
+(SpawnProcess-1 pid=1846741) WARNING 11-03 23:30:39 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(SpawnProcess-2 pid=1846742) WARNING 11-03 23:30:39 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(SpawnProcess-3 pid=1846743) WARNING 11-03 23:30:39 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(SpawnProcess-4 pid=1846744) WARNING 11-03 23:30:39 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(SpawnProcess-1 pid=1846741) WARNING 11-03 23:30:39 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [vllm.py:1929] Cudagraph is disabled under eager mode
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [vllm.py:1929] Cudagraph is disabled under eager mode
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:30:39 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:30:39 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [vllm.py:1929] Cudagraph is disabled under eager mode
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [vllm.py:1929] Cudagraph is disabled under eager mode
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:30:39 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:30:39 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+W1103 23:30:52.858000 1846926 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.859000 1846935 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.865000 1846944 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.866000 1846917 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.921000 1846926 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.922000 1846935 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.930000 1846944 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:30:52.930000 1846917 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:30:57 [core.py:133] Initializing a V1 LLM engine (v0.32.1.dev0+g5df63a720.d20261101) with config: model='/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700', speculative_config=None, tokenizer='/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=4, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, quantization_config=None, enforce_eager=True, aux_output_config=AuxOutputConfig(enable_return_routed_experts=False, max_bytes=None), kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, per_request_spec_decode_metrics='none', kv_cache_metrics=False, kv_cache_metrics_sample=0.01, custom_histogram_buckets=None, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=42, served_model_name=/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700, enable_prefix_caching=False, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'cudagraph_decoder_replay': True, 'decoder_replay_cudagraph_capture_sizes': [], 'decoder_replay_trim_threshold': 768, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native']), enable_flashinfer_autotune=True, enable_rocm_segmented_attn_autotune=False, enable_cutedsl_warmup=True, enable_jit_warmup=False, moe_backend='auto', sparse_indexer_topk_backend='auto', linear_backend='auto', linear_backend_per_quant=None)
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:30:57 [multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=0.0.0.0 (local), world_size=1, local_world_size=1
+/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/v1/executor/multiproc_executor.py:152: UserWarning: Failed to get the IP address, using 0.0.0.0 by default. The value can be set by the environment variable VLLM_HOST_IP or HOST_IP.
+  mq_connect_ip = get_ip()
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:30:57 [multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=0.0.0.0 (local), world_size=1, local_world_size=1
+/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/v1/executor/multiproc_executor.py:152: UserWarning: Failed to get the IP address, using 0.0.0.0 by default. The value can be set by the environment variable VLLM_HOST_IP or HOST_IP.
+  mq_connect_ip = get_ip()
+/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/v1/executor/multiproc_executor.py:152: UserWarning: Failed to get the IP address, using 0.0.0.0 by default. The value can be set by the environment variable VLLM_HOST_IP or HOST_IP.
+  mq_connect_ip = get_ip()
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:30:57 [multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=0.0.0.0 (local), world_size=1, local_world_size=1
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:30:57 [multiproc_executor.py:153] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=0.0.0.0 (local), world_size=1, local_world_size=1
+/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/v1/executor/multiproc_executor.py:152: UserWarning: Failed to get the IP address, using 0.0.0.0 by default. The value can be set by the environment variable VLLM_HOST_IP or HOST_IP.
+  mq_connect_ip = get_ip()
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+/opt/pytorch/ao/torchao/quantization/quant_api.py:1542: SyntaxWarning: invalid escape sequence '\.'
+  """Configuration class for applying different quantization configs to modules or parameters based on their fully qualified names (FQNs).
+W1103 23:31:05.057000 1847114 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.058000 1847120 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.061000 1847121 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.061000 1847115 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.118000 1847114 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.120000 1847120 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.122000 1847121 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W1103 23:31:05.123000 1847115 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+(VllmWorker-0 pid=1847114) ERROR 11-03 23:31:09 [config.py:35] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847115) ERROR 11-03 23:31:09 [config.py:35] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847120) ERROR 11-03 23:31:09 [config.py:35] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847121) ERROR 11-03 23:31:09 [config.py:35] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417] Module deep_ep was found but failed to import
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/__init__.py", line 4, in <module>
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     from .utils import EventOverlap
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/utils.py", line 9, in <module>
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     from deep_ep_cpp import Config, EventHandle
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/deep_ep_cpp.cpython-312-x86_64-linux-gnu.so: undefined symbol: nvshmem_selected_device_transport, version NVSHMEM
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417] Module deep_ep was found but failed to import
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/__init__.py", line 4, in <module>
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     from .utils import EventOverlap
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/utils.py", line 9, in <module>
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     from deep_ep_cpp import Config, EventHandle
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/deep_ep_cpp.cpython-312-x86_64-linux-gnu.so: undefined symbol: nvshmem_selected_device_transport, version NVSHMEM
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417] Module deep_ep was found but failed to import
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/__init__.py", line 4, in <module>
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     from .utils import EventOverlap
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/utils.py", line 9, in <module>
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     from deep_ep_cpp import Config, EventHandle
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/deep_ep_cpp.cpython-312-x86_64-linux-gnu.so: undefined symbol: nvshmem_selected_device_transport, version NVSHMEM
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417] Module deep_ep was found but failed to import
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/__init__.py", line 4, in <module>
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     from .utils import EventOverlap
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/deep_ep/utils.py", line 9, in <module>
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     from deep_ep_cpp import Config, EventHandle
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/deep_ep_cpp.cpython-312-x86_64-linux-gnu.so: undefined symbol: nvshmem_selected_device_transport, version NVSHMEM
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417] Module moonep was found but failed to import
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/__init__.py", line 1, in <module>
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     from .api import (
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/api.py", line 60, in <module>
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     from .buffer import (
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/buffer.py", line 10, in <module>
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417]     from moonep._C import (
+(VllmWorker-0 pid=1847121) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/moonep/_C.cpython-312-x86_64-linux-gnu.so: undefined symbol: _ZN3c104cuda19CUDAErrorLogCaptureC1Ev
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417] Module moonep was found but failed to import
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/__init__.py", line 1, in <module>
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     from .api import (
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/api.py", line 60, in <module>
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     from .buffer import (
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/buffer.py", line 10, in <module>
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417]     from moonep._C import (
+(VllmWorker-0 pid=1847115) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/moonep/_C.cpython-312-x86_64-linux-gnu.so: undefined symbol: _ZN3c104cuda19CUDAErrorLogCaptureC1Ev
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417] Module moonep was found but failed to import
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/__init__.py", line 1, in <module>
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     from .api import (
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/api.py", line 60, in <module>
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     from .buffer import (
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/buffer.py", line 10, in <module>
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417]     from moonep._C import (
+(VllmWorker-0 pid=1847120) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/moonep/_C.cpython-312-x86_64-linux-gnu.so: undefined symbol: _ZN3c104cuda19CUDAErrorLogCaptureC1Ev
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417] Module moonep was found but failed to import
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417] Traceback (most recent call last):
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/utils/import_utils.py", line 415, in _has_module
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     importlib.import_module(module_name)
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     return _bootstrap._gcd_import(name[level:], package, level)
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/__init__.py", line 1, in <module>
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     from .api import (
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/api.py", line 60, in <module>
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     from .buffer import (
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]   File "/usr/local/lib/python3.12/dist-packages/moonep/buffer.py", line 10, in <module>
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417]     from moonep._C import (
+(VllmWorker-0 pid=1847114) WARNING 11-03 23:31:09 [import_utils.py:417] ImportError: /usr/local/lib/python3.12/dist-packages/moonep/_C.cpython-312-x86_64-linux-gnu.so: undefined symbol: _ZN3c104cuda19CUDAErrorLogCaptureC1Ev
+(VllmWorker-0 pid=1847115) ERROR 11-03 23:31:10 [mxfp4.py:76] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847120) ERROR 11-03 23:31:10 [mxfp4.py:76] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847121) ERROR 11-03 23:31:10 [mxfp4.py:76] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847114) ERROR 11-03 23:31:10 [mxfp4.py:76] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: cannot import name 'is_hip_gfx1250' from 'triton.language.target_info' (/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/triton/language/target_info.py)
+(VllmWorker-0 pid=1847114) INFO 11-03 23:31:10 [worker_base.py:317] Injected <class 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['arm_gpu_trace', 'batching_memory', 'check_batched_engram', 'configure_engram_decode', 'disarm_gpu_trace']
+(VllmWorker-0 pid=1847115) INFO 11-03 23:31:10 [worker_base.py:317] Injected <class 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['arm_gpu_trace', 'batching_memory', 'check_batched_engram', 'configure_engram_decode', 'disarm_gpu_trace']
+(VllmWorker-0 pid=1847121) INFO 11-03 23:31:10 [worker_base.py:317] Injected <class 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['arm_gpu_trace', 'batching_memory', 'check_batched_engram', 'configure_engram_decode', 'disarm_gpu_trace']
+(VllmWorker-0 pid=1847120) INFO 11-03 23:31:10 [worker_base.py:317] Injected <class 'scripts.korbi.vllm.gpu_profile.DecodeTimelineProbe'> into <class 'vllm.v1.worker.gpu_worker.Worker'> for extended collective_rpc calls ['arm_gpu_trace', 'batching_memory', 'check_batched_engram', 'configure_engram_decode', 'disarm_gpu_trace']
+(Worker pid=1847115) INFO 11-03 23:31:10 [parallel_state.py:1906] world_size=4 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:49090 backend=nccl
+(Worker pid=1847114) INFO 11-03 23:31:10 [parallel_state.py:1906] world_size=4 rank=2 local_rank=2 distributed_init_method=tcp://127.0.0.1:49090 backend=nccl
+(Worker pid=1847120) INFO 11-03 23:31:10 [parallel_state.py:1906] world_size=4 rank=3 local_rank=3 distributed_init_method=tcp://127.0.0.1:49090 backend=nccl
+(Worker pid=1847121) INFO 11-03 23:31:10 [parallel_state.py:1906] world_size=4 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:49090 backend=nccl
+(Worker pid=1847115) INFO 11-03 23:31:15 [pynccl.py:148] vLLM is using nccl==2.29.7
+NCCL version 2.29.7+cuda13.2
+(Worker pid=1847115) INFO 11-03 23:31:18 [cuda_communicator.py:353] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'dp:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=1847115) INFO 11-03 23:31:18 [cuda_communicator.py:353] Using ['PYNCCL'] all-reduce backends (in dispatch order) for group 'ep:0' out of potential backends: ['FLASHINFER_PCIE_IPC', 'FLASHINFER', 'NCCL_SYMM_MEM', 'QUICK_REDUCE', 'AITER_CUSTOM', 'CUSTOM', 'SYMM_MEM', 'PYNCCL'].
+(Worker pid=1847115) INFO 11-03 23:31:18 [cuda_communicator.py:280] Using AgRsAll2AllManager all2all manager.
+(Worker pid=1847115) INFO 11-03 23:31:18 [parallel_state.py:2350] rank 0 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, ETP rank 0, EP rank 0, EPLB rank N/A
+(Worker pid=1847115) INFO 11-03 23:31:18 [gpu_worker.py:518] Using V2 Model Runner
+(Worker pid=1847115) WARNING 11-03 23:31:18 [flashinfer.py:143] FlashInfer's precompiled kernels are missing or do not match flashinfer-python 0.7.0.post1 (flashinfer-cubin not installed, flashinfer-jit-cache not installed). FlashInfer then downloads and compiles kernels at startup, which can take several minutes, or fails to import mismatched ones. Run `vllm download-kernels` in this Python environment to install them.
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:19 [model_runner.py:392] Loading model from scratch...
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:19 [cuda.py:506] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:19 [flash_attn.py:1117] Using FlashAttention version 3
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:19 [expert_map_manager.py:250] [EP Rank 0/4] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 90/360. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63, 64->64, 65->65, 66->66, 67->67, 68->68, 69->69, 70->70, 71->71, 72->72, 73->73, 74->74, 75->75, 76->76, 77->77, 78->78, 79->79, 80->80, 81->81, 82->82, 83->83, 84->84, 85->85, 86->86, 87->87, 88->88, 89->89.
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:19 [unquantized.py:364] Using TRITON Unquantized MoE backend out of potential backends: ['TRITON', 'BATCHED_TRITON', 'FlashInfer TRTLLM', 'FlashInfer CUTLASS'].
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:25 [base_loader.py:82] Initializing model took 6.228567 seconds
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:25 [weight_utils.py:1108] Filesystem type for checkpoints: GPFS. Checkpoint size: 231.14 GiB. Available RAM: 426.05 GiB.
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:31:25 [weight_utils.py:1131] Auto-prefetch is disabled because the filesystem (GPFS) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+Loading safetensors checkpoint shards:   0% Completed | 0/18 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:   6% Completed | 1/18 [00:10<02:58, 10.52s/it]
+Loading safetensors checkpoint shards:  11% Completed | 2/18 [00:19<02:32,  9.51s/it]
+Loading safetensors checkpoint shards:  17% Completed | 3/18 [00:29<02:30, 10.01s/it]
+Loading safetensors checkpoint shards:  22% Completed | 4/18 [00:41<02:25, 10.43s/it]
+Loading safetensors checkpoint shards:  28% Completed | 5/18 [00:51<02:17, 10.54s/it]
+Loading safetensors checkpoint shards:  33% Completed | 6/18 [01:01<02:05, 10.43s/it]
+Loading safetensors checkpoint shards:  39% Completed | 7/18 [01:13<01:57, 10.67s/it]
+Loading safetensors checkpoint shards:  44% Completed | 8/18 [01:24<01:47, 10.77s/it]
+Loading safetensors checkpoint shards:  50% Completed | 9/18 [01:33<01:32, 10.23s/it]
+Loading safetensors checkpoint shards:  56% Completed | 10/18 [01:41<01:18,  9.76s/it]
+Loading safetensors checkpoint shards:  61% Completed | 11/18 [01:51<01:07,  9.64s/it]
+Loading safetensors checkpoint shards:  67% Completed | 12/18 [02:01<00:59,  9.96s/it]
+Loading safetensors checkpoint shards:  72% Completed | 13/18 [02:13<00:51, 10.30s/it]
+Loading safetensors checkpoint shards:  78% Completed | 14/18 [02:24<00:42, 10.59s/it]
+Loading safetensors checkpoint shards:  83% Completed | 15/18 [02:34<00:31, 10.47s/it]
+Loading safetensors checkpoint shards:  89% Completed | 16/18 [02:45<00:21, 10.55s/it]
+Loading safetensors checkpoint shards:  94% Completed | 17/18 [02:56<00:10, 10.70s/it]
+Loading safetensors checkpoint shards: 100% Completed | 18/18 [02:57<00:00,  7.80s/it]
+Loading safetensors checkpoint shards: 100% Completed | 18/18 [02:57<00:00,  9.85s/it]
+
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:23 [default_loader.py:501] Loading weights took 177.28 seconds
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:23 [unquantized.py:528] Using MoEPrepareAndFinalizeNaiveDPEPModular
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:23 [unquantized.py:529] Using TritonExperts MoE backend
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:24 [model_runner.py:424] Model loading took 42.14 GiB memory and 185.466548 seconds
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:24 [topk_topp_sampler.py:124] Using FlashInfer for top-p & top-k sampling.
+(Worker_DP0_EP0 pid=1847115) WARNING 11-03 23:34:24 [torch_utils.py:283] OMP_NUM_THREADS=8 is set; leaving Torch threads at 8 for serving. Multi-threaded torch CPU ops during serving can degrade performance through spin-wait contention and cgroup CPU-quota throttling.
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:24 [interface.py:1096] Setting attention block size to 1072 tokens to ensure that attention page size is >= mamba page size.
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:34:24 [interface.py:1120] Padding mamba page size by 1.13% to ensure that mamba page size and attention page size are exactly equal.
+(EngineCore_DP0 pid=1846926) WARNING 11-03 23:34:24 [torch_utils.py:283] OMP_NUM_THREADS=8 is set; leaving Torch threads at 8 for serving. Multi-threaded torch CPU ops during serving can degrade performance through spin-wait contention and cgroup CPU-quota throttling.
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:34:24 [utils.py:347] Using LBNHC KV cache layout.
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:34:25 [model_runner.py:424] Model loading took 42.14 GiB memory and 186.027788 seconds
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:34:25 [interface.py:1096] Setting attention block size to 1072 tokens to ensure that attention page size is >= mamba page size.
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:34:25 [interface.py:1120] Padding mamba page size by 1.13% to ensure that mamba page size and attention page size are exactly equal.
+(EngineCore_DP3 pid=1846944) WARNING 11-03 23:34:25 [torch_utils.py:283] OMP_NUM_THREADS=8 is set; leaving Torch threads at 8 for serving. Multi-threaded torch CPU ops during serving can degrade performance through spin-wait contention and cgroup CPU-quota throttling.
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:34:25 [utils.py:347] Using LBNHC KV cache layout.
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:34:25 [model_runner.py:424] Model loading took 42.14 GiB memory and 186.380497 seconds
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:34:25 [interface.py:1096] Setting attention block size to 1072 tokens to ensure that attention page size is >= mamba page size.
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:34:25 [interface.py:1120] Padding mamba page size by 1.13% to ensure that mamba page size and attention page size are exactly equal.
+(EngineCore_DP1 pid=1846917) WARNING 11-03 23:34:25 [torch_utils.py:283] OMP_NUM_THREADS=8 is set; leaving Torch threads at 8 for serving. Multi-threaded torch CPU ops during serving can degrade performance through spin-wait contention and cgroup CPU-quota throttling.
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:34:25 [utils.py:347] Using LBNHC KV cache layout.
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:34:25 [model_runner.py:424] Model loading took 42.14 GiB memory and 186.511902 seconds
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:34:25 [interface.py:1096] Setting attention block size to 1072 tokens to ensure that attention page size is >= mamba page size.
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:34:25 [interface.py:1120] Padding mamba page size by 1.13% to ensure that mamba page size and attention page size are exactly equal.
+(EngineCore_DP2 pid=1846935) WARNING 11-03 23:34:25 [torch_utils.py:283] OMP_NUM_THREADS=8 is set; leaving Torch threads at 8 for serving. Multi-threaded torch CPU ops during serving can degrade performance through spin-wait contention and cgroup CPU-quota throttling.
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:34:25 [utils.py:347] Using LBNHC KV cache layout.
+(Worker_DP0_EP0 pid=1847115) WARNING 11-03 23:34:27 [fused_moe.py:1163] Using default MoE config. Performance might be sub-optimal! Config file not found at /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/layers/fused_moe/configs/E=90,N=768,device_name=NVIDIA_H100.json
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:35:25 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:35:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:35:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:35:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:36:25 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:36:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:36:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:36:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:37:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:37:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:37:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:37:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:38:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:38:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:38:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:38:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:39:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:39:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:39:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:39:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:40:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:40:26 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:40:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:40:27 [shm_broadcast.py:871] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:10 [kv_cache_utils.py:2327] GPU KV cache size: 468,269 tokens, Maximum concurrency for 4,096 tokens per request: 114.32x
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:10 [kv_cache_utils.py:853] kv cache group sizes (1072, 1072, 1072, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096)
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:10 [kv_cache_utils.py:854] kv lcm block sizes 274432
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [gpu_worker.py:759] Available KV cache memory: 7.95 GiB
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:10 [kv_cache_utils.py:2327] GPU KV cache size: 468,269 tokens, Maximum concurrency for 4,096 tokens per request: 114.32x
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:10 [kv_cache_utils.py:853] kv cache group sizes (1072, 1072, 1072, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096)
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:10 [kv_cache_utils.py:854] kv lcm block sizes 274432
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:10 [kv_cache_utils.py:2327] GPU KV cache size: 468,269 tokens, Maximum concurrency for 4,096 tokens per request: 114.32x
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:10 [kv_cache_utils.py:853] kv cache group sizes (1072, 1072, 1072, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096)
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:10 [kv_cache_utils.py:854] kv lcm block sizes 274432
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:10 [kv_cache_utils.py:2327] GPU KV cache size: 468,269 tokens, Maximum concurrency for 4,096 tokens per request: 114.32x
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:10 [kv_cache_utils.py:853] kv cache group sizes (1072, 1072, 1072, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096)
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:10 [kv_cache_utils.py:854] kv lcm block sizes 274432
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:41:10 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:41:10 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:41:10 [mamba_triton_warmup.py:42] Warmed Mamba batch_memcpy_kernel.
+(Worker_DP0_EP0 pid=1847115) WARNING 11-03 23:41:10 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(Worker_DP0_EP0 pid=1847115) WARNING 11-03 23:41:10 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:41:10 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:41:10 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:41:10 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [vllm.py:1929] Cudagraph is disabled under eager mode
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [kernel_warmup.py:460] Using FlashInfer autotune cache file: /home/eit/eit847786/.cache/vllm/flashinfer_autotune_cache/0.7.0.post1/90a/e3b57d7e90d8dd9eefb574184d62c064b795dbc1c42a576d496b5e01386d2435/autotune_configs_dp0_rank0.json
+2026-11-03 23:41:10,986 - INFO - autotuner.py:1046 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+2026-11-03 23:41:10,987 - INFO - autotuner.py:1046 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+2026-11-03 23:41:10,987 - INFO - autotuner.py:1046 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+2026-11-03 23:41:10,987 - INFO - autotuner.py:1046 - flashinfer.jit: [Autotuner]: Autotuning process starts ...
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:41:10 [kernel_warmup.py:367] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:41:10 [kernel_warmup.py:367] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:10 [kernel_warmup.py:367] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:41:10 [kernel_warmup.py:367] Running FlashInfer autotune with 8192 tokens and token buckets (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, 3584, 4096, 8192).
+2026-11-03 23:41:11,742 - INFO - autotuner.py:1069 - flashinfer.jit: [Autotuner]: Autotuning process ends
+2026-11-03 23:41:11,742 - INFO - autotuner.py:1069 - flashinfer.jit: [Autotuner]: Autotuning process ends
+2026-11-03 23:41:11,742 - INFO - autotuner.py:1069 - flashinfer.jit: [Autotuner]: Autotuning process ends
+2026-11-03 23:41:11,742 - INFO - autotuner.py:1069 - flashinfer.jit: [Autotuner]: Autotuning process ends
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:41:11 [gpu_worker.py:1034] Free memory on device (61.35/63.29 GiB) on startup. Desired GPU memory utilization is (0.85, 53.79 GiB). Actual usage is 43.58 GiB for consumed memory (weights + non-torch), 2.26 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=8377228493` (7.8 GiB) to fit into requested memory, or `--kv-cache-memory=16495087616` (15.36 GiB) to fully utilize gpu memory. Current kv cache memory in use is 7.95 GiB.
+(Worker_DP1_EP1 pid=1847121) INFO 11-03 23:41:11 [gpu_worker.py:1034] Free memory on device (61.35/63.29 GiB) on startup. Desired GPU memory utilization is (0.85, 53.79 GiB). Actual usage is 43.58 GiB for consumed memory (weights + non-torch), 2.26 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=8377228493` (7.8 GiB) to fit into requested memory, or `--kv-cache-memory=16495087616` (15.36 GiB) to fully utilize gpu memory. Current kv cache memory in use is 7.95 GiB.
+(Worker_DP3_EP3 pid=1847120) INFO 11-03 23:41:11 [gpu_worker.py:1034] Free memory on device (61.35/63.29 GiB) on startup. Desired GPU memory utilization is (0.85, 53.79 GiB). Actual usage is 43.58 GiB for consumed memory (weights + non-torch), 2.26 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=8377228493` (7.8 GiB) to fit into requested memory, or `--kv-cache-memory=16495087616` (15.36 GiB) to fully utilize gpu memory. Current kv cache memory in use is 7.95 GiB.
+(Worker_DP2_EP2 pid=1847114) INFO 11-03 23:41:11 [gpu_worker.py:1034] Free memory on device (61.35/63.29 GiB) on startup. Desired GPU memory utilization is (0.85, 53.79 GiB). Actual usage is 43.58 GiB for consumed memory (weights + non-torch), 2.26 GiB for peak activation, and 0.0 GiB for CUDAGraph memory. Replace gpu_memory_utilization config with `--kv-cache-memory=8377228493` (7.8 GiB) to fit into requested memory, or `--kv-cache-memory=16495087616` (15.36 GiB) to fully utilize gpu memory. Current kv cache memory in use is 7.95 GiB.
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:12 [core.py:402] init engine (profile, create kv cache, warmup model) took 407.28 s
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:12 [core.py:402] init engine (profile, create kv cache, warmup model) took 406.30 s
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:12 [core.py:402] init engine (profile, create kv cache, warmup model) took 406.22 s
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:12 [core.py:402] init engine (profile, create kv cache, warmup model) took 406.91 s
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore_DP2 pid=1846935) WARNING 11-03 23:41:13 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(EngineCore_DP2 pid=1846935) WARNING 11-03 23:41:13 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:13 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:13 [vllm.py:1929] Cudagraph is disabled under eager mode
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:41:13 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(EngineCore_DP3 pid=1846944) WARNING 11-03 23:41:13 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(EngineCore_DP3 pid=1846944) WARNING 11-03 23:41:13 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:13 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:13 [vllm.py:1929] Cudagraph is disabled under eager mode
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:41:13 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(EngineCore_DP1 pid=1846917) WARNING 11-03 23:41:13 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(EngineCore_DP1 pid=1846917) WARNING 11-03 23:41:13 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:13 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:13 [vllm.py:1929] Cudagraph is disabled under eager mode
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:41:13 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+(EngineCore_DP0 pid=1846926) WARNING 11-03 23:41:13 [vllm.py:1703] Enforce eager set, disabling torch.compile, CUDAGraphs, and JIT kernel warmup. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none and --kernel_config.enable_jit_warmup=False
+(EngineCore_DP0 pid=1846926) WARNING 11-03 23:41:13 [vllm.py:1727] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored.
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:13 [kernel.py:467] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'], gelu_and_mul_sparse=['triton', 'native'])
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:13 [vllm.py:1929] Cudagraph is disabled under eager mode
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:41:13 [compilation.py:317] Enabled custom fusions: norm_quant, act_quant
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:41:15 [hf.py:648] Detected the chat template content format to be 'string'. You can set `--chat-template-content-format` to override this.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:41:15 [hf.py:648] Detected the chat template content format to be 'string'. You can set `--chat-template-content-format` to override this.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:41:15 [hf.py:648] Detected the chat template content format to be 'string'. You can set `--chat-template-content-format` to override this.
+[transformers] The tokenizer you are loading from '/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:41:15 [hf.py:648] Detected the chat template content format to be 'string'. You can set `--chat-template-content-format` to override this.
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:41:29 [loggers.py:335] Engine 000: Avg prompt throughput: 32.6 tokens/s, Avg generation throughput: 3.1 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.6%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:41:39 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 6.6 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.6%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:41:49 [loggers.py:335] Engine 000: Avg prompt throughput: 21.7 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:41:49 [loggers.py:335] Engine 000: Avg prompt throughput: 21.7 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:41:49 [loggers.py:335] Engine 000: Avg prompt throughput: 21.7 tokens/s, Avg generation throughput: 0.1 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:41:49 [loggers.py:335] Engine 000: Avg prompt throughput: 25.3 tokens/s, Avg generation throughput: 4.9 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.6%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:42:29 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.4 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.6%
+{"layout": "ep4", "rank": 3, "batch": 1, "unprofiled_wall_seconds": 21.754900638014078}
+{"layout": "ep4", "rank": 2, "batch": 1, "unprofiled_wall_seconds": 21.754867198411375}
+{"layout": "ep4", "rank": 1, "batch": 1, "unprofiled_wall_seconds": 21.755125185940415}
+{"layout": "ep4", "rank": 0, "batch": 1, "unprofiled_wall_seconds": 21.754715665243566}
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:42:39 [loggers.py:335] Engine 000: Avg prompt throughput: 25.0 tokens/s, Avg generation throughput: 4.2 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:42:39 [loggers.py:335] Engine 000: Avg prompt throughput: 5.1 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:42:39 [loggers.py:335] Engine 000: Avg prompt throughput: 5.1 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:42:39 [loggers.py:335] Engine 000: Avg prompt throughput: 5.1 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:42:49 [loggers.py:335] Engine 000: Avg prompt throughput: 378.9 tokens/s, Avg generation throughput: 26.2 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:42:49 [loggers.py:335] Engine 000: Avg prompt throughput: 378.9 tokens/s, Avg generation throughput: 26.0 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:42:49 [loggers.py:335] Engine 000: Avg prompt throughput: 378.9 tokens/s, Avg generation throughput: 26.0 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:42:49 [loggers.py:335] Engine 000: Avg prompt throughput: 378.8 tokens/s, Avg generation throughput: 26.0 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:42:59 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.4 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:42:59 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.4 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:42:59 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.4 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:42:59 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.4 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:43:09 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.7 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:43:09 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.7 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:43:09 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.7 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:43:09 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 45.7 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:43:54 [loggers.py:335] Engine 000: Avg prompt throughput: 46.0 tokens/s, Avg generation throughput: 6.1 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:43:54 [loggers.py:335] Engine 000: Avg prompt throughput: 46.0 tokens/s, Avg generation throughput: 6.1 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:43:54 [loggers.py:335] Engine 000: Avg prompt throughput: 46.0 tokens/s, Avg generation throughput: 6.1 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:43:54 [loggers.py:335] Engine 000: Avg prompt throughput: 46.0 tokens/s, Avg generation throughput: 6.1 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+{"layout": "ep4", "rank": 1, "batch": 32, "unprofiled_wall_seconds": 25.875678449869156}
+{"layout": "ep4", "rank": 2, "batch": 32, "unprofiled_wall_seconds": 25.87557052494958}
+{"layout": "ep4", "rank": 3, "batch": 32, "unprofiled_wall_seconds": 25.875705298036337}
+{"layout": "ep4", "rank": 0, "batch": 32, "unprofiled_wall_seconds": 25.875749533995986}
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:44:05 [loggers.py:335] Engine 000: Avg prompt throughput: 24.3 tokens/s, Avg generation throughput: 31.9 tokens/s, Running: 6 reqs, Waiting: 0 reqs, GPU KV cache usage: 3.9%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:44:05 [loggers.py:335] Engine 000: Avg prompt throughput: 24.3 tokens/s, Avg generation throughput: 31.8 tokens/s, Running: 6 reqs, Waiting: 0 reqs, GPU KV cache usage: 3.9%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:44:05 [loggers.py:335] Engine 000: Avg prompt throughput: 24.3 tokens/s, Avg generation throughput: 31.9 tokens/s, Running: 10 reqs, Waiting: 0 reqs, GPU KV cache usage: 6.4%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:44:05 [loggers.py:335] Engine 000: Avg prompt throughput: 48.6 tokens/s, Avg generation throughput: 32.0 tokens/s, Running: 9 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.8%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:44:17 [loggers.py:335] Engine 000: Avg prompt throughput: 1317.8 tokens/s, Avg generation throughput: 164.7 tokens/s, Running: 7 reqs, Waiting: 0 reqs, GPU KV cache usage: 4.5%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:44:17 [loggers.py:335] Engine 000: Avg prompt throughput: 1317.8 tokens/s, Avg generation throughput: 164.7 tokens/s, Running: 11 reqs, Waiting: 0 reqs, GPU KV cache usage: 7.1%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:44:17 [loggers.py:335] Engine 000: Avg prompt throughput: 1297.3 tokens/s, Avg generation throughput: 164.7 tokens/s, Running: 8 reqs, Waiting: 0 reqs, GPU KV cache usage: 5.1%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:44:17 [loggers.py:335] Engine 000: Avg prompt throughput: 1317.7 tokens/s, Avg generation throughput: 164.7 tokens/s, Running: 7 reqs, Waiting: 0 reqs, GPU KV cache usage: 4.5%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:44:27 [loggers.py:335] Engine 000: Avg prompt throughput: 1591.0 tokens/s, Avg generation throughput: 269.6 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:44:27 [loggers.py:335] Engine 000: Avg prompt throughput: 1591.0 tokens/s, Avg generation throughput: 270.4 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:44:27 [loggers.py:335] Engine 000: Avg prompt throughput: 1591.0 tokens/s, Avg generation throughput: 269.6 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:44:27 [loggers.py:335] Engine 000: Avg prompt throughput: 1591.0 tokens/s, Avg generation throughput: 269.8 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:44:37 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 360.7 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:44:37 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 360.7 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:44:37 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 360.7 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:44:37 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 360.7 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:44:48 [loggers.py:335] Engine 000: Avg prompt throughput: 1542.8 tokens/s, Avg generation throughput: 181.7 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:44:48 [loggers.py:335] Engine 000: Avg prompt throughput: 1542.8 tokens/s, Avg generation throughput: 181.0 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:44:48 [loggers.py:335] Engine 000: Avg prompt throughput: 1542.8 tokens/s, Avg generation throughput: 181.5 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:44:48 [loggers.py:335] Engine 000: Avg prompt throughput: 1542.7 tokens/s, Avg generation throughput: 181.4 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+Capture range started in the application.
+Capture range ended in the application.
+Generating '/scratch/tmp/48469958/nsys-eit847786/nsys-report-9349.qdstrm'
+Capture range started in the application.
+Capture range ended in the application.
+Generating '/scratch/tmp/48469958/nsys-eit847786/nsys-report-d58b.qdstrm'
+Capture range started in the application.
+Capture range ended in the application.
+Generating '/scratch/tmp/48469958/nsys-eit847786/nsys-report-0bfe.qdstrm'
+[1/3] [0%                          ] capture.1.nsys-repProcessing events...
+[1/3] [0%                          ] capture.1.nsys-rep[1/3] [1%                          ] capture.1.nsys-rep[1/3] [2%                          ] capture.1.nsys-rep[1/3] [5%                          ] capture.1.nsys-rep[1/3] [6%                          ] capture.1.nsys-rep[1/3] [7%                          ] capture.1.nsys-rep[1/3] [8%                          ] capture.1.nsys-rep[1/3] [9%                          ] capture.1.nsys-rep[1/3] [10%                         ] capture.1.nsys-rep[1/3] [11%                         ] capture.1.nsys-rep[1/3] [12%                         ] capture.1.nsys-rep[1/3] [13%                         ] capture.1.nsys-rep[1/3] [14%                         ] capture.1.nsys-rep[1/3] [=15%                        ] capture.1.nsys-rep[1/3] [=16%                        ] capture.1.nsys-rep[1/3] [=17%                        ] capture.1.nsys-rep[1/3] [==18%                       ] capture.1.nsys-rep[1/3] [==19%                       ] capture.1.nsys-rep[1/3] [==20%                       ] capture.1.nsys-rep[1/3] [=====================88%    ] capture.1.nsys-rep[1/3] [======================91%   ] capture.1.nsys-rep[1/3] [=======================96%  ] capture.1.nsys-rep[1/3] [========================98% ] capture.1.nsys-rep[1/3] [========================100%] capture.1.nsys-rep[1/3] [========================100%] capture.1.nsys-rep
+[2/3] [0%                          ] capture.2.nsys-rep[2/3] [0%                          ] capture.2.nsys-rep[2/3] [1%                          ] capture.2.nsys-rep[2/3] [2%                          ] capture.2.nsys-rep[2/3] [5%                          ] capture.2.nsys-rep[2/3] [6%                          ] capture.2.nsys-rep[2/3] [7%                          ] capture.2.nsys-rep[2/3] [8%                          ] capture.2.nsys-rep[2/3] [9%                          ] capture.2.nsys-rep[2/3] [10%                         ] capture.2.nsys-rep[2/3] [11%                         ] capture.2.nsys-rep[2/3] [12%                         ] capture.2.nsys-rep[2/3] [13%                         ] capture.2.nsys-rep[2/3] [14%                         ] capture.2.nsys-rep[2/3] [=15%                        ] capture.2.nsys-rep[2/3] [=16%                        ] capture.2.nsys-rep[2/3] [=17%                        ] capture.2.nsys-rep[2/3] [==18%                       ] capture.2.nsys-rep[2/3] [==19%                       ] capture.2.nsys-rep[2/3] [==20%                       ] capture.2.nsys-rep[2/3] [=====================87%    ] capture.2.nsys-rep[2/3] [=====================89%    ] capture.2.nsys-rep[2/3] [=======================96%  ] capture.2.nsys-rep[2/3] [========================98% ] capture.2.nsys-rep[2/3] [========================100%] capture.2.nsys-rep[2/3] [========================100%] capture.2.nsys-rep
+[3/3] [0%                          ] capture.3.nsys-rep[3/3] [0%                          ] capture.3.nsys-rep[3/3] [1%                          ] capture.3.nsys-rep[3/3] [2%                          ] capture.3.nsys-rep[3/3] [5%                          ] capture.3.nsys-rep[3/3] [6%                          ] capture.3.nsys-rep[3/3] [7%                          ] capture.3.nsys-rep[3/3] [8%                          ] capture.3.nsys-rep[3/3] [9%                          ] capture.3.nsys-rep[3/3] [10%                         ] capture.3.nsys-rep[3/3] [11%                         ] capture.3.nsys-rep[3/3] [12%                         ] capture.3.nsys-rep[3/3] [13%                         ] capture.3.nsys-rep[3/3] [14%                         ] capture.3.nsys-rep[3/3] [=15%                        ] capture.3.nsys-rep[3/3] [=16%                        ] capture.3.nsys-rep[3/3] [=17%                        ] capture.3.nsys-rep[3/3] [==18%                       ] capture.3.nsys-rep[3/3] [==19%                       ] capture.3.nsys-rep[3/3] [==20%                       ] capture.3.nsys-rep[3/3] [=====================88%    ] capture.3.nsys-rep[3/3] [======================90%   ] capture.3.nsys-rep[3/3] [=======================96%  ] capture.3.nsys-rep[3/3] [========================98% ] capture.3.nsys-rep[3/3] [========================100%] capture.3.nsys-rep[3/3] [========================100%] capture.3.nsys-rep
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:32 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 30.4 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:32 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 30.4 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:32 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 30.4 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:32 [loggers.py:335] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 30.4 tokens/s, Running: 64 reqs, Waiting: 0 reqs, GPU KV cache usage: 41.2%
+{"layout": "ep4", "rank": 2, "batch": 256, "unprofiled_wall_seconds": 28.114473037887365}
+{"layout": "ep4", "rank": 3, "batch": 256, "unprofiled_wall_seconds": 28.11467050295323}
+{"layout": "ep4", "rank": 1, "batch": 256, "unprofiled_wall_seconds": 28.11466930108145}
+{"layout": "ep4", "rank": 0, "batch": 256, "unprofiled_wall_seconds": 28.114611423108727}
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:42 [core_client.py:770] [shutdown] MPClient: start timeout=default
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:42 [core_client.py:770] [shutdown] MPClient: start timeout=default
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:42 [core_client.py:770] [shutdown] MPClient: start timeout=default
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:42 [core_client.py:770] [shutdown] MPClient: start timeout=default
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:42 [core_client.py:772] [shutdown] MPClient: stopping engine manager
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:42 [core_client.py:772] [shutdown] MPClient: stopping engine manager
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:42 [core_client.py:772] [shutdown] MPClient: stopping engine manager
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:42 [utils.py:628] [shutdown] Process manager: send sigterm to process EngineCore_DP0
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:42 [core_client.py:772] [shutdown] MPClient: stopping engine manager
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:42 [utils.py:628] [shutdown] Process manager: send sigterm to process EngineCore_DP2
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:42 [utils.py:628] [shutdown] Process manager: send sigterm to process EngineCore_DP3
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:42 [utils.py:628] [shutdown] Process manager: send sigterm to process EngineCore_DP1
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:45:42 [core.py:1454] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:45:42 [core.py:1454] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:45:42 [core.py:1454] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:45:42 [core.py:1454] [shutdown] EngineCore: trigger received signal=SIGTERM
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:45:42 [core.py:1635] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:45:42 [core.py:1666] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:45:42 [core.py:1635] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:45:42 [core.py:1666] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:45:42 [core.py:1499] [shutdown] EngineCore: exiting busy loop
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:45:42 [core.py:1635] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:45:42 [core.py:1499] [shutdown] EngineCore: exiting busy loop
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:45:42 [core.py:1635] [shutdown] EngineCore: start mode=abort timeout=0s
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:45:42 [core.py:1666] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:45:42 [core.py:1666] [shutdown] EngineCore: request processing complete; starting resource teardown
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:45:42 [core.py:1499] [shutdown] EngineCore: exiting busy loop
+(EngineCore_DP2 pid=1846935) INFO 11-03 23:45:42 [multiproc_executor.py:479] [shutdown] Executor: waiting for worker exit count=1
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:45:42 [core.py:1499] [shutdown] EngineCore: exiting busy loop
+(EngineCore_DP0 pid=1846926) INFO 11-03 23:45:42 [multiproc_executor.py:479] [shutdown] Executor: waiting for worker exit count=1
+(EngineCore_DP3 pid=1846944) INFO 11-03 23:45:42 [multiproc_executor.py:479] [shutdown] Executor: waiting for worker exit count=1
+(EngineCore_DP1 pid=1846917) INFO 11-03 23:45:42 [multiproc_executor.py:479] [shutdown] Executor: waiting for worker exit count=1
+(Worker_DP0_EP0 pid=1847115) INFO 11-03 23:45:42 [multiproc_executor.py:843] Parent process exited, terminating worker queues
+[rank3]:[W1103 23:45:45.542442515 TCPStore.cpp:125] [c10d] recvValue failed on SocketImpl(fd=87, addr=[localhost]:56200, remote=[localhost]:49090): Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+Exception raised from recvBytes at /__w/pytorch/pytorch/torch/csrc/distributed/c10d/Utils.hpp:787 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x9d (0x7f130db63bfd in /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/lib/libc10.so)
+frame #1: c10::DistError::DistError(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x72 (0x7f130db64bd2 in /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/lib/libc10.so)
+frame #2: c10::DistNetworkError::DistNetworkError(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >) + 0x72 (0x7f130db65092 in /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/lib/libc10.so)
+frame #3: <unknown function> + 0x66acf0d (0x7f1269debf0d in /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/lib/libtorch_cpu.so)
+frame #4: c10d::TCPStore::check(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&) + 0x383 (0x7f1269de53e3 in /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/lib/libtorch_cpu.so)
+frame #5: c10d::ProcessGroupNCCL::HeartbeatMonitor::runLoop() + 0x43d (0x7f124bd4619d in /tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xecdb4 (0x7f130d26edb4 in /lib/x86_64-linux-gnu/libstdc++.so.6)
+frame #7: <unknown function> + 0x9cb84 (0x7f131b829b84 in /lib/x86_64-linux-gnu/libc.so.6)
+frame #8: <unknown function> + 0x129ecc (0x7f131b8b6ecc in /lib/x86_64-linux-gnu/libc.so.6)
+
+[rank3]:[W1103 23:45:46.544320052 ProcessGroupNCCL.cpp:1876] [PG ID 0 PG GUID 0 Rank 3] Failed to check the "should dump" flag on TCPStore, (maybe TCPStore server has shut down too early), with error: Failed to recv, got 0 bytes. Connection was likely closed. Did the remote server shutdown or crash?
+(SpawnProcess-1 pid=1846741) WARNING 11-03 23:45:47 [utils.py:648] [shutdown] Process manager: force killing remaining processes count=1
+(SpawnProcess-3 pid=1846743) WARNING 11-03 23:45:47 [utils.py:648] [shutdown] Process manager: force killing remaining processes count=1
+(SpawnProcess-4 pid=1846744) WARNING 11-03 23:45:47 [utils.py:648] [shutdown] Process manager: force killing remaining processes count=1
+(SpawnProcess-1 pid=1846741) WARNING 11-03 23:45:47 [utils.py:653] [shutdown] Process manager: force killing remaining process EngineCore_DP0 pid 1846926
+(SpawnProcess-3 pid=1846743) WARNING 11-03 23:45:47 [utils.py:653] [shutdown] Process manager: force killing remaining process EngineCore_DP2 pid 1846935
+(SpawnProcess-4 pid=1846744) WARNING 11-03 23:45:47 [utils.py:653] [shutdown] Process manager: force killing remaining process EngineCore_DP3 pid 1846944
+(SpawnProcess-2 pid=1846742) WARNING 11-03 23:45:47 [utils.py:648] [shutdown] Process manager: force killing remaining processes count=1
+(SpawnProcess-2 pid=1846742) WARNING 11-03 23:45:47 [utils.py:653] [shutdown] Process manager: force killing remaining process EngineCore_DP1 pid 1846917
+(EngineCore_DP2 pid=1846935) WARNING 11-03 23:45:47 [multiproc_executor.py:491] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=1
+(EngineCore_DP0 pid=1846926) WARNING 11-03 23:45:47 [multiproc_executor.py:491] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=1
+(EngineCore_DP3 pid=1846944) WARNING 11-03 23:45:47 [multiproc_executor.py:491] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=1
+(EngineCore_DP1 pid=1846917) WARNING 11-03 23:45:47 [multiproc_executor.py:491] [shutdown] Executor: workers still running after grace period; sending SIGTERM count=1
+(SpawnProcess-2 pid=1846742) WARNING 11-03 23:45:47 [system_utils.py:225] [shutdown] force killing sub process VLLM::Worker_DP pid 1847121
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:47 [core_client.py:774] [shutdown] MPClient: engine manager stopped
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:47 [core_client.py:775] [shutdown] MPClient: cleaning up background resources
+(SpawnProcess-2 pid=1846742) INFO 11-03 23:45:47 [core_client.py:777] [shutdown] MPClient: complete
+(SpawnProcess-3 pid=1846743) WARNING 11-03 23:45:47 [system_utils.py:225] [shutdown] force killing sub process VLLM::Worker_DP pid 1847114
+(SpawnProcess-1 pid=1846741) WARNING 11-03 23:45:47 [system_utils.py:225] [shutdown] force killing sub process VLLM::Worker_DP pid 1847115
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:47 [core_client.py:774] [shutdown] MPClient: engine manager stopped
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:47 [core_client.py:774] [shutdown] MPClient: engine manager stopped
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:47 [core_client.py:775] [shutdown] MPClient: cleaning up background resources
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:47 [core_client.py:775] [shutdown] MPClient: cleaning up background resources
+(SpawnProcess-3 pid=1846743) INFO 11-03 23:45:47 [core_client.py:777] [shutdown] MPClient: complete
+(SpawnProcess-1 pid=1846741) INFO 11-03 23:45:47 [core_client.py:777] [shutdown] MPClient: complete
+(SpawnProcess-4 pid=1846744) WARNING 11-03 23:45:47 [system_utils.py:225] [shutdown] force killing sub process VLLM::Worker_DP pid 1847120
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:47 [core_client.py:774] [shutdown] MPClient: engine manager stopped
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:47 [core_client.py:775] [shutdown] MPClient: cleaning up background resources
+(SpawnProcess-4 pid=1846744) INFO 11-03 23:45:47 [core_client.py:777] [shutdown] MPClient: complete
+/usr/lib/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 4 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+Generated:
+	/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.1.nsys-rep
+	/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.2.nsys-rep
+	/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/ep4/capture.3.nsys-rep
