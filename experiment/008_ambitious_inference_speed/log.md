@@ -20,6 +20,8 @@ Reduce inference/evaluation latency for the ambitious MHC/LDM models, keeping ch
 - 2026-11-03: inspection found HF loops over torch.unique(idx).tolist(), torch.where per expert and dequantizes per expert on every forward. vLLM uses fused experts but Engram hashes/state handling still loop over sequences and host lookups synchronize GPU indices. Disk mmap is already default.
 
 ## Results
+Latest: [batch tests and Engram report](results/batch_report.md).
+
 Measurements are recorded chronologically below. See [comparison.json](results/comparison.json) for the consolidated data and [usage.md](notes/usage.md) for reproduction and production commands.
 
 ## Related
