@@ -38,10 +38,16 @@ def analyze(path):
     steps.sort(key=lambda r:r['start'])
     label = steps[0]['name'].split('/')[1]
     by_count = {int(re.search(r'/decode(\d+)/', r['name'])[1]):r for r in steps}
-    assert all(i in by_count for i in range(11,20)), sorted(by_count)
-    start, end = by_count[11]['start'], by_count[19]['start']
-    nsteps = 8
+    coverage = [dict(r) for r in db.execute('select deviceId,min(start) as first_kernel_ns,max(end) as last_kernel_ns,count(*) as kernels from CUPTI_ACTIVITY_KIND_KERNEL group by deviceId')]
+    assert len(coverage) == 4, coverage
+    common_end = min(r['last_kernel_ns'] for r in coverage)
+    eligible = [i for i in range(11,19) if i in by_count and i+1 in by_count and by_count[i+1]['start'] < common_end]
+    assert len(eligible) >= 2, (path, coverage, sorted(by_count))
+    assert eligible == list(range(eligible[0],eligible[-1]+1))
+    start, end = by_count[eligible[0]]['start'], by_count[eligible[-1]+1]['start']
+    nsteps = len(eligible)
     wall = end-start
+    pid_to_device = dict(db.execute('select distinct globalPid,deviceId from CUPTI_ACTIVITY_KIND_KERNEL'))
     apis = []
     for table in ['CUPTI_ACTIVITY_KIND_RUNTIME', 'CUPTI_ACTIVITY_KIND_DRIVER']:
         if table in tables:
@@ -86,6 +92,7 @@ def analyze(path):
     events = defaultdict(list)
     kernels = defaultdict(lambda:[0,0])
     owners = defaultdict(lambda:[0,0])
+    compute_owners = defaultdict(lambda:[0,0])
     unmatched = 0
     for r in db.execute('select * from CUPTI_ACTIVITY_KIND_KERNEL where end>? and start<?',(start,end)):
         r = dict(r)
@@ -101,6 +108,8 @@ def analyze(path):
                                      'owner':owner(api),'launch_start':api['start'] if api else None})
         v = kernels[(r['deviceId'],name)]; v[0]+=1; v[1]+=b-a
         v = owners[(r['deviceId'],owner(api))]; v[0]+=1; v[1]+=b-a
+        if kind == 'compute':
+            v = compute_owners[(r['deviceId'],owner(api))]; v[0]+=1; v[1]+=b-a
     copy_details = defaultdict(lambda:[0,0,0])
     for table in ['CUPTI_ACTIVITY_KIND_MEMCPY','CUPTI_ACTIVITY_KIND_MEMSET']:
         if table not in tables:
@@ -148,16 +157,17 @@ def analyze(path):
                 v = scope_summary[(tid & ~((1<<24)-1), r['name'].split('/')[1])]
                 v[0] += 1
                 v[1] += min(end,r['end'])-max(start,r['start'])
-    result = {'path':str(path),'label':label,'window_ns':[start,end],'decode_steps':nsteps,
-        'step_ms':wall/1e6/nsteps,'individual_step_ms':[(by_count[i+1]['start']-by_count[i]['start'])/1e6 for i in range(11,19)],
+    result = {'path':str(path),'label':label,'window_ns':[start,end],'decode_steps':nsteps,'decode_counts':eligible,'kernel_timestamp_coverage':coverage,
+        'step_ms':wall/1e6/nsteps,'individual_step_ms':[(by_count[i+1]['start']-by_count[i]['start'])/1e6 for i in eligible],
         'devices':devices,'unmatched_kernel_launches':unmatched,
         'kernels':[{'device':d,'name':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (d,name),v in sorted(kernels.items(),key=lambda kv:kv[1][1],reverse=True)],
         'module_kernel_sums':[{'device':d,'owner':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (d,name),v in sorted(owners.items(),key=lambda kv:kv[1][1],reverse=True)],
-        'cpu_module_sums':[{'globalPid':pid,'owner':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (pid,name),v in sorted(scope_summary.items(),key=lambda kv:kv[1][1],reverse=True)],
+        'module_compute_kernel_sums':[{'device':d,'owner':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (d,name),v in sorted(compute_owners.items(),key=lambda kv:kv[1][1],reverse=True)],
+        'cpu_module_sums':[{'globalPid':pid,'device':pid_to_device.get(pid),'owner':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (pid,name),v in sorted(scope_summary.items(),key=lambda kv:kv[1][1],reverse=True)],
         'cuda_apis':[{'table':t,'name':name,'count_per_step':v[0]/nsteps,'sum_ms_per_step':v[1]/1e6/nsteps} for (t,name),v in sorted(api_summary.items(),key=lambda kv:kv[1][1],reverse=True)],
         'copies':[{'device':d,'kind':kind,'count_per_step':v[0]/nsteps,'ms_per_step':v[1]/1e6/nsteps,'bytes_per_step':v[2]/nsteps} for (d,kind),v in copy_details.items()]}
     # Plot the first middle step only; trace offsets retain exact measured positions.
-    step_end = by_count[12]['start']
+    step_end = by_count[eligible[0]+1]['start']
     result['timeline'] = {d:[{**r,'start':(max(start,r['start'])-start)/1e6,'end':(min(step_end,r['end'])-start)/1e6} for r in rows if r['start']<step_end and r['end']>start] for d,rows in events.items()}
     return result
 
