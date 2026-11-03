@@ -1,0 +1,12 @@
+{
+  "reference_warm_seconds": 92.035470334813,
+  "fast_warm_seconds": 6.495413512922823,
+  "warm_speedup": 14.169301177162257,
+  "reference_load_seconds": 147.4134452920407,
+  "fast_load_seconds": 117.25902870530263,
+  "mean_nll_delta": -0.0007671953493602161,
+  "mean_abs_logprob_difference": 0.020504896048222584,
+  "max_abs_logprob_difference": 0.43246984481811523,
+  "greedy_token_match": 1.0,
+  "generation_speedup": 4.824448397504365
+}

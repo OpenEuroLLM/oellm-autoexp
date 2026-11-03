@@ -1,0 +1,10 @@
+vllm/hellaswag/0	hellaswag	sample_len	17	17.0
+vllm/hellaswag/0	hellaswag	acc,none	0.4117647058823529	17.0
+vllm/hellaswag/0	hellaswag	acc_stderr,none	0.12303823919618757	17.0
+vllm/hellaswag/0	hellaswag	acc_norm,none	0.5882352941176471	17.0
+vllm/hellaswag/0	hellaswag	acc_norm_stderr,none	0.12303823919618757	17.0
+vllm/gsm8k/4	gsm8k	sample_len	17	17.0
+vllm/gsm8k/4	gsm8k	exact_match,strict-match	0.5882352941176471	17.0
+vllm/gsm8k/4	gsm8k	exact_match_stderr,strict-match	0.12303823919618757	17.0
+vllm/gsm8k/4	gsm8k	exact_match,flexible-extract	0.5882352941176471	17.0
+vllm/gsm8k/4	gsm8k	exact_match_stderr,flexible-extract	0.12303823919618757	17.0

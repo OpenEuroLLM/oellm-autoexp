@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "requests": 8,
+  "persisted_before_interruption": 3,
+  "executed_on_resume": 5,
+  "outputs_match_uninterrupted": true
+}

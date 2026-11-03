@@ -1,0 +1,124 @@
+{
+  "export": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700",
+  "tp": 1,
+  "dp": 4,
+  "ep": 1,
+  "max_num_seqs": 32,
+  "request_batch": "64",
+  "max_num_batched_tokens": 2048,
+  "vllm_version": "0.32.1.dev0+g5df63a720.d20261101",
+  "torch_version": "2.13.0+cu130",
+  "harness_version": "0.4.13",
+  "tokenizer": {
+    "tokenizer_config.json": "e079ddc241dda186f21c165234aa76324c72ed95abdbcb8bfebf763aaba165c8",
+    "special_tokens_map.json": "84a4bbb6c823e3f9fd886f23650f41d0e507dc390cc4a5d998dc9524862af509",
+    "added_tokens.json": "8301006588f1bee825ad0e2ea54a3dadf08f80dceb1804e5c6a177bf0812d08c",
+    "tokenizer.json": "e7367cc99e588f30afc1acd99e968f6a9ee87772af63c275096c9f0096c83793"
+  },
+  "files": [
+    [
+      "model-00001-of-00018.safetensors",
+      83733497020,
+      1793696061501603479
+    ],
+    [
+      "model-00002-of-00018.safetensors",
+      5394250696,
+      1793696246134603331
+    ],
+    [
+      "model-00003-of-00018.safetensors",
+      5404576376,
+      1793696416363985683
+    ],
+    [
+      "model-00004-of-00018.safetensors",
+      5396064120,
+      1793696594525612350
+    ],
+    [
+      "model-00005-of-00018.safetensors",
+      5404576464,
+      1793696795104696249
+    ],
+    [
+      "model-00006-of-00018.safetensors",
+      5404576464,
+      1793697034023035417
+    ],
+    [
+      "model-00007-of-00018.safetensors",
+      5396064120,
+      1793697249990744347
+    ],
+    [
+      "model-00008-of-00018.safetensors",
+      5404576464,
+      1793697458906758440
+    ],
+    [
+      "model-00009-of-00018.safetensors",
+      83423179316,
+      1793697740247926438
+    ],
+    [
+      "model-00010-of-00018.safetensors",
+      5385738472,
+      1793697917522110811
+    ],
+    [
+      "model-00011-of-00018.safetensors",
+      5404576464,
+      1793698117705526601
+    ],
+    [
+      "model-00012-of-00018.safetensors",
+      5396064120,
+      1793698342333431817
+    ],
+    [
+      "model-00013-of-00018.safetensors",
+      5404576464,
+      1793698567768148313
+    ],
+    [
+      "model-00014-of-00018.safetensors",
+      5404576464,
+      1793698777096288828
+    ],
+    [
+      "model-00015-of-00018.safetensors",
+      5396064120,
+      1793698973907680986
+    ],
+    [
+      "model-00016-of-00018.safetensors",
+      5404576464,
+      1793699200291451231
+    ],
+    [
+      "model-00017-of-00018.safetensors",
+      5404576464,
+      1793699451894823400
+    ],
+    [
+      "model-00018-of-00018.safetensors",
+      27132408,
+      1793699452487428193
+    ]
+  ],
+  "config": "ea14f977d5debbd8cc289e8b1248f26424f40fecf44294166afb74df37e89f6f",
+  "source": {
+    "model_executor/models/oellm_ambitious.py": "c34a6bb6e6b88c2258260f26959dd9462939545c2b65605921a2b5161826dbbf",
+    "model_executor/layers/oellm_mhc.py": "c1631f9b22c35262a6f352e8d83145decb18c0b4a571014cbf6aa89efe665ce9"
+  },
+  "settings": {
+    "OELLM_MOE": null,
+    "OELLM_MHC_IMPL": "reference",
+    "OELLM_ENGRAM_TABLES": "ram",
+    "OELLM_ENGRAM_LOOKUP": "leader",
+    "OELLM_ENGRAM_MADVISE": null,
+    "OELLM_LOCAL_EXPERT_LOAD": "1",
+    "OELLM_ENGRAM_MODEL_DIR": null
+  }
+}
