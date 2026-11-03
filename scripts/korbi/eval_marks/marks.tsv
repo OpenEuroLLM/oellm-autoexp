@@ -17,5 +17,5 @@ conservative_mha	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/run_2/mai
 ambitious	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e216_eng40	500,1000,2000,4000,8000,16000,32000,64000,128000
 conservative	/gpfs/scratch/ehpc533/hybrid_nucleus/q35_conservative/main_gqa/main	2000,4000,6000,8000,10000,16000,32000,59600,64000,128000,256000,512000
 ambitious_v3	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v3	1000,1400,1500,2000,4000,8000,16000,32000,64000,128000
-ambitious_v4_2ph	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph	1000,2000,3000,3700,4000,8000,16000,32000,64000,128000
+ambitious_v4_2ph	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph	1000,2000,3000,3700,4000,5000,8000,16000,32000,64000,128000
 ambitious_v4_ldm	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v4_ldm	1000,2000,4000,8000,16000,32000,64000,128000

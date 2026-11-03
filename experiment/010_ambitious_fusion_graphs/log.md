@@ -16,3 +16,5 @@ Reduce the ~9600 eager kernels/token measured in experiment 009. Implement compl
 ## Related
 - ../009_ambitious_decode_gpu_profile/results/report.md
 - ../008_ambitious_inference_speed/log.md
+- 00:18 CET: submitted one new acc_debug allocation 48470754 (one node, one-hour limit), snapshot autoexp_fusion010, runtime source edfebe66a7fc49a1. vLLM source 0e4675b997; all pre-commit and mypy checks passed before submission. No existing Slurm job mutated.
+- User additionally requested fast evals of amb_v4_2ph_mhc at step5000 after validation, using existing configs. Existing hf_export_v2_mn5 selects model ambitious_v4 and persistent/rolling checkpoint discovery; flag_eval_fast_mn5 keeps the standard 21 FLAG rows and four shards. Persistent ckpt/iter_0005000 is complete (latest marker5000, metadata238211192 bytes), no step5000 HF export exists. Preserve it in ckpt_eval via hard links, then use the established export + checks and fast-eval path after graph correctness/performance are established.
