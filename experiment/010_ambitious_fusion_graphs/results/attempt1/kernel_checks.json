@@ -1,0 +1,127 @@
+{
+  "passed": true,
+  "mhc": [
+    {
+      "batch": 1,
+      "scale": 0.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 1,
+      "scale": 0.0001,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 1,
+      "scale": 1.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 1,
+      "scale": 50.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 7,
+      "scale": 0.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 7,
+      "scale": 0.0001,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 7,
+      "scale": 1.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 7,
+      "scale": 50.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 32,
+      "scale": 0.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 32,
+      "scale": 0.0001,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 32,
+      "scale": 1.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 32,
+      "scale": 50.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 64,
+      "scale": 0.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 64,
+      "scale": 0.0001,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 64,
+      "scale": 1.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 64,
+      "scale": 50.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 256,
+      "scale": 0.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 256,
+      "scale": 0.0001,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 256,
+      "scale": 1.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    },
+    {
+      "batch": 256,
+      "scale": 50.0,
+      "read_max_abs": 0.0,
+      "write_exact": true
+    }
+  ],
+  "rms_cases": 18,
+  "graph_slot_cases": 15
+}

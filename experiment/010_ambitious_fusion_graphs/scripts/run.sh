@@ -7,6 +7,10 @@ export OELLM_FUSION_IMPL=reference OELLM_DECODE_GRAPHS=0 VLLM_LOGGING_LEVEL=INFO
 OUT=$PWD/experiment/010_ambitious_fusion_graphs/results
 mkdir -p "$OUT"
 nvidia-smi -q > "$OUT/gpus_start.txt"
+nvidia-smi --query-gpu=timestamp,index,memory.used,utilization.gpu,power.draw \
+ --format=csv,noheader -lms 500 > "$OUT/gpu_samples.csv" &
+sample_pid=$!
+trap 'kill "$sample_pid" 2>/dev/null || true' EXIT
 "$INFER_PY" experiment/010_ambitious_fusion_graphs/scripts/check_kernels.py > "$OUT/kernel_checks.log" 2>&1
 "$INFER_PY" experiment/010_ambitious_fusion_graphs/scripts/bench.py \
  --model /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700 \

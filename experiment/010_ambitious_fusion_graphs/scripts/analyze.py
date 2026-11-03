@@ -21,6 +21,7 @@ for variant in variants:
         summary['decode'].append({'variant':variant,'batch':batch,'requests':len(req),
             'decode_output_tok_s':len(req)*127/(last-first),'mean_request_itl_ms':itl*1000,
             'wall_seconds':max(t['wall_seconds'] for t in entries),
+            'min_gpu_free_gib':min(m['free_bytes'] for t in entries for m in t['memory'])/2**30,
             'peak_gpu_allocated_gib':max(m['peak_allocated_bytes'] for t in entries for m in t['memory'])/2**30,
             'graph_captures':sum(v['captures'] for s in stats for v in s.values()),
             'graph_replays':sum(v['replays'] for s in stats for v in s.values()),
