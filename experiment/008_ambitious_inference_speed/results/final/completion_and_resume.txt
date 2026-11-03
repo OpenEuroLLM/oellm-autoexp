@@ -1,0 +1,8 @@
+[flag_lmeval] ambitious_v4_2ph_fp8_3700 shard 0/1: 2 rows, 0 to run
+[flag_lmeval] ambitious_v4_2ph_fp8_3700 shard 0/1: 2 rows, 0 to run
+[flag_lmeval] ambitious_v4_2ph_fp8_3700 shard 0/1: 2 rows, 0 to run[flag_lmeval] ambitious_v4_2ph_fp8_3700 shard 0/1: 2 rows, 0 to run
+48458754      COMPLETED      0:0   00:26:43 
+48458754.ba+  COMPLETED      0:0   00:26:43 
+48458754.ex+  COMPLETED      0:0   00:26:43 
+48458754.0    COMPLETED      0:0   00:26:28 
+48458754.1    COMPLETED      0:0   00:00:11 

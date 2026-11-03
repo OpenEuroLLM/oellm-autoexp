@@ -20,7 +20,7 @@ Reduce inference/evaluation latency for the ambitious MHC/LDM models, keeping ch
 - 2026-11-03: inspection found HF loops over torch.unique(idx).tolist(), torch.where per expert and dequantizes per expert on every forward. vLLM uses fused experts but Engram hashes/state handling still loop over sequences and host lookups synchronize GPU indices. Disk mmap is already default.
 
 ## Results
-Pending.
+Measurements are recorded chronologically below. See [comparison.json](results/comparison.json) for the consolidated data and [usage.md](notes/usage.md) for reproduction and production commands.
 
 ## Related
 - ../007_fast_hf_export/log.md
@@ -41,3 +41,27 @@ Pending.
 - 2026-11-03 17:06: reference-mHC task comparison completed successfully (all four evaluator ranks rc0): HellaSwag raw acc 8/17 versus fast 7/17; normalized acc 10/17 in both. GSM8K exact match 10/17 in both filters and both implementations. Saved prompt hashes match for every document. Task runtimes reference/fast: HellaSwag 14 / 8 s, GSM8K 92 / 46 s (different nodes; small smoke sample, not a controlled full-suite speed claim). Reference startup 506–507 s; fast smoke startup 108 s on the already warmed prior node. Cold/startup cost is variable and must be reported separately.
 - The actual production wrapper/runtime successfully installed from offline wheels and resumed the completed smoke output: all four frontends reported 2 rows / 0 to run, then exited successfully without initializing another engine. Larger token-budget probes now running as final stages.
 - Add a final HF offload-root exercise after the vLLM batching stages: same real GPFS Engram shards, `OELLM_ENGRAM_MODEL_DIR=$BASE`, full fixed-prompt test. This validates the optional disk-backed table replacement against the prior HF fast run; no use of tmpfs as a disk proxy.
+
+## 2026-11-03: implementation and interpretation
+
+| Fixed-prompt path | Warm prefill / one output | Warm prefill + 8 outputs |
+| --- | ---: | ---: |
+| HF original | 92.035 s (prefill only) | generation measured separately |
+| HF grouped, original mHC | 11.915 s (prefill only) | 2.43x generation speedup |
+| HF grouped + fused mHC | 6.495 s (prefill only) | 4.82x generation speedup |
+| vLLM TP4 reference mHC, budget 2048 | 2.572 s | 5.575 s |
+| vLLM TP4 fused mHC, budget 2048 | 1.496 s | 4.557 s |
+| vLLM EP4 fused mHC, budget 2048 | 2.573 s | 2.856 s |
+
+HF measurements process the same 32 prompts sequentially; vLLM processes them in batches. Do not compare HF and vLLM speedup columns as equivalent batching protocols. Within each comparison, checkpoint and prompts are identical. The older TP4 baseline used a lower global token budget; its 9.795 s warm mixed result is retained, but the 5.575 s control is the appropriate matched-budget baseline.
+
+The new HF implementation removes the Python expert loop, repeated FP8 conversion, and many GPU synchronization points. BF16 expansion trades GPU memory for speed. Fused 4x4 mHC normalization removes many individual Torch launches. vLLM now avoids dequantizing experts that the rank will discard, supports one TP leader for host-table lookups, and exposes true single-node EP to lm-eval. The production runner caches responses between finite request batches.
+
+Engram disk offload was already the vLLM default. GPU tables do not fit comfortably alongside these experts on a four-GPU node. RAM prefetch uses the shared OS page cache and shifts reads into startup, but does not guarantee a fixed startup time. The tables and inactive experts remain large despite the model's ~3B active parameter count. Further work would need profiling of Engram host lookups, per-sequence hashing/convolution/state handling, and expert kernels; increasing token budget alone is insufficient for EP in this probe.
+
+Numerical equivalence is limited: grouped BF16 GEMMs and fused mHC change rounding, and EP batching itself varies across repeats. All 32 tested HF greedy tokens matched, but logprobs differ. On 17 matched task documents, GSM8K correctness matches for all documents/filters; HellaSwag differs on one raw-accuracy decision while normalized accuracy matches. These smoke tests verify execution/aggregation and expose drift; they do not prove unchanged full-suite quality. Fast implementations remain opt-in through the new config/environment variables. Existing reference defaults remain available.
+
+No full FLAG suite was automatically relaunched. Earlier production shards/allocation were externally canceled; completed markers remain. Debug jobs were independent of live training. New runs should use the fast output directory and cache identity; old uncached in-flight tasks cannot be resumed from individual requests.
+- Final matched aggregate budget 8192 probes passed: EP4 startup 108.99 s, first 11.316 s, warm mixed 2.777 s / prefill+one 2.630 s; TP4 startup 115.92 s, first 179.149 s, warm mixed 3.506 s / prefill+one 1.234 s. EP benefits little from the larger budget, so retain EP/2048 as the default. For prefill-heavy MC tasks, recommend TP4/DP1 with `aux.token_budget=8192`. Larger-budget TP4 improves prefill ~17.5% over TP4/2048, and ~2.08x over the reference-mHC matched-2048 control. Runtime shapes and batching differ in the latter comparison; this is a combined configuration/implementation gain, not an isolated kernel effect.
+- 2026-11-03 17:16: HF GPFS-mapped Engram full-model test passed: all 8160 scored token logprobs and all 32 generated tokens exactly equal to the previous optimized HF RAM-table run. Warm prefill 6.613 s versus 6.495 s, generation speed ratio 0.992. This validates the mapped-table inference path; it is not a cold-disk bandwidth benchmark. The current HF loader still materializes the CPU model before replacing the tables, so initial peak host RAM is not eliminated.
+- Final allocation 48458754 completed with exit 0:0 in 26m43s. All three independent debug allocations have finished. Final artifacts are in `results/final/`, consolidated comparison in `results/comparison.json`, and reproduction/profile selection in `notes/usage.md`. Production wrapper resume and Slurm completion evidence: `results/final/completion_and_resume.txt`.

@@ -45,3 +45,9 @@ A completed task has a done marker. Interrupted tasks resume saved responses fro
 - Remote logs: `/gpfs/scratch/ehpc533/hybrid_nucleus/kernel_tests/{infer008_debug,infer008_fast,infer008_quality}/slurm-<jobid>.log`.
 - Full lm-eval artifacts: `/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_infer008_{smoke,reference}/ambitious_v4_2ph_fp8_3700_limit17`.
 - `summarize.py` regenerates `results/comparison.json` from the downloaded JSON artifacts with the standard library. The 17-example tests are smoke checks, not sufficient evidence of benchmark-level quality equivalence.
+
+## Layout selection from the measured probes
+
+Use the default TP1/DP4 for mixed/decode workloads. The matched larger-budget test gave TP1/DP4 2.777 s versus TP4/DP1 3.506 s for 32 prompts with 8 outputs each. For prefill-heavy multiple-choice scoring, TP4 was better: 1.234 s versus EP4's 2.630 s for prefill plus one output. Override the fast config with `aux.tp=4 aux.dp=1 aux.token_budget=8192` for that profile. Both profiles still use EP across the four GPUs of a single node. No cross-node collectives are required.
+
+HF mapped-table validation: setting `OELLM_ENGRAM_MODEL_DIR` to the original GPFS export produced exactly identical 8160 scored logprobs and 32 greedy tokens to the optimized RAM-table run. Warm prefill was 6.613 versus 6.495 s. This loader currently materializes the CPU model before replacing its Engram tensors with file-backed mappings; it does not eliminate the initial peak host-memory requirement. The operating system can keep recently used mapped pages resident, so this test does not establish cold-disk throughput.

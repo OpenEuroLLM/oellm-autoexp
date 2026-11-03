@@ -21,6 +21,28 @@
       "generation_speedup": 2.4315842254154423,
       "generated_tokens": 32,
       "generated_tokens_matched": 32
+    },
+    "mapped_tables": {
+      "tokens": 8160,
+      "mean_nll_delta": -0.0007671953493602161,
+      "mean_abs_logprob_difference": 0.020504896048222584,
+      "max_abs_logprob_difference": 0.43246984481811523,
+      "warm_seconds": 6.6128022111952305,
+      "warm_speedup": 13.91777152793113,
+      "generation_speedup": 4.787068694695124,
+      "generated_tokens": 32,
+      "generated_tokens_matched": 32
+    },
+    "mapped_vs_fast": {
+      "tokens": 8160,
+      "mean_nll_delta": -0.0,
+      "mean_abs_logprob_difference": 0.0,
+      "max_abs_logprob_difference": 0.0,
+      "warm_seconds": 6.6128022111952305,
+      "warm_speedup": 0.9822482671455571,
+      "generation_speedup": 0.9922520255727937,
+      "generated_tokens": 32,
+      "generated_tokens_matched": 32
     }
   },
   "vllm": {
@@ -42,6 +64,66 @@
           "input_tokens": 8192,
           "output_tokens": 256,
           "input_tokens_per_second": 1343.880371591431
+        }
+      ]
+    },
+    "final/ep4": {
+      "layout": "ep4",
+      "tp": 1,
+      "dp": 4,
+      "expert_parallel": 4,
+      "startup_seconds": 108.99276801105589,
+      "global_token_budget": 8192,
+      "prefill_one_output_seconds": 2.629589272197336,
+      "settings": {
+        "OELLM_MHC_IMPL": "triton",
+        "OELLM_LOCAL_EXPERT_LOAD": "1",
+        "OELLM_ENGRAM_TABLES": "ram",
+        "OELLM_ENGRAM_LOOKUP": "leader",
+        "OELLM_ENGRAM_MADVISE": "normal"
+      },
+      "trials": [
+        {
+          "seconds": 11.316055519971997,
+          "input_tokens": 8192,
+          "output_tokens": 256,
+          "input_tokens_per_second": 723.9271657462027
+        },
+        {
+          "seconds": 2.7769096232950687,
+          "input_tokens": 8192,
+          "output_tokens": 256,
+          "input_tokens_per_second": 2950.041993185003
+        }
+      ]
+    },
+    "final/tp4": {
+      "layout": "tp4",
+      "tp": 4,
+      "dp": 1,
+      "expert_parallel": 4,
+      "startup_seconds": 115.91723828669637,
+      "global_token_budget": 8192,
+      "prefill_one_output_seconds": 1.2340092780068517,
+      "settings": {
+        "OELLM_MHC_IMPL": "triton",
+        "OELLM_LOCAL_EXPERT_LOAD": "1",
+        "OELLM_ENGRAM_TABLES": "ram",
+        "OELLM_ENGRAM_LOOKUP": "leader",
+        "OELLM_ENGRAM_MADVISE": "normal"
+      },
+      "trials": [
+        {
+          "seconds": 179.14884295500815,
+          "input_tokens": 8192,
+          "output_tokens": 256,
+          "input_tokens_per_second": 45.7273397074485
+        },
+        {
+          "seconds": 3.506258314009756,
+          "input_tokens": 8192,
+          "output_tokens": 256,
+          "input_tokens_per_second": 2336.393746937496
         }
       ]
     },
@@ -269,6 +351,20 @@
           }
         }
       }
+    }
+  },
+  "task_comparison": {
+    "hellaswag": {
+      "unique_docs": 17,
+      "doc_filter_records": 17,
+      "all_prompt_hashes_match": true,
+      "records_with_identical_correctness": 16
+    },
+    "gsm8k": {
+      "unique_docs": 17,
+      "doc_filter_records": 34,
+      "all_prompt_hashes_match": true,
+      "records_with_identical_correctness": 34
     }
   }
 }
