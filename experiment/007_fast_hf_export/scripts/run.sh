@@ -9,6 +9,7 @@ CROOT=/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007
 mkdir -p "$RESULT" "$CROOT"
 # Keep the paired-validation workload identical to baseline; its input is read-only.
 [ -e "$CROOT/paired" ] || ln -s /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/paired "$CROOT/paired"
+python -c 'import accelerate, safetensors, transformers; print("Export validation dependencies available", flush=True)'
 python -m pytest --confcutdir=tests/unit -p no:cacheprovider -o addopts='' -q tests/unit/test_hf_export_reader.py 2>&1 | tee "$RESULT/unit.log"
 if [ "${SKIP_READER_BENCHMARK:-0}" = 1 ]; then
   test -s "$RESULT/reader_benchmark.json"
