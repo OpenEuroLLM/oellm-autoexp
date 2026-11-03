@@ -1,0 +1,31 @@
+{
+  "note": "Both continuations restore matching state summaries; subsequent training is not bitwise reproducible. One control does not establish trajectory equivalence.",
+  "arms": {
+    "cont": {
+      "optimizer_state_matches": true,
+      "metrics": {
+        "lm loss": {
+          "max_abs_delta": 0.0882499999999995,
+          "rms_delta": 0.03962235573132918
+        },
+        "grad norm": {
+          "max_abs_delta": 20.0,
+          "rms_delta": 6.521041343221188
+        }
+      }
+    },
+    "cont_baseline": {
+      "optimizer_state_matches": true,
+      "metrics": {
+        "lm loss": {
+          "max_abs_delta": 0.03408800000000056,
+          "rms_delta": 0.01710746400551547
+        },
+        "grad norm": {
+          "max_abs_delta": 4.771000000000001,
+          "rms_delta": 2.0321415058996264
+        }
+      }
+    }
+  }
+}

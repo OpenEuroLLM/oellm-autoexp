@@ -1,15 +1,17 @@
 {
   "ranks": 16,
   "tensors": 64,
+  "baseline_source": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_rowmeta2/submodules/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/uneven_dtensor.py",
+  "baseline_sha256": "d6c698851de3a1a58e5231b383b965e4fb8f9d52d9c71bd4f1fc1828e8850f82",
   "baseline": {
-    "max_rank_seconds": 0.18803340196609497,
+    "max_rank_seconds": 0.14767798781394958,
     "all_gather_object": 128,
     "all_reduce": 64
   },
   "batched": {
-    "max_rank_seconds": 0.003759465180337429,
+    "max_rank_seconds": 0.004298129118978977,
     "all_gather_object": 2,
     "all_reduce": 2
   },
-  "speedup": 50.015997740726014
+  "speedup": 34.35866716098808
 }
