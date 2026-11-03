@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 export HF_EXPORT_READER=fast HF_EXPORT_READ_THREADS=8 EXPERT_DTYPE=fp8
+# Match hf_export_mn5: accelerate is supplied outside the training image.
+export PYTHONPATH="${PYTHONPATH:-}:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_hfx"
 RESULT=$PWD/experiment/007_fast_hf_export/results
 BASE=/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_3700
 CROOT=/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007

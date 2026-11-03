@@ -41,12 +41,12 @@ for kind, ignored in [('score', {'model'}), ('paired', {'model','prefix'})]:
 result['parity']['mean_nll_delta'] = cand['score']['mean_nll'] - base['score']['mean_nll']
 result['parity']['paired_lm_loss_delta'] = cand['paired']['lm_loss'] - base['paired']['lm_loss']
 result['values'] = json.loads((r/'value_comparison.json').read_text())
-result['candidate_pipeline_timer'] = json.loads((r/'pipeline_time.json').read_text())
+result['candidate_resumed_pipeline_timer'] = json.loads((r/'pipeline_time.json').read_text())
 result['reader_benchmark'] = json.loads((r/'reader_benchmark.json').read_text())
 result['limitations'] = [
     'Full runs use equivalent different MN5 nodes in one allocation, without cache flushing; shared GPFS load may vary.',
-    'Phase times use identical completion markers. Operational totals start at pool launch, including container startup; candidate also repeats two small unit tests, but skips the earlier AB/BA benchmark.',
-    'Candidate subprocess pipeline timer separately excludes unit tests, reader benchmark and full-byte comparison.',
+    'Phase times use identical completion markers. Operational totals start at pool launch, including container startup; candidate includes the launch-dependency retry delay and repeated unit tests, but skips the earlier AB/BA benchmark.',
+    'Candidate subprocess timer covers the resumed validation pipeline only; conversion was already complete. Operational marker times include the original conversion and retry delay.',
     'Controlled reader AB/BA trials use the same node and input, without cache flushing; initial metadata read is recorded separately.',
 ]
 Path(a.out).write_text(json.dumps(result, indent=2)+'\n')
