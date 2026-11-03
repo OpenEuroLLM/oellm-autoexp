@@ -24,7 +24,7 @@ def worker(rank, dp, tp, port, args, prompts, barrier):
               tensor_parallel_size=tp, enable_expert_parallel=True,
               all2all_backend='allgather_reducescatter',
               gpu_memory_utilization=0.85, max_num_seqs=max(1, 32//dp),
-              max_model_len=4096, max_num_batched_tokens=512,
+              max_model_len=4096, max_num_batched_tokens=args.global_token_budget//dp,
               enforce_eager=True, seed=42)
     startup = time.perf_counter()-started
     barrier.wait(timeout=1800)
@@ -47,9 +47,14 @@ def worker(rank, dp, tp, port, args, prompts, barrier):
         trials.append({'trial':trial, 'seconds':elapsed, 'rows':rows})
         print(json.dumps({'layout':args.layout,'rank':rank,'trial':trial,
                           'seconds':elapsed,'prompts':len(selected)}),flush=True)
+    barrier.wait(timeout=1800)
+    started = time.perf_counter()
+    llm.generate(records, SamplingParams(temperature=0,max_tokens=1,ignore_eos=True), use_tqdm=False)
+    torch.cuda.synchronize()
+    prefill_seconds = time.perf_counter()-started
     out = Path(args.out);out.mkdir(parents=True,exist_ok=True)
     (out/f'rank{rank}.json').write_text(json.dumps({'startup_seconds':startup,
-        'tp':tp,'dp':dp,'rank':rank,'trials':trials},indent=2)+'\n')
+        'tp':tp,'dp':dp,'rank':rank,'trials':trials,'prefill_one_output_seconds':prefill_seconds},indent=2)+'\n')
     barrier.wait(timeout=1800)
     llm.llm_engine.engine_core.shutdown()
 
@@ -57,7 +62,7 @@ def worker(rank, dp, tp, port, args, prompts, barrier):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--model',required=True)
     p.add_argument('--out',required=True);p.add_argument('--layout',choices=['tp4','ep4'],required=True)
-    p.add_argument('--decode',type=int,default=8);p.add_argument('--prompts',type=int,default=32)
+    p.add_argument('--global-token-budget',type=int,default=2048);p.add_argument('--decode',type=int,default=8);p.add_argument('--prompts',type=int,default=32)
     args=p.parse_args()
     from oellm_autoexp.hf_export.score_on_flag import sample_docs
     out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
@@ -79,7 +84,10 @@ def main():
     if bad:raise RuntimeError(f'worker failures: {bad}')
     results=[json.loads((out/f'rank{r}.json').read_text()) for r in range(dp)]
     summary={'layout':args.layout,'tp':tp,'dp':dp,'expert_parallel':4,
-             'startup_seconds':max(r['startup_seconds'] for r in results),'trials':[]}
+             'startup_seconds':max(r['startup_seconds'] for r in results),
+             'global_token_budget':args.global_token_budget,
+             'prefill_one_output_seconds':max(r['prefill_one_output_seconds'] for r in results),
+             'settings':{k:os.environ.get(k) for k in ['OELLM_MHC_IMPL','OELLM_LOCAL_EXPERT_LOAD','OELLM_ENGRAM_TABLES','OELLM_ENGRAM_LOOKUP','OELLM_ENGRAM_MADVISE']},'trials':[]}
     for trial in range(2):
         elapsed=max(r['trials'][trial]['seconds'] for r in results)
         summary['trials'].append({'seconds':elapsed,'input_tokens':sum(map(len,prompts)),

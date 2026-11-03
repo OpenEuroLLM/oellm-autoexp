@@ -43,7 +43,7 @@ with torch.no_grad():
     generated=[];start=time.perf_counter()
     for ids in prompts[:4]:
         tokens=torch.tensor([ids],device=first_device)
-        output=model.generate(input_ids=tokens,max_new_tokens=8,do_sample=False,use_cache=True)
+        output=model.generate(input_ids=tokens,max_new_tokens=8,do_sample=False,use_cache=True,eos_token_id=None)
         generated.append(output[0,len(ids):].cpu().tolist())
     for device in range(torch.cuda.device_count()):torch.cuda.synchronize(device)
     decode_seconds=time.perf_counter()-start

@@ -24,6 +24,11 @@ for mode in reference fast; do
     2>&1 | tee "$RESULT/hf_$mode.log"
 done
 unset OELLM_HF_MOE OELLM_HF_ENGRAM_LOOKUP
+export OELLM_MHC_IMPL=reference OELLM_LOCAL_EXPERT_LOAD=1
+export OELLM_ENGRAM_TABLES=mmap OELLM_ENGRAM_LOOKUP=replicated
+"$INFER_PY" experiment/008_ambitious_inference_speed/scripts/bench_vllm.py \
+  --model "$BASE" --layout tp4 --global-token-budget 2048 --out "$RESULT/tp4_tuned" \
+  2>&1 | tee "$RESULT/tp4_tuned.log"
 export OELLM_MHC_IMPL=triton OELLM_LOCAL_EXPERT_LOAD=1
 export OELLM_ENGRAM_TABLES=ram OELLM_ENGRAM_MADVISE=normal OELLM_ENGRAM_LOOKUP=leader
 for layout in ep4 tp4; do
