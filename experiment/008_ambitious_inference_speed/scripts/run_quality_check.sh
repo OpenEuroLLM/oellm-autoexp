@@ -21,3 +21,4 @@ export OELLM_ENGRAM_TABLES=ram OELLM_ENGRAM_LOOKUP=leader
  --max-num-batched-tokens 2048 --request-batch-size 64 --response-cache \
  --limit 17 --names vllm/hellaswag/0 vllm/gsm8k/4 \
  2>&1 | tee "$RESULT/lmeval_reference.log"
+bash experiment/008_ambitious_inference_speed/scripts/run_final_checks.sh
