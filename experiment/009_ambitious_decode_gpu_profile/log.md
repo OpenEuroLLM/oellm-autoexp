@@ -19,3 +19,5 @@ Scripts in scripts/, named worker extension scripts/korbi/vllm/gpu_profile.py. R
 
 ## Related
 - ../008_ambitious_inference_speed/log.md
+- Initial allocation 48466108 started 20:39:41 CET on as04r3b09. Four-process smoke passed: all four GPUs recorded 16 kernels each with positive device timestamps. The allocation was externally cancelled at 20:47:57 during model initialization, before the actual decode capture; no decode timeline was obtained. Raw partial artifacts preserved in the remote `results_attempt1/` directory, with the smoke result/inventory ingested under local `results/attempt1/`.
+- User explicitly requested continuation at 23:27 CET. Restart the same committed profiling protocol in a new independent debug allocation. Parallel experiment `009_mhc256_sharding` has a separate folder; this experiment retains its full existing pathname and history.
