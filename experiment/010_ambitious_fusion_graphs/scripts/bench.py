@@ -39,7 +39,7 @@ def worker(rank,args,port,barrier):
         barrier.wait(timeout=1800)
         scoring=[{'prompt_token_ids':p} for p in all_prompts[:128][rank::dp]]
         params=SamplingParams(temperature=0,max_tokens=1,prompt_logprobs=0,ignore_eos=True)
-        llm.generate(scoring[:4],params,use_tqdm=False)
+        llm.generate(scoring,params,use_tqdm=False)
         barrier.wait(timeout=1800)
         start=time.perf_counter();outputs=llm.generate(scoring,params,use_tqdm=False)
         scores=[]

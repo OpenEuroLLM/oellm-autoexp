@@ -10,6 +10,9 @@ ranks=[json.loads(f.read_text()) for f in sorted((a.directory/'paired').glob('ra
 assert len(ranks)==4
 variants=['reference0','reference1','fused','graphs','graphs_repeat']
 summary={'decode':[],'scoring':[],'quality':[]}
+initial=[r['trials'][1]['graphs'] for r in ranks if len(r['trials'])>1]
+initial_captures=sum(v['captures'] for group in initial for stat in group for v in stat.values())
+initial_replays=sum(v['replays'] for group in initial for stat in group for v in stat.values())
 for variant in variants:
     for batch in [1,32,256]:
         entries=[t for r in ranks for t in r['trials'] if t['variant']==variant and t['mode']=='decode' and t['batch']==batch]
@@ -23,8 +26,8 @@ for variant in variants:
             'wall_seconds':max(t['wall_seconds'] for t in entries),
             'min_gpu_free_gib':min(m['free_bytes'] for t in entries for m in t['memory'])/2**30,
             'peak_gpu_allocated_gib':max(m['peak_allocated_bytes'] for t in entries for m in t['memory'])/2**30,
-            'graph_captures':sum(v['captures'] for s in stats for v in s.values()),
-            'graph_replays':sum(v['replays'] for s in stats for v in s.values()),
+            'graph_captures':sum(v['captures'] for s in stats for v in s.values())-initial_captures,
+            'graph_replays':sum(v['replays'] for s in stats for v in s.values())-initial_replays,
             'graph_fallbacks':sum(v['fallbacks'] for s in stats for v in s.values())})
     records=[t for r in ranks for t in r['trials'] if t['variant']==variant and t['mode']=='scoring']
     if len(records)==4:
