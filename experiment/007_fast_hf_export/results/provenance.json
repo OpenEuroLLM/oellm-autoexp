@@ -1,0 +1,55 @@
+{
+  "baseline": {
+    "snapshot": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_mhc_eval3700",
+    "sync_stamp": ".                            feat/hybrid-v0.19 d02d3cc9 dirty=220658704414\nsubmodules/Megatron-LM       oellm/v0.19-hybrid ac1020efc dirty=da39a3ee5e6b\nflash-linear-attention       feat/hybrid-kernels 32f3036 dirty=da39a3ee5e6b\nsubmodules/cute_kernels      ldm-recompute 4739513 dirty=da39a3ee5e6b\nsubmodules/MoonEP            oellm/main ec3eb8b dirty=da39a3ee5e6b\nsubmodules/vllm              oellm/main 7993918d04 dirty=da39a3ee5e6b\nexperiment006: workflow 8ae0f19e; isolated from autoexp_hfexp13; pinned main_mhc4 iter_0003700\n",
+    "sha256": {
+      "oellm_autoexp/hf_export/fsdp_dtensor.py": "97be15dd8cc03e9e0a357f17cf1b8f2d088147855b26ecba795018c714f8a9c5",
+      "oellm_autoexp/hf_export/export_ambitious.py": "82ca0300f1cb905dd8ccfbac1f2cd7424b945e91099e200f9f28388cfc1daa80",
+      "oellm_autoexp/hf_export/score_on_flag.py": "535d40c3f794d2c2d7493abcda0ff7fc4418d0d84e006d2d3da1e69613397f66",
+      "oellm_autoexp/hf_export/paired_valid_check.py": "856589fb989a5247271d87742b5243b230650eaf035ec11840d1fe9f47531b2c",
+      "oellm_autoexp/hf_export/oellm_ambitious/modeling_oellm_ambitious.py": "0add859bab216ed013b1c16e10816f97d09907d64e5e76817c80c633a36b21a2",
+      "scripts/korbi/hf_export/export_main_run.sh": "deb94b9f4eb5fb2b76978ad3dc8b4c9a7a960074ba26dee143dcc0d3618dfd30"
+    }
+  },
+  "candidate": {
+    "snapshot": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_hf_fast007",
+    "sync_stamp": ".                            feat/hybrid-v0.19 d02d3cc9 dirty=220658704414\nsubmodules/Megatron-LM       oellm/v0.19-hybrid ac1020efc dirty=da39a3ee5e6b\nflash-linear-attention       feat/hybrid-kernels 32f3036 dirty=da39a3ee5e6b\nsubmodules/cute_kernels      ldm-recompute 4739513 dirty=da39a3ee5e6b\nsubmodules/MoonEP            oellm/main ec3eb8b dirty=da39a3ee5e6b\nsubmodules/vllm              oellm/main 7993918d04 dirty=da39a3ee5e6b\nexperiment006: workflow 8ae0f19e; isolated from autoexp_hfexp13; pinned main_mhc4 iter_0003700\nfast_export007=c9c032f8,9def4359\nbaseline=autoexp_mhc_eval3700\ntimer_fix=9b1b8458\nvalidation_deps_fix=2e3dc8bd,529177ff\n",
+    "sha256": {
+      "oellm_autoexp/hf_export/fsdp_dtensor.py": "9d0385a69c18f22e7b8751974a5be33a44ace384852bfc48201c37e033898ec4",
+      "oellm_autoexp/hf_export/fast_fsdp_reader.py": "7da55cc57927889f8f839af3f8caea5f1fb23c87671f5f0d9722d09c913a626a",
+      "oellm_autoexp/hf_export/export_ambitious.py": "82ca0300f1cb905dd8ccfbac1f2cd7424b945e91099e200f9f28388cfc1daa80",
+      "oellm_autoexp/hf_export/score_on_flag.py": "535d40c3f794d2c2d7493abcda0ff7fc4418d0d84e006d2d3da1e69613397f66",
+      "oellm_autoexp/hf_export/paired_valid_check.py": "856589fb989a5247271d87742b5243b230650eaf035ec11840d1fe9f47531b2c",
+      "oellm_autoexp/hf_export/oellm_ambitious/modeling_oellm_ambitious.py": "0add859bab216ed013b1c16e10816f97d09907d64e5e76817c80c633a36b21a2",
+      "scripts/korbi/hf_export/export_main_run.sh": "deb94b9f4eb5fb2b76978ad3dc8b4c9a7a960074ba26dee143dcc0d3618dfd30"
+    }
+  },
+  "input": {
+    "metadata": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph/ckpt_eval/iter_0003700/.metadata",
+    "metadata_bytes": 484968871,
+    "metadata_sha256": "af1f8a916785c502c822d8d1626c0f55269ebf429daf345649efdc437b651269"
+  },
+  "v2_orchestration_sha256": {
+    "experiment/007_fast_hf_export/scripts/export_main_run_v2.sh": "b9fa791485de2323dc09a73a8d447e7a46e9011fb898438726445785889e6e16",
+    "experiment/007_fast_hf_export/scripts/time_command.py": "27da3666ea75f338e1064df26d32f8038d3e1873b2ac6ed368a2c16ab553696f",
+    "scripts/korbi/hf_export/export_main_run_v2.sh": "337dd1b4e26ca16d13e92c562af86832187ceeb1aa72e8c0bb4dab27b050f974",
+    "scripts/korbi/hf_export/time_command.py": "27da3666ea75f338e1064df26d32f8038d3e1873b2ac6ed368a2c16ab553696f",
+    "config/experiments/korbi/production/hf_export_v2_mn5.yaml": "e5d00047e2079c891b9eba3efbc4c1902d5d110f1615de9448d592cec859514e"
+  },
+  "settings": {
+    "expert_dtype": "fp8",
+    "reader": "fast",
+    "read_threads": 8,
+    "v2_gpu_pairs": [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        3
+      ]
+    ],
+    "container": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif"
+  }
+}

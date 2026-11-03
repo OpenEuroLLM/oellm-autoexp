@@ -1,0 +1,16 @@
+{
+  "command": [
+    "bash",
+    "experiment/007_fast_hf_export/scripts/export_main_run_v2.sh",
+    "ambitious_v4",
+    "3700",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel"
+  ],
+  "started_at": "2026-11-03T10:40:40.374085+00:00",
+  "finished_at": "2026-11-03T11:23:06.322728+00:00",
+  "wall_seconds": 2545.948651030194,
+  "user_seconds": 7884.236101,
+  "system_seconds": 1457.944518,
+  "max_rss_kib": 287101580,
+  "exit_code": 0
+}

@@ -1,0 +1,24 @@
+{
+  "model": "ambitious_v4",
+  "expert_dtype": "fp8",
+  "bench": "EXPERT_DTYPE=fp8 bash scripts/korbi/hf_export/export_main_run_v2.sh ambitious_v4 3700",
+  "pythonpath": ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/retention:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_ep:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_hfx",
+  "sbatch": {
+    "nodes": 1,
+    "ntasks_per_node": 1,
+    "cpus_per_task": 160,
+    "time": "04:00:00",
+    "account": "ehpc533",
+    "partition": null,
+    "gres": "gpu:4",
+    "gpus_per_node": 4,
+    "output": "/gpfs/projects/ehpc533//outputs/hf_exports/logs/hf_export_v2_ambitious_v4_3700_fp8/slurm-%j.log",
+    "ntasks": 1,
+    "threads_per_core": 2,
+    "gpu_bind": "none",
+    "qos": "acc_xehpc",
+    "wait_all_nodes": 1,
+    "exclusive": true
+  },
+  "passed": true
+}

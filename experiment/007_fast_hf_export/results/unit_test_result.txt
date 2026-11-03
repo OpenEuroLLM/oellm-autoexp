@@ -1,0 +1,14 @@
+..                                                                       [100%]
+=============================== warnings summary ===============================
+tests/unit/test_hf_export_reader.py::test_parallel_reader_matches_legacy
+tests/unit/test_hf_export_reader.py::test_cache_reset_and_multiple_files
+  /usr/local/lib/python3.12/dist-packages/torch/distributed/checkpoint/utils.py:488: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to save in a single process.
+    return func(*args, **kwargs)
+
+tests/unit/test_hf_export_reader.py::test_parallel_reader_matches_legacy
+tests/unit/test_hf_export_reader.py::test_cache_reset_and_multiple_files
+  /usr/local/lib/python3.12/dist-packages/torch/distributed/checkpoint/utils.py:488: UserWarning: torch.distributed is disabled, unavailable or uninitialized, assuming the intent is to load in a single process.
+    return func(*args, **kwargs)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 4 warnings in 6.25s
