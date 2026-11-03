@@ -1,0 +1,16 @@
+[
+  {
+    "max_seqs": 32,
+    "token_budget": 8192,
+    "exit_code": -15,
+    "status": "failed",
+    "wall_seconds": 921.6794364452362
+  },
+  {
+    "max_seqs": 64,
+    "token_budget": 8192,
+    "exit_code": 1,
+    "status": "failed",
+    "wall_seconds": 137.2457423210144
+  }
+]
