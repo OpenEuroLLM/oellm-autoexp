@@ -71,6 +71,13 @@ def worker(rank, dp, tp, port, args, barrier):
     llm.llm_engine.logger_manager.stat_loggers.append(peaks)
     result['memory_after_init'] = llm.collective_rpc('batching_memory', timeout=30)
     atomic_json(out / f'rank{rank}.json', result)
+    if args.profile_single:
+        from decode_diagnostics import profile_single
+        result['single_profiles'] = profile_single(llm, rank, records, args, barrier)
+        atomic_json(out / f'rank{rank}.json', result)
+        barrier.wait(timeout=1800)
+        llm.llm_engine.engine_core.shutdown()
+        return
     if args.engram_compare:
         result['engram_checks'] = llm.collective_rpc('check_batched_engram', timeout=300)
         atomic_json(out / f'rank{rank}.json', result)
@@ -240,11 +247,12 @@ def run_sweep(args):
         reader.read_index = functools.lru_cache(maxsize=None)(reader.read_index)
         docs = reader.sample_docs(mix, args.requests, 512, 0)
         atomic_json(prompts_file, [[1] + d[:255].tolist() for d in docs])
-    cases = ([(256, 32768)] if args.engram_compare else
+    cases = ([(256, 32768)] if args.engram_compare or args.profile_single else
              [(256, 65536)] if args.extra_only else
              [(32, 8192)] + [(size, budget) for budget in [8192, 32768]
                              for size in [64, 128, 256]])
-    status_path = out / ('candidate_status.json' if args.engram_compare else
+    status_path = out / ('profile_status.json' if args.profile_single else
+                         'candidate_status.json' if args.engram_compare else
                          'status_extra.json' if args.extra_only else 'status.json')
     status = []
     for size, budget in cases:
@@ -265,6 +273,8 @@ def run_sweep(args):
                    '--decode', str(args.decode)]
         if args.engram_compare:
             command.append('--engram-compare')
+        if args.profile_single:
+            command.append('--profile-single')
         stop, samples = threading.Event(), []
         monitor = threading.Thread(target=memory_sampler, args=(stop, samples), daemon=True)
         monitor.start()
@@ -309,6 +319,7 @@ def main():
     p.add_argument('--case', action='store_true')
     p.add_argument('--extra-only', action='store_true')
     p.add_argument('--engram-compare', action='store_true')
+    p.add_argument('--profile-single', action='store_true')
     p.add_argument('--max-seqs', type=int)
     p.add_argument('--token-budget', type=int)
     p.add_argument('--prompts-file')

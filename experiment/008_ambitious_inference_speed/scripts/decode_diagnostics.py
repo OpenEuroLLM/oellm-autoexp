@@ -110,3 +110,49 @@ def combine(ranks):
         row['decode_speedup_vs_single'] = row['decode_output_tokens_per_second'] / single
         row['linear_scaling_efficiency'] = row['decode_speedup_vs_single'] / row['batch']
     return result
+
+
+def profile_single(llm, rank, records, args, barrier):
+    import threading
+    from vllm import SamplingParams
+    out = Path(args.out)
+    actual = rank == 0
+    work = records[:1]
+    barrier.wait(timeout=1800)
+    llm.generate(work, SamplingParams(temperature=0, max_tokens=8 if actual else 1,
+                                     ignore_eos=True), use_tqdm=False)
+    memory = llm.collective_rpc('batching_memory', timeout=30)
+    targets = sorted({os.getpid(), *(m['pid'] for m in memory),
+                      *(m['parent_pid'] for m in memory)})
+    spies = []
+
+    def start_spies():
+        for pid in targets:
+            path = out / f'single_profile_rank{rank}_pid{pid}.json'
+            log = path.with_suffix('.txt').open('w')
+            proc = subprocess.Popen([
+                '/gpfs/projects/ehpc533/users/korbip/hybrid_v019/tools/py-spy',
+                'record', '--pid', str(pid), '--rate', '49', '--duration', '8',
+                '--idle', '--nonblocking', '--format', 'speedscope', '--output', str(path)],
+                stdout=log, stderr=subprocess.STDOUT)
+            spies.append((proc, log, path, pid))
+
+    barrier.wait(timeout=1800)
+    timer = threading.Timer(3, start_spies)
+    timer.start()
+    # No performance claim is made from this instrumented workload.
+    outputs = llm.generate(work, SamplingParams(temperature=0,
+        max_tokens=128 if actual else 1, ignore_eos=True), use_tqdm=False)
+    assert all(len(x.outputs[0].token_ids) == (128 if actual else 1) for x in outputs)
+    timer.join()
+    result = []
+    for proc, log, path, pid in spies:
+        try:
+            code = proc.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            code = proc.wait()
+        log.close()
+        result.append({'pid': pid, 'path': path.name, 'exit_code': code})
+    save(out / f'single_profiles_rank{rank}.json', result)
+    return result
