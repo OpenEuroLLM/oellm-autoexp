@@ -3,12 +3,13 @@
 
 class BatchMemoryProbe:
     def batching_memory(self, reset=False):
+        import os
         import torch
 
         if reset:
             torch.cuda.reset_peak_memory_stats()
         free, total = torch.cuda.mem_get_info()
-        return {'device': torch.cuda.current_device(), 'free_bytes': free,
+        return {'pid': os.getpid(), 'device': torch.cuda.current_device(), 'free_bytes': free,
                 'total_bytes': total, 'allocated_bytes': torch.cuda.memory_allocated(),
                 'reserved_bytes': torch.cuda.memory_reserved(),
                 'peak_allocated_bytes': torch.cuda.max_memory_allocated(),

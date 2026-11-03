@@ -117,6 +117,11 @@ def worker(rank, dp, tp, port, args, barrier):
                               'seconds': elapsed, 'max_seqs': args.max_seqs,
                               'token_budget': args.token_budget}), flush=True)
             del outputs
+    if args.max_seqs == 256 and args.token_budget == 32768:
+        from decode_diagnostics import measure_decode
+        result['decode_diagnostics'] = measure_decode(
+            llm, rank, dp, records, args, barrier)
+        atomic_json(out / f'rank{rank}.json', result)
     barrier.wait(timeout=1800)
     llm.llm_engine.engine_core.shutdown()
 
@@ -183,6 +188,10 @@ def run_case(args):
         entry['scheduler_peaks_by_frontend'] = [t['scheduler_peaks'] for t in trials]
         entry['worker_memory_by_frontend'] = [t['worker_memory'] for t in trials]
         result['trials'].append(entry)
+    if all('decode_diagnostics' in r for r in ranks):
+        from decode_diagnostics import combine
+        result['decode_scaling'] = combine([r['decode_diagnostics'] for r in ranks])
+        atomic_json(out / 'decode_scaling.json', result['decode_scaling'])
     atomic_json(out / 'summary.json', result)
     print(json.dumps(result), flush=True)
 
