@@ -17,7 +17,13 @@ FSDP parameter initialization gathers uneven-shard metadata twice and reduces bo
 - 2026-11-03: inspected live stack and source; found metadata gather in validation, boundary all-reduce, then another metadata gather for attachment. Implementation preserves TP construction checks and batches only uneven-shard finalization.
 
 ## Results
-Pending execution; exact commands in scripts/.
+- [Focused unit output](results/unit.log): 6 tests per rank, 4 ranks, passed.
+- [Exact-source NCCL benchmark](results/benchmark.json): 34.36x metadata-finalization speedup on 16 GPUs; 192 collectives reduced to 4.
+- [Four-node restore and continuation](results/comparison.json): matching FP32 parameter/optimizer-state diagnostics on all 16 ranks; steps 21–30 completed and final checkpoint saved.
+- [Unchanged-code control](results/trajectory_control.json): restore diagnostics match, but subsequent trajectories vary in both arms. Statistical trajectory equivalence is not established.
+- [Source provenance](results/provenance.json); exact driver commands in scripts/.
+
+Full 128-node startup improvement has not been measured. The implementation is committed as Megatron `a1f185341` and remains isolated from the live training snapshot.
 
 ## Interpretation
 No production deployment until tests pass. The helper requires identical tensor order across ranks, as the existing metadata collectives do.
@@ -38,3 +44,5 @@ No production deployment until tests pass. The helper requires identical tensor 
 - 2026-11-03 01:41 CET: exact-source NCCL timing rerun: 0.147678 s baseline vs 0.004298 s candidate, 34.36x for the metadata-finalization microbenchmark, identical metadata and 128+64 -> 2+2 collectives. This supersedes the 50x wrapper-based timing; the earlier result is retained as `results/benchmark_common_validator.json`.
 - 2026-11-03 01:44 CET: unchanged-code control also restored matching state summaries on all 16 ranks and completed steps 21–30 with a successful step-30 save. Control vs ref loss max/RMS delta: 0.034088/0.017107; candidate vs ref: 0.088250/0.039622. Control grad-norm max/RMS: 4.771/2.032; candidate: 20.0/6.521. Both trajectories differ; one control does not establish statistical equivalence, and candidate variability was larger in this sample. **Validated: checkpoint state diagnostics, metadata equivalence, retained validation, continued training/save, collective reduction. Not established: bitwise or statistical trajectory equivalence, or full 128-node startup improvement.** Candidate is isolated; live training still uses its previous snapshot.
 - 2026-11-03 01:42 CET: user requested retiring the one-day allocation. LDM production is stable near 29.36 s/step after excluding as07r2b24. Set o134e `min_hosts=0 keep_pending=0 max_own_hosts=0`, drained host001, and cancelled its keepalive. Existing tests (including another agent's amb_rs7_cont) finish before release.
+
+- 2026-11-03 01:47:36 CET: o134e host001 exited after `drain requested: pool_ctl drain`. All running tests completed, including the other agent's `amb_rs7_cont` (step-30 save successful, run rc `0 completed`). No replacement allocation will be submitted (`min_hosts=0`, `keep_pending=0`, `max_own_hosts=0`). LDM remains on 48291324 with as07r2b24 excluded.
