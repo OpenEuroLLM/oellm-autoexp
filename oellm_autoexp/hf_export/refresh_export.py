@@ -19,7 +19,12 @@ _HERE = Path(__file__).resolve().parent
 def refresh(d: Path) -> None:
     for pkg in ("oellm_ambitious", "oellm_hybrid", "oellm_q35"):
         for f in (_HERE / pkg).glob("*.py"):
-            if (d / f.name).exists():
+            new_mhc_helper = (
+                pkg == "oellm_ambitious"
+                and f.name == "mhc_kernels.py"
+                and (d / "modeling_oellm_ambitious.py").exists()
+            )
+            if (d / f.name).exists() or new_mhc_helper:
                 shutil.copy2(f, d / f.name)
                 print(f"{d.name}: {f.name}")
     cfg = json.loads((d / "config.json").read_text())
