@@ -6,6 +6,9 @@ export_dir=$1 out=$2 shard=$3 nshards=$4 limit=$5; shift 5
 source scripts/korbi/vllm/setup_vllm_uv.sh
 export OELLM_MHC_IMPL=${OELLM_MHC_IMPL:-triton}
 export OELLM_LOCAL_EXPERT_LOAD=1
+export OELLM_FUSION_IMPL=${OELLM_FUSION_IMPL:-reference}
+export OELLM_DECODE_GRAPHS=${OELLM_DECODE_GRAPHS:-0}
+export OELLM_GRAPH_MAX_ROWS=${OELLM_GRAPH_MAX_ROWS:-256}
 export OELLM_ENGRAM_DECODE_IMPL=${OELLM_ENGRAM_DECODE_IMPL:-batched}
 export OELLM_ENGRAM_TABLES=${OELLM_ENGRAM_TABLES:-ram}
 export OELLM_ENGRAM_LOOKUP=${OELLM_ENGRAM_LOOKUP:-leader}

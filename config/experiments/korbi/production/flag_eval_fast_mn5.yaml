@@ -14,6 +14,9 @@ aux:
   token_budget: 32768
   request_batch_size: 256
   mhc_impl: triton
+  fusion_impl: reference
+  decode_graphs: 0
+  graph_max_rows: 256
   engram_tables: ram
   engram_decode_impl: batched
   name: flag_fast_${aux.export}_s${aux.shard}of${aux.num_shards}${aux.name_suffix}
@@ -23,5 +26,7 @@ aux:
     FLAG_TOKEN_BUDGET=${aux.token_budget} FLAG_REQUEST_BATCH_SIZE=${aux.request_batch_size}
     OELLM_MHC_IMPL=${aux.mhc_impl} OELLM_ENGRAM_TABLES=${aux.engram_tables}
     OELLM_ENGRAM_DECODE_IMPL=${aux.engram_decode_impl}
+    OELLM_FUSION_IMPL=${aux.fusion_impl} OELLM_DECODE_GRAPHS=${aux.decode_graphs}
+    OELLM_GRAPH_MAX_ROWS=${aux.graph_max_rows}
     bash scripts/korbi/flag_eval/run_flag_fast_mn5.sh
     ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} ${aux.limit} ${aux.flag_names}
