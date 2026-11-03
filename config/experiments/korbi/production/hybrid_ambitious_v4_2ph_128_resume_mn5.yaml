@@ -1,0 +1,23 @@
+# @package _global_
+# Normal production continuation on 128 compute nodes in the held CNS132 host.
+# Same production arm, full model/optimizer/RNG/scheduler resume, original sample layout.
+# A missing checkpoint is fatal: never silently train a fresh copy.
+defaults:
+  - hybrid_ambitious_v4_2ph_256_mn5
+  - _self_
+aux:
+  nodes: 128
+backend:
+  megatron:
+    exit_on_missing_checkpoint: true
+    strict_fsdp_dtensor_load: true
+    finetune: false
+    no_load_optim: false
+    no_load_rng: false
+    num_distributed_optimizer_instances: 1
+    data_parallel_sharding_strategy: optim_grads_params
+    outer_dp_sharding_strategy: no_shard
+    profile: false
+    use_pytorch_profiler: false
+job:
+  name: ambitious_v4_2ph_128n_resume_p${aux.phase}
