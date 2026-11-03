@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -34,7 +36,17 @@ def model_keys(ckpt_dir: Path) -> tuple[object, dict[str, tuple[str, tuple[int, 
     import torch.distributed.checkpoint as dcp
     from torch.distributed.checkpoint.metadata import TensorStorageMetadata
 
-    reader = dcp.FileSystemReader(str(ckpt_dir))
+    mode = os.environ.get("HF_EXPORT_READER", "legacy")
+    if mode == "fast":
+        from .fast_fsdp_reader import ExportFileSystemReader
+
+        reader = ExportFileSystemReader(
+            str(ckpt_dir), threads=int(os.environ.get("HF_EXPORT_READ_THREADS", "8"))
+        )
+    elif mode == "legacy":
+        reader = dcp.FileSystemReader(str(ckpt_dir))
+    else:
+        raise ValueError(f"Unknown HF_EXPORT_READER: {mode}")
     md = reader.read_metadata().state_dict_metadata
     out = {}
     for key, entry in md.items():
@@ -53,7 +65,17 @@ def load(reader, entries: dict[str, tuple[str, tuple[int, ...], torch.dtype]]) -
     import torch.distributed.checkpoint as dcp
 
     template = {key: torch.empty(shape, dtype=dtype) for key, shape, dtype in entries.values()}
-    dcp.load(template, storage_reader=reader, no_dist=True)
+    if os.environ.get("HF_EXPORT_READER", "legacy") == "fast":
+        # Templates are already flat FQN -> ordinary CPU tensor dictionaries.
+        # Skip legacy nested-state key detection and sharded-tensor flattening.
+        from torch.distributed.checkpoint.default_planner import DefaultLoadPlanner
+
+        planner = DefaultLoadPlanner(flatten_state_dict=False, flatten_sharded_tensors=False)
+    else:
+        planner = None
+    started = time.perf_counter()
+    dcp.load(template, storage_reader=reader, no_dist=True, planner=planner)
+    LOGGER.info("DCP load: %d tensors in %.3fs", len(template), time.perf_counter() - started)
     return {name: template[key] for name, (key, _, _) in entries.items()}
 
 
