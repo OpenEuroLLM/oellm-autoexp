@@ -1,0 +1,26 @@
+{
+  "optimizer_state_matches": true,
+  "restored_iteration": 20,
+  "resumed_steps": [
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30
+  ],
+  "metrics": {
+    "lm loss": {
+      "max_abs_delta": 0.0882499999999995,
+      "rms_delta": 0.03962235573132918
+    },
+    "grad norm": {
+      "max_abs_delta": 20.0,
+      "rms_delta": 6.521041343221188
+    }
+  }
+}
