@@ -21,3 +21,6 @@ Pending execution; exact commands in scripts/.
 
 ## Interpretation
 No production deployment until tests pass. The helper requires identical tensor order across ranks, as the existing metadata collectives do.
+
+- 2026-11-03 01:21 CET: focused unit job `mn5-pool-o134e.0017` completed, 6 tests passed per rank (4 ranks, CPU/gloo within the training container). Tests cover bounds and missing coverage errors, empty shards, replicated and multi-shard meshes, metadata reuse, and group-level collective counts. See `results/unit.log`. Candidate Megatron commit `a1f185341`; hashes in `results/provenance.json`.
+- 2026-11-03 01:21 CET: baseline reference `fsdp_meta005_ref_2c579a` enqueued in o134e using `autoexp_rowmeta2`. Fresh output suite, 30 total iterations, rolling save at 20.
