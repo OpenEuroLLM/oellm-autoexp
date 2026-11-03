@@ -30,6 +30,9 @@ for label, (out, log) in cases.items():
         'score': json.loads(paths[2].read_text()),
         'paired': json.loads(paths[3].read_text()),
     }
+resume_text = (h/'kernel_tests/fast_hf_export007c/slurm-mn5-pool-p132.0236.log').read_text()
+resume = re.search(r'\[pool\] (\S+) run (\S+) starting .*nodes (\S+)', resume_text)
+result['candidate']['validation_resume'] = {'pool_start': resume[1], 'run': resume[2], 'node': resume[3]}
 base, cand = result['baseline'], result['candidate']
 result['speedup'] = {phase: base['phase_seconds'][phase]/cand['phase_seconds'][phase] for phase in base['phase_seconds']}
 result['speedup']['end_to_end'] = base['ready_seconds_from_pool_start']/cand['ready_seconds_from_pool_start']
