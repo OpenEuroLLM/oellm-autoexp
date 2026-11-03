@@ -360,8 +360,17 @@ class OellmMoE(nn.Module):
         y = torch._grouped_mm(
             act, self.down_proj.transpose(-1, -2), offs=offsets
         )
+        weighted = (y * weights.flatten()[order, None]).to(t.dtype)
+        contributions = torch.empty_like(weighted)
+        contributions[order] = weighted
+        contributions = contributions.view(t.shape[0], self.top_k, t.shape[1])
+        expert_order = idx.argsort(dim=-1)
+        token_ids = torch.arange(t.shape[0], device=t.device)
         out = torch.zeros_like(t)
-        out.index_add_(0, tokens, (y * weights.flatten()[order, None]).to(t.dtype))
+        # The reference adds experts in ascending ID order with BF16 rounding
+        # after every contribution. Preserve that order without a CPU sync.
+        for slot in range(self.top_k):
+            out.add_(contributions[token_ids, expert_order[:, slot]])
         return out
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
