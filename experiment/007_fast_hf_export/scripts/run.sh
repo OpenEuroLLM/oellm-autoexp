@@ -8,9 +8,13 @@ mkdir -p "$RESULT" "$CROOT"
 # Keep the paired-validation workload identical to baseline; its input is read-only.
 [ -e "$CROOT/paired" ] || ln -s /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/paired "$CROOT/paired"
 python -m pytest --confcutdir=tests/unit -p no:cacheprovider -o addopts='' -q tests/unit/test_hf_export_reader.py 2>&1 | tee "$RESULT/unit.log"
-python experiment/007_fast_hf_export/scripts/reader_benchmark.py 2>&1 | tee "$RESULT/reader_benchmark.log"
+if [ "${SKIP_READER_BENCHMARK:-0}" = 1 ]; then
+  test -s "$RESULT/reader_benchmark.json"
+else
+  python experiment/007_fast_hf_export/scripts/reader_benchmark.py 2>&1 | tee "$RESULT/reader_benchmark.log"
+fi
 # Time the same export + shape checks + validation scoring + paired scoring as baseline.
-/usr/bin/time -v -o "$RESULT/pipeline_time.txt" \
+python experiment/007_fast_hf_export/scripts/time_command.py "$RESULT/pipeline_time.json" \
   bash scripts/korbi/hf_export/export_main_run.sh ambitious_v4 3700 "$CROOT" \
   2>&1 | tee "$RESULT/pipeline.log"
 CAND=$CROOT/ambitious_v4_2ph_fp8_3700
