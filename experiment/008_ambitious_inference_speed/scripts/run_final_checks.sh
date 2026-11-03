@@ -15,3 +15,9 @@ for layout in ep4 tp4; do
  --model "$BASE" --layout "$layout" --global-token-budget 8192 --out "$RESULT/$layout" \
  2>&1 | tee "$RESULT/$layout.log"
 done
+# Exercise HF disk-backed table replacement, using the real GPFS export (not tmpfs).
+OELLM_ENGRAM_MODEL_DIR="$BASE" "$INFER_PY" \
+ experiment/008_ambitious_inference_speed/scripts/bench_hf_full.py \
+ --model "${BASE}_hf008" --case fast \
+ --prompts /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_infer008/experiment/008_ambitious_inference_speed/results/ep4/prompts.json \
+ --out "$RESULT/hf_mmap.json" 2>&1 | tee "$RESULT/hf_mmap.log"
