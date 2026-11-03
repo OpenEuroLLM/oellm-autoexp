@@ -1,0 +1,93 @@
+{
+  "startup_seconds": {
+    "legacy": 12.2409909729613,
+    "fast": 10.453088931972161
+  },
+  "trials": [
+    {
+      "kind": "attention",
+      "layer": 0,
+      "order": [
+        "legacy",
+        "fast"
+      ],
+      "seconds": {
+        "legacy": 72.93107170501025,
+        "fast": 0.40302725799847394
+      },
+      "tensors": 12,
+      "bitwise_equal": true
+    },
+    {
+      "kind": "attention",
+      "layer": 0,
+      "order": [
+        "fast",
+        "legacy"
+      ],
+      "seconds": {
+        "fast": 0.3446806989959441,
+        "legacy": 18.45471937203547
+      },
+      "tensors": 12,
+      "bitwise_equal": true
+    },
+    {
+      "kind": "ckda",
+      "layer": 3,
+      "order": [
+        "legacy",
+        "fast"
+      ],
+      "seconds": {
+        "legacy": 76.00170069601154,
+        "fast": 1.6681630319799297
+      },
+      "tensors": 24,
+      "bitwise_equal": true
+    },
+    {
+      "kind": "ckda",
+      "layer": 3,
+      "order": [
+        "fast",
+        "legacy"
+      ],
+      "seconds": {
+        "fast": 3.077692558988929,
+        "legacy": 28.884264086023904
+      },
+      "tensors": 24,
+      "bitwise_equal": true
+    },
+    {
+      "kind": "moe",
+      "layer": 1,
+      "order": [
+        "legacy",
+        "fast"
+      ],
+      "seconds": {
+        "legacy": 162.6785289309919,
+        "fast": 7.380014950002078
+      },
+      "tensors": 1093,
+      "bitwise_equal": true
+    },
+    {
+      "kind": "moe",
+      "layer": 1,
+      "order": [
+        "fast",
+        "legacy"
+      ],
+      "seconds": {
+        "fast": 5.941023951978423,
+        "legacy": 107.83426006801892
+      },
+      "tensors": 1093,
+      "bitwise_equal": true
+    }
+  ],
+  "note": "Same node, same input, AB/BA order; no global cache flush. Engram tables covered by full-export comparison."
+}
