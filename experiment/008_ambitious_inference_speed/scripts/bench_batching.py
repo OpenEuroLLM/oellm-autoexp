@@ -76,6 +76,7 @@ def worker(rank, dp, tp, port, args, barrier):
               enforce_eager=True, enable_prefix_caching=False,
               disable_log_stats=False, seed=42)
     result['startup_seconds'] = time.perf_counter() - started
+    atomic_json(out / f'rank{rank}.json', result)
     peaks = SchedulerPeaks()
     assert llm.llm_engine.logger_manager is not None
     llm.llm_engine.logger_manager.stat_loggers.append(peaks)
@@ -131,6 +132,18 @@ def worker(rank, dp, tp, port, args, barrier):
     llm.llm_engine.engine_core.shutdown()
 
 
+def worker_entry(rank, dp, tp, port, args, barrier):
+    try:
+        worker(rank, dp, tp, port, args, barrier)
+    except BaseException:
+        error = traceback.format_exc()
+        atomic_json(Path(args.out) / f'error_rank{rank}.json', {'traceback': error})
+        print(error, file=sys.stderr, flush=True)
+        # multiprocessing's finalizer otherwise joins engine children before
+        # printing the exception. The case supervisor cleans the process group.
+        os._exit(1)
+
+
 def run_case(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -140,7 +153,7 @@ def run_case(args):
         port = sock.getsockname()[1]
     ctx = mp.get_context('spawn')
     barrier = ctx.Barrier(dp)
-    processes = [ctx.Process(target=worker, args=(r, dp, tp, port, args, barrier))
+    processes = [ctx.Process(target=worker_entry, args=(r, dp, tp, port, args, barrier))
                  for r in range(dp)]
     for proc in processes:
         proc.start()
