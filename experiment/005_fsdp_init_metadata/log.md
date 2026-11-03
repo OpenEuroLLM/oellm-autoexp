@@ -26,3 +26,5 @@ No production deployment until tests pass. The helper requires identical tensor 
 - 2026-11-03 01:21 CET: baseline reference `fsdp_meta005_ref_2c579a` enqueued in o134e using `autoexp_rowmeta2`. Fresh output suite, 30 total iterations, rolling save at 20.
 
 - 2026-11-03: added a separate 4-node/16-GPU NCCL benchmark over 64 uneven-shard tensors on full-DP and expert-like inner meshes. It compares old validate+attach (128 metadata gathers, 64 boundary reductions per rank) with batched finalization (2+2), checks identical metadata, and records slowest-rank elapsed time.
+
+- 2026-11-03 01:24 CET: four-node NCCL benchmark `mn5-pool-o134e.0019` produced identical metadata. Slowest-rank time: old validate+attach 0.188033 s vs batch 0.003759 s (50.02x on 64 tensors). Per-rank collective counts: 128 gathers + 64 boundary reductions -> 2 + 2. This is finalization-path timing, not total startup speedup. See `results/benchmark.json`.
