@@ -109,6 +109,8 @@ case "$suite" in
                 --load-tasks-multilingual --output-dir "$out/lighteval_${task_key}_${n_shot}" \
                 ${limit:+--max-samples "$limit"}
         else
+            # the HF path loads the export's own model code: this checkout's (hf_fast_prefill_env)
+            [ "${OELLM_HF_REFRESH_CODE:-0}" = 1 ] && bash scripts/korbi/hf_export/refresh_code.sh "$export_dir"
             "$INFER_PY" "$PWD/scripts/korbi/flag_eval/lighteval_accelerate_cli.py" accelerate \
                 "model_name=$export_dir,trust_remote_code=True,batch_size=32" "$light_task" \
                 --load-tasks-multilingual --output-dir "$out/lighteval_${task_key}_${n_shot}" \

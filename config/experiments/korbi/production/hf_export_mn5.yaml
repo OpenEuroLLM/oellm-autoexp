@@ -8,6 +8,7 @@
 #       --config-name experiments/korbi/production/hf_export_mn5 aux.model=ambitious_v4 aux.step=1000 aux.expert_dtype=fp8 --yes
 defaults:
   - ../hybrid_speed/kernel_tests_mn5
+  - hf_fast_prefill_env
   - _self_
 
 aux:

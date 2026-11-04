@@ -15,6 +15,7 @@
 defaults:
   - ../hybrid_speed/kernel_tests_mn5
   - vllm_fast_decode_env
+  - hf_fast_prefill_env
   - _self_
 
 aux:
