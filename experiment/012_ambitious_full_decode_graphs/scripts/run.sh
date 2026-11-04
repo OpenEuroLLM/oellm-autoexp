@@ -12,7 +12,7 @@ export OELLM_FUSION_IMPL=triton OELLM_ENGRAM_MADVISE=normal VLLM_LOGGING_LEVEL=I
 VARIANTS=${VARIANTS:-fullgraph,islands}
 rm -f /dev/shm/oellm_engram_* 2>/dev/null  # stale tables of a killed run
 if [ "${VARIANTS#*k8}" != "$VARIANTS" ]; then
-  "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/check_fp8_w8a16.py 2>&1 | tail -4 | tee "$OUT/check_fp8_w8a16.log"
+  "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/check_fp8_w8a16.py 2>&1 | grep -vE "Warning|warn" | tail -8 | tee "$OUT/check_fp8_w8a16.log"
   grep -q FP8_W8A16_EXACT "$OUT/check_fp8_w8a16.log" || { echo "fp8 w8a16 check failed"; exit 1; }
 fi
 status=0
