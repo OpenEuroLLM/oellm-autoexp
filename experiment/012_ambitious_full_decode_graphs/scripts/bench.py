@@ -94,7 +94,7 @@ def main():
     p.add_argument("--model", required=True)
     p.add_argument("--prompts", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--variant", choices=["islands", "fullgraph", "fullgraph_k"], required=True)
+    p.add_argument("--variant", choices=["islands", "fullgraph", "fullgraph_k", "fullgraph_k8"], required=True)
     p.add_argument("--tokens", type=int, default=256)
     a = p.parse_args()
     Path(a.out).mkdir(parents=True, exist_ok=True)

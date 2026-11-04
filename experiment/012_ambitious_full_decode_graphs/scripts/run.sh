@@ -9,14 +9,19 @@ PROMPTS=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_infer008_batch/e
 { hostname; df -h /dev/shm /tmp; free -g; nvidia-smi -L; } > "$OUT/node.txt" 2>&1
 export OELLM_MHC_IMPL=triton OELLM_LOCAL_EXPERT_LOAD=1 OELLM_ENGRAM_DECODE_IMPL=batched
 export OELLM_FUSION_IMPL=triton OELLM_ENGRAM_MADVISE=normal VLLM_LOGGING_LEVEL=INFO
-rm -f /dev/shm/oellm_engram_* 2>/dev/null  # stale tables of a killed run
-status=0
 VARIANTS=${VARIANTS:-fullgraph,islands}
+rm -f /dev/shm/oellm_engram_* 2>/dev/null  # stale tables of a killed run
+if [ "${VARIANTS#*k8}" != "$VARIANTS" ]; then
+  "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/check_fp8_w8a16.py 2>&1 | tail -4 | tee "$OUT/check_fp8_w8a16.log"
+  grep -q FP8_W8A16_EXACT "$OUT/check_fp8_w8a16.log" || { echo "fp8 w8a16 check failed"; exit 1; }
+fi
+status=0
 for v in ${VARIANTS//,/ }; do
-  export OELLM_DECODE_KERNELS=reference
+  export OELLM_DECODE_KERNELS=reference OELLM_MOE_FP8=
   if [ "${v#fullgraph}" != "$v" ]; then
     export OELLM_ENGRAM_TABLES=uva OELLM_DECODE_GRAPHS=0 OELLM_ENGRAM_LOOKUP=replicated
-    [ "$v" = fullgraph_k ] && export OELLM_DECODE_KERNELS=triton
+    [ "${v#fullgraph_k}" != "$v" ] && export OELLM_DECODE_KERNELS=triton
+    [ "$v" = fullgraph_k8 ] && export OELLM_MOE_FP8=w8a16
   else
     export OELLM_ENGRAM_TABLES=ram OELLM_DECODE_GRAPHS=1 OELLM_ENGRAM_LOOKUP=leader
   fi
