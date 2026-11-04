@@ -9,7 +9,7 @@
 # matters at 64+ nodes), Engram tables / 32 (811,683 rows per head: odd, as
 # 25,973,845, so the DP shards stay uneven), gbs 128 x 16k (8k since 2026-11-02).
 #
-#   phase save (4 nodes each, train_iters 40 for every arm: the same data order)
+#   phase save (4 nodes each, train_iters 30 for every arm: the same data order)
 #     ref    trains to step 30; an ASYNC rolling (non-persistent global) save at step 20 into
 #            ref/ckpt_rolling, as production writes the checkpoints it resumes from
 #     ref2   the same without saves: the run-to-run noise floor (non-deterministic kernels)
@@ -65,7 +65,9 @@ backend:
     fixed_valid_seq_lengths: null
     validation_set_names: null
     engram_table_size: 811683
-    train_iters: 40
+    # 30, not 40 (2026-11-03): ref's step-20 rolling checkpoint must remain the latest when
+    # cont loads it; a step-40 non-persistent save overwrites it (the amb_rs5 bug, cont loaded 40).
+    train_iters: 30
     exit_interval: 30
     log_interval: 1
     arch_metrics_interval: 5
@@ -91,7 +93,7 @@ job:
   metadata:
     pool_singleton: null
   est_step_time_s: 25.0
-  # cold data index (gbs 128 x 40 steps is a new sample count) + compile
+  # cold data index (gbs 128 x 30 steps is a new sample count) + compile
   est_startup_min: 30.0
   state_events:
     - name: timeout
