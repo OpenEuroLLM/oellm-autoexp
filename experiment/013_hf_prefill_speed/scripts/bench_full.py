@@ -38,8 +38,13 @@ def logprobs(logits, ids):
     """Next-token logprobs [b, s-1] (fp32), computed in row chunks."""
     out = []
     for r in range(logits.shape[0]):
-        lp = torch.log_softmax(logits[r, :-1].float(), dim=-1)
-        out.append(lp.gather(-1, ids[r, 1:].to(lp.device)[:, None])[:, 0].cpu())
+        row = []
+        for a in range(0, logits.shape[1] - 1, 1024):  # 1024 positions at a time (memory)
+            e = min(a + 1024, logits.shape[1] - 1)
+            lp = torch.log_softmax(logits[r, a:e].float(), dim=-1)
+            row.append(lp.gather(-1, ids[r, a + 1:e + 1].to(lp.device)[:, None])[:, 0].cpu())
+            del lp
+        out.append(torch.cat(row))
     return torch.stack(out)
 
 

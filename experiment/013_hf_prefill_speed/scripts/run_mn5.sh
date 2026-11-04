@@ -33,6 +33,11 @@ if [ "${STAGES#*reduced}" != "$STAGES" ]; then
   unset CUDA_VISIBLE_DEVICES
 fi
 
+if [ "${STAGES#*gemm}" != "$STAGES" ]; then
+  CUDA_VISIBLE_DEVICES=0 "$INFER_PY" $D/scripts/bench_gemm.py --out "$OUT/gemm.json" > "$OUT/gemm.log" 2>&1 || { echo "gemm failed"; status=1; }
+  grep tokens "$OUT/gemm.log"
+fi
+
 if [ "${STAGES#*full}" != "$STAGES" ]; then
   # an export view: hard links to the immutable weights; this checkout's model code replaces the
   # code files atomically (new inodes: the original export's files are never written)
