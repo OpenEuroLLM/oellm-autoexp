@@ -6,7 +6,9 @@ defaults:
   - marenostrum_ehpc533
   - _self_
 
-template_path: templates/marenostrum_watchdog.sbatch
+# absolute at render time (the snapshot run_autoexp runs in): a pool's monitor renders the step
+# script and resolves a relative path against ITS working directory -- another snapshot's template
+template_path: ${oc.env:PWD,.}/templates/marenostrum_watchdog.sbatch
 srun_opts: "--overlap "
 
 env:

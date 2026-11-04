@@ -547,7 +547,12 @@ def render_step_script(
         srun_flags.append(f"--cpus-per-task={cpus}")
     replacements["srun_opts"] = replacements["srun_opts"] + " ".join(srun_flags) + " "
 
-    text = render_template(Path(slurm.template_path).read_text(), replacements)
+    template = Path(slurm.template_path)
+    if not template.is_absolute() and workdir:
+        # the job's own snapshot's template, not the one of the process rendering it (a pool's
+        # monitor runs from another snapshot)
+        template = Path(workdir) / template
+    text = render_template(template.read_text(), replacements)
     header = (
         f"# [pool] step script of run {run_id} (job {slurm.name}), rendered "
         f"{time.strftime('%Y-%m-%dT%H:%M:%S')} from {slurm.template_path}\n"
