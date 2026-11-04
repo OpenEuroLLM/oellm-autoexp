@@ -74,14 +74,21 @@ def rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float, zero_centered: b
 def _mhc_read_kernel(S, C, APRE, APOST, ARES, BPRE, BPOST, BRES, X, POST, RES, NW,
                      H: tl.constexpr, EPS: tl.constexpr, ITERS: tl.constexpr, BLOCK: tl.constexpr,
                      NORM: tl.constexpr, NEPS: tl.constexpr, ZC: tl.constexpr):
+    # the 4 streams as separate rows: the stream sums are elementwise (in order 0..3, as torch's
+    # sum over the stream dim), only the norms reduce over h
     t = tl.program_id(0).to(tl.int64)
     h = tl.arange(0, BLOCK)
-    s = tl.arange(0, 4)
+    hm = h < H
     dtype = S.dtype.element_ty
-    stream = tl.load(S + t * 4 * H + s[:, None] * H + h[None, :], h[None, :] < H, 0).to(tl.float32)
+    base = S + t * 4 * H
+    s0 = tl.load(base + h, hm, 0).to(tl.float32)
+    s1 = tl.load(base + H + h, hm, 0).to(tl.float32)
+    s2 = tl.load(base + 2 * H + h, hm, 0).to(tl.float32)
+    s3 = tl.load(base + 3 * H + h, hm, 0).to(tl.float32)
     # torch.linalg.vector_norm returns the input dtype before .float()
-    norm = tl.sqrt(tl.sum(tl.sum(stream * stream, 1), 0)).to(dtype).to(tl.float32)
+    norm = tl.sqrt(tl.sum(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3, 0)).to(dtype).to(tl.float32)
     rms = tl.maximum(norm / ((4 * H) ** 0.5), EPS)
+    s = tl.arange(0, 4)
     cp = tl.load(C + t * 24 + s).to(tl.float32) / rms
     cq = tl.load(C + t * 24 + 4 + s).to(tl.float32) / rms
     pre = tl.sigmoid(tl.load(APRE).to(tl.float32) * cp + tl.load(BPRE + s).to(tl.float32))
@@ -97,16 +104,22 @@ def _mhc_read_kernel(S, C, APRE, APOST, ARES, BPRE, BPOST, BRES, X, POST, RES, N
         maximum = tl.max(matrix, 1)
         lse = maximum + tl.log(tl.sum(tl.exp(matrix - maximum[:, None]), 1))
         matrix -= lse[:, None]
-    weighted = (pre.to(dtype).to(tl.float32)[:, None] * stream).to(dtype).to(tl.float32)
-    value = tl.sum(weighted, 0)
+    pb = pre.to(dtype).to(tl.float32)
+    p0 = tl.sum(tl.where(s == 0, pb, 0.0), 0)
+    p1 = tl.sum(tl.where(s == 1, pb, 0.0), 0)
+    p2 = tl.sum(tl.where(s == 2, pb, 0.0), 0)
+    p3 = tl.sum(tl.where(s == 3, pb, 0.0), 0)
+    value = (p0 * s0).to(dtype).to(tl.float32) + (p1 * s1).to(dtype).to(tl.float32)
+    value = value + (p2 * s2).to(dtype).to(tl.float32)
+    value = value + (p3 * s3).to(dtype).to(tl.float32)
     if NORM:  # the layer's input RMSNorm of the rounded read
         value = value.to(dtype).to(tl.float32)
-        w = tl.load(NW + h, h < H, 0).to(tl.float32)
+        w = tl.load(NW + h, hm, 0).to(tl.float32)
         if ZC:
             w += 1.0
-        inv = tl.rsqrt(tl.sum(tl.where(h < H, value * value, 0.0), 0) / H + NEPS)
+        inv = tl.rsqrt(tl.sum(tl.where(hm, value * value, 0.0), 0) / H + NEPS)
         value = w * (value * inv)
-    tl.store(X + t * H + h, value.to(dtype), h < H)
+    tl.store(X + t * H + h, value.to(dtype), hm)
     tl.store(POST + t * 4 + s, post)
     tl.store(RES + t * 16 + offsets, tl.exp(matrix))
 
@@ -125,7 +138,7 @@ def mhc_read(streams, phi, alpha_pre, alpha_post, alpha_res, b_pre, b_post, b_re
         with _guard(streams):
             _mhc_read_kernel[(tokens,)](streams, coeffs, alpha_pre, alpha_post, alpha_res, b_pre, b_post, b_res,
                                         x, post, res, nw, h, eps, iters, triton.next_power_of_2(h),
-                                        norm is not None, neps, zc, num_warps=8, enable_fp_fusion=False)
+                                        norm is not None, neps, zc, num_warps=4, enable_fp_fusion=False)
     return x, (post, res)
 
 
@@ -134,14 +147,20 @@ def _mhc_write_kernel(S, OUT, POST, RES, Y, H: tl.constexpr, BLOCK: tl.constexpr
     t = tl.program_id(0).to(tl.int64)
     h = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
     hm = h < H
-    s = tl.arange(0, 4)
     dtype = S.dtype.element_ty
     base = S + t * 4 * H
-    stream = tl.load(base + s[:, None] * H + h[None, :], hm[None, :], 0).to(tl.float32)
+    s0 = tl.load(base + h, hm, 0).to(tl.float32)
+    s1 = tl.load(base + H + h, hm, 0).to(tl.float32)
+    s2 = tl.load(base + 2 * H + h, hm, 0).to(tl.float32)
+    s3 = tl.load(base + 3 * H + h, hm, 0).to(tl.float32)
     out = tl.load(OUT + t * H + h, hm, 0).to(tl.float32)
     for j in tl.static_range(4):
-        res = tl.load(RES + t * 16 + j * 4 + s).to(dtype).to(tl.float32)
-        mixed = tl.sum((res[:, None] * stream).to(dtype).to(tl.float32), 0).to(dtype).to(tl.float32)
+        r = RES + t * 16 + j * 4
+        mixed = (tl.load(r).to(dtype).to(tl.float32) * s0).to(dtype).to(tl.float32)
+        mixed = mixed + (tl.load(r + 1).to(dtype).to(tl.float32) * s1).to(dtype).to(tl.float32)
+        mixed = mixed + (tl.load(r + 2).to(dtype).to(tl.float32) * s2).to(dtype).to(tl.float32)
+        mixed = mixed + (tl.load(r + 3).to(dtype).to(tl.float32) * s3).to(dtype).to(tl.float32)
+        mixed = mixed.to(dtype).to(tl.float32)
         post = tl.load(POST + t * 4 + j).to(dtype).to(tl.float32)
         weighted = (post * out).to(dtype).to(tl.float32)
         tl.store(Y + t * 4 * H + j * H + h, (mixed + weighted).to(dtype), hm)
@@ -156,8 +175,8 @@ def mhc_write(streams, out, pending):
     y = torch.empty_like(streams)
     if tokens:
         with _guard(streams):
-            _mhc_write_kernel[(tokens, triton.cdiv(h, 512))](streams, out, post, res, y, h, 512,
-                                                            num_warps=4, enable_fp_fusion=False)
+            _mhc_write_kernel[(tokens, triton.cdiv(h, 1024))](streams, out, post, res, y, h, 1024,
+                                                             num_warps=4, enable_fp_fusion=False)
     return y
 
 
@@ -337,11 +356,27 @@ def _decode_e4m3(b):
     return bits.to(tl.float16, bitcast=True).to(tl.float32)
 
 
+def _gemm_configs():
+    return [triton.Config({"BN": bn}, num_warps=w, num_stages=st)
+            for bn in (64, 128, 256) for w in (4, 8) for st in (3, 4)
+            if not (bn == 256 and w == 4)]
+
+
+def _prune_gemm(configs, named_args, **kwargs):
+    """No tile wider than N; the small row blocks with the narrower tiles only."""
+    n, bm = named_args["N"], kwargs.get("BM", named_args.get("BM", 64))
+    out = [c for c in configs if c.kwargs["BN"] <= max(64, triton.next_power_of_2(n))
+           and not (bm <= 32 and c.kwargs["BN"] == 256) and not (bm >= 128 and c.num_warps == 4)]
+    return out or configs[:1]
+
+
+@triton.autotune(configs=_gemm_configs(), key=["N", "K", "BM", "GATHER", "FP8"],
+                 prune_configs_by={"early_config_prune": _prune_gemm})
 @triton.jit
 def _grouped_gemm_kernel(A, A_ROWS, W, S, Y, BLOCK_EXPERT, BLOCK_ROW0, BLOCK_ROWEND,
                          N, K, stride_am, stride_we, stride_wn, stride_se, stride_sn, stride_ym,
                          GATHER: tl.constexpr, FP8: tl.constexpr, NATIVE: tl.constexpr,
-                         BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr):
+                         BM: tl.constexpr, BK: tl.constexpr, BN: tl.constexpr):
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
     e = tl.load(BLOCK_EXPERT + pid_m)
@@ -436,17 +471,14 @@ def grouped_gemm(a: torch.Tensor, sched: ExpertSchedule, weight: torch.Tensor, s
     if sched.m == 0:
         return y
     bm = sched.block_m
-    bn = 128 if n >= 128 else 64
-    bk = 128
     native = fp8 and torch.cuda.get_device_capability(a.device) >= (8, 9)
     s = scale if fp8 else weight
     with _guard(a):
-        _grouped_gemm_kernel[(sched.grid_m, triton.cdiv(n, bn))](
+        _grouped_gemm_kernel[lambda meta: (sched.grid_m, triton.cdiv(n, meta["BN"]))](
             a, sched.tokens, weight, s, y, sched.block_expert, sched.block_row0, sched.block_rowend,
             n, k, a.stride(0), weight.stride(0), weight.stride(1),
             s.stride(0) if fp8 else 0, s.stride(1) if fp8 else 0, y.stride(0),
-            gather, fp8, native, bm, bn, bk,
-            num_warps=4 if bm <= 32 else 8, num_stages=3,
+            gather, fp8, native, bm, 128,
         )
     return y
 
