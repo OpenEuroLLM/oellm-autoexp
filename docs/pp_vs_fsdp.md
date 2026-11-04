@@ -287,6 +287,19 @@ leaf; the 84B checkpoint had 559k such items, a 485 MB `.metadata` and ~30 min l
 | 4 -> 4 nodes (`cont`) | rank by rank exact | 7.748000 = 7.748000 | \|d loss\| <= 0.0009 to step 25, <= 0.018 after |
 | 4 -> 8 nodes (`grow`) | summed over ranks, max rel diff 5.7e-10 | (cyclic sampler: other batches) | - |
 
+Reruns 2026-11-03 with the batched Muown row-state metadata (Megatron 5ecd322ea) and the batched
+FSDP parameter metadata (a1f185341), snapshot `autoexp_rowmeta3`, `train_iters` 30 for every arm
+(`amb_rs5` was invalid: ref trained to 40, its step-40 rolling save replaced step 20, cont loaded
+40), on pool spare nodes (`hybrid_ambitious_resume_test_mn5_pool`, `amb_rs6_chain.sh`):
+
+| test | optimizer state (15,345 entries) | persistent buffers (48) | step 21 lm loss | steps 22-30 |
+|---|---|---|---|---|
+| `amb_rs6` cont | rank by rank exact | - | 7.874615 = 7.874615 | \|d loss\| <= 0.096 |
+| `amb_rs7` cont | rank by rank exact | rank by rank exact (router expert_bias, ...) | 7.868867 = 7.868867 | \|d loss\| <= 0.015 |
+
+Not covered by a resume test: the opt-in rank-local load planning (`FSDP_DCP_LOCAL_LOAD_PLAN=1`,
+Megatron 404b5f2fa); in production since 2026-11-04 (v4_2ph, loss continuous across the load).
+
 The test checkpoint holds 30 non-tensor items (19.5 MB `.metadata`). The arms need `exit_interval=null`
 (train to 40): stopped at 30 < `train_iters`, the monitor resubmits them and the second job overwrites
 the after-load dumps. The first packed version (a6d3ffda1) failed this test three ways (iteration and

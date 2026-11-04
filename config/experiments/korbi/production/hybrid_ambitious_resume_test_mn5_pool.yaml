@@ -1,0 +1,17 @@
+# @package _global_
+# 4-node row-state resume validation (amb_rs6) on a large pool host's spare nodes.
+# Inherits hybrid_ambitious_resume_test_mn5; only the SLURM QOS changes from the dev queue
+# (acc_debug) to the pool host's acc_xehpc, and dev_queue is off. The account stays ehpc533
+# (the pool host definition's account); the run executes inside whichever large allocation
+# takes it. The pool scheduler places it on free nodes next to the running main run.
+#   scripts/korbi/production/amb_rs6_chain.sh
+defaults:
+  - hybrid_ambitious_resume_test_mn5
+  - _self_
+
+aux:
+  dev_queue: false
+
+slurm:
+  sbatch:
+    qos: acc_xehpc
