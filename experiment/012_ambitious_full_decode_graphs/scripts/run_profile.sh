@@ -9,6 +9,7 @@ PROMPTS=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_infer008_batch/e
 export OELLM_MHC_IMPL=triton OELLM_LOCAL_EXPERT_LOAD=1 OELLM_ENGRAM_DECODE_IMPL=batched
 export OELLM_FUSION_IMPL=triton OELLM_ENGRAM_MADVISE=normal VLLM_LOGGING_LEVEL=INFO
 export OELLM_ENGRAM_TABLES=uva OELLM_DECODE_GRAPHS=0 OELLM_ENGRAM_LOOKUP=replicated
+export OELLM_DECODE_KERNELS=${OELLM_DECODE_KERNELS:-reference}
 rm -f /dev/shm/oellm_engram_* 2>/dev/null
 nsys profile --trace=cuda,nvtx --cuda-graph-trace=node --sample=none --cpuctxsw=none \
   --capture-range=cudaProfilerApi --capture-range-end=stop --force-overwrite=true -o "$OUT/decode" \

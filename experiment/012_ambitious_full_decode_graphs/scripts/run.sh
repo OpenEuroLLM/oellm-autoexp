@@ -12,8 +12,10 @@ export OELLM_FUSION_IMPL=triton OELLM_ENGRAM_MADVISE=normal VLLM_LOGGING_LEVEL=I
 rm -f /dev/shm/oellm_engram_* 2>/dev/null  # stale tables of a killed run
 status=0
 for v in ${VARIANTS:-fullgraph islands}; do
-  if [ "$v" = fullgraph ]; then
+  export OELLM_DECODE_KERNELS=reference
+  if [ "${v#fullgraph}" != "$v" ]; then
     export OELLM_ENGRAM_TABLES=uva OELLM_DECODE_GRAPHS=0 OELLM_ENGRAM_LOOKUP=replicated
+    [ "$v" = fullgraph_k ] && export OELLM_DECODE_KERNELS=triton
   else
     export OELLM_ENGRAM_TABLES=ram OELLM_DECODE_GRAPHS=1 OELLM_ENGRAM_LOOKUP=leader
   fi

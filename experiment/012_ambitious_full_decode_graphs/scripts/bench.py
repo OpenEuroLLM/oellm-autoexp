@@ -33,7 +33,7 @@ def worker(rank, args, port, barrier):
               gpu_memory_utilization=0.85, max_num_seqs=64, max_num_batched_tokens=8192,
               max_model_len=4096, enable_prefix_caching=False, seed=42,
               disable_log_stats=False)
-    if args.variant == "fullgraph":
+    if args.variant.startswith("fullgraph"):
         kw.update(enforce_eager=False, compilation_config={
             "mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY",
             "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64]})
@@ -44,6 +44,14 @@ def worker(rank, args, port, barrier):
     res = {"rank": rank, "variant": args.variant, "startup_seconds": time.perf_counter() - started,
            "env": {k: v for k, v in os.environ.items() if k.startswith("OELLM_")}, "trials": []}
     save(out, res)
+    # prefill scoring: mean NLL of 32 prompts per rank (the fused kernels run in prefill too)
+    score = [{"prompt_token_ids": p} for p in prompts[rank * 64 + 32: rank * 64 + 64]]
+    sp = SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=0)
+    barrier.wait(timeout=3600)
+    outs = llm.generate(score, sp, use_tqdm=False)
+    nll = [-rec[tok].logprob for o in outs for tok, rec in zip(o.prompt_token_ids[1:], o.prompt_logprobs[1:])]
+    res["score"] = {"tokens": len(nll), "mean_nll": sum(nll) / len(nll)}
+    save(out, res)
     # (label, requests on this rank): one request on the whole node, then 1 / 8 / 32 per GPU
     cases = [("node1", 1 if rank == 0 else 0), ("gpu1", 1), ("gpu8", 8), ("gpu32", 32)]
     for label, n in cases:
@@ -53,14 +61,15 @@ def worker(rank, args, port, barrier):
             barrier.wait(timeout=3600)
             tokens = (32 if phase == "warmup" else args.tokens) if mine else 1
             t0 = time.perf_counter()
-            outs = llm.generate(work, SamplingParams(temperature=0, max_tokens=tokens, ignore_eos=True),
+            outs = llm.generate(work, SamplingParams(temperature=0, max_tokens=tokens, ignore_eos=True, logprobs=0),
                                 use_tqdm=False)
             wall = time.perf_counter() - t0
         entry = {"case": label, "requests": len(mine), "wall_seconds": wall, "per_request": []}
         for o in (outs if mine else []):
             m = o.metrics
             k = len(o.outputs[0].token_ids)
-            entry["per_request"].append({"tokens": o.outputs[0].token_ids[:16],
+            lp = [d[t].logprob for t, d in zip(o.outputs[0].token_ids, o.outputs[0].logprobs or [])]
+            entry["per_request"].append({"tokens": o.outputs[0].token_ids[:64], "logprobs": lp[:64],
                                          "decode_tok_s": (k - 1) / (m.last_token_ts - m.first_token_ts)})
         if entry["per_request"]:
             entry["mean_request_decode_tok_s"] = sum(r["decode_tok_s"] for r in entry["per_request"]) / len(entry["per_request"])
@@ -85,7 +94,7 @@ def main():
     p.add_argument("--model", required=True)
     p.add_argument("--prompts", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--variant", choices=["islands", "fullgraph"], required=True)
+    p.add_argument("--variant", choices=["islands", "fullgraph", "fullgraph_k"], required=True)
     p.add_argument("--tokens", type=int, default=256)
     a = p.parse_args()
     Path(a.out).mkdir(parents=True, exist_ok=True)
