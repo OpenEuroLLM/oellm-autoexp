@@ -205,6 +205,11 @@ class PoolHostConfig:
     preflight_max_rounds: int = 3
     preflight_check: str = ""
     preflight_check_overrides: list[str] = field(default_factory=list)
+    # where a preflight exclusion goes: "host" (default) -- <host>/exclude_nodes, honoured by that
+    # host's supervisor only; "pool" -- <pool>/exclude_nodes, which every later host avoids AND
+    # which the monitor pushes into queued hosts' ExcNodeList (scontrol update: an edit of an
+    # existing SLURM job, not allowed without the user's go, AGENTS.md 2026-11-03)
+    preflight_exclude_scope: str = "host"
     # VERIFIED handover (with `handover`): the runs on the old host are stopped (checkpoint) and
     # restart on the new, verified host while the old allocation stays; it is released once every
     # moved run is healthy there (handover_healthy_steps matches of handover_healthy_pattern in
@@ -1956,6 +1961,19 @@ class PoolManager:
                     fh.write(node + "\n")
         return new
 
+    @staticmethod
+    def _add_host_excludes(layout: PoolLayout, hid: str, nodes: list[str]) -> list[str]:
+        """Append nodes to <host>/exclude_nodes (that host's supervisor avoids them; never pushed
+        into SLURM jobs); returns the new ones."""
+        path = layout.host_dir(hid) / "exclude_nodes"
+        existing = set(_split_nodes(_read(path)))
+        new = [n for n in nodes if n and n not in existing]
+        if new:
+            with path.open("a") as fh:
+                for node in new:
+                    fh.write(node + "\n")
+        return new
+
     def _host_free_nodes(self, layout: PoolLayout, host: HostView) -> list[str]:
         """The host's nodes minus the pool's and its own exclusions."""
         nodes = _split_nodes(host.info.get("NODELIST", ""))
@@ -2031,12 +2049,14 @@ class PoolManager:
             if st["status"] == "failed":
                 continue
             hdir = layout.host_dir(host.hid)
-            # the supervisor's GPU probe: its exclusions go into the pool's list
-            probed = _split_nodes(_read(hdir / "exclude_nodes"))
-            for node in self._add_pool_excludes(layout, probed):
-                LOGGER.warning(
-                    "[pool %s] preflight %s: %s excluded (GPU probe)", cfg.name, host.hid, node
-                )
+            # the supervisor's GPU probe writes <host>/exclude_nodes; with scope "pool" its
+            # exclusions also go into the pool's list
+            if cfg.preflight_exclude_scope == "pool":
+                probed = _split_nodes(_read(hdir / "exclude_nodes"))
+                for node in self._add_pool_excludes(layout, probed):
+                    LOGGER.warning(
+                        "[pool %s] preflight %s: %s excluded (GPU probe)", cfg.name, host.hid, node
+                    )
             if cfg.preflight_gpus_per_node > 0 and not (hdir / "probe_done").exists():
                 # a supervisor of older code never probes: do not wait for it forever
                 if not host.start_ts or now - host.start_ts < PREFLIGHT_PROBE_WAIT_S:
@@ -2090,7 +2110,11 @@ class PoolManager:
                 unverified.discard(host.hid)
                 LOGGER.info("[pool %s] preflight %s: passed (%s)", cfg.name, host.hid, verdict.why)
             elif verdict.status == "exclude" and st["round"] < cfg.preflight_max_rounds:
-                new = self._add_pool_excludes(layout, verdict.exclude)
+                new = (
+                    self._add_pool_excludes(layout, verdict.exclude)
+                    if cfg.preflight_exclude_scope == "pool"
+                    else self._add_host_excludes(layout, host.hid, verdict.exclude)
+                )
                 LOGGER.warning(
                     "[pool %s] preflight %s: excluding %s (%s); next round",
                     cfg.name,

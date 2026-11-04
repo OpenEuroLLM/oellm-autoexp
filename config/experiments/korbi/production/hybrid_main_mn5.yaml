@@ -27,6 +27,8 @@ defaults:
   - _self_
 
 aux:
+  # the pre-training node check (off | light | thorough), see slurm.env.NODE_CHECK
+  node_check: "off"
   # MoonEP built from submodules/MoonEP (OpenEuroLLM fork, branch oellm/main) by
   # scripts/korbi/build_moonep.sh into $HYBRID_ENV/pylibs_moonep_<commit>; ec3eb8b = upstream
   # d86fda4 + the no-multicast fallback + the barrier timeout (= the old pylibs_moonep2)
@@ -364,3 +366,7 @@ slurm:
   env:
     # startup at 128 nodes (dataset index of the flag blend, compile)
     WATCHDOG_STARTUP_S: "3600"
+    # node check on the step's own nodes before the training (templates/marenostrum*.sbatch):
+    # off | light | thorough (aux.node_check; bad nodes -> this host's exclude list + restart)
+    NODE_CHECK: ${aux.node_check}
+    NODE_CHECK_DIR: ${job.base_output_dir}/node_check

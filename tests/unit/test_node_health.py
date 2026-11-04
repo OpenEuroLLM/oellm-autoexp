@@ -194,3 +194,92 @@ def test_bench_on_cpu_two_agents(tmp_path):
     assert all(bw > 0 for *_, bw in r["pairs"])
     # CPU timings are noisy: only that the verdict reads it
     assert judge(text, ratio=0.0).status == "pass"
+
+
+# --- profiles (light / thorough) ------------------------------------------------------------
+
+THOROUGH = {"compute_ratio": 0.85, "group_ratio": 0.85, "min_group_gbs": 20.0, "ring_ratio": 0.8,
+            "profile": "thorough"}
+
+
+def test_thresholds_recorded_by_the_benchmark_override_the_ratio():
+    """A GPU at 0.8 x median passes the light verdict (0.75) and is excluded by the thorough one
+    the result carries (MareNostrum 5, 2026-11-04: GPUs at 0.58-0.62 x passed the light check)."""
+    flops = {f"n{i}": [400.0] * 4 for i in range(4)}
+    flops["n2"] = [400.0, 320.0, 400.0, 400.0]
+    light = _result(flops=flops)
+    assert judge(_log(light)).status == "pass"
+    thorough = {**_result(flops=flops), "thresholds": THOROUGH}
+    v = judge(_log(thorough))
+    assert (v.status, v.exclude) == ("exclude", ["n2"]), v
+    assert "thorough" in v.why
+
+
+def test_absolute_floor_locates_a_single_slow_group():
+    groups = {str(g): {"all_gather": 22.0, "reduce_scatter": 22.5} for g in range(4)}
+    groups["1"] = {"all_gather": 19.0, "reduce_scatter": 19.0}  # 0.86 x median, below 20 GB/s
+    pairs = [[f"n{(i // 4 - 1) % 4}", f"n{i // 4}", i % 4, 12.5] for i in range(16)]
+    pairs[1 * 4 + 1][3] = 3.0  # n0 -> n1 on GPU 1
+    pairs[2 * 4 + 1][3] = 3.1  # n1 -> n2 on GPU 1: n1 common to both
+    r = {**_result(groups=groups, pairs=pairs), "thresholds": THOROUGH}
+    v = judge(_log(r))
+    assert (v.status, v.exclude) == ("exclude", ["n1"]), v
+
+
+def test_all_groups_below_the_floor_is_a_warning_not_an_exclusion():
+    groups = {str(g): {"all_gather": 18.0, "reduce_scatter": 18.5} for g in range(4)}
+    r = {**_result(groups=groups), "thresholds": THOROUGH}
+    v = judge(_log(r))
+    assert v.status == "pass" and v.why.startswith("WARNING"), v
+
+
+def test_ring_slow_node_in_both_directions_is_excluded():
+    pairs = [[f"n{(i // 4 - 1) % 4}", f"n{i // 4}", i % 4, 12.5] for i in range(16)]
+    pairs[2 * 4 + 0][3] = 8.0  # n1 -> n2 (n2 receives slowly)
+    pairs[3 * 4 + 0][3] = 8.0  # n2 -> n3 (n2 sends slowly)
+    r = {**_result(pairs=pairs), "thresholds": THOROUGH}
+    v = judge(_log(r))
+    assert (v.status, v.exclude) == ("exclude", ["n2"]), v
+    # the light verdict has no ring check
+    assert judge(_log(_result(pairs=pairs))).status == "pass"
+
+
+def test_bench_check_out_cpu_thorough(tmp_path):
+    """--profile thorough --check-out on gloo: the verdict file is written and every agent exits
+    0 (pass); thresholds are in the result line."""
+    port = str(_free_port())
+    out_json = tmp_path / "check.json"
+    procs, logs = [], []
+    for node in range(2):
+        cmd = [sys.executable, "-m", "torch.distributed.run", "--nnodes", "2", "--nproc-per-node",
+               "2", "--node-rank", str(node), "--master-addr", "127.0.0.1", "--master-port", port,
+               "-m", "oellm_autoexp.node_health.bench", "--device", "cpu", "--profile", "thorough",
+               "--coll-mb", "4", "--ring-mb", "4", "--matmul-n", "128", "--matmul-seconds", "1",
+               "--iters", "2", "--check-out", str(out_json),
+               # gloo on one machine: no absolute floor, no ring outliers to judge
+               "--min-group-gbs", "0", "--ring-ratio", "0", "--compute-ratio", "0.1",
+               "--group-ratio", "0.1"]
+        env = {**os.environ, "SLURMD_NODENAME": f"cpu{node}", "PYTHONPATH": str(REPO)}
+        log = tmp_path / f"node{node}.log"
+        logs.append(log)
+        procs.append(subprocess.Popen(cmd, env=env, stdout=log.open("w"), stderr=subprocess.STDOUT,
+                                      cwd=tmp_path))
+    codes = [p.wait(timeout=300) for p in procs]
+    text = "".join(l.read_text() for l in logs)
+    assert codes == [0, 0], text[-3000:]
+    check = json.loads(out_json.read_text())
+    assert check["status"] == "pass", check
+    line = [l for l in text.splitlines() if PREFIX in l][-1]
+    result = json.loads(line[line.index(PREFIX) + len(PREFIX):])
+    assert result["thresholds"]["profile"] == "thorough"
+    assert result["matmul"]["seconds"] == 1.0
+
+
+def test_thorough_cap_excludes_only_the_worst_nodes():
+    flops = {f"n{i}": [400.0] * 4 for i in range(8)}
+    for n, x in (("n1", 250.0), ("n3", 240.0), ("n5", 260.0), ("n6", 270.0)):
+        flops[n] = [400.0, x, 400.0, 400.0]
+    r = {**_result(nodes=8, flops=flops), "thresholds": {**THOROUGH, "compute_ratio": 0.8, "max_exclude": 2}}
+    v = judge(_log(r))
+    assert (v.status, v.exclude) == ("exclude", ["n1", "n3"]), v
+    assert "2 more below the threshold" in v.why and "n5=" in v.why

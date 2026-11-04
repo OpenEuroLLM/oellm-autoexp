@@ -84,8 +84,12 @@ def test_preflight_excludes_bad_nodes_before_any_run(pool, tmp_path):  # noqa: F
         lambda: pool.run_state(rid).status in ("RUNNING", "COMPLETED"), 120, "the run starts"
     )
     nodes = pool.run_state(rid).started["nodes"].split(",")
-    excluded = set((pool.pool_dir / "exclude_nodes").read_text().split())
+    # default preflight_exclude_scope "host": the exclusions stay in the host's list, the pool's
+    # (pushed into queued hosts' ExcNodeList) is left alone
+    excluded = set((pool.pool_dir / "hosts" / "host001" / "exclude_nodes").read_text().split())
     assert {"n1000-1", "n1000-3"} <= excluded, excluded
+    pool_list = pool.pool_dir / "exclude_nodes"
+    assert not (pool_list.exists() and pool_list.read_text().split()), pool_list.read_text()
     assert sorted(nodes) == ["n1000-0", "n1000-2"], nodes
     assert (tmp_path / "bench_count").read_text().strip() == "2", "two benchmark rounds before it"
     log = pool.monitor_log.read_text()
