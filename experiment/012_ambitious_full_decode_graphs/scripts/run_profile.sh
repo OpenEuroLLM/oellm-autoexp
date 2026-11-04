@@ -12,7 +12,7 @@ export OELLM_ENGRAM_TABLES=uva OELLM_DECODE_GRAPHS=0 OELLM_ENGRAM_LOOKUP=replica
 rm -f /dev/shm/oellm_engram_* 2>/dev/null
 nsys profile --trace=cuda,nvtx --cuda-graph-trace=node --sample=none --cpuctxsw=none \
   --capture-range=cudaProfilerApi --capture-range-end=stop --force-overwrite=true -o "$OUT/decode" \
-  "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/profile.py --model "$MODEL" --prompts "$PROMPTS" \
+  "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/nsys_decode.py --model "$MODEL" --prompts "$PROMPTS" \
   > "$OUT/profile.log" 2>&1
 echo "profile rc=$?"
 grep decode_tok_s "$OUT/profile.log"
