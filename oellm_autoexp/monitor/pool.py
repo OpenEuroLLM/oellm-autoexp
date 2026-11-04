@@ -159,6 +159,9 @@ class PoolHostConfig:
     # (0: always -- the accounts race, and the first host to start takes the run).
     host_accounts: str = ""
     fallback_lead_s: float = 0.0
+    # queued hosts each non-first host_accounts account holds (its insurance hosts age in that
+    # account's queue); raise it to keep several aging there too
+    fallback_hosts: int = 1
     # ADOPTED hosts (pool_ctl adopt: an ordinary queued job whose own step is held by the
     # adoption hook): stop the runs this long before the job's own end time (it has no
     # B:USR1), and cancel the job when it runs but the hook's start marker has not
@@ -1359,18 +1362,18 @@ class PoolManager:
 
         ``desired`` (max_hosts_running + successors, at least min_hosts) is the total the
         single-account pool keeps. The hosts that are up count once. Of the queued rest,
-        every other account holds one insurance host while nothing runs or once the running
-        hosts have less than ``fallback_lead_s`` left (0 = always); the FIRST account the
-        remainder, and always at least one (its queue keeps an aging host). Whichever starts
-        first takes the run (handover)."""
+        every other account holds ``fallback_hosts`` insurance hosts (default 1) while nothing
+        runs or once the running hosts have less than ``fallback_lead_s`` left (0 = always); the
+        FIRST account the remainder, and always at least one (its queue keeps an aging host).
+        Whichever starts first takes the run (handover)."""
         up = [h for h in current if h.info]
         wanted_queued = max(0, desired - len(up))
         left = min((h.remaining_s(now) for h in running), default=None)
         fallback_on = cfg.fallback_lead_s <= 0 or left is None or left < cfg.fallback_lead_s
         missing, create_account = 0, None
-        # a fallback account holds one insurance allocation, not a full set of successors;
+        # a fallback account holds fallback_hosts insurance allocations, not a full set of successors;
         # the first account the rest, and always at least one while any is wanted (it ages)
-        fallback = min(1, wanted_queued) if fallback_on else 0
+        fallback = min(max(0, int(cfg.fallback_hosts)), wanted_queued) if fallback_on else 0
         primary = max(min(1, wanted_queued), wanted_queued - fallback * (len(accounts) - 1))
         for i, account in enumerate(accounts):
             target = primary if i == 0 else fallback

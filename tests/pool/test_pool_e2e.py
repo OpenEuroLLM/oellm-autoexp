@@ -263,6 +263,30 @@ def test_host_accounts_race_and_the_first_account_keeps_its_successor(pool):
     assert pool.run_state(second).started["job"] == a1
 
 
+def test_fallback_hosts_keeps_several_queued_in_every_account(pool):
+    """fallback_hosts=2 with keep_pending=3: nothing runs yet, so 1 + 3 hosts are wanted, two
+    queued in each account (JUPITER 2026-11-04: two aging 516-node hosts on e-sta and e-ext)."""
+    pool.create_pool(
+        *FAST,
+        "job.pool_host.keep_pending=3",
+        "job.pool_host.fallback_hosts=2",
+        'job.pool_host.host_accounts="dev,accB"',
+    )
+    pool.enqueue("fb", "aux.iters=300", "aux.tick=0.1")
+    pool.start_monitor(hold_new_jobs=True)
+
+    def pending(account):
+        return [
+            j["id"] for j in pool.fake_jobs() if j["state"] == "PENDING" and j["account"] == account
+        ]
+
+    pool.wait_for(
+        lambda: len(pending("dev")) == 2 and len(pending("accB")) == 2, 60, "2 dev + 2 accB"
+    )
+    time.sleep(3)
+    assert len(pending("dev")) == 2 and len(pending("accB")) == 2, "no more hosts than that"
+
+
 USER_JOB = """#!/bin/bash
 #SBATCH --job-name=user_job
 #SBATCH --nodes=1

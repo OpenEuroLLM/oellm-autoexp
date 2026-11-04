@@ -37,6 +37,8 @@ pool_host:
   # the running host has less than fallback_lead_s left (0 = always); first to start wins
   host_accounts: ""
   fallback_lead_s: 0
+  # queued insurance hosts per non-first account (they age in that account's queue)
+  fallback_hosts: 1
   # adopted hosts (pool_ctl adopt): stop the runs this long before the job's own end; cancel
   # the job if it runs but the adoption hook has not engaged within adopt_hook_timeout_s
   adopt_stop_margin_s: 1800
