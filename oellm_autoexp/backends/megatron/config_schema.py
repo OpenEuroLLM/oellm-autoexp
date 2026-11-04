@@ -2142,9 +2142,21 @@ class MegatronConfig(ConfigInterface):
     muown_expert_orthogonal: bool = False
 
     # muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init
-    # sigma_max (per shape) after each step (deflation of the top singular directions; 0 =
-    # off).
+    # sigma_max (per shape) after each step (the matrix scaled by min(1, cap / sigma_max); 0 =
+    # off). With --muown-expert-spectral-cap-end, the factor at the start of the ramp.
     muown_expert_spectral_cap: float = 0.0
+
+    # muown_classical: the spectral-cap factor at the end of the ramp (0 = no ramp). The
+    # factor moves geometrically from --muown-expert-spectral-cap to this value over --muown-
+    # expert-spectral-cap-ramp-steps optimizer steps.
+    muown_expert_spectral_cap_end: float = 0.0
+
+    # muown_classical: the optimizer step (the parameters' step counter: iteration + 1 without
+    # skipped steps) at which the spectral-cap ramp starts.
+    muown_expert_spectral_cap_ramp_start: int = 0
+
+    # muown_classical: length of the spectral-cap ramp in optimizer steps.
+    muown_expert_spectral_cap_ramp_steps: int = 0
 
     # muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >=
     # this value after each step (rank-1 deflation of the top singular direction at fixed row
