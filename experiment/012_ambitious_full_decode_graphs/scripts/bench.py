@@ -31,7 +31,8 @@ def worker(rank, args, port, barrier):
     kw = dict(model=args.model, trust_remote_code=True, dtype="bfloat16", tensor_parallel_size=1,
               enable_expert_parallel=True, all2all_backend="allgather_reducescatter",
               gpu_memory_utilization=0.85, max_num_seqs=64, max_num_batched_tokens=8192,
-              max_model_len=4096, enable_prefix_caching=False, seed=42)
+              max_model_len=4096, enable_prefix_caching=False, seed=42,
+              disable_log_stats=False)
     if args.variant == "fullgraph":
         kw.update(enforce_eager=False, compilation_config={
             "mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY",

@@ -19,7 +19,7 @@ for v in ${VARIANTS:-fullgraph islands}; do
   timeout ${CASE_TIMEOUT:-2400} "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/bench.py \
     --model "$MODEL" --prompts "$PROMPTS" --out "$OUT" --variant "$v" > "$OUT/$v.log" 2>&1 || { echo "$v failed rc=$?"; status=1; }
   grep -E '"case"' "$OUT/$v.log" || tail -30 "$OUT/$v.log"
-  pkill -9 -f "variant $v" 2>/dev/null; sleep 5
+  sleep 5
 done
 rm -f /dev/shm/oellm_engram_* 2>/dev/null
 echo "BENCH012_DONE status=$status"
