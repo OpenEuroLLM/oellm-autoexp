@@ -3778,3 +3778,42 @@ stages, the same per-source ratios; `v8ml-stages/stages_report.tsv`):
 | long_64k | 1.797 | 1.906 | +0.109 |
 
 v3 is ahead on every set except long_64k, where it is still in its 4k phase while q35 trains at 8k; this fits finding 3 of the s3 study above. Tokenizers differ (q35 base, v3 agent): identical ordinary tokens, different chat delimiters, which shift the reasoning set by ~0.04.
+
+### Node health checks: light / thorough, preflight and production pre-check (2026-11-04)
+
+**Why:**
+- The 128-node v4 mHC segment on o134c (job 48269251) ran at 34.3 s/step. The same config ran at 27.1 s on p129.
+- The pools' preflight (`node_health`, ~1.5 min) had passed o134c.
+- A longer run of the same benchmark on 128 free nodes found the cause: **19 of 128 nodes have one GPU at 0.58–0.69× the median under a sustained matmul.** Every other node is at ≥0.87×. The rails were clean at 24.4–24.5 GB/s; one rack (as02r2) was 0.88× in the ring.
+- Five short matmuls cannot see throttling under sustained load.
+
+**Profiles** (`oellm_autoexp/node_health/bench.py --profile`; the thresholds are recorded in the result, so the verdict applies the profile it ran with):
+
+| | light (default; the original check) | thorough |
+|---|---|---|
+| matmul | 5 × 8192³ | 16384³ sustained 30 s (TFLOP/s over the last half) |
+| collectives / ring | 256 / 512 MB | 1 GB / 1 GB, 20 iterations |
+| GPU | pool `preflight_ratio` (0.75× median) | 0.80× median (the gap in the o134c distribution) |
+| GPU groups | 0.75× median | 0.85× median and ≥ 20 GB/s absolute (all below: warning, no exclusion) |
+| ring | – | node < 0.8× median as receiver AND sender |
+| exclusions per verdict | unlimited | at most 2 (worst first; the rest listed) |
+| duration | ~1–2 min | ~4–5 min |
+
+**Where it runs:**
+
+1. **Pool preflight (once per new host):** `scripts/korbi/pool/set_preflight_profile.sh <pool> light|thorough` records `preflight_check` and enqueues the matching check config (`experiments/korbi/pool/node_health[_thorough]_mn5`) as the preflight template.
+   - New setting `preflight_exclude_scope: host` (default): exclusions go to `<host>/exclude_nodes`.
+   - `pool` is the old behaviour. The monitor pushes `<pool>/exclude_nodes` into queued hosts' ExcNodeList with `scontrol update`, which needs the user's go (AGENTS.md).
+   - This takes effect only when the pool monitors run this code. On 11-04 they run `autoexp_capture2`, which still has the pool-wide behaviour.
+2. **Production pre-check (every start or restart):** `aux.node_check: off|light|thorough` → `NODE_CHECK` in `templates/marenostrum*.sbatch`.
+   - The benchmark runs on the step's own nodes, in the training's container, before the training starts. The verdict file is `NODE_CHECK_DIR/check_<run>.json`.
+   - On "exclude": the nodes go to `<host>/exclude_nodes`, never a SLURM job. The step exits 86, and the job's restart policy places it on other nodes. At most `NODE_CHECK_MAX_ROUNDS` (2) times, then the training starts anyway.
+   - A broken check never blocks the training.
+   - The v4 main runs (`hybrid_ambitious_v4_mn5`) use `thorough`; everything else is `off`.
+   - `NODE_CHECK_ARGS`: more bench flags. Env exports are unquoted, so use one token, e.g. `--compute-ratio=0.9`.
+   - Tested on o134c (11-04): the thorough check excluded as01r3b21 (397 vs 606 TFLOP/s) on the host, exit 86; the pool-wide list stayed empty.
+
+**Template fix on the way:**
+- The pool monitor renders a run's step script, and it resolved the relative `templates/marenostrum.sbatch` against its OWN snapshot (`autoexp_capture2`), so runs got another snapshot's template.
+- `template_path` is now absolute at render time (`${oc.env:PWD}`).
+- `render_step_script` resolves a relative path against the job's workdir.
