@@ -75,6 +75,8 @@ if [ ! -f "$out/.export_done" ]; then
   python -m oellm_autoexp.hf_export.$exporter --ckpt-dir "$ckpt" --config "$config" --out-dir "$out" --tokenizer "$tok" $export_args
   touch "$out/.export_done"
 fi
+# EXPORT_ONLY=1: stop after the export (no check / score / paired validation)
+[ "${EXPORT_ONLY:-0}" = 1 ] && { echo "[export_main_run_v2] export only: $out"; exit 0; }
 # the model code from this checkout (an export from an earlier run of this stage keeps its weights)
 python -m oellm_autoexp.hf_export.refresh_export "$out"
 if [ ! -f "$out/.check_done" ]; then

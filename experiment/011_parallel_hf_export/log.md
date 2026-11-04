@@ -30,3 +30,9 @@ No GPU needed: the job is I/O bound (654 GB fp32 in, 248 GB out).
 More CPUs in the step (kernel_tests default 16) may raise the rate further.
 
 Artifacts: results/run1/.
+
+## Checkpoint 6000 (export only)
+- 2026-11-04 run o134c.0029 (as01r2b06): `HF_EXPORTER=parallel EXPORT_ONLY=1 export_main_run_v2.sh ambitious_v4 6000` via
+  hf_export_v2_mn5. Checkpoint saved by the 256-node run (1,024 files, 393 units). 131.4 s in python
+  (metadata 13 s), job step 3 min including container start. No check / score / paired (equivalence shown on 5800).
+  -> hf_exports/ambitious_v4_2ph_fp8_6000 (.export_done; 1,949 tensors, 248.2 GB).
