@@ -1,0 +1,34 @@
+# @package _global_
+# R0 (router predictability: next-layer and next-token expert prediction, batch-16 unions, cache windows)
+# and R2 (skip / substitute unavailable experts: NLL cost) on an HF export of v4_2ph, one MN5 node
+# (docs/campaign_3b_hybrid_midtraining.md §3.1, §5; scripts/korbi/campaign_midtraining/router_probe.py).
+# Into a pool's spare nodes (user 2026-11-04: the o260c buffer nodes):
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o260c \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/r0_r2_router_probe_mn5 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: r0r2_v4_2ph_8000
+  export: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_8000
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  # 16 rows x 2k (16 decode streams at the same position, 32k tokens per forward); long_64k: 1 x 64k
+  args: "--seq-len 2048 --rows 16 --batches 24 --warm 8 --r2-batches 2"
+  bench: "bash scripts/korbi/campaign_midtraining/run_r0_r2_mn5.sh ${aux.export} ${aux.out} ${aux.args}"
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 7200
+  array_group: null
+  metadata:
+    pool_priority: 30
+
+slurm:
+  sbatch:
+    time: "03:00:00"
+    qos: acc_xehpc
+    account: ehpc533
