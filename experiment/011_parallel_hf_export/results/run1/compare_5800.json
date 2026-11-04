@@ -1,0 +1,21 @@
+{
+  "tensors": 1949,
+  "tensor_bytes": 248189032600,
+  "mismatched_tensors": [],
+  "bitwise_equal": true,
+  "files_equal": {
+    "config.json": true,
+    "generation_config.json": true,
+    "tokenizer.json": true,
+    "tokenizer_config.json": true,
+    "special_tokens_map.json": true,
+    "added_tokens.json": true,
+    "tokenizer.model": true,
+    "modeling_oellm_ambitious.py": true,
+    "configuration_oellm_ambitious.py": true,
+    "modeling_oellm_hybrid.py": true,
+    "configuration_oellm_hybrid.py": true,
+    "mhc_kernels.py": true
+  },
+  "seconds": 31.2
+}

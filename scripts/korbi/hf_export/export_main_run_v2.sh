@@ -70,6 +70,8 @@ echo "[export_main_run] $model step $step: $ckpt, config $config, tokenizer $tok
 if [ ! -f "$out/.export_done" ]; then
   rm -rf "$out"
   # shellcheck disable=SC2086
+  # HF_EXPORTER=parallel: export_parallel (worker processes, byte-identical tensors; experiment 011)
+  if [ "${HF_EXPORTER:-sequential}" = parallel ] && [ "$exporter" = export_ambitious ]; then exporter=export_parallel; fi
   python -m oellm_autoexp.hf_export.$exporter --ckpt-dir "$ckpt" --config "$config" --out-dir "$out" --tokenizer "$tok" $export_args
   touch "$out/.export_done"
 fi

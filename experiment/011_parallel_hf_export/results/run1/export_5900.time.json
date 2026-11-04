@@ -1,0 +1,28 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "oellm_autoexp.hf_export.export_parallel",
+    "--ckpt-dir",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph/ckpt_rolling/iter_0005900",
+    "--config",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph/config-mn5-pool-o260c.0016.yaml",
+    "--out-dir",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_5900",
+    "--tokenizer",
+    "/gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent",
+    "--expert-dtype",
+    "fp8",
+    "--workers",
+    "32",
+    "--read-threads",
+    "4"
+  ],
+  "started_at": "2026-11-04T10:11:36.704383+00:00",
+  "finished_at": "2026-11-04T10:13:18.999511+00:00",
+  "wall_seconds": 102.29513476602733,
+  "user_seconds": 5735.785464,
+  "system_seconds": 1502.213334,
+  "max_rss_kib": 9770456,
+  "exit_code": 0
+}
