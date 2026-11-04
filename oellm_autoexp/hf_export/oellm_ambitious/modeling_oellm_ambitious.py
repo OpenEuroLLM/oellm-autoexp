@@ -60,6 +60,8 @@ def _fast(t: torch.Tensor) -> bool:
 
 
 def _kernels():
+    # the `from .x import` form: transformers' remote-code loader copies only those targets
+    from .oellm_kernels import rms_norm  # noqa: F401
     from . import oellm_kernels
 
     return oellm_kernels

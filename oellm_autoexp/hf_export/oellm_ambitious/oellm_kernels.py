@@ -357,8 +357,10 @@ def _decode_e4m3(b):
 
 
 def _gemm_configs():
-    return [triton.Config({"BN": bn}, num_warps=w, num_stages=st)
-            for bn in (64, 128, 256) for w in (4, 8) for st in (3, 4)
+    # SWAP: Y^T = W X^T, the dequantized weights as the dot's first operand (on Hopper wgmma takes
+    # only its A operand from registers; the gathered rows come through shared memory)
+    return [triton.Config({"BN": bn, "SWAP": sw}, num_warps=w, num_stages=st)
+            for sw in (0, 1) for bn in (64, 128, 256) for w in (4, 8) for st in (3, 4)
             if not (bn == 256 and w == 4)]
 
 
@@ -376,7 +378,7 @@ def _prune_gemm(configs, named_args, **kwargs):
 def _grouped_gemm_kernel(A, A_ROWS, W, S, Y, BLOCK_EXPERT, BLOCK_ROW0, BLOCK_ROWEND,
                          N, K, stride_am, stride_we, stride_wn, stride_se, stride_sn, stride_ym,
                          GATHER: tl.constexpr, FP8: tl.constexpr, NATIVE: tl.constexpr,
-                         BM: tl.constexpr, BK: tl.constexpr, BN: tl.constexpr):
+                         BM: tl.constexpr, BK: tl.constexpr, BN: tl.constexpr, SWAP: tl.constexpr):
     pid_m = tl.program_id(0)
     pid_n = tl.program_id(1)
     e = tl.load(BLOCK_EXPERT + pid_m)
@@ -397,7 +399,10 @@ def _grouped_gemm_kernel(A, A_ROWS, W, S, Y, BLOCK_EXPERT, BLOCK_ROW0, BLOCK_ROW
     a_ptr = A + src[:, None] * stride_am + kk[None, :]
     w_ptr = W + e * stride_we + n[:, None].to(tl.int64) * stride_wn + kk[None, :]
     s_ptr = S + e * stride_se + n.to(tl.int64) * stride_sn
-    acc = tl.zeros([BM, BN], dtype=tl.float32)
+    if SWAP:
+        acc = tl.zeros([BN, BM], dtype=tl.float32)
+    else:
+        acc = tl.zeros([BM, BN], dtype=tl.float32)
     for kb in range(0, tl.cdiv(K, BK)):
         a = tl.load(a_ptr, mask=rmask[:, None], other=0.0)
         wb = tl.load(w_ptr, mask=nmask[:, None], other=0)
@@ -411,11 +416,18 @@ def _grouped_gemm_kernel(A, A_ROWS, W, S, Y, BLOCK_EXPERT, BLOCK_ROW0, BLOCK_ROW
                 w = (_decode_e4m3(wb) * (sc * 256.0)[:, None]).to(tl.bfloat16)
         else:
             w = wb
-        acc = tl.dot(a, tl.trans(w), acc)
+        if SWAP:
+            acc = tl.dot(w, tl.trans(a), acc)
+        else:
+            acc = tl.dot(a, tl.trans(w), acc)
         a_ptr += BK
         w_ptr += BK
-    tl.store(Y + rows[:, None].to(tl.int64) * stride_ym + n[None, :], acc.to(Y.dtype.element_ty),
-             mask=rmask[:, None] & nmask[None, :])
+    if SWAP:
+        tl.store(Y + rows[None, :].to(tl.int64) * stride_ym + n[:, None], acc.to(Y.dtype.element_ty),
+                 mask=rmask[None, :] & nmask[:, None])
+    else:
+        tl.store(Y + rows[:, None].to(tl.int64) * stride_ym + n[None, :], acc.to(Y.dtype.element_ty),
+                 mask=rmask[:, None] & nmask[None, :])
 
 
 class ExpertSchedule:
