@@ -7,7 +7,8 @@ UV_BIN=${OELLM_UV_BIN:-$R/tools/uv}
 VLLM_SOURCE_ID=$(cat submodules/vllm/vllm/model_executor/models/oellm_ambitious.py \
  submodules/vllm/vllm/model_executor/layers/oellm_mhc.py \
  submodules/vllm/vllm/model_executor/layers/oellm_fusion.py \
- submodules/vllm/vllm/model_executor/layers/oellm_graph.py | sha256sum | cut -c1-16)
+ submodules/vllm/vllm/model_executor/layers/oellm_graph.py \
+ submodules/vllm/vllm/model_executor/layers/oellm_uva_table.py | sha256sum | cut -c1-16)
 VLLM_RUNTIME=/tmp/oellm_vllm032_$VLLM_SOURCE_ID
 mkdir -p "$VLLM_RUNTIME"
 export UV_CACHE_DIR=$VLLM_RUNTIME/uv-cache
