@@ -1,6 +1,7 @@
 # Campaign: 1M-context inference on consumer hardware (midtraining + next pretraining)
 
-**Status:** plan, 2026-11-04. Nothing has been run or implemented for this campaign yet. It follows
+**Status:** plan, 2026-11-04. Updated 2026-11-05: user targets (§0), phase split (§4), R0/R2 enqueued (§3.1,
+§7). It follows
 [`hybrid_moe_3b_campaign.md`](hybrid_moe_3b_campaign.md), which covers the architecture search up to the
 ambitious main run (referenced below as "campaign"). It builds on
 [`inference_model_size.md`](inference_model_size.md) and the inference experiments `experiment/008`-`013`.
@@ -17,20 +18,30 @@ Labels used throughout:
 
 ## 0. Goal and constraints
 
-**Goal (user, 2026-11-04):**
-- 1M+ token context on **consumer hardware**.
-- Decode **and** prefill must stay reasonable at **batch 16**. Batch 1 is not the only operating point.
+**Goal (user, 2026-11-04 / 11-05):**
+- Two end-state operating points:
+  - **10M tokens of context** for a single stream;
+  - **500k tokens at batch 16**, with decode **and** prefill reasonable.
+- The **"ultimate" device is an RTX 3090 / 4090 (24 GB)**, with large host RAM and disk available for offloading.
+  - Weights are stored quantized; matmuls still run in BF16 (3090, Ampere) or FP8 (4090, Ada).
+  - Expert offloading must therefore be pushed as far as possible, with both **next-layer** and **next-token**
+    router prediction (§3.1).
 - The model is ambitious v4 (84B-A2.9B-E80B). The campaign has two outputs:
   1. a **midtraining stage** run from a v4 checkpoint: long-context extension, sparse attention, quantization,
      offload robustness;
   2. the design input for any **next pretraining run**, covering the decisions that only pay off from scratch.
 
-**Hardware classes [open: confirm the reference devices]:**
+**Hardware classes:**
 
 | class | example | memory | link to the weights that do not fit |
 |---|---|---|---|
-| A, discrete GPU | RTX 5090 32 GB (1.8 TB/s), plus 128-256 GB DDR5 | weights are split between GPU and host | PCIe 5 x16, ~50 GB/s effective; NVMe ~7-14 GB/s |
-| B, unified memory | Strix Halo / DGX Spark, 128 GB at ~256-273 GB/s; Mac Studio up to 512 GB at ~800 GB/s | everything in one pool | no transfer; bandwidth-bound |
+| **A0, the target** | RTX 3090 / 4090, 24 GB (~0.94 / 1.0 TB/s), 128-256 GB DDR4/5 host RAM, NVMe | ~15 GB for experts after weights, state, index and activations | PCIe 4 x16, ~25 GB/s effective; host DDR ~50-90 GB/s for host-side expert compute; NVMe ~7 GB/s |
+| A, larger discrete GPU | RTX 5090 32 GB (1.8 TB/s) | as A0, more cache | PCIe 5 x16, ~50 GB/s |
+| B, unified memory | Strix Halo / DGX Spark 128 GB at ~256-273 GB/s; Mac Studio up to 512 GB at ~800 GB/s | everything in one pool | no transfer; bandwidth-bound |
+
+**Precision (user, 2026-11-05):** no FP4 in the (still long) midtraining, since H100s have no FP4. KV quantization
+is FP8. 4-bit **storage** of the weights for A0 comes from post-training quantization; the measured RTN cost is
++0.004-0.005 (campaign). An optional fake-quant QAT pass runs in BF16 and needs no FP4 hardware.
 
 **Feature gate** (same spirit as the first campaign):
 - An inference feature that changes the LM is adopted only if its loss and eval cost stays within seed noise
@@ -96,6 +107,38 @@ budget line. Rough per-item costs are given in §5.
      with compute.
    - Whether this is "reasonable" sets the target. [open: TTFT targets]
 
+### 1.1 The target points on a 24 GB 3090 / 4090 [est.]
+
+**500k at batch 16:**
+- **KV:** 6 KB × 500k × 16 = 49 GB (bf16) or 25 GB (FP8). It lives in host RAM. The sparse fetch is ~100-200 MB per
+  step, i.e. 4-8 ms over PCIe 4.
+- **GPU index for all 16 streams:** must stay at ~1-1.5 GB.
+  - A CSA2-like FP8 indexer key of 128 dimensions at m = 2 is 32 MB per layer per stream, 3 GB in total. That is
+    too much next to the expert cache.
+  - Index dimension ≤ 64 and compression m ≥ 4 (or LSA centroids) fit.
+  - **Index size is therefore a training-time choice** (S4).
+- **Experts:** ~15 GB of GPU cache holds ~35 % of the 43 GB (Q4).
+  - A step touches ~70 experts per layer, ~8.6 GB.
+  - Prediction plus cache leave maybe 30-45 % misses, ~3 GB per step. That is ~120 ms over PCIe 4 alone, or
+    ~35-45 ms when the misses are split between PCIe fetch and host-CPU computation (KTransformers-style).
+  - The result is ~25 steps/s, i.e. ~400 tok/s in total and ~25 tok/s per stream. **R2's substitute policy and R4
+    (adaptive k) are the levers that would move this most.**
+
+**10M at batch 1:**
+- **KV:** 61 GB (bf16) or 31 GB (FP8) in host RAM.
+- **GPU index:** LSA's 246 MiB per layer at 10M (the paper) is 1.5 GB for 6 layers. CSA2-like keys (FP8, 128
+  dimensions, m = 2) would be 3.8 GB.
+- **Prefill:** ~60 PFLOP outside attention.
+  - Sparse attention adds ~1.3 PFLOP.
+  - **A flat indexer that scores every key costs ~40 PFLOP** (64 dimensions, 6 layers, T²/2), which is as much as
+    the rest of the model.
+  - At 10M the selection must therefore be hierarchical: LSA's tree search, or a coarse-to-fine block index like
+    V4.1's hierarchical indexer.
+  - That is ~5-10 min at ~150-300 TFLOP/s effective (FP8 on the 4090, BF16 on the 3090 is half). Streaming all
+    experts per 256k-token chunk adds ~70 s over PCIe 4, which overlaps with compute.
+- **Decode:** the KV fetch (~13 MB per step) and a flat index read (~2 ms) are small. The expert misses dominate
+  (§1, batch 1: 240 expert reads per token, ~0.6 GB).
+
 ## 2. Starting point
 
 - **Routing locality** [V] (campaign §"Expert offloading by MoE granularity", traces from s1/s2):
@@ -145,7 +188,7 @@ MTP in pretraining is doubtful for us (§3.3).
 | native sparse attention: selection + window (LSA / NSA / CSA2-like, §3.2) | yes | **next pretraining: from scratch at 64k** (V4.1 recipe); **v4: midtraining conversion**, unless S2 shows conversion late is clearly worse than native, in which case it goes in at a v4 restart [open] | needed for 1M prefill and decode |
 | selection granularity and layout suited to offload (pages, one index per token shared by all heads) | via the above | fixed **before** training the sparse layers | PCIe/DMA efficiency of the KV fetch |
 | KV compression (m = 2 entries) | yes | with the sparse attention | KV bytes: 6 KB → 3 KB per token |
-| KV quantization (FP8 / FP4 + scales) | small | QAT at the end of midtraining (V4.1 adds FP4 QAT in post-training) | 4× less host KV and fetch |
+| KV quantization (FP8 + scales; **no FP4 in midtraining**, user 2026-11-05) | small | FP8 QAT at the end of midtraining | 2× less host KV and fetch |
 | context extension to 1M (CP for packed CKDA / Engram, data, NoPE length generalization) | yes | midtraining | the target itself |
 | expert-miss robustness (simulated misses, handoff change 2) | yes, a regularizer | pretraining tail / midtraining | skip a missed expert instead of stalling |
 | adaptive k through zero experts (`moe_zero_expert_num`, exists in the fork) | yes | next pretraining; a v4 restart only if very cheap | fewer expert bytes per token; needs MoonEP support |
@@ -153,7 +196,7 @@ MTP in pretraining is doubtful for us (§3.3).
 | detached next-router predictor (+ previous tokens, + look-ahead) | no | **post-hoc, offline** (R0); retrain after post-training | the handoff patch conflicts with full recompute (§3.1) |
 | MTP / Soft-MTP | yes; +~20 % FLOPs per depth because of the 262k head | only if M1 shows a quality gain ≥ its compute | DFlash beats MTP on Qwen3.5-A3B; V4.1 dropped MTP |
 | drafter (DFlash / DSpark) | no | post-training, backbone frozen, long-context and multilingual data | must match the final chat model |
-| 4-bit expert QAT | small | end of midtraining / post-training | RTN costs only +0.004-0.005 (campaign), so PTQ may suffice |
+| 4-bit weight storage (experts, then the rest) | small | PTQ after training; optional fake-quant QAT in BF16 at the end | RTN costs only +0.004-0.005 (campaign); matmuls stay BF16 / FP8 |
 | Single-Pass mHC; YOCO / CED-like KV sharing | yes, architecture | next pretraining candidates (ablation N1, N2) | training speed and prefill |
 | CKDA delayed-state verify, Engram multi-token, expert cache, KV offload engine | no | inference engine | §3.3, §3.2 |
 
@@ -177,28 +220,49 @@ MTP in pretraining is doubtful for us (§3.3).
   - attach the loss during layer L's recompute;
   - `router_replay.py` is the existing pattern for this.
 
-**Predictor features to compare (R0, offline on traces from a frozen checkpoint):**
-1. **Free baseline:** router_{L+1}(h_L).
-2. **Linear from h_L:** the handoff's predictor.
-3. **Previous tokens:** layer L+1's top-k at t-1, t-2. Per layer, a learned stay probability plus a 360 × 360
-   transition table (~130k parameters). This is the user's "previous token(s)" feature for decoding.
-4. **Combined:** 2 + 3.
-5. **Look-ahead:** d = 2-4 layers. A ~200 µs layer hides only ~10 MB of PCIe transfer, so batch 16 needs d > 1.
-6. **Drafted future tokens:** in speculative decoding, drafted tokens give future positions, and their experts
-   (and Engram rows) can be prefetched one verification ahead.
+**R0 / R2 as implemented** (`scripts/korbi/campaign_midtraining/router_probe.py`):
+- **Setup:** one MN5 node on the HF export of v4_2ph step 8000, with the export's fast kernels.
+  - The probe replaces every MoE forward with the router's own rule in torch. A parity check against the export's
+    forward is written to the summary.
+  - Data are the fixed validation sets (web_en, multilingual, code, math, reasoning: 16 rows × 2k, i.e. 16 decode
+    streams at the same position; long_64k: 1 × 64k).
+  - Config: `config/experiments/korbi/campaign_3b_hybrid_midtraining/r0_r2_router_probe_mn5.yaml`.
+- **R0 targets:** layer m's own top-5.
+- **R0 features**, i.e. what a decoder knows before layer m runs for token t:
 
-**Metrics:**
-- recall@K for K = 5-30;
-- union recall at batch 16;
-- simulated stall time for class A and class B with `scripts/korbi/campaign/expert_cache_sim.py`, under LRU,
-  predictive replacement and Belady's optimum (the ceiling);
-- bytes per token.
+  | feature | what it is | prediction type |
+  |---|---|---|
+  | `x<d>` | the router input of the MoE layer d = 1 / 2 / 4 below, same token | next layer |
+  | `xprev` | layer m's router input at t-1 | next token |
+  | `selprev` | layer m's experts at t-1 | next token |
+  | `emb` | token t's embedding, known once the token is sampled | — |
+  | `xlastprev` | the last MoE layer's input at t-1 | R0 only |
 
-**Skip policy (R2, on v4, no training):**
-- the loss and evals when the missed experts are skipped (renormalized) at each prefetch budget, or computed on
-  the CPU;
-- this decides whether miss-robustness training (R1) is needed at all.
-- `moe_masked_layer_eval_iters` and router replay are the tools.
+- **R0 predictors:**
+  - **free:** the target router on `x<d>` / `xprev`, the previous token's experts, a decayed 16-token history, an
+    oracle;
+  - **learned online** (prequential: every batch is scored before it is trained on; each starts at its free
+    baseline; two learning rates, the best one goes on to R2):
+    - `lin_d<d>`, `lin_prev`;
+    - `tokahead` = xprev + selprev: before token t is sampled, i.e. prefetch across the token boundary;
+    - `start` = emb + xprev + selprev: at the start of t's step;
+    - `start_deep`;
+    - `combo_d<d>` = start + x<d>: next-layer **and** next-token information.
+- **R0 metrics:**
+  - recall@K and gate-weighted recall@K for K = 5-64;
+  - batch-16 union coverage and union size;
+  - cache windows (last 1-64 positions, per stream or over the batch) as the reference;
+  - top-5 traces of the first batches, for offline LRU / Belady simulation with `expert_cache_sim.py`.
+- **R2:** forwards in which each token and layer may only use an available set, built from:
+  - a predictor's top-K, per stream or the batch-16 union;
+  - and / or a cache window.
+
+  Misses are skipped (renormalized or not) or substituted by the router's top-5 within the available set. Also
+  run: drop-the-lowest-1/2 as calibration. Reported: ΔNLL, miss rate (by count and gate weight), available-set
+  size. Skips propagate through the layers.
+- **Not yet covered:**
+  - drafted future tokens as a prefetch source (needs the drafter);
+  - host-CPU computation of misses (an engine question, not a loss one).
 
 **Engine:**
 - a GPU expert cache, asynchronous prefetch over CUDA streams or UVA, and host-CPU computation of misses
@@ -239,16 +303,17 @@ MTP in pretraining is doubtful for us (§3.3).
 **Design for KV offload with the indexer in place:**
 - **On the GPU:**
   - the index structure: LSA centroids, ~25 MiB per layer per sequence at 1M (scaled from the paper's
-    246 MiB at 10M), or compressed indexer keys at FP4 (~32 MB per layer per sequence at m = 2, 128 dims);
+    246 MiB at 10M), or compressed indexer keys in FP8 (~32 MB per layer per sequence at m = 2 and 128 dims; ≤ 64 dims and
+    m ≥ 4 for the batch-16 budget of §1.1);
   - the window and sinks;
   - an LRU cache of recently selected KV pages;
   - the CKDA state and the speculative tail.
-- **On the host:** the full KV (FP8 / FP4 + scales), written page by page during chunked prefill. The index is
+- **On the host:** the full KV (FP8 + scales), written page by page during chunked prefill. The index is
   built incrementally: LSA clusters per 512-key block, or the CSA2 compressor per entry.
 - **Per decode step:** score the index on the GPU, then gather the selected pages through UVA zero-copy (the same
   mechanism as 012's UVA Engram) or batched DMA.
   - ~13 MB per sequence per step at bf16 (6 layers × 2048 keys × 1 KB), ~200 MB at batch 16, ~4 ms over PCIe 5.
-  - Less in practice: FP4 and page reuse between consecutive steps.
+  - Less in practice: FP8 KV and page reuse between consecutive steps.
 - **Training-side requirements** (they decide which variant can be served efficiently):
   - the selection unit must be a contiguous page of 64-128 tokens, or LSA's 4-token pools stored cluster-ordered
     so that a bucket is one contiguous read;
@@ -326,12 +391,28 @@ rollback:
 
 ## 4. Order of work
 
-**Phase 0** (now, on the v4 checkpoint and existing traces; no LM change, cheap):
-- R0: predictor features;
-- R2: skip-policy eval;
+**Context phases of the model (user, 2026-11-05):**
+- The 64k extension is already v4_2ph's phase 2: 64k with gbs 1024 from step 23,691, i.e. 90 % of the tokens.
+- **C1, dense long context:** extend beyond 64k with dense attention, to 256k-512k. This needs packed-sequence CP
+  for CKDA and Engram, long data, and NoPE length generalization (log-n scaling).
+- **C2, attention sparsification:** convert the 6 attention layers to sparse attention at the end of C1's length.
+  - Indexer warm-up against the dense attention (DSA-style KL, or D-LSA-style index distillation), then joint
+    sparse training.
+  - Then extend to 1M-2M. 10M is reached through the sparse layers' length generalization and verified by evals;
+    training at 10M is not planned.
+- **C3, deployment hardening** (each item only if its ablation pays off):
+  - FP8 KV QAT;
+  - miss / substitute robustness;
+  - a fake-quant pass;
+  - then post-training and the drafter.
+- S2 (native vs converted) remains the check that converting late is good enough. If not, the next pretraining
+  run trains sparse from scratch.
+
+**Phase 0** (now, on the v4 checkpoint; no LM change, cheap):
+- R0 + R2 (§3.1): enqueued 2026-11-05;
 - S0: profile v4 attention at 64k-1M in the HF/vLLM path;
 - B4: D-LSA retrofit on v4, PCA variant first;
-- KV FP8 / FP4 PTQ eval;
+- KV FP8 PTQ eval;
 - the CKDA delayed-state verify kernel, with a parity test against sequential decode on the local GPU.
 
 **Phase 1** (screens, 8k, s2/s3, see §5):
@@ -341,16 +422,15 @@ rollback:
 - M1: MTP / Soft-MTP;
 - N1: Single-Pass mHC.
 
-**Phase 2** (s3 long-context extension 8k → 64k → 128k/256k; needs the CP work):
+**Phase 2** (s3 long-context mirror of C1 / C2; needs the CP work):
 - S1: sparse variants;
-- **S2: conversion timing.** Native from scratch vs converted at 50 % vs converted at the end. This decides
-  whether v4 should switch at a restart or in midtraining;
-- S3: KV QAT;
-- S4: selection granularity and layer reuse.
+- S2: conversion timing;
+- S3: KV FP8 QAT;
+- S4: selection granularity, index size and layer reuse, under the 24 GB GPU-index budget of §1.1.
 
 **Phase 3:**
-- a v4 midtraining pilot on 16-32 nodes: conversion + 128k-256k, then 1M;
-- the drafter (M2) on the final post-trained model.
+- v4 midtraining: a C1 pilot on 16-32 nodes, then C1 / C2 at scale;
+- the drafter (ablation M2) on the final post-trained model.
 
 ## 5. Ablation plan
 
@@ -375,14 +455,14 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
 | B4 | Retrofit sparse attention | v4 + D-LSA (PCA → trained index); top-k 2048/4096 | 64-fact retrieval, passkey, RULER at 64k-256k vs full; selection overlap between steps | ~50-100 |
 | S1 | Which native sparse attention? | s3 extension 64k → 128k: full / N-LSA / NSA-style pages + window / CSA2-like (m = 2 + indexer + SWA 128) / SWA-only control | position-binned NLL, retrieval, RULER, per-layer speed, offload fetch bytes | ~5 × 150+ |
 | S2 | Native vs converted | s3: sparse from scratch / converted at 50 % / converted at the end (DSA-style indexer warm-up + sparse training) | as S1 | ~3 × 150+ |
-| S3 | KV quantization | s3 / v4: FP8, FP4 + E4M3 scales per 16 channels; PTQ vs QAT | Δ long-context metrics | small-medium |
+| S3 | KV quantization | s3 / v4: FP8 per-page / per-channel scales; PTQ vs QAT (no FP4, user 2026-11-05) | Δ long-context metrics | small-medium |
 | S4 | Selection layout | s3: page size 64 / 128 / LSA 4-pools; per-layer vs one shared index (Reindex / Reuse) | quality vs DMA efficiency | ~3 × 150 |
 | M2 | Which drafter? | frozen s3 target first, then v4: post-hoc MTP head / DFlash (block 8/16, 3/5 layers, mHC tap) / DSpark-like / EAGLE-3 | τ, real speedup at batch 1/4/16 per hardware class, expert bytes per accepted token, per language, 8k/32k | ~100-200; for v4, regenerating target responses dominates (~200+ GPU-h) |
 
 ## 6. Open decisions
 
-1. Reference devices and targets: tok/s per sequence at batch 16 at 1M, and TTFT for 1M prefill, per hardware
-   class.
+1. Targets: the points are set (10M at batch 1, 500k at batch 16, on a 3090 / 4090); the tok/s and TTFT
+   numbers to aim for are still open.
 2. Budget line for this campaign.
 3. Whether the rest of v4's pretraining gets any change, e.g. sparse attention at a restart if S2 favours
    native. A restart needs the user's go. Otherwise everything goes into midtraining.
@@ -396,6 +476,18 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - papers: Soft-MTP 2610.38331, DFlash 2602.06036, V4.1 CSA2 / DSpark, LSA 2610.42147.
 
   Nothing run.
+- **2026-11-05:**
+  - User targets: 10M context at batch 1 and 500k at batch 16; 3090 / 4090 as the target device; no FP4 in
+    midtraining; a dense long-context phase before sparsification.
+  - R0 / R2 implemented (`router_probe.py`) and checked locally on a reduced random-weight model:
+    - the oracle recall is 1.0;
+    - the probe routing matches the export forward (ΔNLL 0 to 2e-4);
+    - short and long domains both run.
+  - Enqueued into `mn5_pool_o260c` as `campaign_mid_r0r2_v4_2ph_8000_8c9181`: 1 node (a buffer node of the 260; the
+    main run uses 256), snapshot `autoexp_midr0r2`, ≤ 3 h, export `ambitious_v4_2ph_fp8_8000`.
+    - Output: `/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/r0r2_v4_2ph_8000/`
+      (`r0_summary.md`, `r2_summary.md`).
+    - It waits behind another session's FLAG-eval shards on the other buffer nodes.
 
 ## References
 

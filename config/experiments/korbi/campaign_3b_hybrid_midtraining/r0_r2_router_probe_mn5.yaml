@@ -31,4 +31,4 @@ slurm:
   sbatch:
     time: "03:00:00"
     qos: acc_xehpc
-    account: ehpc533
+    account: cns144  # the o260c pool hosts (an ehpc533 run is refused there)
