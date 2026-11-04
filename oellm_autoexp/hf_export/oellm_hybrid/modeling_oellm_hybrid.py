@@ -1042,8 +1042,24 @@ class OellmFLALayer(nn.Module):
         self.layer = cls(**spec["kwargs"], layer_idx=0)
 
     def forward(
-        self, hidden_states: torch.Tensor, state=None, attention_mask: torch.Tensor | None = None
+        self, hidden_states: torch.Tensor, state=None, attention_mask: torch.Tensor | None = None,
+        use_cache: bool = True,
     ):
+        """``use_cache=False`` (scoring, no state given): no FLA cache and no final state, so a
+        layer with ``fuse_projections`` takes its fused input GEMM / short-conv path."""
+        if not use_cache and state is None:
+            layer = self.layer
+            fused = getattr(layer, "fuse_projections", None)
+            if fused is not None:
+                layer.fuse_projections = True
+            try:
+                with torch.cuda.device(hidden_states.device) if hidden_states.is_cuda else contextlib.nullcontext():
+                    out, _, _ = layer(hidden_states=hidden_states, attention_mask=attention_mask,
+                                      past_key_values=None, use_cache=False)
+            finally:
+                if fused is not None:
+                    layer.fuse_projections = fused
+            return out, None
         from fla.models.utils import Cache
 
         cache = state if state is not None else Cache()

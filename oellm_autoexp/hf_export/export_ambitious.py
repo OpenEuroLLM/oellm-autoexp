@@ -330,7 +330,7 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
 def finish_export(out_dir: Path, cfg: dict, tokenizer: Path | None, ckpt_dir: Path, config_yaml: Path) -> None:
     """config.json, the model code, the tokenizer and megatron_source.json next to the weights."""
     write_config(out_dir, cfg, tokenizer)
-    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py"):
+    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py"):
         shutil.copy2(_PKG / f, out_dir / f)
     # the reused modules (CKDA wrapper, Engram base, norm, cache) and their config
     for f in ("modeling_oellm_hybrid.py", "configuration_oellm_hybrid.py"):
