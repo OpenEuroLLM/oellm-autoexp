@@ -9,6 +9,7 @@ PROMPTS=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_infer008_batch/e
 { hostname; df -h /dev/shm /tmp; free -g; nvidia-smi -L; } > "$OUT/node.txt" 2>&1
 export OELLM_MHC_IMPL=triton OELLM_LOCAL_EXPERT_LOAD=1 OELLM_ENGRAM_DECODE_IMPL=batched
 export OELLM_FUSION_IMPL=triton OELLM_ENGRAM_MADVISE=normal VLLM_LOGGING_LEVEL=INFO
+rm -f /dev/shm/oellm_engram_* 2>/dev/null  # stale tables of a killed run
 status=0
 for v in ${VARIANTS:-fullgraph islands}; do
   if [ "$v" = fullgraph ]; then
