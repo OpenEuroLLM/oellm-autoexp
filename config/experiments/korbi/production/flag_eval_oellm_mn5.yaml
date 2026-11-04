@@ -1,0 +1,43 @@
+# @package _global_
+# One FLAG row of the full oellm-eval suite on MareNostrum 5.
+# The task list, suites and n_shot values are the 438 rows of
+# config/eval_tasks/flag_evals.yaml. lm-eval rows use the proven MN5 runner;
+# evalchemy and lighteval rows use the same harness commands as oellm-eval's
+# JUPITER launcher (scripts/korbi/flag_eval/mn5_oellm_run_one.sh).
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#     --monitor-state-dir $R/pool_state --pool <pool> \
+#     --config-name experiments/korbi/production/flag_eval_oellm_mn5 \
+#     aux.export=ambitious_v4_2ph_fp8_5000 aux.task=arc_challenge aux.n_shot=25 \
+#     aux.suite=lm-eval-harness --yes
+#
+# For the full suite use the generated list config (one sweep point per row).
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - vllm_fast_decode_env
+  - _self_
+
+aux:
+  export: ???
+  export_root: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  export_dir: ${aux.export_root}/${aux.export}
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  task: ???
+  n_shot: 0
+  suite: lm-eval-harness
+  limit: 0
+  name: oellm_${aux.suite}_${aux.task}_${aux.n_shot}
+  bench: "bash scripts/korbi/flag_eval/mn5_oellm_run_one.sh ${aux.export_dir} ${aux.out} ${aux.task} ${aux.n_shot} ${aux.suite} ${aux.limit}"
+
+job:
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_evals_oellm/logs/${aux.name}"
+  est_step_time_s: 3600
+  array_group: null
+  metadata:
+    pool_priority: 30
+
+slurm:
+  sbatch:
+    time: "06:00:00"
+    qos: acc_xehpc
+    account: cns144

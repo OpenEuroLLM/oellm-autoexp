@@ -102,12 +102,20 @@ def main(argv=None):
 
         VLLM = distributed_adapter(VLLM)
     t0 = time.time()
+    # The OELLM custom decode graphs are controlled by OELLM_DECODE_GRAPHS; this
+    # vLLM engine flag stays opt-in because vLLM's own graph capture is separate.
+    enforce_eager = os.environ.get("OELLM_VLLM_ENFORCE_EAGER", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
     engine_extra = {}
     if a.max_num_batched_tokens is not None:
         engine_extra["max_num_batched_tokens"] = max(1, a.max_num_batched_tokens // a.dp)
     lm = VLLM(pretrained=str(export), trust_remote_code=True, dtype="bfloat16", batch_size=a.request_batch_size,
               tensor_parallel_size=a.tp, enable_expert_parallel=bool(a.ep) and (a.tp * a.dp > 1),
-              gpu_memory_utilization=a.gpu_mem, max_num_seqs=max(1, a.max_num_seqs // a.dp), enforce_eager=True,
+              gpu_memory_utilization=a.gpu_mem, max_num_seqs=max(1, a.max_num_seqs // a.dp), enforce_eager=enforce_eager,
               **engine_extra)
     if a.dp > 1:
         import torch
@@ -140,12 +148,18 @@ def main(argv=None):
                        for f in [source / "model_executor/models/oellm_ambitious.py",
                                  source / "model_executor/layers/oellm_mhc.py",
                                  source / "model_executor/layers/oellm_fusion.py",
-                                 source / "model_executor/layers/oellm_graph.py"] if f.exists()},
+                                 source / "model_executor/layers/oellm_graph.py",
+                                 source / "model_executor/layers/oellm_uva_table.py",
+                                 source / "model_executor/layers/oellm_decode_kernels.py",
+                                 source / "model_executor/layers/fused_moe/fused_moe.py",
+                                 source / "model_executor/layers/fused_moe/activation.py"] if f.exists()},
             "settings": {k: os.environ.get(k) for k in ["OELLM_MOE", "OELLM_MHC_IMPL",
                          "OELLM_ENGRAM_TABLES", "OELLM_ENGRAM_LOOKUP", "OELLM_ENGRAM_MADVISE",
                          "OELLM_ENGRAM_DECODE_IMPL", "OELLM_FUSION_IMPL", "OELLM_DECODE_GRAPHS",
                          "OELLM_GRAPH_MAX_ROWS",
-                         "OELLM_LOCAL_EXPERT_LOAD", "OELLM_ENGRAM_MODEL_DIR"]},
+                         "OELLM_LOCAL_EXPERT_LOAD", "OELLM_ENGRAM_MODEL_DIR", "OELLM_DECODE_KERNELS",
+                         "OELLM_DECODE_KERNELS_OFF", "OELLM_MOE_FP8", "OELLM_VLLM_CUDAGRAPH",
+                         "OELLM_VLLM_ENFORCE_EAGER"]},
         }
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:20]
         cache_dir = out / "response_cache" / digest

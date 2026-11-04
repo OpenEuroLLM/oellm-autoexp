@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 export_dir=$1 out=$2 shard=$3 nshards=$4 limit=$5; shift 5
 source scripts/korbi/vllm/setup_vllm_uv.sh
+source scripts/korbi/vllm/uva_tables_cleanup.sh
 export OELLM_MHC_IMPL=${OELLM_MHC_IMPL:-triton}
 export OELLM_LOCAL_EXPERT_LOAD=1
 export OELLM_FUSION_IMPL=${OELLM_FUSION_IMPL:-reference}

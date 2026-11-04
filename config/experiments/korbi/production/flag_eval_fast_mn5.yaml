@@ -1,7 +1,8 @@
 # @package _global_
 # Separate fast entry point. Reference runner/config stay available.
 # One four-GPU node: TP1 + DP4 + EP4, shared RAM-prefetched mmap Engram tables.
-# Batch/implementation validated on ambitious_v4_2ph_fp8_3700; see experiment/008.
+# Batch/implementation validated on ambitious_v4_2ph_fp8_3700 (experiment/008); decode settings
+# (vllm_fast_decode_env, via flag_eval_mn5) on ambitious_v4_2ph_fp8_6000 (experiment/012).
 # 256 is an upper scheduling cap; long contexts may reduce admitted concurrency.
 defaults:
   - flag_eval_mn5
@@ -14,10 +15,10 @@ aux:
   token_budget: 32768
   request_batch_size: 256
   mhc_impl: triton
-  fusion_impl: reference
+  fusion_impl: triton
   decode_graphs: 0
   graph_max_rows: 256
-  engram_tables: ram
+  engram_tables: uva
   engram_decode_impl: batched
   name: flag_fast_${aux.export}_s${aux.shard}of${aux.num_shards}${aux.name_suffix}
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_fast

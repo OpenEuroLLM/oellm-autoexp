@@ -9,6 +9,7 @@ set -euo pipefail
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 cd "$(dirname "$0")/../../.."
 export_dir=$1 out=$2 shard=$3 nshards=$4 limit=$5; shift 5
+source scripts/korbi/vllm/uva_tables_cleanup.sh
 SHA=$(grep -m1 "^submodules/vllm " SYNC_STAMP | awk '{print $3}')
 export DEST=/tmp/pylibs_vllm_$SHA
 bash scripts/korbi/vllm/build_pylibs_vllm.sh
