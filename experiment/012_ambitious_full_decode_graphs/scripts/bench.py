@@ -33,7 +33,7 @@ def worker(rank, args, port, barrier):
               gpu_memory_utilization=0.85, max_num_seqs=64, max_num_batched_tokens=8192,
               max_model_len=4096, enable_prefix_caching=False, seed=42,
               disable_log_stats=False)
-    if args.variant.startswith("fullgraph"):
+    if args.variant.startswith("fullgraph"):  # (suffix "-a+b": OELLM_DECODE_KERNELS_OFF)
         kw.update(enforce_eager=False, compilation_config={
             "mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY",
             "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64]})
@@ -53,7 +53,8 @@ def worker(rank, args, port, barrier):
     res["score"] = {"tokens": len(nll), "mean_nll": sum(nll) / len(nll)}
     save(out, res)
     # (label, requests on this rank): one request on the whole node, then 1 / 8 / 32 per GPU
-    cases = [("node1", 1 if rank == 0 else 0), ("gpu1", 1), ("gpu8", 8), ("gpu32", 32)]
+    cases = [(c, n) for c, n in [("node1", 1 if rank == 0 else 0), ("gpu1", 1), ("gpu8", 8), ("gpu32", 32)]
+             if c in args.cases.split(",")]
     for label, n in cases:
         mine = prompts[rank * 64: rank * 64 + n]
         work = [{"prompt_token_ids": p} for p in (mine or prompts[:1])]
@@ -71,12 +72,28 @@ def worker(rank, args, port, barrier):
             lp = [d[t].logprob for t, d in zip(o.outputs[0].token_ids, o.outputs[0].logprobs or [])]
             entry["per_request"].append({"tokens": o.outputs[0].token_ids[:64], "logprobs": lp[:64],
                                          "decode_tok_s": (k - 1) / (m.last_token_ts - m.first_token_ts)})
+        if mine and label in ("gpu1", "gpu8"):
+            # self-consistency: the decode-time logprobs of the generated tokens vs a
+            # prefill re-scoring of prompt + generated tokens (same engine)
+            seqs = [{"prompt_token_ids": list(w["prompt_token_ids"]) + list(o.outputs[0].token_ids[:64])}
+                    for w, o in zip(work, outs)]
+            barrier_free = llm.generate(seqs, SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=0),
+                                        use_tqdm=False)
+            diffs = []
+            for w, o, r in zip(work, outs, barrier_free):
+                p0 = len(w["prompt_token_ids"])
+                dec = [d[t].logprob for t, d in zip(o.outputs[0].token_ids[:64], o.outputs[0].logprobs[:64])]
+                pre = [r.prompt_logprobs[p0 + i][t].logprob for i, t in enumerate(o.outputs[0].token_ids[:64])]
+                diffs += [abs(a - b) for a, b in zip(dec, pre)]
+            entry["decode_vs_prefill"] = {"mean_abs": sum(diffs) / len(diffs), "max_abs": max(diffs),
+                                          "frac_gt_0p1": sum(d > 0.1 for d in diffs) / len(diffs)}
         if entry["per_request"]:
             entry["mean_request_decode_tok_s"] = sum(r["decode_tok_s"] for r in entry["per_request"]) / len(entry["per_request"])
         res["trials"].append(entry)
         save(out, res)
         print(json.dumps({"variant": args.variant, "rank": rank, "case": label,
-                          "decode_tok_s": entry.get("mean_request_decode_tok_s"), "wall": wall}), flush=True)
+                          "decode_tok_s": entry.get("mean_request_decode_tok_s"), "wall": wall,
+                          "decode_vs_prefill": entry.get("decode_vs_prefill")}), flush=True)
     barrier.wait(timeout=3600)
     llm.llm_engine.engine_core.shutdown()
 
@@ -94,8 +111,9 @@ def main():
     p.add_argument("--model", required=True)
     p.add_argument("--prompts", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--variant", choices=["islands", "fullgraph", "fullgraph_k", "fullgraph_k8"], required=True)
+    p.add_argument("--variant", required=True)
     p.add_argument("--tokens", type=int, default=256)
+    p.add_argument("--cases", default="node1,gpu1,gpu8,gpu32")
     a = p.parse_args()
     Path(a.out).mkdir(parents=True, exist_ok=True)
     with socket.socket() as s:

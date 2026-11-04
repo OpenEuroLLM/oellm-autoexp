@@ -17,16 +17,18 @@ if [ "${VARIANTS#*k8}" != "$VARIANTS" ]; then
 fi
 status=0
 for v in ${VARIANTS//,/ }; do
-  export OELLM_DECODE_KERNELS=reference OELLM_MOE_FP8=
-  if [ "${v#fullgraph}" != "$v" ]; then
+  off=""; [ "${v#*-}" != "$v" ] && off=${v#*-}
+  base=${v%%-*}
+  export OELLM_DECODE_KERNELS=reference OELLM_MOE_FP8= OELLM_DECODE_KERNELS_OFF=${off//+/,}
+  if [ "${base#fullgraph}" != "$base" ]; then
     export OELLM_ENGRAM_TABLES=uva OELLM_DECODE_GRAPHS=0 OELLM_ENGRAM_LOOKUP=replicated
-    [ "${v#fullgraph_k}" != "$v" ] && export OELLM_DECODE_KERNELS=triton
-    [ "$v" = fullgraph_k8 ] && export OELLM_MOE_FP8=w8a16
+    [ "${base#fullgraph_k}" != "$base" ] && export OELLM_DECODE_KERNELS=triton
+    [ "$base" = fullgraph_k8 ] && export OELLM_MOE_FP8=w8a16
   else
     export OELLM_ENGRAM_TABLES=ram OELLM_DECODE_GRAPHS=1 OELLM_ENGRAM_LOOKUP=leader
   fi
   timeout ${CASE_TIMEOUT:-2400} "$INFER_PY" experiment/012_ambitious_full_decode_graphs/scripts/bench.py \
-    --model "$MODEL" --prompts "$PROMPTS" --out "$OUT" --variant "$v" > "$OUT/$v.log" 2>&1 || { echo "$v failed rc=$?"; status=1; }
+    --model "$MODEL" --prompts "$PROMPTS" --out "$OUT" --variant "$v" --cases "${CASES:-node1,gpu1,gpu8,gpu32}" > "$OUT/$v.log" 2>&1 || { echo "$v failed rc=$?"; status=1; }
   grep -E '"case"' "$OUT/$v.log" || tail -30 "$OUT/$v.log"
   sleep 5
 done

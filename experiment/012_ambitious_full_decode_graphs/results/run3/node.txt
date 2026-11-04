@@ -1,0 +1,11 @@
+as02r2b21
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           252G     0  252G   0% /dev/shm
+rw              252G  9.2G  243G   4% /tmp
+               total        used        free      shared  buff/cache   available
+Mem:             503          54         450           8           9         449
+Swap:              3           1           2
+GPU 0: NVIDIA H100 (UUID: GPU-dd93f7cf-6873-d3f3-f012-4e39fae9864e)
+GPU 1: NVIDIA H100 (UUID: GPU-c4ab1ebc-98dc-4704-901b-40b4e5b7f3e2)
+GPU 2: NVIDIA H100 (UUID: GPU-8ebd3adf-8215-c679-58a4-d7b3188e3609)
+GPU 3: NVIDIA H100 (UUID: GPU-59565e81-6b1e-ebe4-9af0-85d234f5ab06)
