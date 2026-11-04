@@ -48,14 +48,18 @@ def logprobs(logits, ids):
     return torch.stack(out)
 
 
-def workloads(prompts):
+def workloads(prompts, big=None):
     p = [torch.tensor(x[:256]) for x in prompts]
-    return {
+    w = {
         "w1": [x[None] for x in p],
         "w2": [torch.stack(p)],
         "w3": [torch.stack([torch.cat(p[8 * r: 8 * r + 8]) for r in range(4)])],
         "w4": [torch.cat(p)[None]],
     }
+    if big:  # w5: 32 x 1024 (32k tokens), 4 prompts of the 1024-prompt file per row
+        q = [torch.tensor(x[:256]) for x in big[:128]]
+        w["w5"] = [torch.stack([torch.cat(q[4 * r: 4 * r + 4]) for r in range(32)])]
+    return w
 
 
 def run(model, batches, dev, reps):
@@ -84,8 +88,9 @@ def main():
     p.add_argument("--prompts", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--reps", type=int, default=3)
-    p.add_argument("--work", nargs="+", default=["w1", "w2", "w3", "w4"])
-    p.add_argument("--reference-subset", type=int, default=8, help="w1 prompts for the reference run (0: skip)")
+    p.add_argument("--work", nargs="+", default=["w1", "w2", "w3", "w4", "w5"])
+    p.add_argument("--big-prompts", default=None, help="1024-prompt file for w5")
+    p.add_argument("--reference-subset", type=int, default=32, help="w1 prompts for the reference run (0: skip)")
     a = p.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -106,11 +111,12 @@ def main():
     dev = model.model.embed_tokens.weight.device
     mem = {d: round(torch.cuda.memory_allocated(d) / 2**30, 1) for d in range(torch.cuda.device_count())}
     print(json.dumps({"variant": a.variant, "load_seconds": load_s, "gib_per_gpu": mem}), flush=True)
-    work = {k: v for k, v in workloads(json.loads(Path(a.prompts).read_text())).items() if k in a.work}
+    big = json.loads(Path(a.big_prompts).read_text()) if a.big_prompts else None
+    work = {k: v for k, v in workloads(json.loads(Path(a.prompts).read_text()), big).items() if k in a.work}
     cases = [(a.variant, {})]
     if a.variant == "fast":
-        cases += [("fast_nopipe", {"OELLM_HF_PIPELINE": "0"}), ("fast_chunks4", {"OELLM_HF_PIPELINE_CHUNKS": "4"}),
-                  ("fast_chunks16", {"OELLM_HF_PIPELINE_CHUNKS": "16"})]
+        cases += [("fast_nopipe", {"OELLM_HF_PIPELINE": "0"}), ("fast_chunks2", {"OELLM_HF_PIPELINE_CHUNKS": "2"}),
+                  ("fast_chunks8", {"OELLM_HF_PIPELINE_CHUNKS": "8"})]
     results = {"variant": a.variant, "load_seconds": load_s, "gib_per_gpu": mem,
                "device_map": getattr(model, "oellm_device_map", None) or getattr(model, "hf_device_map", None),
                "cases": {}}
@@ -118,7 +124,7 @@ def main():
         saved = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         for w, batches in work.items():
-            if name != a.variant and w == "w4":  # a single row: no pipeline, nothing new
+            if name != a.variant and w in ("w1", "w4"):  # single rows: no pipeline, nothing new
                 continue
             r, lps = run(model, batches, dev, a.reps)
             results["cases"].setdefault(name, {})[w] = r

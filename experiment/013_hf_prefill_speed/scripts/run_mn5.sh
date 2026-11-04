@@ -11,6 +11,7 @@ R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
 BASE=${BASE:-/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_6000}
 VIEW=${BASE}_hf013
 PROMPTS=$R/autoexp_infer008/experiment/008_ambitious_inference_speed/results/ep4/prompts.json
+BIG=$R/autoexp_infer008_batch/experiment/008_ambitious_inference_speed/results/batching/ep4/prompts.json
 { hostname; nvidia-smi -L; free -g; "$INFER_PY" -c "import torch, triton, transformers; print(torch.__version__, triton.__version__, transformers.__version__)"; } > "$OUT/node.txt" 2>&1
 cat "$OUT/node.txt"
 status=0
@@ -50,7 +51,7 @@ if [ "${STAGES#*full}" != "$STAGES" ]; then
   VARIANTS=${VARIANTS:-fast,hf008}
   for v in ${VARIANTS//,/ }; do
     timeout ${CASE_TIMEOUT:-1800} "$INFER_PY" $D/scripts/bench_full.py --model "$VIEW" --variant "$v" \
-      --prompts "$PROMPTS" --out "$OUT/full" > "$OUT/full_$v.log" 2>&1 || { echo "full $v failed rc=$?"; status=1; }
+      --prompts "$PROMPTS" --big-prompts "$BIG" --out "$OUT/full" > "$OUT/full_$v.log" 2>&1 || { echo "full $v failed rc=$?"; status=1; }
     grep -E '"(case|variant)"' "$OUT/full_$v.log" || tail -30 "$OUT/full_$v.log"
   done
 fi

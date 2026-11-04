@@ -1,0 +1,263 @@
+{
+  "variant": "fast",
+  "load_seconds": 320.40751422569156,
+  "gib_per_gpu": {
+    "0": 21.1,
+    "1": 20.2,
+    "2": 20.1,
+    "3": 21.1
+  },
+  "device_map": {
+    "model.embed_tokens": 0,
+    "model.layers.0": 0,
+    "model.layers.1": 0,
+    "model.layers.2": 0,
+    "model.layers.3": 0,
+    "model.layers.4": 0,
+    "model.layers.5": 0,
+    "model.layers.6": 0,
+    "model.layers.7": 0,
+    "model.layers.8": 0,
+    "model.layers.9": 0,
+    "model.layers.10": 0,
+    "model.layers.11": 0,
+    "model.layers.12": 0,
+    "model.layers.13": 0,
+    "model.layers.14": 0,
+    "model.layers.15": 0,
+    "model.layers.16": 0,
+    "model.layers.17": 0,
+    "model.layers.18": 0,
+    "model.layers.19": 0,
+    "model.layers.20": 0,
+    "model.layers.21": 0,
+    "model.layers.22": 0,
+    "model.layers.23": 0,
+    "model.layers.24": 0,
+    "model.layers.25": 1,
+    "model.layers.26": 1,
+    "model.layers.27": 1,
+    "model.layers.28": 1,
+    "model.layers.29": 1,
+    "model.layers.30": 1,
+    "model.layers.31": 1,
+    "model.layers.32": 1,
+    "model.layers.33": 1,
+    "model.layers.34": 1,
+    "model.layers.35": 1,
+    "model.layers.36": 1,
+    "model.layers.37": 1,
+    "model.layers.38": 1,
+    "model.layers.39": 1,
+    "model.layers.40": 1,
+    "model.layers.41": 1,
+    "model.layers.42": 1,
+    "model.layers.43": 1,
+    "model.layers.44": 1,
+    "model.layers.45": 1,
+    "model.layers.46": 1,
+    "model.layers.47": 1,
+    "model.layers.48": 1,
+    "model.layers.49": 1,
+    "model.layers.50": 1,
+    "model.layers.51": 2,
+    "model.layers.52": 2,
+    "model.layers.53": 2,
+    "model.layers.54": 2,
+    "model.layers.55": 2,
+    "model.layers.56": 2,
+    "model.layers.57": 2,
+    "model.layers.58": 2,
+    "model.layers.59": 2,
+    "model.layers.60": 2,
+    "model.layers.61": 2,
+    "model.layers.62": 2,
+    "model.layers.63": 2,
+    "model.layers.64": 2,
+    "model.layers.65": 2,
+    "model.layers.66": 2,
+    "model.layers.67": 2,
+    "model.layers.68": 2,
+    "model.layers.69": 2,
+    "model.layers.70": 2,
+    "model.layers.71": 2,
+    "model.layers.72": 2,
+    "model.layers.73": 2,
+    "model.layers.74": 2,
+    "model.layers.75": 3,
+    "model.layers.76": 3,
+    "model.layers.77": 3,
+    "model.layers.78": 3,
+    "model.layers.79": 3,
+    "model.layers.80": 3,
+    "model.layers.81": 3,
+    "model.layers.82": 3,
+    "model.layers.83": 3,
+    "model.layers.84": 3,
+    "model.layers.85": 3,
+    "model.layers.86": 3,
+    "model.layers.87": 3,
+    "model.layers.88": 3,
+    "model.layers.89": 3,
+    "model.layers.90": 3,
+    "model.layers.91": 3,
+    "model.layers.92": 3,
+    "model.layers.93": 3,
+    "model.layers.94": 3,
+    "model.layers.95": 3,
+    "model.layers.96": 3,
+    "model.layers.97": 3,
+    "model.norm": 3,
+    "lm_head": 3
+  },
+  "cases": {
+    "fast": {
+      "w1": {
+        "tokens": 8192,
+        "seconds": 4.312552799005061,
+        "all_seconds": [
+          4.307785060722381,
+          4.314691838808358,
+          4.312552799005061
+        ],
+        "tok_s": 1899.5709459812194
+      },
+      "w2": {
+        "tokens": 8192,
+        "seconds": 1.1257117949426174,
+        "all_seconds": [
+          1.1266397661529481,
+          1.1257117949426174,
+          1.1246471051126719
+        ],
+        "tok_s": 7277.173461985075
+      },
+      "w3": {
+        "tokens": 8192,
+        "seconds": 0.5912019559182227,
+        "all_seconds": [
+          0.5964775518514216,
+          0.5911197597160935,
+          0.5912019559182227
+        ],
+        "tok_s": 13856.517080151794
+      },
+      "w4": {
+        "tokens": 8192,
+        "seconds": 0.3794694868847728,
+        "all_seconds": [
+          0.379189555067569,
+          0.3794694868847728,
+          0.37949170591309667
+        ],
+        "tok_s": 21588.033512922553
+      }
+    },
+    "fast_nopipe": {
+      "w1": {
+        "tokens": 8192,
+        "seconds": 4.368569436017424,
+        "all_seconds": [
+          4.349978148937225,
+          4.665008826646954,
+          4.368569436017424
+        ],
+        "tok_s": 1875.2134125326345
+      },
+      "w2": {
+        "tokens": 8192,
+        "seconds": 0.36660266015678644,
+        "all_seconds": [
+          0.3666234780102968,
+          0.36660266015678644,
+          0.36655656807124615
+        ],
+        "tok_s": 22345.718922215387
+      },
+      "w3": {
+        "tokens": 8192,
+        "seconds": 0.366895099170506,
+        "all_seconds": [
+          0.366895099170506,
+          0.36688162107020617,
+          0.3669445291161537
+        ],
+        "tok_s": 22327.907945679475
+      }
+    },
+    "fast_chunks4": {
+      "w1": {
+        "tokens": 8192,
+        "seconds": 4.345514516346157,
+        "all_seconds": [
+          4.343057151883841,
+          4.345514516346157,
+          4.3455473110079765
+        ],
+        "tok_s": 1885.1622677095756
+      },
+      "w2": {
+        "tokens": 8192,
+        "seconds": 0.5891773700714111,
+        "all_seconds": [
+          0.5891773700714111,
+          0.5930698150768876,
+          0.5884142857976258
+        ],
+        "tok_s": 13904.132127490046
+      },
+      "w3": {
+        "tokens": 8192,
+        "seconds": 0.5911702839657664,
+        "all_seconds": [
+          0.5911702839657664,
+          0.5931652579456568,
+          0.5893389307893813
+        ],
+        "tok_s": 13857.25944315967
+      }
+    },
+    "fast_chunks16": {
+      "w1": {
+        "tokens": 8192,
+        "seconds": 4.343534373212606,
+        "all_seconds": [
+          4.342657600063831,
+          4.350118527654558,
+          4.343534373212606
+        ],
+        "tok_s": 1886.0216809890135
+      },
+      "w2": {
+        "tokens": 8192,
+        "seconds": 2.1920889182947576,
+        "all_seconds": [
+          2.1920889182947576,
+          2.190396468155086,
+          2.1952774967066944
+        ],
+        "tok_s": 3737.0746832535506
+      },
+      "w3": {
+        "tokens": 8192,
+        "seconds": 0.596334152854979,
+        "all_seconds": [
+          0.596334152854979,
+          0.5904004736803472,
+          0.5963542489334941
+        ],
+        "tok_s": 13737.264519867591
+      }
+    },
+    "reference": {
+      "w1": {
+        "tokens": 2048,
+        "seconds": 21.44864758476615,
+        "all_seconds": [
+          21.44864758476615
+        ],
+        "tok_s": 95.48387570387361
+      }
+    }
+  }
+}

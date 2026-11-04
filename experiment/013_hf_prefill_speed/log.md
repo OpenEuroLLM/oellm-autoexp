@@ -60,3 +60,17 @@ per-expert loop and accelerate's placement, which cannot hold an 80 GB Engram la
     6.40 s = 1,281 tok/s (008 measured 6.50 s); w2 32x256 / w3 4x2048: 0.827 s = 9,910 tok/s (the estimate
     said 10.6k: the estimate holds); w4 OOM'd in the parity code. fast: the remote-code loader did not copy
     oellm_kernels.py (`from . import` form) -- fixed (38121aea), verified with a local remote-code load.
+- Run 2 = acc_debug 48496369 (autoexp_hf013c). results/mn5_run2/summary.md.
+  - Grouped expert GEMM (GEMM1 + GEMM2, v4 shapes): FP8 Triton vs torch._grouped_mm on BF16 experts:
+    512 tok 18.9 vs 10.3 TFLOP/s, 2k 60.7 vs 38.6, 8k 168 vs 128, 16k 224 vs 201, 32k 262 vs 236.
+    The swapped-operand variant brings nothing (autotune keeps both).
+  - Real export (fp8_6000), fast loaded by from_pretrained(device_map="auto"): load 320 s, 20-21 GiB per GPU
+    (hf008: 52 GiB on 3 GPUs). Without pipelining: w2 32x256 / w3 4x2048 0.367 s = 22.3k tok/s
+    (2.25x hf008), w4 1x8192 21.6k (2.19x), w1 32 x (1x256) 1.9k tok/s (1.48x; ~135 ms per 256-token
+    forward: host-bound, ~0.8-1 ms of launches per MoE / CKDA layer). Original reference: 95 tok/s.
+  - Pipelining over the 4 GPUs LOST: w2 with 8 / 4 / 16 micro-batches 1.13 / 0.59 / 2.19 s vs 0.367 s
+    unpipelined -- every micro-batch costs the full host launch time; now adaptive (one micro-batch per
+    >= 8k tokens, at most one per stage).
+  - Parity (next-token logprobs): fast vs hf008 NLL delta +0.00025 / +0.00025 / -0.00076 / +0.00039
+    (w1-w4, ~8.2k tokens each), mean |dlogp| 0.025-0.029; vs the reference (8 prompts, 2040 tokens):
+    fast +0.00136 (mean |dlogp| 0.0255), hf008 +0.00074 (0.0219). Run 3: the reference on all 32.

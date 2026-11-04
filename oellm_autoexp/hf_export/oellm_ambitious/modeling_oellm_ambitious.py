@@ -30,7 +30,7 @@ Inference fast path (CUDA, no autograd; ``OELLM_HF_IMPL=reference`` turns it off
 expert and dequantized inside the GEMM (no BF16 copy of the experts), the sigmoid router, the
 Engram hashes and a zero-copy gather from tables pinned in host memory -- and no host
 synchronization, so the layers on the GPUs of a device map run concurrently on micro-batches
-(``OELLM_HF_PIPELINE``). ``from_pretrained(device_map="auto")`` places whole layers on the GPUs
+(``OELLM_HF_PIPELINE``; from 8k tokens per micro-batch). ``from_pretrained(device_map="auto")`` places whole layers on the GPUs
 itself and keeps the Engram tables in pinned host memory (``OELLM_HF_PLACEMENT=accelerate``: the
 stock placement). Scoring calls (no ``use_cache``) skip the decoding state.
 """
@@ -846,8 +846,15 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         b = input_ids.shape[0]
         if len(stages) < 2 or b < 2 or any(d is None for d, _, _ in stages):
             return None
-        per = int(os.environ.get("OELLM_HF_PIPELINE_CHUNKS", "0")) or 2 * len(stages)
+        # A forward costs ~0.1 s of host time (kernel launches) whatever its size: a micro-batch
+        # only pays when its GPU time per stage exceeds that, i.e. from ~8k tokens per micro-batch
+        # (MN5 H100: 8 micro-batches of 1k tokens were 3x slower than none).
+        per = int(os.environ.get("OELLM_HF_PIPELINE_CHUNKS", "0"))
+        if not per:
+            per = min(len(stages), input_ids.numel() // int(os.environ.get("OELLM_HF_PIPELINE_TOKENS", "8192")))
         n = min(b, per)
+        if n < 2:
+            return None
         bounds = [round(i * b / n) for i in range(n + 1)]
         rows = [slice(bounds[i], bounds[i + 1]) for i in range(n)]
 
