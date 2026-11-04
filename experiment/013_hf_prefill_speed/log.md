@@ -96,3 +96,10 @@ per-expert loop and accelerate's placement, which cannot hold an 80 GB Engram la
 - Small-batch MoE GEMMs are weight-read bound at ~1.3 TB/s.
 - Existing exports keep their old code until refreshed (`python -m oellm_autoexp.hf_export.refresh_export <dir>`;
   not done on the live exports).
+- 2026-11-04 (user: make it the default via env in the eval configs, refresh the live exports):
+  hf_fast_prefill_env.yaml (the 013 switches, explicit) in flag_eval_oellm_mn5 and hf_export_mn5 (so
+  hf_export_v2's score / paired checks); the lighteval HF branch runs refresh_code.sh on its export
+  first (OELLM_HF_REFRESH_CODE=1). lighteval rows stay on vLLM by default (generative). Refreshed in
+  place (code files only, atomic renames, config.json untouched, md5 = checkout d3319f92):
+  ambitious_v4_2ph_fp8_{1000,2000,3700,5000,5800,5900,6000} + views/identity/ambitious_v4_2ph_fp8_6000.
+  Not refreshed: LDM / v3 / e216 exports (fast path validated on mHC only), the _hf008 record.
