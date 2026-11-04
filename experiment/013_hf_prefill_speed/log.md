@@ -47,3 +47,16 @@ per-expert loop and accelerate's placement, which cannot hold an 80 GB Engram la
   layer timings on GPU 0 (fast vs 008 settings), then the real export fp8_6000 via a hard-linked
   view (`<export>_hf013`, code files replaced atomically) -- fast vs hf008, logprob parity, the
   reference on 8 prompts.
+- Run 1 = acc_debug 48495311 (snapshot autoexp_hf013b, as06r5b27; 48494126 on acc_ehpc stays pending,
+  old code). results/mn5_run1/summary.md.
+  - tests/hf_export_gpu: test_ambitious_v2_hf all pass; 7 failures in test_fla_hf / test_engram_export_dtypes
+    (OellmHybrid models, whose code path this change leaves untouched: pre-existing in the ep image).
+  - H100, native FP8 path: errors vs float64 attention 0.00462 (ref 0.00462), MoE 0.00492 (ref 0.00521),
+    Engram bitwise; reduced-model NLL delta +0.0003; no host syncs.
+  - Reduced model, full-model estimate on ONE GPU (no pipelining): fast 13.6k / 20.8k / 25.5k tok/s at
+    1x2048 / 8x512 / 8k-token batches vs the 008 settings 7.0k / 9.1k / 10.6k (1.9-2.4x). MoE 395 -> 151 ms,
+    mHC 229 -> 51 ms per 8k tokens; MoE is 47 % of the rest (grouped FP8 GEMM ~120-150 TFLOP/s).
+  - Real export, hf008 (score_on_flag loader, BF16 experts, 52 GiB on GPUs 0-2): load 176 s; w1 32x(1x256)
+    6.40 s = 1,281 tok/s (008 measured 6.50 s); w2 32x256 / w3 4x2048: 0.827 s = 9,910 tok/s (the estimate
+    said 10.6k: the estimate holds); w4 OOM'd in the parity code. fast: the remote-code loader did not copy
+    oellm_kernels.py (`from . import` form) -- fixed (38121aea), verified with a local remote-code load.

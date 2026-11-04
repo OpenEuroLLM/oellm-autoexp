@@ -1,0 +1,66 @@
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                   _grouped_gemm_kernel         0.00%       0.000us         0.00%       0.000us       0.000us       6.390ms        43.03%       6.390ms     798.797us             8  
+                                           aten::matmul         0.50%      77.952us         8.20%       1.276ms      31.897us       0.000us         0.00%       4.238ms     105.941us            40  
+                                               aten::mm         5.62%     874.677us         7.35%       1.144ms      28.610us       4.238ms        28.53%       4.238ms     105.941us            40  
+                                           aten::linear         0.43%      67.584us         7.91%       1.231ms      39.714us       0.000us         0.00%       4.037ms     130.237us            31  
+         nvjet_sm90_tst_320x128_64x3_1x2_h_bz_coopB_TNT         0.00%       0.000us         0.00%       0.000us       0.000us       3.308ms        22.27%       3.308ms       3.308ms             1  
+                                       ChunkKDAFunction        13.66%       2.126ms        18.34%       2.854ms     951.199us       1.061ms         7.14%       1.253ms     417.591us             3  
+                                            aten::copy_         1.69%     262.823us         3.56%     553.376us       8.384us     517.698us         3.49%     517.698us       7.844us            66  
+                                       _mhc_read_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     498.051us         3.35%     498.051us      55.339us             9  
+         nvjet_sm90_tst_256x128_64x4_1x2_h_bz_coopA_TNT         0.00%       0.000us         0.00%       0.000us       0.000us     460.802us         3.10%     460.802us      25.600us            18  
+                                      _mhc_write_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     413.507us         2.78%     413.507us      45.945us             9  
+                                       cuLaunchKernelEx         3.19%     496.028us         3.19%     496.028us       3.968us     368.544us         2.48%     368.544us       2.948us           125  
+                                            aten::clone         0.26%      41.059us         1.77%     274.855us      16.168us       0.000us         0.00%     278.531us      16.384us            17  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     278.531us         1.88%     278.531us      16.384us            17  
+                                       aten::contiguous         0.08%      12.512us         1.62%     252.275us      16.818us       0.000us         0.00%     262.306us      17.487us            15  
+                                          aten::argsort         0.05%       7.818us         2.86%     445.238us     111.310us       0.000us         0.00%     258.435us      64.609us             4  
+                                             aten::sort         0.81%     125.521us         2.81%     437.420us     109.355us     253.604us         1.71%     258.435us      64.609us             4  
+                                               aten::to         0.24%      37.509us         3.78%     588.494us       7.265us       0.000us         0.00%     234.336us       2.893us            81  
+                                         aten::_to_copy         0.57%      88.491us         3.54%     550.985us      12.244us       0.000us         0.00%     234.336us       5.207us            45  
+         nvjet_sm90_tst_32x64_64x16_1x2_h_bz_splitK_NNN         0.00%       0.000us         0.00%       0.000us       0.000us     213.443us         1.44%     213.443us      23.716us             9  
+                 chunk_kda_fwd_kernel_inter_solve_fused         0.00%       0.000us         0.00%       0.000us       0.000us     212.482us         1.43%     212.482us      70.827us             3  
+         chunk_gated_delta_rule_fwd_kernel_h_blockdim64         0.00%       0.000us         0.00%       0.000us       0.000us     201.825us         1.36%     201.825us      67.275us             3  
+                                              aten::mul         0.56%      87.882us         0.88%     137.002us       9.786us     183.104us         1.23%     183.104us      13.079us            14  
+void at_cuda_detail::cub::detail::radix_sort::Device...         0.00%       0.000us         0.00%       0.000us       0.000us     181.314us         1.22%     181.314us       5.666us            32  
+                                        _combine_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     168.034us         1.13%     168.034us      42.008us             4  
+                                 chunk_gla_fwd_kernel_o         0.00%       0.000us         0.00%       0.000us       0.000us     144.736us         0.97%     144.736us      48.245us             3  
+                                              aten::cat         0.63%      98.801us         0.90%     139.619us      12.693us     143.584us         0.97%     143.584us      13.053us            11  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us     142.207us         0.96%     142.207us       9.480us            15  
+                           recompute_w_u_fwd_kda_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     131.072us         0.88%     131.072us      43.691us             3  
+                                kda_sign_cumprod_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     125.120us         0.84%     125.120us      41.707us             3  
+                                         _swiglu_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     117.858us         0.79%     117.858us      14.732us             8  
+                   chunk_kda_fwd_kernel_intra_sub_chunk         0.00%       0.000us         0.00%       0.000us       0.000us     108.257us         0.73%     108.257us      36.086us             3  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     105.472us         0.71%     105.472us      17.579us             6  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us      97.600us         0.66%      97.600us      10.844us             9  
+                                   CausalConv1dFunction         2.80%     435.079us         3.02%     469.504us     156.501us      79.776us         0.54%      79.776us      26.592us             3  
+                               causal_conv1d_fwd_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      79.776us         0.54%      79.776us      26.592us             3  
+         nvjet_sm90_tst_192x128_64x5_1x2_h_bz_coopB_TNT         0.00%       0.000us         0.00%       0.000us       0.000us      77.217us         0.52%      77.217us      19.304us             4  
+sm90_xmma_gemm_f32f32_tf32f32_f32_tn_n_tilesize64x12...         0.00%       0.000us         0.00%       0.000us       0.000us      74.720us         0.50%      74.720us      18.680us             4  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      73.794us         0.50%      73.794us      18.448us             4  
+                       chunk_local_cumsum_vector_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      72.032us         0.49%      72.032us      24.011us             3  
+                                            aten::index         1.11%     172.823us         1.71%     266.099us      12.671us      68.770us         0.46%      68.770us       3.275us            21  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      68.770us         0.46%      68.770us       3.275us            21  
+                                l2norm_gauge_fwd_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      65.537us         0.44%      65.537us      10.923us             6  
+                                              aten::add         0.74%     114.687us         1.08%     168.841us       9.932us      62.209us         0.42%      62.209us       3.659us            17  
+                                            aten::fill_         0.85%     131.561us         1.76%     274.171us       6.231us      57.247us         0.39%      57.247us       1.301us            44  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      56.640us         0.38%      56.640us      18.880us             3  
+                                            _SignedGate         1.46%     227.150us         1.77%     275.157us      91.719us      55.104us         0.37%      55.104us      18.368us             3  
+                                _signed_gate_fwd_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      55.104us         0.37%      55.104us      18.368us             3  
+                                        Memset (Device)         0.00%       0.000us         0.00%       0.000us       0.000us      53.984us         0.36%      53.984us       1.200us            45  
+         nvjet_sm90_tst_192x192_64x4_2x1_v_bz_coopB_TNN         0.00%       0.000us         0.00%       0.000us       0.000us      53.633us         0.36%      53.633us      53.633us             1  
+                                            aten::zero_         0.37%      57.473us         1.83%     284.957us       7.915us       0.000us         0.00%      49.280us       1.369us            36  
+                     aten::scaled_dot_product_attention         0.09%      14.724us         0.58%      90.068us      90.068us       0.000us         0.00%      49.057us      49.057us             1  
+              aten::_scaled_dot_product_cudnn_attention         0.03%       4.684us         0.48%      75.344us      75.344us       0.000us         0.00%      49.057us      49.057us             1  
+                         aten::_cudnn_attention_forward         0.29%      45.141us         0.45%      70.660us      70.660us      49.057us         0.33%      49.057us      49.057us             1  
+                                             aten::mean         0.20%      31.466us         0.29%      44.522us      14.841us      48.640us         0.33%      48.640us      16.213us             3  
+cudnn_generated_fort_native_sdpa_sm90_flash_fprop_wg...         0.00%       0.000us         0.00%       0.000us       0.000us      48.289us         0.33%      48.289us      48.289us             1  
+                                              aten::sub         0.57%      88.935us         0.90%     140.283us       8.252us      48.002us         0.32%      48.002us       2.824us            17  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us      44.416us         0.30%      44.416us      44.416us             1  
+void at::native::vectorized_elementwise_kernel<8, at...         0.00%       0.000us         0.00%       0.000us       0.000us      44.000us         0.30%      44.000us       1.419us            31  
+                                           aten::conv1d         0.02%       2.422us         0.28%      43.044us      43.044us       0.000us         0.00%      43.169us      43.169us             1  
+                                      aten::convolution         0.05%       7.909us         0.26%      40.622us      40.622us       0.000us         0.00%      43.169us      43.169us             1  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 15.563ms
+Self CUDA time total: 14.851ms
