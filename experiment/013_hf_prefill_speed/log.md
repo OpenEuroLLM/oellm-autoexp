@@ -74,3 +74,25 @@ per-expert loop and accelerate's placement, which cannot hold an 80 GB Engram la
   - Parity (next-token logprobs): fast vs hf008 NLL delta +0.00025 / +0.00025 / -0.00076 / +0.00039
     (w1-w4, ~8.2k tokens each), mean |dlogp| 0.025-0.029; vs the reference (8 prompts, 2040 tokens):
     fast +0.00136 (mean |dlogp| 0.0255), hf008 +0.00074 (0.0219). Run 3: the reference on all 32.
+- Run 3 = acc_debug 48497941 (autoexp_hf013d), fast only. results/mn5_run3/summary.md.
+  - Adaptive pipelining: 8k-token batches unchanged (22.4k tok/s, no micro-batches); w5 32 x 1024
+    (32k tokens) 0.962 s = 34.1k tok/s with 4 micro-batches vs 26.2k unpipelined (+30 %); 2 / 8 forced
+    micro-batches 33.5k / 25.1k.
+  - Parity vs the reference on all 32 prompts (8160 tokens): fast NLL +0.00048 (mean |dlogp| 0.0257),
+    hf008 +0.00023 (0.0218) -- 008's reference-vs-reference noise was 0.010-0.020 per token.
+
+## Result
+| path (v4_2ph fp8_6000, 1 node 4 x H100) | 32 x 256 | 4 x 2048 | 1 x 8192 | 32 x 1024 | 32 x (1 x 256) | GPU memory |
+|---|---:|---:|---:|---:|---:|---:|
+| reference HF (from_pretrained default before) | | | | | 95-99 tok/s | |
+| 008 fast HF (score_on_flag loader only) | 9.9k | 10.0k | 9.9k | -- | 1.28k | 52 GiB x 3 |
+| 013 (default from_pretrained(device_map="auto")) | 22.4k | 22.4k | 21.6k | 34.1k | 1.85-1.9k | 21 GiB x 4 |
+
+## Next
+- Host launch overhead (~0.1 s per forward) bounds small forwards (1 x 256: ~135 ms) and the
+  pipelining; CUDA graphs need repeated shapes (lighteval's padded lengths change per batch).
+- Two replicas per node (the model now fits 2 GPUs): place_on_gpus would have to take the GPU subset
+  from lighteval's per-process max_memory, and the 160 GB of Engram tables be shared between processes.
+- Small-batch MoE GEMMs are weight-read bound at ~1.3 TB/s.
+- Existing exports keep their old code until refreshed (`python -m oellm_autoexp.hf_export.refresh_export <dir>`;
+  not done on the live exports).
