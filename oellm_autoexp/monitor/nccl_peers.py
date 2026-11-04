@@ -70,7 +70,13 @@ PEER_ALIVE = {
 # Node-local faults: a healthy node does not produce these, whatever its peers do.
 FATAL_SIGNATURE = re.compile(
     r"\[rank(?P<rank>\d+)\]:.*?(?P<sig>Invalid access of peer GPU memory over nvlink"
-    r"|uncorrectable ECC error|\.idx and \.bin files cannot be found)"
+    r"|uncorrectable ECC error|\.idx and \.bin files cannot be found"
+    # MN5 GPU faults (config/slurm/marenostrum_autoexclude.yaml's hardware signatures): one rank
+    # each, e.g. 2026-11-04 v4_2ph o260c.0016, rank 754 on as04r4b22 GPU 2 -- the pool retried on
+    # the same node. A MoonEP barrier trap makes every waiting rank report a launch failure: more
+    # than FATAL_HOST_CAP hosts -> unattributed, nothing excluded.
+    r"|CUDA error: unspecified launch failure|CUDA error: unknown error"
+    r"|GPU has fallen off the bus)"
 )
 SRUN_ERROR = re.compile(
     r"srun: error: (?P<host>[\w.-]+): task (?P<task>\d+): Exited with exit code"

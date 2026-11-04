@@ -354,6 +354,14 @@ FATAL = {
         287,
         "[default3]:[rank1151]:[E1019 06:26:39.430918320 ProcessGroupNCCL.cpp:2109] [PG ID 6 PG GUID 4576(TENSOR_MODEL_PARALLEL_GROUP) Rank 3] Process group watchdog thread terminated with exception: CUDA error: Invalid access of peer GPU memory over nvlink or a hardware error",
     ),
+    # MN5 (2026-11-04, v4_2ph pool run mn5-pool-o260c.0016): GPU 2 of as04r4b22; the pool's
+    # automatic retry landed on the same node
+    "48269252": (
+        754,
+        "as04r4b22",
+        188,
+        "[default2]:[rank754]:[E1104 11:25:41.643167106 ProcessGroupNCCL.cpp:2192] [PG ID 20 PG GUID 11279(INTRA_DISTRIBUTED_OPTIMIZER_INSTANCE_GROUP) Rank 754] Process group watchdog thread terminated with exception: CUDA error: unspecified launch failure",
+    ),
     "2347262": (
         1748,
         "jpbo-104-26",
