@@ -14,7 +14,8 @@ fi
 
 # --- Watchdog: one per node, on the host, next to the training step ---------------
 # GPU memory trace + hang kill (no iteration for WATCHDOG_STALL_S, or none within
-# WATCHDOG_STARTUP_S): py-spy stacks of every rank, then scancel.
+# WATCHDOG_STARTUP_S): py-spy stacks of every rank, then a pool_ctl cancel of this pool RUN
+# (never scancel: inside a pool the SLURM job is the whole allocation; outside a pool: report only).
 # scripts/korbi/hybrid_speed/job_watchdog.py; both steps use --overlap.
 echo "Launching watchdog on $SLURM_NNODES node(s)"
 srun --ntasks-per-node=1 --nodes=$SLURM_NNODES --overlap --cpu-bind=none python3 $WATCHDOG_SCRIPT &
