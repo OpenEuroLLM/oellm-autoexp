@@ -1,6 +1,9 @@
 # @package _global_
-# PREPARED ONLY (2026-11-05) -- do not enqueue without the user's go; the v4_2ph main run's restarts
-# are owned by its run session.
+# THE MERGED RESTART (2026-11-05, owner: the main-run session "Current edits review (2)"): head dim 256
+# (session -53) on top of the z-loss + forward-measured expert spectral cap ramp (session "Marenostrum
+# training run 1 debugging"), which this config inherits through hybrid_ambitious_v4_2ph_mn5 (Megatron
+# >= 3d8071635). Do not enqueue without the user's go. It is gated on the two checks below, and on a
+# checkpoint widened from the step the 128-dim run actually stops at (not 9789: that run continues).
 #
 # v4_2ph continued with attention head dim 256 instead of 128 (user 2026-11-05: the 6 softmax attention
 # layers' head dim caps long-range retrieval; Qwen3.5 uses 256; our 128 came from the 2026-10-17 screen
@@ -22,9 +25,16 @@ aux:
 backend:
   megatron:
     kv_channels: 256
+    # a missing / unwidened checkpoint must be fatal, never a silent fresh start or a partial load
+    exit_on_missing_checkpoint: true
+    strict_fsdp_dtensor_load: true
+    finetune: false
+    no_load_optim: false
+    no_load_rng: false
 
 job:
   name: ambitious_v4_2ph_hd256_256n_p${aux.phase}
   metadata:
-    # its own singleton: never next to the 128 run from the same step
-    pool_singleton: ambitious_main_v4_hd256
+    # the main run's singleton: never next to the 128-dim run (that one is cancelled with a final
+    # save, then its checkpoint is widened, then this one starts)
+    pool_singleton: ambitious_main_v4
