@@ -15,5 +15,32 @@ defaults:
 aux:
   arm: ambitious_e360_eng80_v4_2ph
 
+backend:
+  megatron:
+    # ADDED 2026-11-05 at step ~9100 (user: introduce a spectral bound gradually + z-loss as in the
+    # 32B run; restarted in place on o260c from the run's own checkpoint, same data order).
+    #
+    # Routed-expert spectral cap with a ramp (Megatron fad580083). Checkpoints 5800 / 8000 / 8900 /
+    # 9000 showed one runaway expert per deep MoE layer: in blocks 35-45 one expert's fc2 sigma_max
+    # was 50-79x its init value at step 9000 (x1.7-1.9 per 2200 steps; healthy experts p99 <= 6.6x,
+    # max 13.6x), and these experts carried the deep band's growing expert output / residual
+    # stream. Weight decay on the Muown magnitudes g would act on the healthy matrices instead
+    # (every expert's g grows ~10 % per 2200 steps alike). The cap is a hard projection after each
+    # step (a matrix with sigma_max > cap is scaled by cap / sigma_max; g follows): start 80 =
+    # holds the largest (78.7x at 9000) where it is, then geometric x0.8 per 250 steps to 15
+    # (above every healthy expert) over 1875 optimizer steps from step 9200 (optimizer step =
+    # iteration + 1). Cost ~0.25 % of a 256-node step (hybrid_v4mhc_capspeed_mn5). The factor is
+    # logged as arch/muown/expert_cap_factor, the bound as arch/muown/expert_768x2048|2048x768/*.
+    # To hold the cap where it is (e.g. on a loss bump): set muown_expert_spectral_cap_end to the
+    # logged factor.
+    muown_expert_spectral_cap: 80.0
+    muown_expert_spectral_cap_end: 15.0
+    muown_expert_spectral_cap_ramp_start: 9200
+    muown_expert_spectral_cap_ramp_steps: 1875
+    # z-loss on the output logits, coefficient as the 32B dense flag run (b1_reborn_base): a pure
+    # gradient term coeff * logZ^2 (the logged lm loss stays the cross entropy), against drifting
+    # logit norms (no softcap). Logged as output_z_loss = mean(logZ^2) (32B at step 339k: 68.1).
+    output_z_loss_coeff: 1.0e-5
+
 job:
   name: ambitious_v4_2ph_128n_p${aux.phase}
