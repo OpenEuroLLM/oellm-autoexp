@@ -17,8 +17,9 @@ aux:
 
 backend:
   megatron:
-    # ADDED 2026-11-05 at step ~9100 (user: introduce a spectral bound gradually + z-loss as in the
-    # 32B run; restarted in place on o260c from the run's own checkpoint, same data order).
+    # ADDED 2026-11-05 at step 9118 (user: introduce a spectral bound gradually + z-loss as in the
+    # 32B run; restarted in place on o260c from the run's own checkpoint 9118, same data order;
+    # o260c.0035, cap only -- z-loss pending, see below).
     #
     # Routed-expert spectral cap with a ramp (Megatron fad580083). Checkpoints 5800 / 8000 / 8900 /
     # 9000 showed one runaway expert per deep MoE layer: in blocks 35-45 one expert's fc2 sigma_max
@@ -40,7 +41,12 @@ backend:
     # z-loss on the output logits, coefficient as the 32B dense flag run (b1_reborn_base): a pure
     # gradient term coeff * logZ^2 (the logged lm loss stays the cross entropy), against drifting
     # logit norms (no softcap). Logged as output_z_loss = mean(logZ^2) (32B at step 339k: 68.1).
-    output_z_loss_coeff: 1.0e-5
+    # PENDING: the first restart with it (o260c.0029, 01:51) failed at startup -- the v4 head + loss
+    # is Liger's fused kernel (liger_fused_linear_cross_entropy, chunk 2048), which had no z-loss
+    # (TransformerConfig asserts). o260c.0035 runs with the cap only. The z-loss inside the Liger
+    # kernel is being added and tested (tests/unit_tests/fusions/test_liger_z_loss.py, the zloss arm
+    # of hybrid_v4mhc_capspeed_mn5); set 1.0e-5 again with a Megatron that has it.
+    output_z_loss_coeff: null
 
 job:
   name: ambitious_v4_2ph_128n_p${aux.phase}
