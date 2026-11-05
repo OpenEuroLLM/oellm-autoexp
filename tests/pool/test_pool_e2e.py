@@ -1013,7 +1013,7 @@ def test_monitor_resumes_a_pool_that_ran_out_of_work(pool):
 
 
 def test_bad_node_in_a_live_host(pool):
-    pool.create_pool(*FAST)
+    pool.create_pool(*FAST, "job.pool_host.insufficient_grace_s=3")
     pool.enqueue("a", "aux.iters=200", "aux.tick=0.1")
     pool.start_monitor()
     first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
@@ -1030,8 +1030,8 @@ def test_bad_node_in_a_live_host(pool):
     )
     state = pool.run_state(second)
     assert (state.started["job"], state.started["nodes"]) == (jid, f"n{jid}-1")
-    # a 2-node job cannot run on the degraded host: it is released at once (not after
-    # idle_exit_s) and the new allocation is told to avoid the bad node
+    # a 2-node job cannot run on the degraded host: it is released once that has lasted
+    # insufficient_grace_s (not idle_exit_s) and the new allocation is told to avoid the bad node
     pool.enqueue("big", "slurm.sbatch.nodes=2")
     pool.wait_for(lambda: pool.record("dummy_a")["runtime"]["final_state"] == "finished", 90, "a")
     big = pool.wait_for(lambda: pool.runs_of("dummy_big"), 30, "big queued")[0]

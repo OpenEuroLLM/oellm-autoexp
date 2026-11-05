@@ -802,17 +802,49 @@ def test_new_hosts_avoid_pool_and_fleet_exclusions(env, tmp_path):
     assert "jpbo-004-04" in Path(newest.definition.slurm.script_path).read_text()
 
 
-def test_a_host_that_cannot_fit_any_queued_job_is_released_at_once(env):
+def _short_host(env, **cfg):
+    meta = env.layout.load_meta()
+    meta["config"].update(cfg)
+    env.layout.write_meta(meta)
     env.add_run("needs2", nodes=2)
     env.poll(2)
     hid = env.host_up(env.hosts()[0])
     (env.layout.host_dir(hid) / "state").write_text(f"idle {int(time.time())} 1\n")  # a bad node
+    return hid, env.layout.host_dir(hid) / "control" / "exit"
+
+
+def test_a_host_that_cannot_fit_any_queued_job_is_released_once_that_lasts(env):
+    # JUPITER 2026-11-05: right after a preempt, 7 nodes looked unusable for one poll and the
+    # 516-node host was released at once; now only a lasting shortfall releases it
+    hid, exit_file = _short_host(env, insufficient_grace_s=60.0, min_hosts=0)
     env.poll()
-    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    assert not exit_file.exists(), "released on the first poll"
+    state = env.layout.load_state()
+    state["insufficient_since"][hid] -= 61.0  # the shortfall has lasted the grace period
+    env.layout.write_state(state)
+    env.poll()
     assert exit_file.exists() and "needs 2 node(s), 1 usable" in exit_file.read_text()
     (env.layout.host_dir(hid) / "exited").write_text("exit requested\n")
     env.poll(2)
     assert len([h for h in env.hosts() if h.runtime.final_state is None]) >= 1  # a replacement
+
+
+def test_a_short_dip_in_usable_nodes_does_not_release(env):
+    hid, exit_file = _short_host(env, insufficient_grace_s=60.0, min_hosts=0)
+    env.poll()
+    (env.layout.host_dir(hid) / "state").write_text(f"idle {int(time.time())} 2\n")  # back
+    env.poll()
+    assert (
+        "insufficient_since" not in env.layout.load_state()
+        or hid not in env.layout.load_state()["insufficient_since"]
+    )
+    assert not exit_file.exists()
+
+
+def test_min_hosts_holds_a_host_that_cannot_fit(env):
+    hid, exit_file = _short_host(env, insufficient_grace_s=0.0, min_hosts=1)
+    env.poll(3)
+    assert not exit_file.exists(), "the hold released the host"
 
 
 def test_no_release_loop_for_a_job_bigger_than_every_host(env):

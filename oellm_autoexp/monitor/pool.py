@@ -127,6 +127,12 @@ class PoolHostConfig:
     # Without it a short queue makes runs ping-pong between fresh allocations
     # (JUPITER 2026-10-26: successors started every 3-4 min).
     handover_min_age_s: float = 1800.0
+    # A host that cannot run any queued job (too few usable nodes, too little time left) is
+    # released only once that has lasted this long: right after a run ends, nodes can show
+    # as completing/not responding for a poll or two (JUPITER 2026-11-05: a preempt for a node
+    # check read 507 of 514 usable and released a held 516-node allocation at once). Hosts
+    # within min_hosts are never released for it -- the hold is the operator's call.
+    insufficient_grace_s: float = 900.0
     # Queue the keep_pending successors only once every running host is this old.
     # 0 = right away (maximum age priority; right for long queues). For short
     # queues set it to roughly (wall time - expected queue wait).
@@ -1206,14 +1212,19 @@ class PoolManager:
                     )
 
         # 5. release idle hosts that have had nothing to do for idle_exit_s -- or
-        #    at once when there IS queued work and this host can run none of it:
+        #    sooner when there IS queued work and this host can run none of it:
         #    too few usable nodes (excluded bad nodes) or too little time left only
-        #    get worse, so waiting idle_exit_s would buy nothing. The freed slot
-        #    is refilled by a fresh allocation in step 6.
+        #    get worse, so waiting idle_exit_s would buy nothing -- but only once that
+        #    has lasted insufficient_grace_s, and never for a host min_hosts holds.
+        #    The freed slot is refilled by a fresh allocation in step 6.
+        short_since = state.setdefault("insufficient_since", {})
+        held = len([h for h in live if not h.retiring]) <= cfg.min_hosts
         for host in live:
             if host.hid in busy or handover_in_progress:
+                short_since.pop(host.hid, None)
                 continue
             if any(fits(host, item[3]) for item in queued):
+                short_since.pop(host.hid, None)
                 continue
             # only if a FRESH host would do better: a job bigger than every host of
             # this pool (host definition changed after enqueue) must not turn into
@@ -1233,6 +1244,20 @@ class PoolManager:
                     if need > host.usable_nodes
                     else f"{host.remaining_s(now):.0f}s left, {cfg.min_remaining_s:.0f}s needed"
                 )
+                since = short_since.setdefault(host.hid, now)
+                if held or now - since < cfg.insufficient_grace_s:
+                    if since == now:
+                        LOGGER.warning(
+                            "[pool %s] host %s cannot run any queued job (%s): %s",
+                            cfg.name,
+                            host.hid,
+                            why,
+                            "held by min_hosts, not released"
+                            if held
+                            else f"released if it lasts {cfg.insufficient_grace_s:.0f}s",
+                        )
+                    continue
+                short_since.pop(host.hid, None)
                 self._control(layout, host.hid, "exit", f"cannot run any queued job ({why})")
                 host.retiring = True
                 LOGGER.info(
@@ -1242,11 +1267,15 @@ class PoolManager:
                     why,
                 )
                 continue
+            short_since.pop(host.hid, None)
             idle_for = now - host.state_ts
             if idle_for >= cfg.idle_exit_s:
                 self._control(layout, host.hid, "exit", f"idle for {idle_for:.0f}s")
                 host.retiring = True
                 LOGGER.info("[pool %s] releasing idle host %s", cfg.name, host.hid)
+
+        for hid in [h for h in short_since if h not in {x.hid for x in live}]:
+            short_since.pop(hid)
 
         # 6. keep hosts submitted, and their exclusion lists current while queued
         self._refresh_queued_host_excludes(loop, layout, hosts)
