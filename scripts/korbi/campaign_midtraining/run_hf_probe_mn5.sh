@@ -23,9 +23,14 @@ for f in oellm_ambitious/configuration_oellm_ambitious.py oellm_ambitious/modeli
   cp "oellm_autoexp/hf_export/$f" "$VIEW/$(basename $f).new" && mv "$VIEW/$(basename $f).new" "$VIEW/$(basename $f)"
 done
 D=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid
-DATA=""
-for s in web_en multilingual code math reasoning long_64k; do DATA="$DATA${DATA:+,}$s=$D/${s}_text_document"; done
-"$INFER_PY" "scripts/korbi/campaign_midtraining/$PROBE" --model "$VIEW" --data "$DATA" --long long_64k \
+DATA_ARGS=()
+case "$PROBE" in
+  router_probe.py|ced_probe.py)  # the fixed validation sets as data
+    DATA=""
+    for s in web_en multilingual code math reasoning long_64k; do DATA="$DATA${DATA:+,}$s=$D/${s}_text_document"; done
+    DATA_ARGS=(--data "$DATA" --long long_64k) ;;
+esac
+"$INFER_PY" "scripts/korbi/campaign_midtraining/$PROBE" --model "$VIEW" "${DATA_ARGS[@]}" \
     --out "$OUT" "$@" 2>&1 | grep -v "UserWarning\|warnings.warn"
 status=${PIPESTATUS[0]}
 echo "PROBE_DONE $PROBE status=$status"

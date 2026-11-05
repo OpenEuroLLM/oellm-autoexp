@@ -1,0 +1,33 @@
+# @package _global_
+# T2: training-free sparse attention on v4 (page 64, window 512, 1 sink page): pooled-key pages at 3 budgets, Quest, the oracle ceiling, token top-k, CSA2-like mean-pooled entries, window-only
+# (docs/campaign_3b_hybrid_midtraining.md; scripts/korbi/campaign_midtraining/long_attention_probe.py, the
+# attention through Megatron's page_sparse module). One MN5 node:
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t2_long_attention_mn5 aux.dev_queue=true --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t2_long_attention_v4_2ph_8000
+  export: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_8000
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  docs: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
+  raw: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/raw.jsonl
+  policies: "dense;window;page_mean:topk=16;page_mean:topk=32;page_mean:topk=64;quest:topk=32;oracle:topk=32;token_topk:topk=32;compress_mean:topk=32"
+  lengths: "65536,131072"
+  args: "--tasks nll,retrieval --n 4 --nll-docs 4 --chunk 16384"
+  bench: "bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh long_attention_probe.py ${aux.export} ${aux.out} --docs ${aux.docs} --raw ${aux.raw} --policies '${aux.policies}' --lengths ${aux.lengths} ${aux.args}"
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 7000
+  array_group: null
+  metadata:
+    pool_priority: 30
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    account: ehpc533
