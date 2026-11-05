@@ -578,6 +578,34 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       caching predict. Routing is known as soon as the token (or a drafted token) is. Inference-only fallback:
       keep layers 0-2 resident (3 × 360 experts ≈ 2.7 GB at Q4).
 
+- **2026-11-05, decision (user):** retrofits only, with no pretraining restart.
+  - Expert offload follows the **practical recipe**:
+    - one-layer-ahead prefetch (the free router-on-previous-layer baseline, top-10);
+    - plus a recency cache;
+    - substitute-on-miss;
+    - MoE layers 0-2 resident.
+  - R1 and R3-R7 change the model from scratch; they are out of scope for v4 and kept only as notes for a future
+    model.
+- **2026-11-05, DS-V4.1 Single-Pass mHC and CED vs ours** (report §2.2, §2.4.1):
+  - **Our mHC is DS-V4's formulation** (A = h_pre, B = h_res Sinkhorn, C = h_post, all from X_l). Ours runs per
+    sublayer (98 per forward) as two kernels: read (coefficients + mixing + input norm, 5d) and write (5d read,
+    4d write), i.e. **(3n + 2)d = 14d per sublayer**.
+  - **Single-Pass** feeds block l with A_{l-1}, so the write of l-1, the mixing of l and the coefficients of l
+    become one pass: (2n + 2)d = 10d. That changes the function, so a retrofit would need fine-tuning.
+  - **For us an exact fusion is likely possible** (to be verified with a kernel): one token's streams are only
+    4 × 2048 bf16 = 16 KB. They can stay on-chip between the write of sublayer l-1 and the read of l, which
+    removes the second read without the shift.
+  - **Gain:** fewer launches in decode (196 → 98 mHC kernels), and ~5.6 → ~4 MB of activation traffic per token
+    in prefill (~13 % → ~9 % of a 1M prefill on a 4090) [est.].
+  - **CED retrofit:** the prefill skip requires that every cross-token path of the upper half come from the
+    encoder output or a bounded window. For us that means 3 attention layers' KV **and 21 CKDA layers' k / v /
+    β / gates** projected from H_24, plus a replay of the last few tokens for the short convolutions.
+    - The gain would be ~45 % of prefill compute.
+    - It is large surgery on the information flow, untested as a conversion (DS trained CED from scratch), and
+      would need a cheap offline probe first (regress the upper layers' k / v / gates from H_24: R², ΔNLL), then
+      an s3 conversion ablation.
+    - Not before the sparse-attention path.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
