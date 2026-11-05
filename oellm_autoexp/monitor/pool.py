@@ -155,7 +155,7 @@ class PoolHostConfig:
     # it is given up; healthy ones (handover, wall clock, pool_ctl preempt) are
     # unlimited, a continuous run has one per segment
     max_attempts: int = 20
-    # a RUNNING host whose supervisor heartbeat is older than this is cancelled
+    # a RUNNING host whose supervisor heartbeat is older than this is cancelled (unless held)
     host_stale_s: float = 900.0
     # supervisor poll period
     poll_s: float = 10.0
@@ -207,9 +207,15 @@ class PoolHostConfig:
     preflight_check_overrides: list[str] = field(default_factory=list)
     # where a preflight exclusion goes: "host" (default) -- <host>/exclude_nodes, honoured by that
     # host's supervisor only; "pool" -- <pool>/exclude_nodes, which every later host avoids AND
-    # which the monitor pushes into queued hosts' ExcNodeList (scontrol update: an edit of an
-    # existing SLURM job, not allowed without the user's go, AGENTS.md 2026-11-03)
+    # which the monitor pushes into queued hosts' ExcNodeList only with refresh_queued_excludes
+    # (scontrol update: an edit of an existing SLURM job, not allowed without the user's go,
+    # AGENTS.md 2026-11-03)
     preflight_exclude_scope: str = "host"
+    # push exclusions found after a host was submitted into its queued SLURM job (scontrol
+    # update of ExcNodeList). OFF by default: an automatic edit of an existing SLURM job needs
+    # the user's go (AGENTS.md 2026-11-03); a host that starts on a bad node is caught by the
+    # preflight / NODE_CHECK on its own nodes instead.
+    refresh_queued_excludes: bool = False
     # VERIFIED handover (with `handover`): the runs on the old host are stopped (checkpoint) and
     # restart on the new, verified host while the old allocation stays; it is released once every
     # moved run is healthy there (handover_healthy_steps matches of handover_healthy_pattern in
@@ -219,8 +225,10 @@ class PoolHostConfig:
     handover_healthy_steps: int = 3
     handover_healthy_pattern: str = r"iteration\s+\d+/"
     handover_verify_timeout_s: float = 3600.0
-    # HOLD: the monitor never releases a host -- not idle, not for queued work it cannot run, not
-    # after a handover; only its wall clock or `pool_ctl exit-host` ends it (per host:
+    # HOLD: the monitor never releases or cancels a host -- not idle, not for queued work it cannot
+    # run, not after a handover or a failed preflight, not for a stale supervisor heartbeat, not on
+    # `pool_ctl close` or an unnamed `pool_ctl drain`; only its wall clock, `pool_ctl exit-host` or
+    # a drain naming it ends it (per host:
     # `pool_ctl hold <host>`, a <host>/control/hold file). For allocations that are hard to get
     # back (adopted cns144 jobs: 47998967 was released with 15 h left, 2026-10-30).
     hold_hosts: bool = False
@@ -1067,6 +1075,23 @@ class PoolManager:
                         (layout.host_dir(host.hid) / name).unlink(missing_ok=True)
                     host.info = {}
                     gone = True
+                elif (host.alive_age is None or host.alive_age > cfg.host_stale_s) and self._held(
+                    layout, cfg, host.hid
+                ):
+                    # a HELD allocation is never cancelled for a silent supervisor: a hung
+                    # GPFS / slurmctld call stops the heartbeat while the job and its run go on
+                    # (p264 host001, job 48203953, 264 nodes, cancelled 2026-11-03 22:27 for
+                    # a 1827 s old heartbeat while its 256-node run trained). Kept as it is.
+                    warned = self.__dict__.setdefault("_stale_held_warned", set())
+                    if (pool_dir, host.hid) not in warned:
+                        LOGGER.error(
+                            "[pool] HELD host %s (job %s): supervisor heartbeat %s s old -- "
+                            "kept (never cancelled while held); check its supervisor",
+                            host.hid,
+                            host.record.runtime.runtime_job_id,
+                            "?" if host.alive_age is None else f"{host.alive_age:.0f}",
+                        )
+                        warned.add((pool_dir, host.hid))
                 elif host.alive_age is None or host.alive_age > cfg.host_stale_s:
                     LOGGER.warning(
                         "[pool] host %s (job %s) heartbeat is %s s old: cancelling it",
@@ -1088,6 +1113,11 @@ class PoolManager:
                 self._unassign(layout, rid, state.host)
 
     _slurm_cancel = None  # set by the monitor loop: callable(job_id)
+
+    @staticmethod
+    def _held(layout: PoolLayout, cfg: PoolHostConfig, hid: str) -> bool:
+        """hold_hosts, or a <host>/control/hold file (pool_ctl hold)."""
+        return bool(cfg.hold_hosts) or (layout.host_dir(hid) / "control" / "hold").exists()
 
     def _cancel_host_job(self, host: HostView) -> None:
         rid = host.record.runtime.runtime_job_id
@@ -1169,11 +1199,7 @@ class PoolManager:
 
         # 1b. hosts the monitor never releases, and the preflight node check of new hosts:
         #     an unverified host takes no run, and is not released as idle meanwhile
-        held = {
-            h.hid
-            for h in hosts
-            if cfg.hold_hosts or (layout.host_dir(h.hid) / "control" / "hold").exists()
-        }
+        held = {h.hid for h in hosts if self._held(layout, cfg, h.hid)}
         unverified = self._preflight(layout, cfg, state, live, held, now)
         live = [h for h in live if not h.retiring]
 
@@ -1402,8 +1428,9 @@ class PoolManager:
                 host.retiring = True
                 LOGGER.info("[pool %s] releasing idle host %s", cfg.name, host.hid)
 
-        # 6. keep hosts submitted, and their exclusion lists current while queued
-        self._refresh_queued_host_excludes(loop, layout, hosts)
+        # 6. keep hosts submitted (and, only if enabled, their exclusion lists current while queued)
+        if cfg.refresh_queued_excludes:
+            self._refresh_queued_host_excludes(loop, layout, hosts)
         work = bool(runs)
         running = [h for h in hosts if h.live(cfg.host_stale_s) and not h.retiring]
         successors = cfg.keep_pending
@@ -1417,6 +1444,10 @@ class PoolManager:
             desired = 0
             for host in hosts:
                 if host.dead or host.retiring:
+                    continue
+                if host.hid in held:
+                    # a held host survives a close too (pool_ctl unhold / exit-host end it): a
+                    # close must not cancel queued cns144 allocations that aged for days
                     continue
                 if host.info:
                     # up: finish what it runs, then release
@@ -2307,10 +2338,19 @@ class PoolManager:
                 elif op == "adopt":
                     result = self._adopt(loop, layout, state, request)
                 elif op == "drain":
-                    for hid in request.get("hosts") or [
-                        h.hid for h in self._hosts.get(str(layout.root), {}).values()
-                    ]:
+                    named = request.get("hosts") or []
+                    if named:  # hosts named explicitly: drained, held or not
+                        targets = list(named)
+                    else:  # "drain everything" leaves the held hosts alone
+                        cfg = layout.load_config()
+                        targets = [
+                            h.hid
+                            for h in self._hosts.get(str(layout.root), {}).values()
+                            if not self._held(layout, cfg, h.hid)
+                        ]
+                    for hid in targets:
                         self._control(layout, hid, "drain", "pool_ctl drain")
+                    result = f"drained {targets}"
                 else:
                     result = f"unknown op {op!r}"
             except Exception as exc:  # pragma: no cover - never let a request kill the poll

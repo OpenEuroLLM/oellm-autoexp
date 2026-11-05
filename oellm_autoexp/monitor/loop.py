@@ -1378,6 +1378,13 @@ class MonitorLoop:
                 continue
             if not isinstance(sibling.definition, SlurmJobConfig):
                 continue
+            # pool hosts are queued allocations, not chain jobs: never edited from here (a pool
+            # session holds them next to its runs; AGENTS.md 2026-11-03), and pool runs have
+            # no SLURM job of their own
+            if (sibling.definition.metadata or {}).get("pool_role") or getattr(
+                sibling.definition, "pool_dir", None
+            ):
+                continue
             runtime_id = sibling.runtime.runtime_job_id
             if not runtime_id or not sibling.runtime.submitted:
                 continue

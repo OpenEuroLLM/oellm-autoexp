@@ -426,6 +426,32 @@ def test_stale_supervisor_heartbeat_cancels_the_host(env):
     assert env.fake.get_job(host.runtime.runtime_job_id).state == "CANCELLED"
 
 
+@pytest.mark.parametrize("how", ["pool", "file"])
+def test_stale_heartbeat_never_cancels_a_held_host(env, how):
+    # p264 host001 (264 nodes, 2026-11-03): a hung supervisor call stopped the heartbeat while
+    # the run trained, and the monitor cancelled the allocation. A held host is kept.
+    meta = env.layout.load_meta()
+    meta["config"]["host_stale_s"] = 60
+    meta["config"]["hold_hosts"] = how == "pool"
+    env.layout.write_meta(meta)
+    env.add_run("job_a")
+    env.poll(2)
+    host = env.hosts()[0]
+    hid = env.host_up(host)
+    if how == "file":
+        (env.layout.host_dir(hid) / "control").mkdir(parents=True, exist_ok=True)
+        (env.layout.host_dir(hid) / "control" / "hold").write_text("pool_ctl hold\n")
+    env.poll()
+    rid = env.rec("job_a").runtime.runtime_job_id
+    env.start_run(rid, hid)
+    old = time.time() - 120
+    os.utime(env.layout.host_dir(hid) / "alive", (old, old))
+    env.poll(2)
+    assert env.fake.get_job(host.runtime.runtime_job_id).state == "RUNNING"
+    assert not (env.layout.host_dir(hid) / "exited").exists()
+    assert read_run_state(env.layout, rid).status == "RUNNING"  # the run is left alone
+
+
 def test_assigned_but_not_started_run_returns_to_the_queue(env):
     env.add_run("job_a")
     env.poll(2)
@@ -506,6 +532,32 @@ def test_requests_close_and_cancel(env):
     submit_request(env.layout.root, "open")
     env.poll(2)
     assert any(h.runtime.final_state is None for h in env.hosts())
+
+
+def test_close_and_unnamed_drain_spare_held_hosts(env):
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=1, handover=True, hold_hosts=False)
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(3)
+    running, queued = env.hosts()
+    up = env.host_up(running)
+    for rec in (running, queued):
+        hdir = env.layout.host_dir(rec.definition.metadata["pool_host_id"])
+        (hdir / "control").mkdir(parents=True, exist_ok=True)
+        (hdir / "control" / "hold").write_text("pool_ctl hold\n")
+    env.poll()
+    submit_request(env.layout.root, "drain")
+    submit_request(env.layout.root, "close")
+    env.poll(2)
+    assert env.layout.load_state()["closed"] is True
+    assert env.fake.get_job(queued.runtime.runtime_job_id).state == "PENDING"
+    assert env.rec(queued.job_id).runtime.final_state is None
+    assert not (env.layout.host_dir(up) / "control" / "drain").exists()
+    # a drain that NAMES the held host still drains it
+    submit_request(env.layout.root, "drain", hosts=[up])
+    env.poll()
+    assert (env.layout.host_dir(up) / "control" / "drain").exists()
 
 
 def test_monitor_restart_rehydrates_pool_runs(env):
@@ -722,9 +774,10 @@ def test_restart_hooks_attribute_a_failed_pool_run_to_its_node(env, tmp_path):
     assert out.read_text().split() == [host_job, rid, "jpbo-001-01,jpbo-001-02"]
 
 
-def test_queued_successor_gets_exclusions_found_after_its_submission(env, monkeypatch):
+@pytest.mark.parametrize("enabled", [False, True])
+def test_queued_successor_gets_exclusions_found_after_its_submission(env, monkeypatch, enabled):
     meta = env.layout.load_meta()
-    meta["config"].update(keep_pending=1, handover=True)
+    meta["config"].update(keep_pending=1, handover=True, refresh_queued_excludes=enabled)
     env.layout.write_meta(meta)
     env.add_run("train")
     env.poll(3)
@@ -737,6 +790,10 @@ def test_queued_successor_gets_exclusions_found_after_its_submission(env, monkey
     )
     env.layout.exclude_nodes.write_text("jpbo-007-07\n")
     env.poll()
+    if not enabled:  # default: queued SLURM jobs are never edited (AGENTS.md 2026-11-03)
+        env.poll(2)
+        assert calls == []
+        return
     assert calls == [(queued.runtime.runtime_job_id, "jpbo-007-07")]  # the queued one only
     assert env.rec(queued.job_id).definition.slurm.sbatch.exclude == "jpbo-007-07"
     env.poll(2)
