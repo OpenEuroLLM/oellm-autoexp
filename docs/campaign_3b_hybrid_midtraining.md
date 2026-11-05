@@ -713,6 +713,34 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       unfused projections).
     - The indexer warm-up on frozen v4.
 
+- **2026-11-05, T1 results** (v4_2ph step 8000, dense attention, 4 held-out long_64k documents per length,
+  dev-queue job 48593819; `docs/campaign_3b_hybrid_midtraining_results/t1_long_attention_v4_2ph_8000/`):
+  - **Parity:** at 32k, chunked prefill with the cache gives NLL 0.47014 against 0.47007 for one forward.
+  - **NLL by position bin (dense → log-n, base 64k):**
+
+    | documents | 32-64k | 64-128k | 128-256k | 256-512k |
+    |---|---|---|---|---|
+    | 128k docs | 1.808 | 1.970 → **1.956** | | |
+    | 256k docs | 0.140 | 0.138 → 0.131 | 0.145 → **0.122** | |
+    | 512k docs | 1.427 | 1.433 → 1.432 | 1.441 → 1.435 | 1.425 → **1.414** |
+
+  - **No collapse up to 512k** (8× the training length). NoPE attention + CKDA extrapolate. Log-n scaling (base 64k)
+    helps by -0.005 to -0.02 beyond 64k and changes nothing below it.
+    - Caveat: the bins are different documents per length, so compare within a row.
+  - **Retrieval (10-way; 3-4 questions per task, noisy):**
+    - passkey 1.0 at 64k and 128k;
+    - 64-fact retrieval 0.25 at 64k and 128k (also in distribution);
+    - variable tracking 0.0, with log-n 0.5 at 128k.
+  - The 256k / 512k retrieval stopped because the natural filler is shorter than 256k. prepare_tasks now repeats
+    it; rerun pending.
+  - **CP test batches:**
+    - Packed CP for CKDA / Engram passes.
+    - Whole hybrid at CP=2 with TE's ring attention (THD + p2p): logits max 0.087-0.095, mean 0.008-0.013 of their
+      spread vs CP=1 (bf16). The mean bound of 1 % failed on one rank, the other rank hung in the gradient
+      all-reduce, and the batch was aborted.
+    - The test now reduces its errors over the ranks and compares TE ring attention, an all-gather dense control
+      and page-sparse attention; rerun pending.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
