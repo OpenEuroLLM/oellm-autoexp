@@ -9,7 +9,7 @@ defaults:
 
 aux:
   name: cp_packed
-  bench: "cd submodules/Megatron-LM && python -m torch.distributed.run --standalone --nproc-per-node 2 -m pytest -q -p no:cacheprovider -o addopts= -rfE tests/unit_tests/ssm/test_cp_packed.py tests/unit_tests/ssm/test_complex_kda_packed.py tests/unit_tests/ssm/test_engram.py tests/unit_tests/ssm/test_kronlstm_cp.py"
+  bench: "cd submodules/Megatron-LM && python -m torch.distributed.run --standalone --nproc-per-node 2 -m pytest -q -p no:cacheprovider -o addopts= -rfE tests/unit_tests/ssm/test_cp_packed.py tests/unit_tests/transformer/test_page_sparse_attention.py tests/unit_tests/transformer/test_page_sparse.py tests/unit_tests/models/test_hybrid_cp_packed.py tests/unit_tests/models/test_hybrid_packed_docs.py tests/unit_tests/ssm/test_complex_kda_packed.py tests/unit_tests/ssm/test_kronlstm_cp.py"
 
 job:
   name: campaign_mid_${aux.name}

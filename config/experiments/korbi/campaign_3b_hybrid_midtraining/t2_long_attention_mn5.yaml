@@ -1,5 +1,6 @@
 # @package _global_
-# T2: training-free sparse attention on v4 (page 64, window 512, 1 sink page): pooled-key pages at 3 budgets, Quest, the oracle ceiling, token top-k, CSA2-like mean-pooled entries, window-only
+# T2: sparse attention on v4 (training-free selectors + a learned page indexer, warmed up by KL to the dense
+# page mass on 48 held-out 64k documents with the model frozen) (page 64, window 512, 1 sink page): pooled-key pages at 3 budgets, Quest, the oracle ceiling, token top-k, CSA2-like mean-pooled entries, window-only
 # (docs/campaign_3b_hybrid_midtraining.md; scripts/korbi/campaign_midtraining/long_attention_probe.py, the
 # attention through Megatron's page_sparse module). One MN5 node:
 #   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
@@ -14,9 +15,9 @@ aux:
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
   docs: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
   raw: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/raw.jsonl
-  policies: "dense/window/page_mean:topk=16/page_mean:topk=32/page_mean:topk=64/quest:topk=32/oracle:topk=32/token_topk:topk=32/compress_mean:topk=32"
+  policies: "dense/window/page_mean:topk=16/page_mean:topk=32/page_mean:topk=64/quest:topk=32/oracle:topk=32/token_topk:topk=32/compress_mean:topk=32/indexer:topk=32"
   lengths: "65536,131072"
-  args: "--tasks nll,retrieval --n 4 --nll-docs 4 --chunk 16384"
+  args: "--tasks nll,retrieval --n 4 --nll-docs 4 --chunk 16384 --train-indexer 48 --indexer-len 65536"
   bench: "bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh long_attention_probe.py ${aux.export} ${aux.out} --docs ${aux.docs} --raw ${aux.raw} --policies ${aux.policies} --lengths ${aux.lengths} ${aux.args}"
 
 job:

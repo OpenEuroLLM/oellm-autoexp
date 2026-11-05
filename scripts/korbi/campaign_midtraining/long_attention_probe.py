@@ -10,7 +10,9 @@ how the attention layers attend:
   logn[:base=65536]              dense, queries scaled by max(1, log n / log base) (Megatron's attention_length_scaling
                                  "logn"; base = the training length)
   <selector>[:k=v,...]           page_sparse with that selector (window, page_mean, quest, oracle, token_topk,
-                                 compress_mean) and PageSparseConfig fields, e.g. page_mean:topk=32,page=64
+                                 compress_mean, indexer) and PageSparseConfig fields, e.g. page_mean:topk=32
+                                 (indexer: --train-indexer N trains one PageIndexer per attention layer first,
+                                 KL to the dense page mass on N held-out long documents: the C2 warm-up)
 
 Tasks:
   nll        per-position NLL (bins) on long held-out documents (v8ml-valid long_64k: 89 docs >= 128k, 23 >= 256k,
@@ -74,17 +76,30 @@ def parse_policy(text):
 
 class AttentionPolicy:
     """Replaces every attention mixer's forward: chunk-wise prefill / decode against the HF cache's (k, v), with
-    the current policy."""
+    the current policy. With ``indexers`` (one page_sparse.PageIndexer per attention layer) the ``indexer``
+    selector scores pages from the layer input; ``train_indexer`` trains them meanwhile (dense forward, KL to the
+    dense attention's page mass of every chunk's queries: the C2 warm-up)."""
 
     def __init__(self, model):
         self.policy = {"kind": "dense"}
         self.n = 0
-        for layer in model.model.layers:
+        self.indexers, self.opts, self.index_keys = {}, {}, {}
+        self.train_indexer = False
+        self.losses = defaultdict(list)
+        for i, layer in enumerate(model.model.layers):
             if layer.kind == "attention":
-                layer.mixer.forward = types.MethodType(self._forward(), layer.mixer)
+                layer.mixer.forward = types.MethodType(self._forward(i), layer.mixer)
                 self.n += 1
 
-    def _forward(self):
+    def add_indexers(self, model, heads=4, dim=64, page=64, lr=1e-3):
+        for i, layer in enumerate(model.model.layers):
+            if layer.kind == "attention":
+                dev = layer.mixer.q_proj.weight.device
+                idx = ps.PageIndexer(layer.mixer.q_proj.weight.shape[1], heads, dim, page).to(dev)
+                self.indexers[i] = idx
+                self.opts[i] = torch.optim.Adam(idx.parameters(), lr=lr)
+
+    def _forward(self, li):
         pol = self
 
         def forward(att, x, state=None, keep_state=True):
@@ -103,13 +118,39 @@ class AttentionPolicy:
                 k = torch.cat([state[0], k], dim=2)
                 v = torch.cat([state[1], v], dim=2)
             p = pol.policy
+            idx_scores = None
+            if li in pol.indexers:
+                idxr = pol.indexers[li]
+                if state is None:
+                    pol.index_keys[li] = None
+                with torch.enable_grad() if pol.train_indexer else torch.no_grad():
+                    xf = x.float()  # the indexer trains in fp32
+                    ki = idxr.wk(xf)  # [b, s, dim]
+                    prev = pol.index_keys[li]
+                    keys = ki if prev is None else torch.cat([prev, ki], 1)
+                    pk = ps.page_pool(keys.unsqueeze(1), idxr.page, "mean")[:, 0]
+                    sc = idxr(xf, pk)  # [b, s, P]
+                    if pol.train_indexer:
+                        oracle = ps.PageSparseConfig(selector="oracle", page=idxr.page, window=512, sink_pages=1)
+                        with torch.no_grad():
+                            target = ps.page_scores(q, k, oracle, past, d**-0.5)
+                        cand = ps.candidate_mask(s, pk.shape[1], past, oracle, x.device)
+                        if bool(cand.any()):
+                            loss = ps.indexer_kl_loss(sc, target, cand)
+                            pol.opts[li].zero_grad(set_to_none=True)
+                            loss.backward()
+                            pol.opts[li].step()
+                            pol.losses[li].append(float(loss))
+                pol.index_keys[li] = keys.detach()
+                idx_scores = sc.detach()
             if p["kind"] == "logn":
                 pos = past + torch.arange(s, device=x.device)
                 f = torch.clamp(torch.log(pos.float() + 1) / math.log(p["base"]), min=1.0)
                 q = (q.float() * f[None, None, :, None]).to(q.dtype)
             with torch.cuda.device(x.device):
                 if p["kind"] == "sparse":
-                    o = ps.page_sparse_attention(q, k, v, p["cfg"], q_offset=past, scale=d**-0.5)
+                    o = ps.page_sparse_attention(q, k, v, p["cfg"], q_offset=past, scale=d**-0.5,
+                                                 indexer_scores=idx_scores)
                 else:
                     o = ps.dense_attention(q, k, v, q_offset=past, scale=d**-0.5)
             o = o.transpose(1, 2)  # [b, s, nh, d]
@@ -173,16 +214,36 @@ def score_choice(model, ctx, conts, chunk):
 
 
 def long_docs(prefix, min_len, n, bos, seed=0):
+    if not prefix:  # the local check: random tokens
+        return [torch.randint(3, 50_000, (1, min_len), generator=torch.Generator().manual_seed(seed + i))
+                for i in range(n)]
     docs = rp.read_indexed(prefix)
     order = [i for i in np.random.default_rng(seed).permutation(len(docs)) if docs.lengths[i] >= min_len - 1]
     return [torch.tensor([[bos] + docs[int(i)][: min_len - 1].tolist()]) for i in order[:n]]
 
 
+def train_indexers(model, pol, args, out):
+    """The indexer warm-up on long held-out documents after the evaluation ones (dense forward)."""
+    pol.add_indexers(model, args.indexer_heads, args.indexer_dim, 64, args.indexer_lr)
+    docs = long_docs(args.docs, args.indexer_len, args.nll_docs + args.train_indexer, args.bos)[args.nll_docs:]
+    pol.policy, pol.train_indexer = parse_policy("dense"), True
+    t0 = time.time()
+    for j, doc in enumerate(docs):
+        prefill(model, doc, args.chunk)
+        if j % 8 == 7 or j == len(docs) - 1:
+            mean = {li: round(float(np.mean(v[-16:])), 4) for li, v in pol.losses.items()}
+            print(f"[indexer] {j + 1}/{len(docs)} docs, KL (last 16 chunks) {mean} {time.time() - t0:.0f}s",
+                  flush=True)
+    pol.train_indexer = False
+    torch.save({li: {k: v.cpu() for k, v in m.state_dict().items()} for li, m in pol.indexers.items()},
+               out / "indexers.pt")
+    (out / "indexer_losses.json").write_text(json.dumps({str(k): v for k, v in pol.losses.items()}))
+
+
 def run_nll(model, pol, policies, args, out):
     res = {}
     for L in args.lengths:
-        docs = long_docs(args.docs, L, args.nll_docs, args.bos) if args.docs else [
-            torch.randint(3, 50_000, (1, L), generator=torch.Generator().manual_seed(i)) for i in range(2)]
+        docs = long_docs(args.docs, L, args.nll_docs, args.bos)
         if not docs:
             continue
         for p in policies:
@@ -266,6 +327,11 @@ def main():
     p.add_argument("--n", type=int, default=6, help="questions per retrieval task and length")
     p.add_argument("--bos", type=int, default=1)
     p.add_argument("--parity", type=int, default=32768, help="parity check length (0: off)")
+    p.add_argument("--train-indexer", type=int, default=0, help="documents for the indexer warm-up (0: off)")
+    p.add_argument("--indexer-len", type=int, default=65536)
+    p.add_argument("--indexer-heads", type=int, default=4)
+    p.add_argument("--indexer-dim", type=int, default=64)
+    p.add_argument("--indexer-lr", type=float, default=1e-3)
     args = p.parse_args()
     args.lengths = [int(x) for x in args.lengths.split(",")]
     args.out.mkdir(parents=True, exist_ok=True)
@@ -286,6 +352,8 @@ def main():
               f"{full / n:.6f}", flush=True)
         (args.out / "parity.json").write_text(json.dumps({"tokens": args.parity, "chunked": float(chunked.mean()),
                                                           "one_forward": full / n}))
+    if args.train_indexer and (args.docs or args.tiny):
+        train_indexers(model, pol, args, args.out)
     if "nll" in args.tasks:
         nll = run_nll(model, pol, policies, args, args.out)
     if "retrieval" in args.tasks and not args.tiny:
