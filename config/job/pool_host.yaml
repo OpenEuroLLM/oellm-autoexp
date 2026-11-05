@@ -30,6 +30,8 @@ pool_host:
   # a host that cannot run any queued job is released only once that lasted this long, and
   # never while min_hosts holds it (a step's nodes can look unusable for a poll after it ends)
   insufficient_grace_s: 900
+  # false: never cancel a queued host automatically (its queue age is the point); close still does
+  cancel_surplus_queued: true
   stop_grace_s: 120
   preempt_grace_s: 900
   max_attempts: 20

@@ -287,6 +287,38 @@ def test_fallback_hosts_keeps_several_queued_in_every_account(pool):
     assert len(pending("dev")) == 2 and len(pending("accB")) == 2, "no more hosts than that"
 
 
+def test_no_queued_host_is_cancelled_when_one_starts(pool):
+    """cancel_surplus_queued=false: when a fallback-account host starts, the first account's
+    share shrinks, but its queued hosts are kept and nothing new is submitted beyond the target
+    (JUPITER 2026-11-05: host013 lost its queue age this way)."""
+    pool.create_pool(
+        *FAST,
+        "job.pool_host.keep_pending=3",
+        "job.pool_host.fallback_hosts=2",
+        "job.pool_host.cancel_surplus_queued=false",
+        'job.pool_host.host_accounts="dev,accB"',
+    )
+    pool.enqueue("ns", "aux.iters=300", "aux.tick=0.1")
+    pool.start_monitor(hold_new_jobs=True)
+
+    def jobs(account, state):
+        return [
+            j["id"] for j in pool.fake_jobs() if j["account"] == account and j["state"] == state
+        ]
+
+    pool.wait_for(
+        lambda: len(jobs("dev", "PENDING")) == 2 and len(jobs("accB", "PENDING")) == 2, 60, "2+2"
+    )
+    pool.release(jobs("accB", "PENDING")[0])  # a fallback host starts and takes the run
+    run = pool.wait_for(lambda: pool.runs_of("dummy_ns"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(run).status == "RUNNING", 30, "running")
+    time.sleep(5)
+    cancelled = [j["id"] for j in pool.fake_jobs() if j["state"] == "CANCELLED"]
+    assert not cancelled, f"queued hosts were cancelled: {cancelled}"
+    assert len(jobs("dev", "PENDING")) == 2, "the first account's queued hosts are kept"
+    assert len(jobs("dev", "PENDING")) + len(jobs("accB", "PENDING")) <= 3, "nothing beyond target"
+
+
 USER_JOB = """#!/bin/bash
 #SBATCH --job-name=user_job
 #SBATCH --nodes=1
@@ -910,9 +942,10 @@ def test_precheck_drops_failed_and_slow_nodes_before_the_run(pool, tmp_path):
     excluded = (pool.pool_dir / "hosts" / "host001" / "exclude_nodes").read_text().split()
     assert excluded == ["n1000-0", "n1000-1"]
     # only this allocation: the pool-wide list is untouched
-    assert not (pool.pool_dir / "exclude_nodes").exists() or not (
-        pool.pool_dir / "exclude_nodes"
-    ).read_text().strip()
+    assert (
+        not (pool.pool_dir / "exclude_nodes").exists()
+        or not (pool.pool_dir / "exclude_nodes").read_text().strip()
+    )
 
 
 def test_two_node_job_gets_both_nodes_and_a_moving_port(pool):
@@ -1058,7 +1091,9 @@ def test_a_crashed_run_s_leftover_gpu_memory_keeps_the_next_run_off_its_node(poo
     jid, node = pool.run_state(first).started["job"], pool.run_state(first).started["nodes"]
     pool.enqueue("b", "aux.iters=20", "aux.tick=0.05")
     (Path(pool.env["FAKESLURM_DIR"]) / "gpu_busy").write_text(node + "\n")  # a leftover process
-    subprocess.run(["pkill", "-9", "-f", "sigterm_dummy_trainer.py.*dummy_a/checkpoints"], check=False)
+    subprocess.run(
+        ["pkill", "-9", "-f", "sigterm_dummy_trainer.py.*dummy_a/checkpoints"], check=False
+    )
     pool.wait_for(lambda: pool.run_state(first).status == "FAILED", 60, "run a to crash")
     second = pool.wait_for(lambda: pool.runs_of("dummy_b"), 60, "run b")[0]
     pool.wait_for(lambda: pool.run_state(second).status == "COMPLETED", 90, "run b")

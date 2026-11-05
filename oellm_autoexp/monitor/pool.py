@@ -133,6 +133,12 @@ class PoolHostConfig:
     # check read 507 of 514 usable and released a held 516-node allocation at once). Hosts
     # within min_hosts are never released for it -- the hold is the operator's call.
     insufficient_grace_s: float = 900.0
+    # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
+    # share shrank when another host started). False: never cancel a queued host automatically --
+    # its queue age is the point (JUPITER 2026-11-05: the 2+2 account split cancelled e-sta hosts
+    # each time one started). New hosts are then only submitted while the total is below target.
+    # `pool_ctl close` still cancels queued hosts.
+    cancel_surplus_queued: bool = True
     # Queue the keep_pending successors only once every running host is this old.
     # 0 = right away (maximum age priority; right for long queues). For short
     # queues set it to roughly (wall time - expected queue wait).
@@ -1325,9 +1331,10 @@ class PoolManager:
             queued_hosts = sorted(
                 (h for h in current if not h.info), key=lambda h: h.record.job_id, reverse=True
             )
-            for host in queued_hosts[: max(0, len(current) - desired)]:
-                self._cancel_host_record(loop, host)
-                host.retiring = True
+            if cfg.cancel_surplus_queued:
+                for host in queued_hosts[: max(0, len(current) - desired)]:
+                    self._cancel_host_record(loop, host)
+                    host.retiring = True
             current = [h for h in current if not h.retiring]
             missing = desired - len(current)
         # A host that ended without its supervisor ever starting -- sbatch failed,
@@ -1411,9 +1418,10 @@ class PoolManager:
                 key=lambda h: h.record.job_id,
                 reverse=True,
             )
-            for host in queued[: max(0, len(queued) - target)]:
-                self._cancel_host_record(loop, host)
-                host.retiring = True
+            if cfg.cancel_surplus_queued:
+                for host in queued[: max(0, len(queued) - target)]:
+                    self._cancel_host_record(loop, host)
+                    host.retiring = True
             gap = target - min(len(queued), target)
             if gap > 0 and create_account is None:
                 create_account = account
@@ -1421,13 +1429,19 @@ class PoolManager:
         # queued hosts of an account no longer in the list
         for host in current:
             if (
-                not host.info
+                cfg.cancel_surplus_queued
+                and not host.info
                 and not host.retiring
                 and host.account
                 and host.account not in accounts
             ):
                 self._cancel_host_record(loop, host)
                 host.retiring = True
+        if not cfg.cancel_surplus_queued:
+            # surplus queued hosts are kept: they count against every account's gap, so the
+            # total never grows beyond what is wanted
+            queued_total = len([h for h in current if not h.info and not h.retiring])
+            missing = min(missing, max(0, wanted_queued - queued_total))
         return missing, create_account
 
     # --- one run per job across pools (job.metadata.pool_singleton) ----------
