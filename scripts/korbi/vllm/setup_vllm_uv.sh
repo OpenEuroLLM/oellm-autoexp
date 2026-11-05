@@ -31,6 +31,9 @@ if [ ! -f "$DEST/.installed" ]; then
  touch "$DEST/.installed"
 fi
 tar -C submodules/vllm/vllm --exclude='*.so' --exclude=__pycache__ -cf - . | tar -C "$DEST/vllm" -xf -
+# hides the image's optional packages that cannot load next to this torch, FlashInfer JIT cache
+# in $DEST instead of the shared $HOME (see the file)
+cp scripts/korbi/vllm/sitecustomize.py "$DEST/sitecustomize.py"
 printf '%s\n' "$VLLM_SOURCE_ID" > "$DEST/RUNTIME_SOURCE_ID"
 flock -u 9
 exec 9>&-
