@@ -194,15 +194,19 @@ def prefill(model, ids, chunk, cache=None, want_nll=False):
 
 
 @torch.no_grad()
-def score_choice(model, ctx, conts, chunk):
-    """Index of the highest-logprob continuation after ctx (and the logprobs)."""
+def score_choice(model, ctx, conts, chunk, pol=None):
+    """Index of the highest-logprob continuation after ctx (and the logprobs). ``pol``: its indexers' key cache
+    is restored for every continuation, like the copied model cache."""
     cache, last, _ = prefill(model, ctx, chunk)
+    saved = dict(pol.index_keys) if pol is not None else None
     lp0 = torch.log_softmax(model.lm_head(last).float(), -1)[0]
     scores = []
     dev = next(model.parameters()).device
     for cont in conts:
         s = float(lp0[cont[0]])
         if len(cont) > 1:
+            if saved is not None:
+                pol.index_keys = dict(saved)
             c = copy.deepcopy(cache)
             out = model.model(input_ids=torch.tensor([cont[:-1]], device=dev), past_key_values=c, use_cache=True)
             lp = torch.log_softmax(model.lm_head(out.last_hidden_state[0]).float(), -1)
@@ -283,7 +287,7 @@ def run_retrieval(model, pol, policies, args, out, tok):
             acc = defaultdict(list)
             for r in rows:
                 ctx = torch.tensor([r["items"][0]["ctx"]])
-                pick, _ = score_choice(model, ctx, [it["cont"] for it in r["items"]], args.chunk)
+                pick, _ = score_choice(model, ctx, [it["cont"] for it in r["items"]], args.chunk, pol)
                 acc[r["task"].split("_")[0]].append(pick == r["gold"])
             key = f"{L}|{p['name']}"
             for task, v in acc.items():
@@ -332,6 +336,7 @@ def main():
     p.add_argument("--indexer-heads", type=int, default=4)
     p.add_argument("--indexer-dim", type=int, default=64)
     p.add_argument("--indexer-lr", type=float, default=1e-3)
+    p.add_argument("--indexers", default="", help="indexers.pt of an earlier run (instead of --train-indexer)")
     args = p.parse_args()
     args.lengths = [int(x) for x in args.lengths.split(",")]
     args.out.mkdir(parents=True, exist_ok=True)
@@ -354,6 +359,11 @@ def main():
                                                           "one_forward": full / n}))
     if args.train_indexer and (args.docs or args.tiny):
         train_indexers(model, pol, args, args.out)
+    elif args.indexers:  # trained indexers of an earlier run
+        pol.add_indexers(model, args.indexer_heads, args.indexer_dim, 64, args.indexer_lr)
+        state = torch.load(args.indexers)
+        for li, sd in state.items():
+            pol.indexers[int(li)].load_state_dict(sd)
     if "nll" in args.tasks:
         nll = run_nll(model, pol, policies, args, args.out)
     if "retrieval" in args.tasks and not args.tiny:
