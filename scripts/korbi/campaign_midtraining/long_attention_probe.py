@@ -19,7 +19,7 @@ Tasks:
              (scripts/korbi/downstream/prepare_tasks.py), scored as 10-way choices by the continuation logprob
 
     python long_attention_probe.py --model <export> --out <dir> --tasks nll,retrieval \\
-        --policies "dense;logn;window;page_mean:topk=32" --lengths 65536,131072,262144 --docs <prefix> --raw <raw.jsonl>
+        --policies dense/logn/window/page_mean:topk=32 --lengths 65536,131072,262144 --docs <prefix> --raw <raw.jsonl>
     python long_attention_probe.py --tiny --out /tmp/x        # local check: reduced random model, random tokens
 """
 
@@ -257,7 +257,7 @@ def main():
     p.add_argument("--tiny", action="store_true")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--tasks", default="nll,retrieval")
-    p.add_argument("--policies", default="dense;logn;window;page_mean", help="';'-separated policies")
+    p.add_argument("--policies", default="dense/logn/window/page_mean", help="'/'-separated policies")
     p.add_argument("--lengths", default="65536,131072,262144")
     p.add_argument("--chunk", type=int, default=16384)
     p.add_argument("--docs", default="", help="indexed dataset prefix of long held-out documents")
@@ -274,7 +274,7 @@ def main():
     model = rp.load_model(args.model, args.tiny)
     pol = AttentionPolicy(model)
     print(f"[probe] model loaded in {time.time() - t0:.0f}s; {pol.n} attention layers", flush=True)
-    policies = [parse_policy(x) for x in args.policies.split(";")]
+    policies = [parse_policy(x) for x in args.policies.split("/")]
     torch.backends.cuda.matmul.allow_tf32 = True  # the oracle / token_topk dense score blocks (fp32 einsums)
     nll = ret = None
     if args.docs and args.parity:  # chunked prefill with the cache vs one stateless forward, dense

@@ -14,10 +14,10 @@ aux:
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
   docs: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
   raw: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/raw.jsonl
-  policies: "dense;window;page_mean:topk=16;page_mean:topk=32;page_mean:topk=64;quest:topk=32;oracle:topk=32;token_topk:topk=32;compress_mean:topk=32"
+  policies: "dense/window/page_mean:topk=16/page_mean:topk=32/page_mean:topk=64/quest:topk=32/oracle:topk=32/token_topk:topk=32/compress_mean:topk=32"
   lengths: "65536,131072"
   args: "--tasks nll,retrieval --n 4 --nll-docs 4 --chunk 16384"
-  bench: "bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh long_attention_probe.py ${aux.export} ${aux.out} --docs ${aux.docs} --raw ${aux.raw} --policies '${aux.policies}' --lengths ${aux.lengths} ${aux.args}"
+  bench: "bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh long_attention_probe.py ${aux.export} ${aux.out} --docs ${aux.docs} --raw ${aux.raw} --policies ${aux.policies} --lengths ${aux.lengths} ${aux.args}"
 
 job:
   name: campaign_mid_${aux.name}
