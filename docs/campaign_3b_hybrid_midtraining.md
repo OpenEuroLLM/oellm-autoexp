@@ -683,6 +683,36 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - **Tests:** CP=2/4 THD tests for ComplexKDA and Engram, plus a hybrid CP-vs-CP1 loss parity test, ~2 days.
   - **Total ~1-1.5 weeks.**
 
+- **2026-11-05, implementation (user: Engram + CKDA with Megatron CP; T1 / T2 with full implementations):**
+  - **Packed CP, Megatron `d22a9020a`:**
+    - `fla_cp.ThdStream` maps Megatron's per-document THD CP sharding to FLA's stream, once per micro-batch
+      (thd_rank_indices == TE's `thd_get_partitioned_indices`), with the FLA CP context from the document
+      boundaries.
+    - Complex KDA: `_forward_cp_packed`.
+    - Engram: `_forward_cp_packed`. Each rank computes its stream piece from a halo of
+      `(kernel - 1) * dilation + max order - 1` tokens; lookups and compute are split.
+    - Tests `tests/unit_tests/ssm/test_cp_packed.py` pass on MN5 (CP=2 vs CP=1: outputs, input and parameter
+      gradients; a document spans the pieces).
+    - Pre-existing failure: `test_engram.py::test_sign_hash_restarts_at_documents` fails identically on the
+      unmodified engram.py (TF32 tolerance, 5.7e-5).
+  - **Page-sparse attention, Megatron `f851ef602` + uncommitted integration:**
+    - `experimental_attention_variant/page_sparse.py`, pure torch:
+      - the selectors: window, page_mean, quest, oracle, token_topk, compress_mean, indexer
+        (`PageIndexer` + `indexer_kl_loss`);
+      - the exact gathered reference;
+      - a FlexAttention backend for the page selectors (a block mask from each query block's page union, a
+        per-token mask_mod), equal to the reference in fp32, forward and backward.
+    - `page_sparse_attention.PageSparseCoreAttention` replaces TE's core attention when `page_sparse_selector` is
+      set (THD per document, CP by an all-gather of the small GQA K / V, the indexer KL warm-up loss,
+      `page_sparse_dense_forward`).
+    - Config fields `page_sparse_*`. The autoexp mirror files still need regenerating (coordinate with the
+      main-run session, which has uncommitted edits to them).
+  - **T1 / T2 probe** (`long_attention_probe.py`):
+    - HF chunked prefill with the cache; attention through page_sparse.
+    - The per-mixer parity of chunked vs one-shot: attention 1-2 ulp, Engram bitwise, CKDA a few ulp (fused vs
+      unfused projections).
+    - The indexer warm-up on frozen v4.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
