@@ -489,6 +489,57 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       (`r0_summary.md`, `r2_summary.md`).
     - It waits behind another session's FLAG-eval shards on the other buffer nodes.
 
+- **2026-11-05, R0 / R2 results** (o260c.0030, 1 node, 59 min; full summaries in
+  `docs/campaign_3b_hybrid_midtraining_results/r0r2_v4_2ph_8000/`):
+  - **How the run went:** two earlier attempts (.0023, .0027) were preempted when the main run took its nodes back.
+  - **Parity:** probe routing vs the export forward differs by +3e-4 NLL on one web_en batch.
+  - **R2 noise:** 2 batches × 32k tokens per domain, so ΔNLL of about ±0.002 is noise.
+  - **R0: next-layer prediction works without training.** The free baseline is layer m's router on the input of
+    the MoE layer below.
+
+    | lookahead | R@5 | R@10 | gate-weighted R@10 |
+    |---|---:|---:|---:|
+    | d = 1 | 0.78-0.82 | 0.91-0.95 | 0.96-0.97 |
+    | d = 2 | 0.69-0.76 | 0.84-0.91 | — |
+    | d = 4 | 0.58-0.68 | 0.74-0.83 | — |
+
+    - By depth (web_en): R@10 is 0.47 / 0.62 / 0.64 at MoE layers 0-2, ≥ 0.91 from layer 3, and ~0.99-1.00 in the
+      top 16 layers. The first 3 layers are the hard part; keep them resident.
+  - **R0: next-token prediction is weak.**
+    - The previous token's experts give R@5 0.25-0.32, against 14-17 % at s1 / s2. It rises with depth, from 0.05
+      at layer 0 to ~0.35 at layers 19-22.
+    - The best learned token-ahead predictor (`start_deep`: emb + xprev + selprev + previous last-layer input)
+      reaches R@5 0.29-0.42 and R@10 0.42-0.57.
+  - **R0: the learned next-layer predictors did not beat the free baseline.** Online training at 3e-6 / 3e-5 is
+    flat to slightly worse, e.g. lin_d1 code R@5 0.764 vs 0.775. This setup (online, domain-interleaved,
+    prequential, a listwise loss) is not the way to learn them; an offline-trained, held-out-tuned version is still
+    open.
+  - **Batch 16:** the true expert union per step is **45-65 per layer** (code 45, web 65), below the 72 of the
+    uniform estimate in §1. The per-stream top-10 of the d = 1 baseline covers 96-97 % of the assignments with
+    78-111 experts.
+  - **R2: robustness to dropping experts.** Dropping the lowest 1 of the top-5 costs +0.004-0.015 NLL; dropping 2
+    costs +0.018-0.052. Long 64k and multilingual are the most sensitive.
+  - **R2: policies** (ΔNLL; miss rate; available experts per layer):
+
+    | policy | ΔNLL | miss | available |
+    |---|---|---|---|
+    | d = 1 prefetch top-10, per stream, skip | +0.002-0.008 | 5-7 % | 10 |
+    | same, substitute | +0.001-0.004 | 5-7 % | 10 |
+    | d = 1 top-10 + the last 16 positions' experts, per stream, substitute | +0.000-0.002 | 3-4 % | 40-49 |
+    | batch 16: combo_d1 top-10 union + the last 4 positions, substitute | ≤ +0.002 | 2 % | 138-182 of 360 |
+    | d = 2 top-10, substitute | -0.003-+0.009 | 10-14 % | 10 |
+    | caches alone (window 64, bs1) | +0.04-0.14 | | ~75-103 |
+    | token-ahead-only prefetch (top-16) | +0.3 to +1.1 | 48-53 % | 16 |
+
+  - **R2: substitute (re-route within the available set) beats skipping everywhere,** roughly halving the cost.
+  - **Consequences:**
+    1. Layer-ahead prefetch (d = 1, top-10, plus a small recency cache) with substitute-on-miss is already within
+       noise of the full model on the unchanged v4. **R1 (miss-drop training) is not needed for d = 1.**
+    2. **Token-ahead prefetch is the gap.** It decides how much latency a 3090 / 4090 can hide beyond one layer.
+       It is where training could help: R3 locality, pre-gating, or a learned predictor done properly.
+    3. Batch 16 needs ~40-50 % of the experts resident per step at 2 % misses. That makes the GPU cache size and
+       the host-side computation of misses the real budget (§1.1).
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

@@ -1,0 +1,12 @@
+{
+ "lin_d1": "lin_d1@3e-06",
+ "lin_d2": "lin_d2@3e-06",
+ "lin_d4": "lin_d4@3e-06",
+ "lin_prev": "lin_prev@3e-05",
+ "tokahead": "tokahead@3e-05",
+ "start": "start@3e-05",
+ "start_deep": "start_deep@3e-05",
+ "combo_d1": "combo_d1@3e-06",
+ "combo_d2": "combo_d2@3e-06",
+ "combo_d4": "combo_d4@3e-06"
+}
