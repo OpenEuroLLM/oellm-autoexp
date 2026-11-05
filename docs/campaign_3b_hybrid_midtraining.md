@@ -741,6 +741,49 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     - The test now reduces its errors over the ranks and compares TE ring attention, an all-gather dense control
       and page-sparse attention; rerun pending.
 
+- **2026-11-05, T2 results** (v4_2ph step 8000, no training except the indexer warm-up; pages of 64, window 512, 1
+  sink page; 4 held-out documents; dev job 48598282; `docs/campaign_3b_hybrid_midtraining_results/t2_long_attention_v4_2ph_8000/`):
+  - **NLL** (mean over all positions; at 128k, the 64-127k bin in brackets):
+
+    | policy | keys per query | 64k | 128k (64-127k) |
+    |---|---|---:|---:|
+    | dense | all | 1.9190 | 1.8987 (1.970) |
+    | window + sink | 640 | 2.0243 | 1.9190 (1.948) |
+    | page_mean top-16 | 1.6k | 1.9142 | **1.8426** (1.878) |
+    | page_mean top-32 | 2.7k | **1.9070** | 1.8428 (1.881) |
+    | page_mean top-64 | 4.7k | 1.9060 | 1.8492 (1.890) |
+    | quest top-32 | 2.7k | 1.9182 | 1.8492 (1.884) |
+    | oracle top-32 (dense attention mass) | 2.7k | 1.9097 | 1.8714 (1.930) |
+    | token top-2048 (dense mass) | 2.7k | 1.9115 | 1.8943 (1.965) |
+    | compress_mean (4 tokens / entry) | 2.7k | 1.9954 | 1.9138 (1.955) |
+    | learned indexer top-32 (48 docs of warm-up) | 2.7k | 1.9779 | 1.8967 (1.926) |
+
+  - **Retrieval at 64k** (10-way, 3-4 questions each; noisy):
+
+    | policy | passkey | 64-fact kvret | var tracking |
+    |---|---|---|---|
+    | dense | 1.0 | 0.25 | 0.0 |
+    | window | 0 | 0 | 0 |
+    | page_mean (top-16/32/64) | 1.0 | 0 | 0.25-0.5 |
+    | quest | 1.0 | 0.25 | 0 |
+    | oracle | 1.0 | **0.75** | 0.25 |
+    | token top-k | 1.0 | **0.75** | 0.25 |
+    | compress_mean | 1.0 | 0 | 0.25 |
+
+  - **Training-free page selection is already loss-neutral at 64k** and **better than dense beyond the training
+    length**: page_mean -0.056 at 128k, mostly in the 64-127k bin. That is what bounding the attended keys
+    should do; log-n scaling gave only -0.007.
+  - **Retrieval needs a better selector than pooled keys.** The dense-mass oracle reaches 0.75 on 64-fact retrieval
+    where page_mean gets 0 and dense 0.25: concentrating on the right pages helps, and pooled keys miss them.
+    That is exactly what a trained indexer must learn.
+  - **The quick indexer warm-up is not there yet:** 48 docs × 4 steps per layer, KL 0.7-1.1 nats in the deep
+    layers and 0.02 in the first. NLL +0.06 at 64k, while page_mean is at -0.012. It needs far more steps / data;
+    DSA's warm-up was 2B tokens.
+  - **compress_mean** (mean-pooled entries without training) hurts: +0.076 at 64k. CSA2's compressor is learned;
+    untrained it is no proxy.
+  - The oracle is not the ceiling beyond 64k: the dense attention's mass is itself length-miscalibrated.
+  - The 128k retrieval and the indexer retrieval stopped on a bug (fixed); rerun as T2b at 128k / 256k.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
