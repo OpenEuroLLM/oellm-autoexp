@@ -1,0 +1,21 @@
+# @package _global_
+# The merged restart (hybrid_ambitious_v4_2ph_hd256_mn5: head dim 256 + z-loss + forward expert
+# spectral cap) at 128 compute nodes in a 134-node cns144 host (user 2026-11-05: integrate the head
+# dim extension already at the 128-node scale, replacing the 128-dim run on the 134-node allocation;
+# the move to 256 nodes later needs no further conversion). The 128-node layout of
+# hybrid_ambitious_v4_2ph_128_resume_mn5, same arm / checkpoint root / singleton as the 256-node
+# hd256 config, so the two can never run side by side.
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_mn5
+  - _self_
+aux:
+  nodes: 128
+backend:
+  megatron:
+    num_distributed_optimizer_instances: 1
+    data_parallel_sharding_strategy: optim_grads_params
+    outer_dp_sharding_strategy: no_shard
+    profile: false
+    use_pytorch_profiler: false
+job:
+  name: ambitious_v4_2ph_hd256_128n_p${aux.phase}
