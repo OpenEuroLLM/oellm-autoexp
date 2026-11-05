@@ -665,6 +665,24 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     indexer + SWA); DSA token top-k (selection-quality ceiling, offload-unfriendly); LSA. LSA is screened
     post-hoc (T2) before any training implementation.
 
+- **2026-11-05, packed-sequence context parallelism survey** (read-only):
+  - **FLA already does it for CKDA:** `fla.ops.cp`, varlen via `build_cp_context`, the sign gauge (`fla/ops/cp/sign.py`), β up to 2, short-conv halos. Tests in `flash-linear-attention/tests/context_parallel/test_cp_kda_layers.py`.
+  - **Megatron glue is missing:**
+    - the explicit reject at `complex_kda.py:206-210`;
+    - `fla_cp.full_sequence` / `cp_context` assume unpacked samples, and `fla_cu_seqlens` uses the local token count.
+    - Work: a THD per-document-zigzag ↔ FLA stream relayout (one all_to_all, computed once per micro-batch) and a
+      CP context built from the document `cu_seqlens`, ~2-3 days.
+  - **Engram is the real gap:** it gathers the full sequence under CP and rejects packed + CP
+    (`engram.py:652-698`). A proper split (token-id halo, global positions, a conv halo) is ~2-3 days; a
+    THD-aware full-gather fallback is ~0.5 day.
+  - **Softmax attention:** TE 2.12 THD + CP works with p2p (ours) and a2a.
+  - **Per-token parts:** mHC and MoE need nothing.
+  - **Document boundaries:** they are snapped to multiples of 2·cp, which leaks ≤ 2cp-1 tokens per boundary into
+    CKDA. The unsnapped `cu_seqlens` can be carried separately (optional).
+  - **Speed:** under CP, FLA falls back to the `auto` KDA kernels, so expect slower CKDA than at CP=1.
+  - **Tests:** CP=2/4 THD tests for ComplexKDA and Engram, plus a hybrid CP-vs-CP1 loss parity test, ~2 days.
+  - **Total ~1-1.5 weeks.**
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
