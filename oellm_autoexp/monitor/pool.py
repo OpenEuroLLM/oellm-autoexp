@@ -295,6 +295,58 @@ def write_env_file(path: Path, values: dict[str, Any]) -> None:
     _atomic_write(path, "\n".join(lines) + "\n")
 
 
+def live_job_nodes(job_id: str | None) -> list[str] | None:
+    """The nodes a running SLURM job holds now (``squeue -o %N``), or None when SLURM gives no
+    answer. A host shrunk with ``scontrol update NodeList=`` holds fewer nodes than its
+    info.env NODELIST, which a supervisor before the live refresh (supervisor.sh refresh_alloc)
+    wrote once at its start."""
+    if not job_id:
+        return None
+    import subprocess
+
+    try:
+        text = subprocess.run(
+            ["squeue", "-h", "-j", str(job_id), "-o", "%N"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.strip()
+        if not text or text == "(null)":
+            return None
+        nodes = subprocess.run(
+            ["scontrol", "show", "hostnames", text.splitlines()[0]],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return nodes or None
+
+
+def removed_nodes(info: dict[str, str], live: list[str] | None) -> list[str]:
+    """The nodes of a host's info.env NODELIST its allocation no longer holds ([] when the
+    allocation is unknown)."""
+    if not live:
+        return []
+    held = set(live)
+    return [n for n in (info.get("NODELIST") or "").split(",") if n and n not in held]
+
+
+def add_run_exclude(layout: PoolLayout, rid: str, nodes: list[str]) -> list[str]:
+    """Add ``nodes`` to a run's own EXCLUDE in its meta.env (the supervisor never gives the run a
+    node of it, the pool-excluded ones included); the nodes actually added. Appended as a later
+    ``EXCLUDE=`` line (sourcing and read_env_file both take the last), so no other value of the
+    file is rewritten."""
+    path = layout.run_dir(rid) / "meta.env"
+    current = [n for n in read_env_file(path).get("EXCLUDE", "").split(",") if n]
+    new = [n for n in nodes if n not in current]
+    if new:
+        text = (_read(path) or "").rstrip("\n")
+        _atomic_write(path, f"{text}\nEXCLUDE={shlex.quote(','.join(current + new))}\n")
+    return new
+
+
 def parse_slurm_time(value: str | None) -> float | None:
     """SLURM time string -> seconds. ``None``/"UNLIMITED" -> None.
 
@@ -1296,11 +1348,38 @@ class PoolManager:
                 n = 1
             return n, bool(meta.get("USE_EXCLUDED_NODES"))
 
+        # The allocation a host holds now, asked from SLURM only where excluded-node capacity
+        # matters (a queued or active USE_EXCLUDED_NODES run), once per pass. A shrunk host's
+        # removed nodes sit in its exclude list too: counted as excluded-but-usable, they made
+        # room for such a run that did not exist (p134c host006 134 -> 16, 2026-11-05).
+        excl_queued = any(run_meta(item[2])[1] for item in queued)
+        live_alloc: dict[str, list[str] | None] = {}
+
+        def alloc(host: HostView) -> list[str] | None:
+            if host.hid not in live_alloc:
+                active_excl = any(
+                    run_meta(r)[1]
+                    for r in host.assignments()
+                    if not (layout.run_dir(r) / "rc").exists()
+                )
+                live_alloc[host.hid] = (
+                    live_job_nodes(
+                        host.adopted
+                        or host.info.get("SLURM_JOB_ID")
+                        or host.record.runtime.runtime_job_id
+                    )
+                    if excl_queued or active_excl
+                    else None
+                )
+            return live_alloc[host.hid]
+
         def host_total(host: HostView) -> int:
             try:
-                return int(host.info.get("NUM_NODES") or host.nodes)
+                total = int(host.info.get("NUM_NODES") or host.nodes)
             except (TypeError, ValueError):
-                return host.nodes
+                total = host.nodes
+            nodes = alloc(host)
+            return min(total, len(nodes)) if nodes else total
 
         def fits(host: HostView, nodes: int, rid: str | None = None) -> bool:
             cap = host_total(host) if rid is not None and run_meta(rid)[1] else host.usable_nodes
@@ -1349,6 +1428,19 @@ class PoolManager:
                         continue
                     if not claim:
                         continue
+                    if use_excl:
+                        # a supervisor that does not refresh its allocation still lists the
+                        # removed nodes (as excluded ones, which this run takes first): keep
+                        # them off the run through its own EXCLUDE
+                        gone = add_run_exclude(layout, rid, removed_nodes(host.info, alloc(host)))
+                        if gone:
+                            LOGGER.info(
+                                "[pool %s] %s: %d node(s) no longer in %s's allocation kept off it",
+                                cfg.name,
+                                rid,
+                                len(gone),
+                                host.hid,
+                            )
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
                     active.append(rid)

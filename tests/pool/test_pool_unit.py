@@ -21,11 +21,14 @@ from oellm_autoexp.monitor.pool import (
     PoolHostConfig,
     PoolLayout,
     PoolManager,
+    add_run_exclude,
     check_fits_host,
     create_or_update_pool,
     parse_slurm_time,
     pool_tag,
+    read_env_file,
     read_run_state,
+    removed_nodes,
     render_step_script,
     submit_request,
     write_rc,
@@ -823,3 +826,35 @@ def test_check_fits_host_accepts_any_of_the_host_accounts(tmp_path):
     assert any("account" in p for p in check_fits_host(job, host))
     assert check_fits_host(job, host, ["cns144", "ehpc533"]) == []
     assert any("account" in p for p in check_fits_host(job, host, ["cns144"]))
+
+
+def test_removed_nodes_are_the_info_nodes_the_allocation_lost():
+    info = {"NODELIST": "a1,a2,a3,a4"}
+    assert removed_nodes(info, ["a1", "a3"]) == ["a2", "a4"]
+    assert removed_nodes(info, ["a1", "a2", "a3", "a4"]) == []
+    assert removed_nodes(info, None) == [], "no answer from SLURM: nothing is taken away"
+    assert removed_nodes({}, ["a1"]) == []
+
+
+def test_add_run_exclude_appends_once_and_keeps_the_other_values(tmp_path):
+    layout = PoolLayout(tmp_path / "pool")
+    rd = layout.run_dir("p.0001")
+    rd.mkdir(parents=True)
+    meta = rd / "meta.env"
+    meta.write_text("NODES=1\nLOG='/a b/run.log'\nEXCLUDE=x1\nUSE_EXCLUDED_NODES=1\n")
+    assert add_run_exclude(layout, "p.0001", ["x2", "x1", "x3"]) == ["x2", "x3"]
+    assert add_run_exclude(layout, "p.0001", ["x3"]) == [], "idempotent"
+    env = read_env_file(meta)
+    assert env["EXCLUDE"] == "x1,x2,x3"
+    assert env["NODES"] == "1" and env["USE_EXCLUDED_NODES"] == "1"
+    assert "LOG='/a b/run.log'" in meta.read_text(), "the other lines are not rewritten"
+    # what the supervisor sees: it sources the file, the last EXCLUDE wins
+    import subprocess
+
+    out = subprocess.run(
+        ["bash", "-c", f'. "{meta}"; printf "%s|%s" "$EXCLUDE" "$LOG"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out == "x1,x2,x3|/a b/run.log"
