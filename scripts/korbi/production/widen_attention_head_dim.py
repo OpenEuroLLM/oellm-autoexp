@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Widen the softmax-attention head dim of an fsdp_dtensor checkpoint (128 -> 256), function-preserving.
+"""Widen the softmax-attention head dim of an fsdp_dtensor checkpoint (128 -> 256 or any multiple), function-preserving.
 
 v4_2ph's 6 attention layers run 16 q heads x 128 (GQA 2, gated, qk RMSNorm, NoPE, XSA); Qwen3.5 uses 256.
 This rewrites one checkpoint so that a model built with --kv-channels 256 computes the same function
@@ -11,9 +11,10 @@ Per attention layer (fused linear_qkv rows per query group: [q heads | gate head
                norm eps x (median row norm of that head type). Muown classical row states: g = the new row
                norm, v_norm = median of the head type's old rows (same rotation rate), m_u / m_g / v_g = 0.
   q/k_layernorm  RMSNorm over the head dim: with ~zero new channels the normalized old channels grow by
-               sqrt(2) (q.k by 2) while the softmax scale drops 1/sqrt(128) -> 1/sqrt(256): old gammas x
-               2^-1/4 keep q.k / sqrt(d) exact; new gammas = mean(old) x 2^-1/4. Adam: exp_avg x 2^1/4,
-               exp_avg_sq x 2^1/2 (the gradient's scale); new entries exp_avg 0, exp_avg_sq = mean(old).
+               sqrt(r) (q.k by r = d_new / d_old) while the softmax scale drops by sqrt(r): old gammas x
+               c = r^-1/4 (2^-1/4 for 128 -> 256) keep q.k / sqrt(d) exact; new gammas = mean(old) x c.
+               Adam: exp_avg / c, exp_avg_sq / c^2 (the gradient's scale); new entries exp_avg 0,
+               exp_avg_sq = mean(old).
   linear_proj  every head gets d_new - d_old new input columns, N(0, (eps * rms of the row)^2); g = the
                new row norm (signed as before); the spectral Muon scale grows sqrt(4096 / 2048), so v_norm
                x sqrt(2) and m_u x 1/sqrt(2) keep the rows' rotation rate; new m_u columns 0.
@@ -98,7 +99,10 @@ def widen_layer(t, *, heads, groups, d_old, d_new, eps, gen):
         out[f"qkv.{s}"] = new.reshape(groups * blocks * d_new, old.shape[-1])
 
     # ---- q / k RMSNorm gammas (shared over heads, per head-dim channel)
-    c = 2.0 ** -0.25
+    # RMS over d_new channels (the new ones ~0) grows the normalized old ones by sqrt(d_new / d_old),
+    # q.k by d_new / d_old, while the softmax scale drops by sqrt(d_old / d_new): gammas x c with
+    # c^2 = sqrt(d_old / d_new) (2^-1/4 for a doubling); the gammas' gradient scales by 1 / c
+    c = (d_old / d_new) ** 0.25
     for n in ("q_norm", "k_norm"):
         gam = t[n]
         new = torch.empty(d_new)
@@ -107,10 +111,10 @@ def widen_layer(t, *, heads, groups, d_old, d_new, eps, gen):
         out[n] = new
         ea, eas = t[f"{n}.exp_avg"], t[f"{n}.exp_avg_sq"]
         new_ea = torch.zeros(d_new)
-        new_ea[:d_old] = ea * 2.0**0.25
+        new_ea[:d_old] = ea / c
         new_eas = torch.empty(d_new)
-        new_eas[:d_old] = eas * 2.0**0.5
-        new_eas[d_old:] = (eas * 2.0**0.5).mean()
+        new_eas[:d_old] = eas / c**2
+        new_eas[d_old:] = (eas / c**2).mean()
         out[f"{n}.exp_avg"], out[f"{n}.exp_avg_sq"] = new_ea, new_eas
 
     # ---- linear_proj: new input columns per head
@@ -172,14 +176,15 @@ def selftest():
     x = torch.randn(T, hidden, dtype=torch.float64)
     ref = reference_attention(x, t["qkv"].double(), t["q_norm"].double(), t["k_norm"].double(),
                               t["proj"].double(), heads=heads, groups=groups, d=d_old)
-    for eps in (0.0, 1e-3, 1e-2):
-        gen = torch.Generator().manual_seed(1234)
-        n = widen_layer(t, heads=heads, groups=groups, d_old=d_old, d_new=d_new, eps=max(eps, 1e-30), gen=gen)
-        y = reference_attention(x, n["qkv"].double(), n["q_norm"].double(), n["k_norm"].double(),
-                                n["proj"].double(), heads=heads, groups=groups, d=d_new)
-        rel = ((y - ref).norm() / ref.norm()).item()
-        print(f"eps {eps:g}: relative output change {rel:.2e}")
-        assert rel < max(1e-6, 30 * eps**2), rel
+    for dn in (512, d_new):  # 4x first, then the 2x case the layout checks below use
+        for eps in (0.0, 1e-3, 1e-2):
+            gen = torch.Generator().manual_seed(1234)
+            n = widen_layer(t, heads=heads, groups=groups, d_old=d_old, d_new=dn, eps=max(eps, 1e-30), gen=gen)
+            y = reference_attention(x, n["qkv"].double(), n["q_norm"].double(), n["k_norm"].double(),
+                                    n["proj"].double(), heads=heads, groups=groups, d=dn)
+            rel = ((y - ref).norm() / ref.norm()).item()
+            print(f"{d_old} -> {dn}, eps {eps:g}: relative output change {rel:.2e}")
+            assert rel < max(2e-6, 30 * eps**2), rel
     # layout: the old rows / columns are where Megatron reads them; row-state invariants
     hb = d_new
     blk = n["qkv"].reshape(groups, 2 * hpg + 2, d_new, hidden)
