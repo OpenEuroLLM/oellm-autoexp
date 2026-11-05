@@ -87,12 +87,19 @@ sweep:
   groups:
     - type: list
       configs:
+        # (the production config carries the cap ramp + z-loss since 2026-11-05: these arms clear them)
         - aux.arm: "off"
           backend.megatron.muown_expert_spectral_cap: 0.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: null
         - aux.arm: cap40
           backend.megatron.muown_expert_spectral_cap: 40.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: null
         - aux.arm: cap1
           backend.megatron.muown_expert_spectral_cap: 1.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: null
         - aux.arm: zloss
           backend.megatron.muown_expert_spectral_cap: 80.0
           backend.megatron.muown_expert_spectral_cap_end: 15.0
