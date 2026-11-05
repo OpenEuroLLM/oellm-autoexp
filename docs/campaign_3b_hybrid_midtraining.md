@@ -606,6 +606,49 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       an s3 conversion ablation.
     - Not before the sparse-attention path.
 
+- **2026-11-05, CED retrofit probe** (`scripts/korbi/campaign_midtraining/ced_probe.py`, dev queue job
+  48550946, 11 min; `docs/campaign_3b_hybrid_midtraining_results/ced_v4_2ph_8000/`):
+  - **Setup:**
+    - per-layer ridge maps from the 4 mHC streams entering sublayer 49 (8192 dims, 1.84M fit tokens) to the
+      24 upper mixers' inputs (3 attention, 21 CKDA);
+    - evaluated on held-out documents;
+    - the predicted input is used **only on the state-writing path** (attention k / v; CKDA k / v / β / f), while
+      queries and gates keep the true input.
+  - **Held-out R²:**
+
+    | target | R² |
+    |---|---|
+    | the input x itself | 0.97 → ~0.5, falling with depth |
+    | attention k | 0.84-0.98 |
+    | CKDA k | 0.80-0.94 |
+    | v | 0.64-0.98 |
+    | CKDA β | 0.92-0.98 |
+    | CKDA f | 0.89-0.98 |
+
+  - **ΔNLL, one layer substituted at a time (web_en):** mostly ≤ +0.002. The outliers are sublayer 56 (+0.016),
+    60 (+0.005) and attention 66 (+0.004).
+  - **ΔNLL, all 24 substituted together:** +0.05 (code) to +0.14 (reasoning); +0.10 web_en, +0.11 long_64k.
+    - CKDA accounts for +0.04-0.11 of that, and the 3 attention layers for +0.006-0.009, or **+0.036 on long_64k**
+      (retrieval).
+    - The first and second halves of the upper mixers add roughly.
+  - **Reading:**
+    - A linear CED initialization keeps most of the state-writing signal: k, β, f are very predictable, v less so.
+    - But the zero-training gap of ~0.1 nats would have to be healed by continued training. Long context is the
+      most sensitive part.
+    - Whether healing works, and how fast, needs an s3 conversion ablation (linear init from these maps → heal N
+      tokens → loss and long-context retrieval vs the unconverted model). A small MLP map or jointly trained
+      projections would start closer.
+    - Priority stays behind the sparse-attention path.
+- **2026-11-05, fused mHC kernel** (`experiment/014_fused_mhc/log.md`):
+  - **Exact write(l-1) + read(l)** in 3 tiled kernels (write with partial coefficients + Gram, coefficients /
+    Sinkhorn, mix); streams bitwise equal, x within 1-2 ulp.
+  - **Decode critical path:** ~11 µs vs ~18-20 µs per sublayer (3090 Ti), mostly from moving Sinkhorn off the
+    critical path (vLLM's split path already does that). Prefill is slower: keep the unfused path there.
+  - **Not wired into the model yet.** Next: a faster Sinkhorn, vLLM decode-graph integration, epilogue / prologue
+    fusion.
+  - **Side finding:** at 16-256 tokens, cuBLAS's bf16 coefficient GEMM uses split-K with bf16 partials, so 40 % of
+    the coefficients are mis-rounded vs fp64.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

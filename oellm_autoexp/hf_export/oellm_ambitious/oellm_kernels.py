@@ -7,6 +7,8 @@ Each kernel replaces a chain of eager ops and keeps the reference's bf16 roundin
 - :func:`mhc_read` / :func:`mhc_write`: the mHC read (norm, coefficients, Sinkhorn, the
   weighted stream sum; optionally the layer's input norm on top) and write (``h_res`` stream
   mix + ``h_post`` x output), one launch each next to the coefficient GEMM;
+- :func:`mhc_write_read`: one sublayer's write and the next one's read (GEMM included) in one
+  launch, the new streams written once and re-read from L2 (``OELLM_MHC_FUSE=1``);
 - :func:`engram_rows`: the Engram n-gram hashes of a prefill (exact int64 XOR / multiply,
   Python's modulo, the row offsets);
 - :class:`UvaTable`: an Engram table in pinned host memory, gathered by a GPU kernel
@@ -27,6 +29,8 @@ layers on different GPUs of a device map overlap.
 """
 
 from __future__ import annotations
+
+import os
 
 import torch
 import triton
@@ -178,6 +182,224 @@ def mhc_write(streams, out, pending):
             _mhc_write_kernel[(tokens, triton.cdiv(h, 1024))](streams, out, post, res, y, h, 1024,
                                                              num_warps=4, enable_fp_fusion=False)
     return y
+
+
+@triton.jit
+def _mhc_wr_write_kernel(S, OUT, POST, RES, Y, PHI, PART, T, H: tl.constexpr, BT: tl.constexpr, BH: tl.constexpr,
+                         NC: tl.constexpr, NP: tl.constexpr):
+    """Fused write + read, step 1 (grid: token tiles x hidden tiles): sublayer l-1's write (mhc_write's rounding
+    points), and per hidden tile the partial coefficient GEMM of l (columns 0..NC-1) and the partial Gram matrix
+    of the new streams (columns NC..NC+9: 00 01 02 03 11 12 13 22 23 33)."""
+    rows = tl.program_id(0).to(tl.int64) * BT + tl.arange(0, BT)
+    tile = tl.program_id(1)
+    rm = rows < T
+    ok = rm[:, None]
+    dtype = S.dtype.element_ty
+    h = tile * BH + tl.arange(0, BH)
+    base = S + rows[:, None] * 4 * H + h[None, :]
+    s0 = tl.load(base, ok, 0).to(tl.float32)
+    s1 = tl.load(base + H, ok, 0).to(tl.float32)
+    s2 = tl.load(base + 2 * H, ok, 0).to(tl.float32)
+    s3 = tl.load(base + 3 * H, ok, 0).to(tl.float32)
+    out = tl.load(OUT + rows[:, None] * H + h[None, :], ok, 0).to(tl.float32)
+    c = tl.arange(0, NC)
+    y0 = _mhc_wr_stream(RES, POST, rows, rm, s0, s1, s2, s3, out, 0, dtype)
+    y1 = _mhc_wr_stream(RES, POST, rows, rm, s0, s1, s2, s3, out, 1, dtype)
+    y2 = _mhc_wr_stream(RES, POST, rows, rm, s0, s1, s2, s3, out, 2, dtype)
+    y3 = _mhc_wr_stream(RES, POST, rows, rm, s0, s1, s2, s3, out, 3, dtype)
+    ybase = Y + rows[:, None] * 4 * H + h[None, :]
+    tl.store(ybase, y0, ok)
+    tl.store(ybase + H, y1, ok)
+    tl.store(ybase + 2 * H, y2, ok)
+    tl.store(ybase + 3 * H, y3, ok)
+    acc = tl.zeros([BT, NC], dtype=tl.float32)
+    acc = tl.dot(y0, tl.load(PHI + h[:, None] * NC + c[None, :]), acc)
+    acc = tl.dot(y1, tl.load(PHI + (H + h)[:, None] * NC + c[None, :]), acc)
+    acc = tl.dot(y2, tl.load(PHI + (2 * H + h)[:, None] * NC + c[None, :]), acc)
+    acc = tl.dot(y3, tl.load(PHI + (3 * H + h)[:, None] * NC + c[None, :]), acc)
+    f0, f1, f2, f3 = y0.to(tl.float32), y1.to(tl.float32), y2.to(tl.float32), y3.to(tl.float32)
+    prow = PART + (rows * tl.num_programs(1) + tile) * NP
+    tl.store(prow[:, None] + c[None, :], acc, ok)
+    tl.store(prow + NC + 0, tl.sum(f0 * f0, 1), rm)
+    tl.store(prow + NC + 1, tl.sum(f0 * f1, 1), rm)
+    tl.store(prow + NC + 2, tl.sum(f0 * f2, 1), rm)
+    tl.store(prow + NC + 3, tl.sum(f0 * f3, 1), rm)
+    tl.store(prow + NC + 4, tl.sum(f1 * f1, 1), rm)
+    tl.store(prow + NC + 5, tl.sum(f1 * f2, 1), rm)
+    tl.store(prow + NC + 6, tl.sum(f1 * f3, 1), rm)
+    tl.store(prow + NC + 7, tl.sum(f2 * f2, 1), rm)
+    tl.store(prow + NC + 8, tl.sum(f2 * f3, 1), rm)
+    tl.store(prow + NC + 9, tl.sum(f3 * f3, 1), rm)
+
+
+@triton.jit
+def _mhc_wr_stream(RES, POST, rows, rm, s0, s1, s2, s3, out, j: tl.constexpr, dtype: tl.constexpr):
+    """New stream j: h_res[j] . streams + h_post[j] * out, with mhc_write's rounding points."""
+    r = RES + rows * 16 + 4 * j
+    mixed = (tl.load(r, rm, 0).to(dtype).to(tl.float32)[:, None] * s0).to(dtype).to(tl.float32)
+    mixed = mixed + (tl.load(r + 1, rm, 0).to(dtype).to(tl.float32)[:, None] * s1).to(dtype).to(tl.float32)
+    mixed = mixed + (tl.load(r + 2, rm, 0).to(dtype).to(tl.float32)[:, None] * s2).to(dtype).to(tl.float32)
+    mixed = mixed + (tl.load(r + 3, rm, 0).to(dtype).to(tl.float32)[:, None] * s3).to(dtype).to(tl.float32)
+    mixed = mixed.to(dtype).to(tl.float32)
+    pj = tl.load(POST + rows * 4 + j, rm, 0).to(dtype).to(tl.float32)[:, None]
+    return (mixed + (pj * out).to(dtype).to(tl.float32)).to(dtype)
+
+
+@triton.jit
+def _mhc_wr_col(m, cols, k: tl.constexpr):
+    """Column k of a [BT, n] block, as [BT]."""
+    return tl.sum(tl.where(cols[None, :] == k, m, 0.0), 1)
+
+
+@triton.jit
+def _mhc_wr_coeff_kernel(PART, APRE, APOST, ARES, BPRE, BPOST, BRES, PB, POST_N, RES_N, INV, T, H: tl.constexpr,
+                         EPS: tl.constexpr, ITERS: tl.constexpr, BT: tl.constexpr, NC: tl.constexpr,
+                         NP: tl.constexpr, NT: tl.constexpr, NORM: tl.constexpr, NEPS: tl.constexpr,
+                         STEP: tl.constexpr):
+    """Fused write + read, step 2 (grid: token tiles): the partials of the hidden tiles summed in a fixed order,
+    l's coefficients (mhc_read's rounding points: the GEMM output in the streams' dtype, the norm rounded),
+    Sinkhorn, the rounded h_pre and the input norm's 1 / rms from the Gram matrix (sum_ij p_i p_j G_ij).
+    STEP 1: h_pre / h_post / 1 / rms only (the sublayer's critical path); 2: only the Sinkhorn h_res (needed by
+    the next write: a side stream); 0: both."""
+    rows = tl.program_id(0).to(tl.int64) * BT + tl.arange(0, BT)
+    rm = rows < T
+    ok = rm[:, None]
+    dtype = PB.dtype.element_ty  # a dummy in the streams' dtype for the rounding points
+    s4 = tl.arange(0, 4)
+    k16 = tl.arange(0, 16)
+    cp = tl.zeros([BT, 4], dtype=tl.float32)
+    cq = tl.zeros([BT, 4], dtype=tl.float32)
+    m16 = tl.zeros([BT, 16], dtype=tl.float32)
+    g16 = tl.zeros([BT, 16], dtype=tl.float32)  # Gram entries 00 01 02 03 11 12 13 22 23 33 in columns 0..9
+    for t in range(NT):
+        rb = (PART + (rows * NT + t) * NP)[:, None]
+        cp += tl.load(rb + s4[None, :], ok, 0)
+        cq += tl.load(rb + 4 + s4[None, :], ok, 0)
+        m16 += tl.load(rb + 8 + k16[None, :], ok, 0)
+        g16 += tl.load(rb + NC + k16[None, :], ok & (k16[None, :] < 10), 0)
+    sumsq = (_mhc_wr_col(g16, k16, 0) + _mhc_wr_col(g16, k16, 4) + _mhc_wr_col(g16, k16, 7)
+             + _mhc_wr_col(g16, k16, 9))
+    norm = tl.sqrt(sumsq).to(dtype).to(tl.float32)
+    rms = tl.maximum(norm / ((4 * H) ** 0.5), EPS)[:, None]
+    cp = cp.to(dtype).to(tl.float32) / rms
+    cq = cq.to(dtype).to(tl.float32) / rms
+    m16 = m16.to(dtype).to(tl.float32) / rms
+    if STEP != 1:
+        m16 = tl.load(ARES).to(tl.float32) * m16 + tl.load(BRES + k16).to(tl.float32)[None, :]
+        matrix = tl.reshape(m16, [BT, 4, 4])  # [t, s, j]: mhc_read's offsets s * 4 + j
+        for _ in range(ITERS):
+            maximum = tl.max(matrix, 1)
+            lse = maximum + tl.log(tl.sum(tl.exp(matrix - maximum[:, None, :]), 1))
+            matrix -= lse[:, None, :]
+            maximum = tl.max(matrix, 2)
+            lse = maximum + tl.log(tl.sum(tl.exp(matrix - maximum[:, :, None]), 2))
+            matrix -= lse[:, :, None]
+        tl.store(RES_N + rows[:, None] * 16 + k16[None, :], tl.reshape(tl.exp(matrix), [BT, 16]), ok)
+    if STEP == 2:
+        return
+    pre = tl.sigmoid(tl.load(APRE).to(tl.float32) * cp + tl.load(BPRE + s4).to(tl.float32)[None, :])
+    post_n = 2.0 * tl.sigmoid(tl.load(APOST).to(tl.float32) * cq + tl.load(BPOST + s4).to(tl.float32)[None, :])
+    tl.store(POST_N + rows[:, None] * 4 + s4[None, :], post_n, ok)
+    pb = pre.to(dtype).to(tl.float32)
+    tl.store(PB + rows[:, None] * 4 + s4[None, :], pb.to(dtype), ok)
+    if NORM:
+        p0, p1 = _mhc_wr_col(pb, s4, 0), _mhc_wr_col(pb, s4, 1)
+        p2, p3 = _mhc_wr_col(pb, s4, 2), _mhc_wr_col(pb, s4, 3)
+        vsq = (p0 * p0 * _mhc_wr_col(g16, k16, 0) + p1 * p1 * _mhc_wr_col(g16, k16, 4)
+               + p2 * p2 * _mhc_wr_col(g16, k16, 7) + p3 * p3 * _mhc_wr_col(g16, k16, 9))
+        vsq += 2.0 * (p0 * p1 * _mhc_wr_col(g16, k16, 1) + p0 * p2 * _mhc_wr_col(g16, k16, 2)
+                      + p0 * p3 * _mhc_wr_col(g16, k16, 3) + p1 * p2 * _mhc_wr_col(g16, k16, 5)
+                      + p1 * p3 * _mhc_wr_col(g16, k16, 6) + p2 * p3 * _mhc_wr_col(g16, k16, 8))
+        tl.store(INV + rows, tl.rsqrt(vsq / H + NEPS), rm)
+
+
+@triton.jit
+def _mhc_wr_mix_kernel(Y, PB, INV, NW, X, T, H: tl.constexpr, BT: tl.constexpr, BH: tl.constexpr,
+                       NORM: tl.constexpr, ZC: tl.constexpr):
+    """Fused write + read, step 3 (grid: token tiles x hidden tiles): l's input mix from the new streams (just
+    written: L2), mhc_read's rounding points, and the input RMSNorm with step 2's 1 / rms."""
+    rows = tl.program_id(0).to(tl.int64) * BT + tl.arange(0, BT)
+    rm = rows < T
+    ok = rm[:, None]
+    dtype = Y.dtype.element_ty
+    h = tl.program_id(1) * BH + tl.arange(0, BH)
+    p0 = tl.load(PB + rows * 4, rm, 0).to(tl.float32)[:, None]
+    p1 = tl.load(PB + rows * 4 + 1, rm, 0).to(tl.float32)[:, None]
+    p2 = tl.load(PB + rows * 4 + 2, rm, 0).to(tl.float32)[:, None]
+    p3 = tl.load(PB + rows * 4 + 3, rm, 0).to(tl.float32)[:, None]
+    base = Y + rows[:, None] * 4 * H + h[None, :]
+    value = (p0 * tl.load(base, ok, 0).to(tl.float32)).to(dtype).to(tl.float32)
+    value = value + (p1 * tl.load(base + H, ok, 0).to(tl.float32)).to(dtype).to(tl.float32)
+    value = value + (p2 * tl.load(base + 2 * H, ok, 0).to(tl.float32)).to(dtype).to(tl.float32)
+    value = value + (p3 * tl.load(base + 3 * H, ok, 0).to(tl.float32)).to(dtype).to(tl.float32)
+    if NORM:
+        value = value.to(dtype).to(tl.float32)
+        w = tl.load(NW + h).to(tl.float32)
+        if ZC:
+            w += 1.0
+        value = w[None, :] * (value * tl.load(INV + rows, rm, 1.0)[:, None])
+    tl.store(X + rows[:, None] * H + h[None, :], value.to(dtype), ok)
+
+
+def mhc_phi_padded(phi: torch.Tensor, dtype: torch.dtype, nc: int = 32) -> torch.Tensor:
+    """``phi`` [n h, 2 n + n^2] in the streams' dtype, zero-padded to ``nc`` columns (the fused kernel's dot)."""
+    out = torch.zeros((phi.shape[0], nc), device=phi.device, dtype=dtype)
+    out[:, : phi.shape[1]] = phi.to(dtype)
+    return out
+
+
+_MHC_SIDE: dict = {}
+
+
+def mhc_write_read(streams, out, pending, phi_pad, alpha_pre, alpha_post, alpha_res, b_pre, b_post, b_res, eps,
+                   iters, norm=None, bh=None, warps=None, split=False):
+    """:func:`mhc_write` of sublayer l-1 followed by :func:`mhc_read` of sublayer l: the write with the partial
+    coefficient GEMM and Gram matrix per hidden tile, a per-token coefficient / Sinkhorn step, the mix: returns (the new ``[T, 4, h]`` streams, l's input
+    ``[T, h]`` -- ``norm(input)`` for ``norm = (weight, eps, zero_centered)`` --, l's (h_post, h_res)). Exact up
+    to the coefficient GEMM's accumulation order and the input norm's sum of squares (from the unrounded mix)."""
+    tokens, n, h = streams.shape
+    bh = bh or int(os.environ.get("OELLM_MHC_FUSE_BH", "64"))
+    warps = warps or int(os.environ.get("OELLM_MHC_FUSE_WARPS", "4"))
+    assert n == 4 and streams.is_contiguous() and h % bh == 0
+    out = out.contiguous()
+    post, res = pending[:2]
+    if len(pending) == 3:  # the previous step's side-stream Sinkhorn
+        torch.cuda.current_stream(streams.device).wait_event(pending[2])
+    nc, nt = phi_pad.shape[1], h // bh
+    np_ = 2 * nc
+    y = torch.empty_like(streams)
+    x = torch.empty((tokens, h), device=streams.device, dtype=streams.dtype)
+    post_n = torch.empty((tokens, n), device=streams.device, dtype=torch.float32)
+    res_n = torch.empty((tokens, n, n), device=streams.device, dtype=torch.float32)
+    part = torch.empty((tokens, nt, np_), device=streams.device, dtype=torch.float32)
+    pb = torch.empty((tokens, n), device=streams.device, dtype=streams.dtype)
+    inv = torch.empty((tokens,), device=streams.device, dtype=torch.float32)
+    nw, neps, zc = norm if norm is not None else (x, 0.0, False)
+    if tokens:
+        bt = 16
+        grid = (triton.cdiv(tokens, bt), nt)
+        with _guard(streams):
+            _mhc_wr_write_kernel[grid](streams, out, post, res, y, phi_pad, part, tokens, h, bt, bh, nc, np_,
+                                       num_warps=warps, enable_fp_fusion=False)
+            cargs = (part, alpha_pre, alpha_post, alpha_res, b_pre, b_post, b_res, pb, post_n, res_n, inv, tokens, h,
+                     eps, iters, bt, nc, np_, nt, norm is not None, neps)
+            cgrid = (triton.cdiv(tokens, bt),)
+            if split:  # h_res (Sinkhorn) is only needed by the next write: off the critical path
+                main = torch.cuda.current_stream(streams.device)
+                side = _MHC_SIDE.setdefault(streams.device, torch.cuda.Stream(device=streams.device))
+                side.wait_stream(main)
+                with torch.cuda.stream(side):
+                    _mhc_wr_coeff_kernel[cgrid](*cargs, 2, num_warps=4, enable_fp_fusion=False)
+                    done = torch.cuda.Event()
+                    done.record(side)
+                _mhc_wr_coeff_kernel[cgrid](*cargs, 1, num_warps=4, enable_fp_fusion=False)
+            else:
+                _mhc_wr_coeff_kernel[cgrid](*cargs, 0, num_warps=4, enable_fp_fusion=False)
+            _mhc_wr_mix_kernel[grid](y, pb, inv, nw, x, tokens, h, bt, bh, norm is not None, zc, num_warps=warps,
+                                     enable_fp_fusion=False)
+    if tokens and split:
+        return y, x, (post_n, res_n, done)
+    return y, x, (post_n, res_n)
 
 
 # --------------------------------------------------------------------------- Engram
