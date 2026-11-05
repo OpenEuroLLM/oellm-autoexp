@@ -649,6 +649,22 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - **Side finding:** at 16-256 tokens, cuBLAS's bf16 coefficient GEMM uses split-K with bf16 partials, so 40 % of
     the coefficients are mis-rounded vs fp64.
 
+- **2026-11-05, budget and order (user):**
+  - ~1k GPU-h for tests first, then a few thousand for C1 / C2.
+  - **Proposal: sparsify first at 64k (C2), then extend sparse.**
+    - The attention layers have no RoPE to adapt.
+    - Sparse attention bounds the number of attended keys, so the softmax entropy no longer grows with length.
+      That was the reason for log-n scaling beyond 8k.
+    - Training beyond 64k is then cheap sparse training, mainly for the indexer and the CKDA states.
+    - V4.1 likewise trains sparse at 64k and extends later.
+    - Context parallelism is still needed for activations at ≥ 256k.
+  - **Ablation:** sparse@64k → extend vs a short dense extension → sparsify. Zero-shot length generalization
+    (128k-512k) of each sparse variant is the first measurement.
+  - **Candidate variants:** dense; SWA-only (lower bound); page selection on mean-pooled keys (MoBA / InfLLM-v2
+    style, no new parameters); a learned page indexer with KL warm-up; CSA2-like (compressed main KV m = 4 +
+    indexer + SWA); DSA token top-k (selection-quality ceiling, offload-unfriendly); LSA. LSA is screened
+    post-hoc (T2) before any training implementation.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
