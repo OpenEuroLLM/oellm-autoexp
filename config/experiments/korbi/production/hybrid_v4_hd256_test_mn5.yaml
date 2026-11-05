@@ -45,6 +45,7 @@ backend:
     eval_interval: 100000
     save: ${job.base_output_dir}/ckpt
     save_interval: 30
+    save_retain_interval: null
     non_persistent_save_interval: null
     async_save: false
 

@@ -1,0 +1,30 @@
+# @package _global_
+# PREPARED ONLY (2026-11-05) -- do not enqueue without the user's go; the v4_2ph main run's restarts
+# are owned by its run session.
+#
+# v4_2ph continued with attention head dim 256 instead of 128 (user 2026-11-05: the 6 softmax attention
+# layers' head dim caps long-range retrieval; Qwen3.5 uses 256; our 128 came from the 2026-10-17 screen
+# layout, never screened). Starts from the v4_2ph checkpoint 9789 widened function-preserving by
+# scripts/korbi/production/widen_attention_head_dim.py (eps 1e-3 noise on the new channels):
+#   main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt/iter_0009789 (the source's shards hard-linked,
+#   widen256_0__0_0.distcp + merged .metadata). Same data order (same sampler state), optimizer state
+#   carried over (new rows / columns: zero moments).
+# Checks before a start: fixedvalid_eval_hd256_v4_mn5 (s9789 vs s9789hd256 must agree) and
+# hybrid_v4_hd256_test_mn5 (2-node save / widen / resume on the production stack).
+# Cost: ~+3 % FLOPs at 8k (6 of 98 layers), ~+25-30 % in the 64k phase (attention scores x2).
+defaults:
+  - hybrid_ambitious_v4_2ph_256_mn5
+  - _self_
+
+aux:
+  arm: ambitious_e360_eng80_v4_2ph_hd256
+
+backend:
+  megatron:
+    kv_channels: 256
+
+job:
+  name: ambitious_v4_2ph_hd256_256n_p${aux.phase}
+  metadata:
+    # its own singleton: never next to the 128 run from the same step
+    pool_singleton: ambitious_main_v4_hd256
