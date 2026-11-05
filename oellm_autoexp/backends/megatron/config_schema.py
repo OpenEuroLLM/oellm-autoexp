@@ -623,6 +623,52 @@ class MegatronConfig(ConfigInterface):
     # The length where the scaling is 1 (the training sequence length).
     attention_length_scaling_base: int = 8192
 
+    # Page-sparse attention for the self-attention layers
+    # (experimental_attention_variant/page_sparse.py): every query attends to the sink pages,
+    # a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense,
+    # window, page_mean, quest, oracle, token_topk, compress_mean (CSA2-like), indexer (a
+    # learned PageIndexer) -- ONE selection per token for all heads. None: the configured core
+    # attention.
+    page_sparse_selector: str | None = None
+
+    # Page size (tokens) of page_sparse_selector.
+    page_sparse_page: int = 64
+
+    # Selected pages per query (token_topk: page_sparse_topk * page tokens; compress_mean:
+    # that many tokens' worth of compressed entries).
+    page_sparse_topk: int = 32
+
+    # Local window (tokens, a multiple of the page) before the query's own page.
+    page_sparse_window: int = 512
+
+    # Always-attended pages at the sequence (document) start.
+    page_sparse_sink_pages: int = 1
+
+    # compress_mean: tokens per mean-pooled entry.
+    page_sparse_compress: int = 4
+
+    # indexer: index-query heads.
+    page_sparse_indexer_heads: int = 4
+
+    # indexer: index key / query dim (the GPU index per page at inference).
+    page_sparse_indexer_dim: int = 64
+
+    # indexer: weight of the KL to the dense attention's page mass (0: trained only through
+    # the LM loss, which does not reach the selection).
+    page_sparse_indexer_loss_coeff: float = 0.0
+
+    # indexer warm-up: the LM keeps dense attention while the indexer learns the dense page
+    # mass.
+    page_sparse_dense_forward: bool = False
+
+    # page selectors' kernel: "flex" (FlexAttention, fused Triton forward / backward, a block
+    # mask of each query block's page union) or "gathered" (the exact torch reference);
+    # token_topk / compress_mean are always gathered.
+    page_sparse_backend: str = "flex"
+
+    # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
+    page_sparse_flex_q_block: int = 64
+
     # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
     # is the polar forget gate's init cap without its angle.
     linear_kronlstm_forget_offset: float = 0.0

@@ -820,6 +820,18 @@ override_opt_param_scheduler: false  # Reset the values of the scheduler (learni
 packed_doc_attention_log_cu_seqlens: 0  # With --dataloader-inter-document-masking, print this rank's cu_seqlens for the first N calls to get_batch. cu_seqlens is a few dozen bytes, so logging it is far cheaper than any runtime cross-check -- and unlike a collective it cannot deadlock against the pipeline p2p chain. Every rank sharing a data-parallel index must print identical values for a given call index; verify with scripts/korbi/check_cu_seqlens_agreement.py. DEBUG ONLY: the readback it needs is the per-microbatch stream drain the scatter exists to remove. OELLM patch, see megatron/training/packed_doc_attention.py.
 pad_vocab_size: true  # Whether to pad vocab size of the model automatically if padded_vocab_size is not provided.
 padded_vocab_size: null  # Vocabulary size of the model (padded to be divisible by tensor model parallel size). If not provided, it will be automatically calculated from vocab-size.
+page_sparse_backend: flex  # page selectors' kernel: "flex" (FlexAttention, fused Triton forward / backward, a block mask of each query block's page union) or "gathered" (the exact torch reference); token_topk / compress_mean are always gathered.
+page_sparse_compress: 4  # compress_mean: tokens per mean-pooled entry.
+page_sparse_dense_forward: false  # indexer warm-up: the LM keeps dense attention while the indexer learns the dense page mass.
+page_sparse_flex_q_block: 64  # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
+page_sparse_indexer_dim: 64  # indexer: index key / query dim (the GPU index per page at inference).
+page_sparse_indexer_heads: 4  # indexer: index-query heads.
+page_sparse_indexer_loss_coeff: 0.0  # indexer: weight of the KL to the dense attention's page mass (0: trained only through the LM loss, which does not reach the selection).
+page_sparse_page: 64  # Page size (tokens) of page_sparse_selector.
+page_sparse_selector: null  # Page-sparse attention for the self-attention layers (experimental_attention_variant/page_sparse.py): every query attends to the sink pages, a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense, window, page_mean, quest, oracle, token_topk, compress_mean (CSA2-like), indexer (a learned PageIndexer) -- ONE selection per token for all heads. None: the configured core attention.
+page_sparse_sink_pages: 1  # Always-attended pages at the sequence (document) start.
+page_sparse_topk: 32  # Selected pages per query (token_topk: page_sparse_topk * page tokens; compress_mean: that many tokens' worth of compressed entries).
+page_sparse_window: 512  # Local window (tokens, a multiple of the page) before the query's own page.
 patch_dim: 16  # patch dimension
 per_dataset_sequences_path: null  # Path to a json file with the sequences per dataset. Check the tools/build_sequences_per_dataset.py script to build this file.
 per_layer_embedding_activation: gelu  # Activation of the PLE gate (gelu as Gemma, or silu).
