@@ -5790,6 +5790,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "muown_expert_bound_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=1,
+        help="muown_classical: apply the routed-expert bounds (floor, cap, orthogonal) every this many optimizer steps (on Megatron-FSDP each application exchanges every expert matrix with its owner rank).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "muown_expert_orthogonal": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -5827,6 +5835,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         default=0,
         help="muown_classical: length of the spectral-cap ramp in optimizer steps.",
         choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "muown_expert_spectral_cap_source": MegatronArgMetadata(
+        arg_type=str,
+        default="owner",
+        help="muown_classical on Megatron-FSDP: measure the expert spectral cap at the owner ranks (matrices exchanged per application) or in the experts' forward on the gathered weights (MoonEP experts; no exchange).",
+        choices=("owner", "forward"),
         nargs=None,
         element_type=None,
     ),
@@ -13512,6 +13528,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "muown_expert_bound_interval": MegatronActionSpec(
+        option_strings=("--muown-expert-bound-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1,
+    ),
     "muown_expert_orthogonal": MegatronActionSpec(
         option_strings=("--muown-expert-orthogonal",),
         action_type="store_true",
@@ -13546,6 +13569,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0,
+    ),
+    "muown_expert_spectral_cap_source": MegatronActionSpec(
+        option_strings=("--muown-expert-spectral-cap-source",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="owner",
     ),
     "muown_expert_stable_rank_floor": MegatronActionSpec(
         option_strings=("--muown-expert-stable-rank-floor",),

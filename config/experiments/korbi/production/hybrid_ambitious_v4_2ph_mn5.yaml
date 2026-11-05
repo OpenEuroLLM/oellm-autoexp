@@ -19,7 +19,8 @@ backend:
   megatron:
     # ADDED 2026-11-05 at step 9118 (user: introduce a spectral bound gradually + z-loss as in the
     # 32B run; restarted in place on o260c from the run's own checkpoint 9118, same data order;
-    # z-loss from the second restart, see below).
+    # o260c.0035 ran 9118-9789 with the owner cap only; cap measured in the forward + z-loss
+    # from the restart after 9789).
     #
     # Routed-expert spectral cap with a ramp (Megatron fad580083). Checkpoints 5800 / 8000 / 8900 /
     # 9000 showed one runaway expert per deep MoE layer: in blocks 35-45 one expert's fc2 sigma_max
@@ -38,6 +39,17 @@ backend:
     muown_expert_spectral_cap_end: 15.0
     muown_expert_spectral_cap_ramp_start: 9200
     muown_expert_spectral_cap_ramp_steps: 1875
+    # Measured in the experts' forward (Megatron 6b5aa0980 / 3d8071635): sigma_max of the full
+    # expert matrices that Megatron-FSDP gathers for the forward anyway (their FP8 round trip),
+    # applied as a per-matrix scale to each rank's local fp32 rows and g at the next due step -- no
+    # matrix moves. The first version (o260c.0035, 'owner' source) sent every expert matrix to an
+    # owner rank and back per application: ~0.8 s per step at 256 nodes (15.86 vs 15.04 s on the
+    # same nodes). Forward measurement: 216 ms per due step per GPU (90 experts x 48 layers), at
+    # interval 20 ~11 ms per step (0.07 % at 256 nodes); the runaways grow < 0.1 % per step, so
+    # they overshoot the cap by ~1-2 % between applications. 20 divides arch_metrics_interval
+    # (500): the cap metrics (arch/muown/expert_*/{capped,sigma_over_cap}) are recorded.
+    muown_expert_spectral_cap_source: forward
+    muown_expert_bound_interval: 20
     # z-loss on the output logits, coefficient as the 32B dense flag run (b1_reborn_base): a pure
     # gradient term coeff * logZ^2 (the logged lm loss stays the cross entropy), against drifting
     # logit norms (no softcap). Logged as output_z_loss = mean(logZ^2) (32B at step 339k: 68.1).

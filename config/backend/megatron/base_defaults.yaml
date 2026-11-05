@@ -720,11 +720,13 @@ muon_tp_mode: blockwise  # choices: ['blockwise', 'duplicated', 'distributed'] |
 muown_classical_g_weight_decay: 0.0  # muown_classical: decoupled weight decay on the row magnitudes g, g <- g (1 - lr lambda): a soft cap at |g| ~ 1 / lambda against the Adam drift of g.
 muown_classical_v_weight_decay: 0.0  # muown_classical: decoupled weight decay on the unnormalized direction vectors v (not in the Muown paper): the rotation rate settles at about sqrt(2 lr lambda) instead of annealing as t^-1/2.
 muown_cpu_offload: false  # Keep the Muown momentum in pinned host memory, streamed through the optimizer step (transfers overlapped with Newton-Schulz).
+muown_expert_bound_interval: 1  # muown_classical: apply the routed-expert bounds (floor, cap, orthogonal) every this many optimizer steps (on Megatron-FSDP each application exchanges every expert matrix with its owner rank).
 muown_expert_orthogonal: false  # muown_classical: after each step, replace every routed-expert matrix's direction part by its polar factor at kept row norms (Muon-like weight balancing).
 muown_expert_spectral_cap: 0.0  # muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init sigma_max (per shape) after each step (the matrix scaled by min(1, cap / sigma_max); 0 = off). With --muown-expert-spectral-cap-end, the factor at the start of the ramp.
 muown_expert_spectral_cap_end: 0.0  # muown_classical: the spectral-cap factor at the end of the ramp (0 = no ramp). The factor moves geometrically from --muown-expert-spectral-cap to this value over --muown-expert-spectral-cap-ramp-steps optimizer steps.
 muown_expert_spectral_cap_ramp_start: 0  # muown_classical: the optimizer step (the parameters' step counter: iteration + 1 without skipped steps) at which the spectral-cap ramp starts.
 muown_expert_spectral_cap_ramp_steps: 0  # muown_classical: length of the spectral-cap ramp in optimizer steps.
+muown_expert_spectral_cap_source: owner  # choices: ['owner', 'forward'] | muown_classical on Megatron-FSDP: measure the expert spectral cap at the owner ranks (matrices exchanged per application) or in the experts' forward on the gathered weights (MoonEP experts; no exchange).
 muown_expert_stable_rank_floor: 0.0  # muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >= this value after each step (rank-1 deflation of the top singular direction at fixed row norms; 0 = off).
 muown_extra_scale_factor: 1.0  # Additional multiplier on the Muown direction update.
 muown_magnitude_lr_scale: 1.0  # Multiplier on the base lr for the Muown row-magnitude (l-infinity sign) update.

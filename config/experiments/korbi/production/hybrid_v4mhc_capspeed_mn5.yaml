@@ -100,6 +100,20 @@ sweep:
           backend.megatron.muown_expert_spectral_cap: 1.0
           backend.megatron.muown_expert_spectral_cap_end: 0.0
           backend.megatron.output_z_loss_coeff: null
+        # z-loss alone (2026-11-05: the zloss arm's forward-backward was +30 % on other nodes)
+        - aux.arm: zlossonly
+          backend.megatron.muown_expert_spectral_cap: 0.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: 1.0e-5
+        # the cap measured in the experts' forward (no exchange): kappa 1 caps nearly every
+        # matrix, every 2nd step, with the per-step log of the scaled matrices
+        - aux.arm: fwdcap
+          backend.megatron.muown_expert_spectral_cap: 1.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.muown_expert_spectral_cap_source: forward
+          backend.megatron.muown_expert_bound_interval: 2
+          backend.megatron.output_z_loss_coeff: null
+          backend.env.MEGATRON_FWDCAP_LOG: "1"
         - aux.arm: zloss
           backend.megatron.muown_expert_spectral_cap: 80.0
           backend.megatron.muown_expert_spectral_cap_end: 15.0

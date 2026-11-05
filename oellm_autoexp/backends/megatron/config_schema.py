@@ -2158,6 +2158,16 @@ class MegatronConfig(ConfigInterface):
     # muown_classical: length of the spectral-cap ramp in optimizer steps.
     muown_expert_spectral_cap_ramp_steps: int = 0
 
+    # muown_classical on Megatron-FSDP: measure the expert spectral cap at the owner ranks
+    # (matrices exchanged per application) or in the experts' forward on the gathered weights
+    # (MoonEP experts; no exchange).
+    muown_expert_spectral_cap_source: Literal["owner", "forward"] = "owner"
+
+    # muown_classical: apply the routed-expert bounds (floor, cap, orthogonal) every this many
+    # optimizer steps (on Megatron-FSDP each application exchanges every expert matrix with
+    # its owner rank).
+    muown_expert_bound_interval: int = 1
+
     # muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >=
     # this value after each step (rank-1 deflation of the top singular direction at fixed row
     # norms; 0 = off).
