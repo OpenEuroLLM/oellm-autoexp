@@ -1,246 +1,249 @@
 {
- "_comment": "W&B display name / tags / notes per run id of runs.tsv, (re)applied after every sync pass by apply_labels.py (an upload of an offline fragment can reset the name to the Megatron job name). Owners: the run's agent.",
- "ambitious_v2_main": {
-  "name": "ambitious_v2_16k_QB",
-  "tags": [
-   "v2",
-   "16k",
-   "quantile_balancing",
-   "replaced"
-  ],
-  "notes": "Ambitious v2 at 16k: quantile balancing (EMA 0.9) + global aux loss 1e-5. Replaced: cap 0.78 allocator thrash (32 s/step), then the long-context restart. Not a main run."
- },
- "ambitious_v2_64k": {
-  "name": "ambitious_v2_64k_QB",
-  "tags": [
-   "v2",
-   "64k",
-   "quantile_balancing",
-   "replaced"
-  ],
-  "notes": "Ambitious v2 at 64k (p132.0059): quantile balancing (EMA 0.9) + global aux loss 1e-5. Healthy to step ~340, but QB hid a strongly unbalanced raw router (max_vio 35, 1,811 near-dead slots, up to 616 ghost slots). Replaced by expert-bias balancing (v2b, then v2c)."
- },
- "ambitious_v2b_64k": {
-  "name": "ambitious_v2b_64k_bias_seqaux",
-  "tags": [
-   "v2b",
-   "64k",
-   "expert_bias",
-   "aux_loss",
-   "replaced"
-  ],
-  "notes": "Ambitious v2b at 64k (p132.0071, commit ad149a00): expert bias (rate 1e-3) + aux_loss 1e-4. At mbs 1 x 65536 aux_loss balances each micro-batch = one sequence (load_balancing_loss == seq_load_balancing_loss), the per-sequence balancing ruled out for a batch-1 model. Cancelled at step ~77, replaced by v2c (global_aux_loss)."
- },
- "ambitious_v2c_64k": {
-  "name": "ambitious_v2c_64k_bias_globalaux",
-  "tags": [
-   "v2c",
-   "64k",
-   "expert_bias",
-   "global_aux_loss",
-   "stability_check"
-  ],
-  "notes": "Ambitious v2c at 64k (p132.0075, commit 809ce46b): expert bias (rate 1e-3) + global_aux_loss 1e-4 (token counts over TP x DP x CP and the step's micro-batches; not the per-sequence aux) -- after quantile balancing hid an unbalanced raw router. 360 experts + Engram 80B [2,3,4] + sign hash, LDM + pab, seq 65536 / mbs 1 / gbs 1024, cap 0.80, NCCL 8, ENGRAM_STEP_GROUP 1, new blend without openthoughts-3, rolling save every 100. 1k-step stability check (exit at 1000)."
- },
- "x_ambresid__ldm_pab": {
-  "name": "ambresid_ldm_pab",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "ldm",
-   "pab"
-  ],
-  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): LDM + pab (the v2 recipe). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambresid__mhc4_pab": {
-  "name": "ambresid_mhc4_pab",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "mhc4",
-   "pab"
-  ],
-  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25) + pab. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambresid__ldm": {
-  "name": "ambresid_ldm",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "ldm",
-   "no_pab"
-  ],
-  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): LDM, no pab. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambresid__mhc4": {
-  "name": "ambresid_mhc4",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "mhc4",
-   "no_pab"
-  ],
-  "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25), no pab: the first ambitious run's residual and MLPs. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambwarmup__base": {
-  "name": "ambwarmup_base",
-  "tags": [
-   "ambwarmup",
-   "router_collapse",
-   "ldm",
-   "no_warmup"
-  ],
-  "notes": "Early router collapse test: LDM + pab, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
- },
- "x_ambwarmup__rwu50": {
-  "name": "ambwarmup_rwu50",
-  "tags": [
-   "ambwarmup",
-   "router_collapse",
-   "ldm",
-   "router_warmup"
-  ],
-  "notes": "Early router collapse test: router-only lr warmup over 50 steps. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
- },
- "x_ambwarmup__awu50": {
-  "name": "ambwarmup_awu50",
-  "tags": [
-   "ambwarmup",
-   "router_collapse",
-   "ldm",
-   "adam_warmup"
-  ],
-  "notes": "Early router collapse test: lr warmup of every Adam parameter over 50 steps. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
- },
- "x_ambwarmup__mhc4": {
-  "name": "ambwarmup_mhc4",
-  "tags": [
-   "ambwarmup",
-   "router_collapse",
-   "mhc4",
-   "no_warmup"
-  ],
-  "notes": "Early router collapse test: mHC-4 (mixer lr x0.25) instead of LDM, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
- },
- "x_ambresid__mhc4_e360": {
-  "name": "ambresid_mhc4_e360",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "mhc4",
-   "no_pab",
-   "e360"
-  ],
-  "notes": "Residual test for the ambitious v2 restart: mHC-4, no pab, 360 experts (the v2 expert count). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambresid__mhc4_pab_e360": {
-  "name": "ambresid_mhc4_pab_e360",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "mhc4",
-   "pab",
-   "e360"
-  ],
-  "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 360 experts (the v2 expert count). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambresid__mhc4_pab_seed2": {
-  "name": "ambresid_mhc4_pab_seed2",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "mhc4",
-   "pab",
-   "seed2"
-  ],
-  "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 216 experts, seed 2 (noise level vs mhc4_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "x_ambresid__ldm_pab_seed2": {
-  "name": "ambresid_ldm_pab_seed2",
-  "tags": [
-   "ambresid",
-   "residual_test",
-   "ldm",
-   "pab",
-   "seed2"
-  ],
-  "notes": "Residual test for the ambitious v2 restart: LDM + pab, 216 experts, seed 2 (noise level vs ldm_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
- },
- "ambitious_v3_main": {
-  "name": "ambitious_v3_ldm_curriculum",
-  "tags": [
-   "v3",
-   "ldm",
-   "curriculum",
-   "4k-16k-64k",
-   "bias_globalaux",
-   "pab"
-  ],
-  "notes": "Ambitious v3 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), LDM (address width 128), sequence-length curriculum 4k / 16k / 64k (2 / 8 / 90 %, transitions at 4,737 / 23,691) at 67M tokens per step on the v8ml stage data, expert bias + global_aux_loss 1e-4 (fixed scaling), pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant."
- },
- "x_screen5qbg_s3__ldm_pab_bgaux": {
-  "name": "screen5qbg_s3_ldm_pab_bgaux",
-  "tags": [
-   "screen5qbg",
-   "s3",
-   "balancing",
-   "pab",
-   "bias",
-   "global_aux"
-  ],
-  "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + expert bias 1e-3 + global_aux_loss 1e-4 (the v3 balancing). screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
- },
- "x_screen5qbg_s3__ldm_pab_qbgaux": {
-  "name": "screen5qbg_s3_ldm_pab_qbgaux",
-  "tags": [
-   "screen5qbg",
-   "s3",
-   "balancing",
-   "pab",
-   "quantile_balancing",
-   "global_aux"
-  ],
-  "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + quantile balancing (EMA 0.9) + global_aux_loss 1e-4. screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
- },
- "ambitious_v4_main": {
-  "name": "ambitious_v4_mhc4",
-  "tags": [
-   "v4",
-   "mhc4",
-   "curriculum",
-   "4k-16k-64k",
-   "bias_globalaux",
-   "pab"
-  ],
-  "notes": "Ambitious v4 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), mHC-4 (mixer lr x0.25), the 4k / 16k / 64k curriculum on the v8ml stages, fixed held-out validation sets, expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant. Replaces the LDM v3 run (front-LDM instability at step ~1750)."
- },
- "ambitious_v4_2ph_main": {
-  "name": "ambitious_v4_2ph_mhc4",
-  "tags": [
-   "v4",
-   "mhc4",
-   "curriculum",
-   "8k-64k",
-   "bias_globalaux",
-   "pab",
-   "no_emb_router_wd",
-   "opt81"
-  ],
-  "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets; option8_1 data mix (opt81) from step ~100 on, resumed in place (user 2026-11-02)."
- },
- "ambitious_v4_ldm_main": {
-  "name": "ambitious_v4_ldm",
-  "tags": [
-   "v4",
-   "ldm",
-   "curriculum",
-   "8k-64k",
-   "qb_ema0_globalaux",
-   "pab",
-   "embedding_norm",
-   "no_emb_router_wd",
-   "opt81"
-  ],
-  "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding RMSNorm (front stream at rms ~1), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum; option8_1 data mix (opt81) from step 0 on, resumed in place (user 2026-11-02)."
- }
+  "_comment": "W&B display name / tags / notes per run id of runs.tsv, (re)applied after every sync pass by apply_labels.py (an upload of an offline fragment can reset the name to the Megatron job name). Owners: the run's agent.",
+  "ambitious_v2_main": {
+    "name": "ambitious_v2_16k_QB",
+    "tags": [
+      "v2",
+      "16k",
+      "quantile_balancing",
+      "replaced"
+    ],
+    "notes": "Ambitious v2 at 16k: quantile balancing (EMA 0.9) + global aux loss 1e-5. Replaced: cap 0.78 allocator thrash (32 s/step), then the long-context restart. Not a main run."
+  },
+  "ambitious_v2_64k": {
+    "name": "ambitious_v2_64k_QB",
+    "tags": [
+      "v2",
+      "64k",
+      "quantile_balancing",
+      "replaced"
+    ],
+    "notes": "Ambitious v2 at 64k (p132.0059): quantile balancing (EMA 0.9) + global aux loss 1e-5. Healthy to step ~340, but QB hid a strongly unbalanced raw router (max_vio 35, 1,811 near-dead slots, up to 616 ghost slots). Replaced by expert-bias balancing (v2b, then v2c)."
+  },
+  "ambitious_v2b_64k": {
+    "name": "ambitious_v2b_64k_bias_seqaux",
+    "tags": [
+      "v2b",
+      "64k",
+      "expert_bias",
+      "aux_loss",
+      "replaced"
+    ],
+    "notes": "Ambitious v2b at 64k (p132.0071, commit ad149a00): expert bias (rate 1e-3) + aux_loss 1e-4. At mbs 1 x 65536 aux_loss balances each micro-batch = one sequence (load_balancing_loss == seq_load_balancing_loss), the per-sequence balancing ruled out for a batch-1 model. Cancelled at step ~77, replaced by v2c (global_aux_loss)."
+  },
+  "ambitious_v2c_64k": {
+    "name": "ambitious_v2c_64k_bias_globalaux",
+    "tags": [
+      "v2c",
+      "64k",
+      "expert_bias",
+      "global_aux_loss",
+      "stability_check"
+    ],
+    "notes": "Ambitious v2c at 64k (p132.0075, commit 809ce46b): expert bias (rate 1e-3) + global_aux_loss 1e-4 (token counts over TP x DP x CP and the step's micro-batches; not the per-sequence aux) -- after quantile balancing hid an unbalanced raw router. 360 experts + Engram 80B [2,3,4] + sign hash, LDM + pab, seq 65536 / mbs 1 / gbs 1024, cap 0.80, NCCL 8, ENGRAM_STEP_GROUP 1, new blend without openthoughts-3, rolling save every 100. 1k-step stability check (exit at 1000)."
+  },
+  "x_ambresid__ldm_pab": {
+    "name": "ambresid_ldm_pab",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "ldm",
+      "pab"
+    ],
+    "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): LDM + pab (the v2 recipe). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambresid__mhc4_pab": {
+    "name": "ambresid_mhc4_pab",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "mhc4",
+      "pab"
+    ],
+    "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25) + pab. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambresid__ldm": {
+    "name": "ambresid_ldm",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "ldm",
+      "no_pab"
+    ],
+    "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): LDM, no pab. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambresid__mhc4": {
+    "name": "ambresid_mhc4",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "mhc4",
+      "no_pab"
+    ],
+    "notes": "Residual test for the ambitious v2 restart (LDM vs mHC-4 x pab): mHC-4 (mixer lr x0.25), no pab: the first ambitious run's residual and MLPs. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambwarmup__base": {
+    "name": "ambwarmup_base",
+    "tags": [
+      "ambwarmup",
+      "router_collapse",
+      "ldm",
+      "no_warmup"
+    ],
+    "notes": "Early router collapse test: LDM + pab, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+  },
+  "x_ambwarmup__rwu50": {
+    "name": "ambwarmup_rwu50",
+    "tags": [
+      "ambwarmup",
+      "router_collapse",
+      "ldm",
+      "router_warmup"
+    ],
+    "notes": "Early router collapse test: router-only lr warmup over 50 steps. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+  },
+  "x_ambwarmup__awu50": {
+    "name": "ambwarmup_awu50",
+    "tags": [
+      "ambwarmup",
+      "router_collapse",
+      "ldm",
+      "adam_warmup"
+    ],
+    "notes": "Early router collapse test: lr warmup of every Adam parameter over 50 steps. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+  },
+  "x_ambwarmup__mhc4": {
+    "name": "ambwarmup_mhc4",
+    "tags": [
+      "ambwarmup",
+      "router_collapse",
+      "mhc4",
+      "no_warmup"
+    ],
+    "notes": "Early router collapse test: mHC-4 (mixer lr x0.25) instead of LDM, no warmup. ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (216 experts, Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), 60 steps: the step-7 router collapse."
+  },
+  "x_ambresid__mhc4_e360": {
+    "name": "ambresid_mhc4_e360",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "mhc4",
+      "no_pab",
+      "e360"
+    ],
+    "notes": "Residual test for the ambitious v2 restart: mHC-4, no pab, 360 experts (the v2 expert count). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambresid__mhc4_pab_e360": {
+    "name": "ambresid_mhc4_pab_e360",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "mhc4",
+      "pab",
+      "e360"
+    ],
+    "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 360 experts (the v2 expert count). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambresid__mhc4_pab_seed2": {
+    "name": "ambresid_mhc4_pab_seed2",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "mhc4",
+      "pab",
+      "seed2"
+    ],
+    "notes": "Residual test for the ambitious v2 restart: mHC-4 + pab, 216 experts, seed 2 (noise level vs mhc4_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "x_ambresid__ldm_pab_seed2": {
+    "name": "ambresid_ldm_pab_seed2",
+    "tags": [
+      "ambresid",
+      "residual_test",
+      "ldm",
+      "pab",
+      "seed2"
+    ],
+    "notes": "Residual test for the ambitious v2 restart: LDM + pab, 216 experts, seed 2 (noise level vs ldm_pab). ambrepro scale (16 nodes, gbs 512 x 16k), v2 recipe (Engram [2,3,4] + sign hash 40B, expert bias + global_aux_loss 1e-4 with the scaling fix), no warmup, 900 steps."
+  },
+  "ambitious_v3_main": {
+    "name": "ambitious_v3_ldm_curriculum",
+    "tags": [
+      "v3",
+      "ldm",
+      "curriculum",
+      "4k-16k-64k",
+      "bias_globalaux",
+      "pab"
+    ],
+    "notes": "Ambitious v3 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), LDM (address width 128), sequence-length curriculum 4k / 16k / 64k (2 / 8 / 90 %, transitions at 4,737 / 23,691) at 67M tokens per step on the v8ml stage data, expert bias + global_aux_loss 1e-4 (fixed scaling), pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant."
+  },
+  "x_screen5qbg_s3__ldm_pab_bgaux": {
+    "name": "screen5qbg_s3_ldm_pab_bgaux",
+    "tags": [
+      "screen5qbg",
+      "s3",
+      "balancing",
+      "pab",
+      "bias",
+      "global_aux"
+    ],
+    "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + expert bias 1e-3 + global_aux_loss 1e-4 (the v3 balancing). screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
+  },
+  "x_screen5qbg_s3__ldm_pab_qbgaux": {
+    "name": "screen5qbg_s3_ldm_pab_qbgaux",
+    "tags": [
+      "screen5qbg",
+      "s3",
+      "balancing",
+      "pab",
+      "quantile_balancing",
+      "global_aux"
+    ],
+    "notes": "QB vs bias with the fixed global aux loss (Megatron 24a814eba) at s3: pab + quantile balancing (EMA 0.9) + global_aux_loss 1e-4. screen5stab ldm_pab setting and data, 4 nodes per arm, 4000 steps; the two arms pair with each other."
+  },
+  "ambitious_v4_main": {
+    "name": "ambitious_v4_mhc4",
+    "tags": [
+      "v4",
+      "mhc4",
+      "curriculum",
+      "4k-16k-64k",
+      "bias_globalaux",
+      "pab"
+    ],
+    "notes": "Ambitious v4 main run: 84B-A2.9B-E80B (360 experts, Engram 80B [2,3,4] + sign hash), mHC-4 (mixer lr x0.25), the 4k / 16k / 64k curriculum on the v8ml stages, fixed held-out validation sets, expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, muown_classical lr 8.5e-4 constant. Replaces the LDM v3 run (front-LDM instability at step ~1750)."
+  },
+  "ambitious_v4_2ph_main": {
+    "name": "ambitious_v4_2ph_mhc4",
+    "tags": [
+      "v4",
+      "mhc4",
+      "curriculum",
+      "8k-64k",
+      "bias_globalaux",
+      "pab",
+      "no_emb_router_wd",
+      "opt81",
+      "zloss",
+      "expert_spectral_cap",
+      "hd256"
+    ],
+    "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets; option8_1 data mix (opt81) from step ~100 on, resumed in place (user 2026-11-02). From step 9790 (2026-11-05): output z-loss 1e-5 + routed-expert spectral cap ramp 80 -> 15 from step 9200, measured in the experts' forward. From step 9815: attention head dim 256 instead of 128 (checkpoint 9814 widened function-preserving, eps 1e-3; run dir ..._v4_2ph_hd256), 128 nodes."
+  },
+  "ambitious_v4_ldm_main": {
+    "name": "ambitious_v4_ldm",
+    "tags": [
+      "v4",
+      "ldm",
+      "curriculum",
+      "8k-64k",
+      "qb_ema0_globalaux",
+      "pab",
+      "embedding_norm",
+      "no_emb_router_wd",
+      "opt81"
+    ],
+    "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding RMSNorm (front stream at rms ~1), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum; option8_1 data mix (opt81) from step 0 on, resumed in place (user 2026-11-02)."
+  }
 }
