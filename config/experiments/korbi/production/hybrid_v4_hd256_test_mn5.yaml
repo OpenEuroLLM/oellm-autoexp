@@ -9,11 +9,16 @@
 #   base   kv_channels 128, 30 steps, persistent save at 30
 #   -- widen base/ckpt/iter_0000030 -> base/ckpt_hd256/iter_0000030 (login node) --
 #   r128   resume base/ckpt at 128, steps 31-40 (the reference)
+#   s128_64k / s256_64k  fresh init at the 64k phase shape (seq 65536, mbs 1, gbs 8), 6 steps: step time
+#          and peak memory at head dim 128 vs 256
 #   r256   resume base/ckpt_hd256 at kv_channels 256, steps 31-40: same batches, so its losses must
 #          track r128 (step 31 within bf16 noise) and it must train on
 #
-#   cd $R/autoexp_hd256 && scripts/korbi/mn5_autoexp_bg.sh hd256_base scripts/run_autoexp.py \
-#       --config-name experiments/korbi/production/hybrid_v4_hd256_test_mn5 --yes aux.only=[base]
+#   in the main run's pool (its spare nodes; user 2026-11-05), own test_root:
+#   cd $R/autoexp_hd256p && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p134c \
+#       --config-name experiments/korbi/production/hybrid_v4_hd256_test_mn5 --yes aux.only=[base,s128_64k,s256_64k] \
+#       aux.test_root=/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool
 defaults:
   - hybrid_ambitious_v4_2ph_256_mn5
   - _self_
@@ -79,13 +84,34 @@ sweep:
       configs:
         - aux.arm: base
         - aux.arm: r128
-          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256test/base/ckpt
+          backend.megatron.load: ${aux.test_root}/base/ckpt
           backend.megatron.save: null
           backend.megatron.save_interval: null
           backend.megatron.exit_interval: 40
         - aux.arm: r256
           backend.megatron.kv_channels: 256
-          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256test/base/ckpt_hd256
+          backend.megatron.load: ${aux.test_root}/base/ckpt_hd256
           backend.megatron.save: null
           backend.megatron.save_interval: null
           backend.megatron.exit_interval: 40
+        # the 64k phase shape (phase 2: seq 65536, mbs 1), fresh init, 6 steps: step time and peak
+        # memory at head dim 256 vs 128 (the main run sits at 0.95 device memory)
+        - aux.arm: s128_64k
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.phase_transition_iterations: null
+          backend.megatron.phase_transition_variable_batch: false
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 6
+        - aux.arm: s256_64k
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.kv_channels: 256
+          backend.megatron.phase_transition_iterations: null
+          backend.megatron.phase_transition_variable_batch: false
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 6
