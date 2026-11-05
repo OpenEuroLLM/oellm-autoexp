@@ -1,14 +1,14 @@
 #!/bin/bash
-# R0 + R2 of the midtraining campaign (docs/campaign_3b_hybrid_midtraining.md §5) on one MN5 node:
-# router predictability and the expert skip policy on an HF export of v4_2ph (router_probe.py), with the
-# fixed validation sets (v8ml-valid) as data. Launched by
-# config/experiments/korbi/campaign_3b_hybrid_midtraining/r0_r2_router_probe_mn5.yaml.
+# An HF-export probe of the midtraining campaign (docs/campaign_3b_hybrid_midtraining.md) on one MN5 node,
+# with the fixed validation sets (v8ml-valid) as data: router_probe.py (R0 / R2), ced_probe.py (CED retrofit).
+# Launched by config/experiments/korbi/campaign_3b_hybrid_midtraining/{r0_r2_router,ced}_probe_mn5.yaml.
 #
-#   run_r0_r2_mn5.sh <export dir> <out dir> [router_probe.py args...]
+#   run_hf_probe_mn5.sh <probe script> <export dir> <out dir> [probe args...]
 set -uo pipefail
-BASE=$1
-OUT=$2
-shift 2
+PROBE=$1
+BASE=$2
+OUT=$3
+shift 3
 source scripts/korbi/vllm/setup_vllm_uv.sh
 export CC=${CC:-gcc}
 mkdir -p "$OUT"
@@ -25,8 +25,8 @@ done
 D=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid
 DATA=""
 for s in web_en multilingual code math reasoning long_64k; do DATA="$DATA${DATA:+,}$s=$D/${s}_text_document"; done
-"$INFER_PY" scripts/korbi/campaign_midtraining/router_probe.py --model "$VIEW" --data "$DATA" --long long_64k \
+"$INFER_PY" "scripts/korbi/campaign_midtraining/$PROBE" --model "$VIEW" --data "$DATA" --long long_64k \
     --out "$OUT" "$@" 2>&1 | grep -v "UserWarning\|warnings.warn"
 status=${PIPESTATUS[0]}
-echo "R0R2_DONE status=$status"
+echo "PROBE_DONE $PROBE status=$status"
 exit $status

@@ -17,7 +17,7 @@ aux:
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
   # 16 rows x 2k (16 decode streams at the same position, 32k tokens per forward); long_64k: 1 x 64k
   args: "--seq-len 2048 --rows 16 --batches 24 --warm 8 --r2-batches 2"
-  bench: "bash scripts/korbi/campaign_midtraining/run_r0_r2_mn5.sh ${aux.export} ${aux.out} ${aux.args}"
+  bench: "bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh router_probe.py ${aux.export} ${aux.out} ${aux.args}"
 
 job:
   name: campaign_mid_${aux.name}
