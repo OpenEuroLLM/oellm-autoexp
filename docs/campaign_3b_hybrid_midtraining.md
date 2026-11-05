@@ -449,6 +449,9 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
 | R1 | Offload-aware training | s3: reference / detached predictor (loss must match) / predicted miss-drop p = 0.1 / random-drop control / undetached predictor / pre-gated routing | loss; degradation under the skip policy; recall | ~6 × 50-126 |
 | R3 | Routing locality | s3: reference vs a temporal-locality term at two strengths (e.g. a per-token stay bonus) | loss vs LRU hit rate and union at batch 16 | ~3 × 50-126 |
 | R4 | Adaptive k | s3: zero experts (identity / zero, 1-2× k) vs reference, at equal mean active compute | loss; mean real experts per token; bytes per step at batch 16 | ~3 × 50-126; dispatcher support |
+| R5 | CED-style pre-routing | s3: decoder-half MoE layers route from the middle layer's state (same token) vs reference; also d = 2 / 4 pre-gating | loss; lookahead gained; prefetch exactness | ~3 × 50-126 |
+| R6 | Chunk-causal expert subsets | s3: per chunk of 256 / 1024 tokens, M = 32 / 64 / 128 experts per layer from the prefix, top-5 within | loss vs M; resident bytes at batch 1 / 16 | ~4 × 50-126 |
+| R7 | Hash routing in the lowest layers | s3: token-id (or bigram-hash) routing for MoE layers 0-2 vs learned | loss; prefetch at token time | ~2 × 50-126 |
 | M1 | MTP in pretraining? | s2/s3: next-token only / MTP-1 λ 0.1 / Soft-MTP-1 / Soft-MTP-2 | loss at equal tokens and equal wall clock; evals; self-speculative acceptance | ~4 × 50-126 |
 | N1 | Single-Pass mHC | s3: mHC-4 vs Single-Pass mHC-4 | loss; tok/s | ~2 × 126 |
 | S0 | Where does attention time go? | v4 HF/vLLM at 64k, 128k, 256k, 1M; prefill and decode | ms per layer by component | dev queue |
@@ -539,6 +542,41 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
        It is where training could help: R3 locality, pre-gating, or a learned predictor done properly.
     3. Batch 16 needs ~40-50 % of the experts resident per step at 2 % misses. That makes the GPU cache size and
        the host-side computation of misses the real budget (§1.1).
+
+- **2026-11-05, prefill-informed (non-causal) expert prediction** (user question;
+  `scripts/korbi/campaign_midtraining/prefill_working_set.py` on the R0 traces):
+  - **Setup:** per layer, pin the C experts most used in the prompt (first half of a row) for the continuation
+    (second half). Compare with an LRU cache of C warmed on the prompt, and with global popularity (other domains).
+  - **Results** (hit rate of the continuation's assignments, C = 64 of 360 per layer):
+
+    | policy | short domains (1k → 1k) | long_64k (32k → 32k, one document) |
+    |---|---:|---:|
+    | prompt-pinned | 0.52-0.72 | **0.24** |
+    | LRU | 0.72-0.85 | 0.78 |
+    | global popularity | 0.07-0.21 | — |
+
+    - Global popularity falls *below* random (0.18): balancing flattens it, and the experts are domain-specific.
+    - With one pinned set for 16 streams, C = 192 reaches 0.86-0.94.
+  - **Reading:** the working set drifts within a document. Locality is temporal, not prompt-global, so a whole-
+    prompt summary does not beat recency. The lower layers (0-2) are the worst for every cache policy (LRU at
+    C = 64: 0.58-0.75).
+    - Caveat: the short rows concatenate documents, which favours LRU a little. The long_64k test is clean.
+  - **Prefill itself needs no expert prediction.** A chunk of a few thousand tokens touches nearly every expert,
+    so prefill streams all experts per chunk anyway. The lever there is the chunk size (§1.1).
+  - **Training-side non-causal routing is excluded.** A routing choice that depends on future tokens leaks them
+    into the LM (top-5 of 360 per layer is ~35 bits per layer per token). V4.1's CED is causal as well: it is a
+    prefill-compute trick (decoder global KV from the middle layer).
+  - **The causal analogues go to the ablation list (§5):**
+    - **R5, CED-style pre-routing:** decoder-half MoE layers route from the middle layer's hidden state of the same
+      token. That gives ~24 layers of exact lookahead for half the experts. (R0's untrained d = 4 baseline
+      already drops to R@10 0.74-0.83; trained routing would be exact by construction, at some quality cost.)
+    - **R6, chunk-causal expert subsets:** per chunk of C tokens, a selector on the prefix picks M experts per
+      layer, and the tokens route within them. This gives exact per-chunk prefetch, e.g. M = 64 → ~7.7 GB
+      resident on a 24 GB card. It helps batch 1 (the 10M point) more than batch 16, where the subsets of 16
+      streams union up.
+    - **R7, hash / token-id routing for MoE layers 0-2:** the layers that neither layer-ahead (R@10 0.47-0.64) nor
+      caching predict. Routing is known as soon as the token (or a drafted token) is. Inference-only fallback:
+      keep layers 0-2 resident (3 × 360 experts ≈ 2.7 GB at Q4).
 
 ## References
 
