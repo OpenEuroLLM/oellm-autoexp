@@ -1,0 +1,90 @@
+# @package _global_
+# End-to-end test of the attention head-dim widening 128 -> 256 (user 2026-11-05: the 6 attention
+# layers' head dim caps long-range retrieval; widen the stopped v4_2ph checkpoint with small noise
+# on the new channels): scripts/korbi/production/widen_attention_head_dim.py.
+#
+# The production stack (hybrid_ambitious_v4_2ph_256_mn5: Megatron-FSDP, EP 4, MoonEP, muown_classical,
+# gated GQA attention with qk RMSNorm + XSA, rank-local DCP load plans) on 2 nodes as the capspeed
+# suite (8 experts, Engram 1/16, gbs 64):
+#   base   kv_channels 128, 30 steps, persistent save at 30
+#   -- widen base/ckpt/iter_0000030 -> base/ckpt_hd256/iter_0000030 (login node) --
+#   r128   resume base/ckpt at 128, steps 31-40 (the reference)
+#   r256   resume base/ckpt_hd256 at kv_channels 256, steps 31-40: same batches, so its losses must
+#          track r128 (step 31 within bf16 noise) and it must train on
+#
+#   cd $R/autoexp_hd256 && scripts/korbi/mn5_autoexp_bg.sh hd256_base scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_v4_hd256_test_mn5 --yes aux.only=[base]
+defaults:
+  - hybrid_ambitious_v4_2ph_256_mn5
+  - _self_
+
+aux:
+  suite: v4_hd256_test
+  arm: base
+  only: []
+  nodes: 2
+  phase: 1
+  seq: 8192
+  gbs: 64
+  stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/capspeed_datamix.txt
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256test
+
+backend:
+  megatron:
+    num_experts: 8
+    engram_table_size: 1623365
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    micro_batch_size: 8
+    load: null
+    exit_on_missing_checkpoint: false
+    exit_interval: 30
+    log_interval: 1
+    timing_log_level: 1
+    eval_interval: 100000
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 30
+    non_persistent_save_interval: null
+    async_save: false
+
+job:
+  name: v4_hd256_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  metadata:
+    pool_singleton: null
+  est_step_time_s: 20.0
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (test: no retry)"}
+
+slurm:
+  sbatch:
+    account: ehpc533
+    time: "01:00:00"
+    qos: acc_ehpc
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: r128
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256test/base/ckpt
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 40
+        - aux.arm: r256
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256test/base/ckpt_hd256
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 40
