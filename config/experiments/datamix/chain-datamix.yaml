@@ -14,10 +14,15 @@ aux:
   output_root: ${oc.env:OUTPUT_ROOT,output}   # relative to the repo root
   scales: [0.1B, 0.4B, 1.4B]          # any subset
   stages: [train, convert, eval]      # any subset, e.g. [convert, eval] for an existing training
-  # Training data: one list item per word of Megatron's --data-path. A single dataset is
-  # just its prefix; a mix alternates weight and prefix items ("0.3", prefix_a, "0.7",
-  # prefix_b, ...). prefix = path without .bin/.idx; weights quoted.
-  data_path:
-    - ${aux.project_dir}/users/${oc.env:USER}/pca_filtering/data/tokenization/fin_Latn/bin_00_text_document
-  eval_task_groups: [open-sci-0.01]   # needed for the eval stage
+  # Training data (required): one list item per word of Megatron's --data-path. A single
+  # dataset is just its prefix; a mix alternates weight and prefix items ("0.3", prefix_a,
+  # "0.7", prefix_b, ...). prefix = path without .bin/.idx; weights quoted. E.g.
+  #   data_path:
+  #     - /scratch/<project>/users/<you>/data/bin_00_text_document
+  # or on the command line: 'aux.data_path=[/scratch/<project>/.../bin_00_text_document]'
+  data_path: ???
+  # Eval task groups (required for the eval stage), e.g. [open-sci-0.01]; all groups are in
+  # submodules/oellm_evals/oellm/resources/task-groups.yaml. Use the same for every mix you
+  # want to compare.
+  eval_task_groups: ???
   eval_limit: null                    # samples per task; null = full tasks

@@ -1,7 +1,7 @@
 # DataMix chain: training, HF conversion and evaluation of every checkpoint
 
-This complements [lumi_autoexp_installation_guide.md](lumi_autoexp_installation_guide.md): install `oellm-autoexp`
-first as described there. The chain runs the DataMix trainings (`scale/<scale>.yaml`), converts every saved checkpoint
+This complements [lumi_autoexp_installation_guide.md](lumi_autoexp_installation_guide.md): set up `oellm-autoexp`
+and do the test run as described there first. The chain runs the DataMix trainings (`scale/<scale>.yaml`), converts every saved checkpoint
 to HF while training continues, and evaluates each converted checkpoint with oellm-eval.
 
 ## Quick start
@@ -15,9 +15,8 @@ aux:
   output_root: ${oc.env:OUTPUT_ROOT,output}   # relative to the repo root
   scales: [0.1B, 0.4B, 1.4B]          # any subset
   stages: [train, convert, eval]      # any subset
-  data_path:
-    - ${aux.project_dir}/users/${oc.env:USER}/pca_filtering/data/tokenization/fin_Latn/bin_00_text_document
-  eval_task_groups: [open-sci-0.01]   # needed for the eval stage
+  data_path: ???                      # your training data, see Training data
+  eval_task_groups: ???               # needed for the eval stage, e.g. [open-sci-0.01]
   eval_limit: null                    # samples per task; null = full tasks
 ```
 
@@ -34,7 +33,9 @@ Before the first run:
 2. Set `aux.data_path` to your training data, see [Training data](#training-data).
 3. Set the evaluation task groups `aux.eval_task_groups` (all groups are listed in
    `submodules/oellm_evals/oellm/resources/task-groups.yaml`). They are only needed if `aux.stages` includes `eval`.
-4. Check the [prerequisites](#prerequisites) once.
+   Use the same groups for all mixes you want to compare.
+4. Download the eval datasets of your config, see [Eval datasets](#eval-datasets).
+5. Check the [prerequisites](#prerequisites) once.
 
 Run it from the repo root in a tmux window and keep it running: it submits the convert and eval jobs only when their
 inputs are ready.
@@ -43,6 +44,7 @@ inputs are ready.
 export HF_HOME=/scratch/project_465002530/cache   # tokenizer + eval datasets
 export OUTPUT_ROOT=/scratch/project_465002530/users/$USER/autoexp_runs   # optional, default output/ in the repo
 
+bash config/experiments/datamix/prefetch_eval.sh --config-name experiments/datamix/chain-datamix
 uv run python scripts/run_autoexp.py --config-name experiments/datamix/chain-datamix
 ```
 
@@ -58,7 +60,7 @@ To see what would be submitted, add `--dry-run`: it renders the job scripts into
 
 ### Training data
 
-`aux.data_path` is Megatron's `--data-path`, one list item per word. A single dataset is just its prefix (the path
+`aux.data_path` (required, no default) is Megatron's `--data-path`, one list item per word. A single dataset is just its prefix (the path
 without `.bin`/`.idx`). A mix alternates weight and prefix items, with the weights quoted:
 
 ```yaml
@@ -110,6 +112,23 @@ Other oellm-eval options aren't exposed. Don't set them under `backend` in `chai
 the training config, and the eval jobs override most `backend` values anyway. Add an `aux.eval_*` value for such an
 option in `_chain-datamix.yaml` instead, next to `backend.limit: "\\${aux.eval_limit}"`.
 
+### Eval datasets
+
+The eval jobs run offline (`HF_HUB_OFFLINE=1`, LUMI compute nodes have no internet), so the datasets of
+`aux.eval_task_groups` must be in `$HF_HOME` before the first eval job starts. Download them on the login node with
+the same config name and overrides as the run, once and after every change of `aux.eval_task_groups`:
+
+```bash
+bash config/experiments/datamix/prefetch_eval.sh --config-name experiments/datamix/chain-datamix
+bash config/experiments/datamix/prefetch_eval.sh --config-name experiments/datamix/chain-datamix 'aux.eval_task_groups=[xnli-eu]'
+```
+
+autoexp doesn't do this itself. Used on its own, `oellm-eval schedule` runs on the login node and downloads the
+datasets before it submits the eval jobs. autoexp runs `oellm-eval schedule --local true` inside its own eval job,
+on an offline compute node, so the chain skips that step (`backend.skip_checks: true`). `prefetch_eval.sh` runs only
+that step (`--download_only true`), in the eval container. Datasets already in `$HF_HOME` are reused, so running it
+again takes about a minute.
+
 ### Selecting stages
 
 Only the jobs of the stages in `aux.stages` are created, so the settings of the other stages aren't needed. E.g. a
@@ -121,7 +140,7 @@ aux:
   stages: [train]
 ```
 
-If `aux.stages` includes `eval` but `aux.eval_task_groups` is missing, the config fails to resolve with
+If `aux.stages` includes `eval` but `aux.eval_task_groups` is not set, `run_autoexp.py` fails with
 `Missing mandatory value: aux.eval_task_groups`.
 
 ### Several sessions
@@ -149,18 +168,22 @@ To test the whole pipeline on `dev-g`, run `run_test.sh`. Outside tmux it starts
 `datamix-test` and attaches to it (detach: `Ctrl-b d`, reattach: `tmux attach -t datamix-test`); the shell stays open
 after the monitor exits, so its output stays readable. Close it with `exit` before the next test run.
 
+The training data is passed on the command line (any dataset tokenized with `openeurollm/tokenizer-256k`):
+
 ```bash
-bash config/experiments/datamix/run_test.sh                       # all scales
-bash config/experiments/datamix/run_test.sh 'aux.scales=[0.1B]'   # quicker: one scale
-bash config/experiments/datamix/run_test.sh --dry-run             # render the job scripts only
+D='aux.data_path=[/path/to/bin_00_text_document]'
+bash config/experiments/datamix/run_test.sh "$D"                       # all scales
+bash config/experiments/datamix/run_test.sh "$D" 'aux.scales=[0.1B]'   # quicker: one scale (~1 h)
+bash config/experiments/datamix/run_test.sh "$D" --dry-run             # render the job scripts only
 ```
 
-It checks the [prerequisites](#prerequisites) and runs `chain-datamix-test.yaml`: every scale on 1 node for 100
-iterations, with checkpoints at 50 and 100, and 50 samples per eval task. It writes to `output/test/datamix/<scale>`
-(ignores `OUTPUT_ROOT`). dev-g allows only 2 jobs per user and a rejected job is dropped, so every job, trainings
-included, is submitted only while you have fewer than 2 jobs there (`aux.submit_guard` in `_chain-test.yaml`). The 15
-jobs therefore run two at a time. Don't run other dev-g jobs at the same time. Finished jobs are skipped, so delete
-`output/test/datamix` to test again from scratch.
+It checks the [prerequisites](#prerequisites), downloads the eval datasets (`prefetch_eval.sh`) and runs
+`chain-datamix-test.yaml`: every scale on 1 node for 100 iterations, with checkpoints at 50 and 100, evaluated on
+`generic-multilingual` with 50 samples per task. It writes to `output/test/datamix/<scale>` (ignores `OUTPUT_ROOT`).
+dev-g allows only **one job per project** (QoS `dev_g`, shared with all colleagues in the billed project), and a
+rejected job is dropped. So every job, trainings included, is submitted only while nobody in the project has a job
+on dev-g (`aux.submit_guard` in `_chain-test.yaml`); the jobs run one at a time and wait while dev-g is in use.
+Finished jobs are skipped, so delete `output/test/datamix` to test again from scratch.
 
 ## Outputs
 
@@ -211,7 +234,9 @@ The configs are layered; later files override earlier ones:
 | `scale/<scale>.yaml` | The training of one model size; the sweep picks one per job. Also runs on its own |
 | `_chain-datamix.yaml` | The plumbing: run dirs, the train/convert/eval jobs, skipping of finished jobs |
 | `chain-datamix.yaml` | What you run: scales, stages, data, eval tasks |
+| `setup_lumi.sh` | Interactive setup from a fresh clone to the test run, see [lumi_autoexp_installation_guide.md](lumi_autoexp_installation_guide.md) |
 | `_chain-test.yaml`, `chain-datamix-test.yaml`, `run_test.sh` | The [test run](#test-run) on dev-g |
+| `prefetch_eval.sh` | Downloads the eval datasets of a config, see [Eval datasets](#eval-datasets) |
 
 To check what a config resolves to, render it:
 `uv run python scripts/render_config.py --config-name experiments/datamix/chain-datamix`.
@@ -224,18 +249,18 @@ To check what a config resolves to, render it:
 | `aux.output_root` | `$OUTPUT_ROOT`, else `output` | `chain-datamix.yaml` | Holds the run dirs `<name>/<scale>`; same for all sessions |
 | `aux.scales` | `[0.1B, 0.4B, 1.4B]` | `chain-datamix.yaml` | Model sizes to run |
 | `aux.stages` | `[train, convert, eval]` | `chain-datamix.yaml` | Stages to run, see [Several sessions](#several-sessions) |
-| `aux.data_path` | `<project_dir>/users/$USER/pca_filtering/...` | `chain-datamix.yaml` | Your training data, see [Training data](#training-data) |
-| `aux.eval_task_groups` | `[open-sci-0.01]` | `chain-datamix.yaml` | Required for the eval stage |
+| `aux.data_path` | – | `chain-datamix.yaml` | Required; your training data, see [Training data](#training-data) |
+| `aux.eval_task_groups` | – | `chain-datamix.yaml` | Required for the eval stage; download with `prefetch_eval.sh`, see [Eval datasets](#eval-datasets) |
 | `aux.eval_limit` | `null` (full tasks) | `chain-datamix.yaml` | Samples per task, e.g. for a quick test |
 | `$HF_HOME` | – | env | Must hold the tokenizer and the eval datasets |
-| `slurm.sbatch.account` | `project_465002530` | `config/slurm/lumi.yaml` | Billed project; also defines `aux.project_dir` |
-| `aux.project_dir` | `/scratch/<account>` | `_chain-datamix.yaml` | Project scratch; the eval container (and the default `data_path`) live under it |
-| `aux.eval_container` | `<project_dir>/containers/laif-rocm-6.4.4-…sif` | `_chain-datamix.yaml` | ROCm eval container (vllm + transformers) |
-| `aux.convert_container` | `<repo>/artifacts/MegatronTrainingLumi_bridge_x86_64.sif` | `_chain-datamix.yaml` | Training container + `nvidia-modelopt`, `pulp` |
+| `aux.account` | `$DATAMIX_PROJECT`, else `project_465002530` | `datamix.yaml` | Billed project of all jobs; set by `setup_lumi.sh` in `~/datamix_env.sh` |
+| `aux.containers_dir` | `$DATAMIX_CONTAINERS`, else `/scratch/project_465002530/containers` | `datamix.yaml` | Holds the train (`AutoExp_2026-07-02.sif`), convert and eval containers |
+| `aux.eval_container` | `<containers_dir>/laif-rocm-6.4.4-…sif` | `_chain-datamix.yaml` | ROCm eval container (vllm + transformers) |
+| `aux.convert_container` | `<containers_dir>/MegatronTrainingLumi_bridge_x86_64.sif` | `_chain-datamix.yaml` | Training container + `nvidia-modelopt`, `pulp`; see [Prerequisites](#prerequisites) |
 | `aux.tokenizer_dir` | snapshot of `backend.megatron.tokenizer_model` in `$HF_HOME/hub` | `_chain-datamix.yaml` | Conversion needs a local dir; a local path in `tokenizer_model` is used as is |
 | `aux.ckpt_iters` | every `save_interval` + the final iteration | `_chain-datamix.yaml` | Checkpoints to convert/evaluate, e.g. `'[4000,47684]'` |
 | `aux.skip_done` | `true` | `_chain-datamix.yaml` | `false` redoes finished trainings, conversions and evals |
-| `aux.convert_time`, `aux.convert_partition` | `01:00:00`, `small-g` | `_chain-datamix.yaml` | For `dev-g` (max 2 jobs per user) also set `aux.submit_guard`, as `_chain-test.yaml` does |
+| `aux.convert_time`, `aux.convert_partition` | `01:00:00`, `small-g` | `_chain-datamix.yaml` | For `dev-g` (max 1 job per project) also set `aux.submit_guard`, as `_chain-test.yaml` does |
 | `aux.submit_guard` | `true` | `_chain-datamix.yaml` | Extra shell check every job must pass before it is submitted. A rejected sbatch is not retried; the job is dropped |
 | `aux.eval_time`, `aux.eval_partition` | `04:00:00`, `small-g` | `_chain-datamix.yaml` | Raise the time for large task groups |
 
@@ -245,28 +270,30 @@ To check what a config resolves to, render it:
 
 ### Prerequisites
 
-Check these once per user/project:
+`setup_lumi.sh` checks and sets up all of these; see [lumi_autoexp_installation_guide.md](lumi_autoexp_installation_guide.md).
+To check them by hand, once per user/project:
 
 - **Tokenizer.** `$HF_HOME/hub/models--openeurollm--tokenizer-256k/` must exist; training loads it offline. The
   config fails to resolve if `refs/main` is missing.
-- **Eval environment and datasets.** oellm-eval and lm-eval go into `~/eval_local` (linked to scratch because of the
-  home quota), and the eval datasets go into `$HF_HOME`:
+- **Eval environment.** oellm-eval and lm-eval go into `~/eval_local` (linked to scratch because of the
+  home quota):
 
   ```bash
   EVAL_LOCAL_DIR=/scratch/project_465002530/users/$USER/eval_local \
   OELLM_EVAL_SIF=/scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif \
-      bash scripts/install_eval_env.sh --cluster lumi --prefetch
+      bash scripts/install_eval_env.sh --cluster lumi
   ```
 
-- **Convert container.** `artifacts/MegatronTrainingLumi_bridge_x86_64.sif` must exist in the repo. It is the
-  training container plus `nvidia-modelopt` and `pulp`, which Megatron-Bridge imports during conversion. Copy it from
-  a colleague, or build it from `MegatronTrainingLumi_x86_64.sif`:
+  The eval datasets of your task groups are downloaded by `prefetch_eval.sh`, see [Eval datasets](#eval-datasets).
+  The installer also patches `submodules/Megatron-Bridge` in place (`container/megatron/patch_bridge_lazy_imports.py`),
+  so that model bridges that don't import with the OpenEuroLLM Megatron-LM fork are skipped; the modified files in
+  that submodule are intended.
+
+- **Convert container.** `aux.convert_container`, by default
+  `/scratch/project_465002530/containers/MegatronTrainingLumi_bridge_x86_64.sif`. It is the training container
+  (`AutoExp_2026-07-02.sif`, `config/container/lumi.yaml`) plus `nvidia-modelopt` and `pulp`, which Megatron-Bridge
+  imports during conversion. To build it (LUMI has no fakeroot, so the script works in a sandbox on `/tmp`):
 
   ```bash
-  SB=/tmp/$USER-sandbox   # local disk: the unpacked image has too many files for the scratch quota
-  singularity build --sandbox --fix-perms $SB artifacts/MegatronTrainingLumi_x86_64.sif
-  umask 022; singularity exec --writable --no-home --no-umask $SB \
-      python3 -m pip install --no-cache-dir --no-deps nvidia-modelopt pulp
-  chmod -R a+rX $SB/opt/venv/lib/python3.12/site-packages/{modelopt,pulp,nvidia_modelopt-*,pulp-*}
-  singularity build artifacts/MegatronTrainingLumi_bridge_x86_64.sif $SB && rm -rf $SB
+  bash container/megatron/build_lumi_bridge_container.sh /scratch/project_465002530/containers/MegatronTrainingLumi_bridge_x86_64.sif
   ```

@@ -40,8 +40,6 @@ aux:
   run_name: ${aux.name}-${aux.scale}           # SLURM job + W&B name of the training, prefix of the others
   train_dir: ${aux.output_root}/${aux.name}/${aux.scale}
 
-  # scratch of the billed project (slurm.sbatch.account); the eval container lives here
-  project_dir: /scratch/${slurm.sbatch.account}
   # The datamix tokenizer (backend.megatron.tokenizer_model, an HF hub id loaded offline
   # from $HF_HOME) resolved to its snapshot in the HF cache, as conversion needs a local
   # dir; used as is if it's a local dir. Needs HF_HOME, as in the datamix guide.
@@ -70,12 +68,13 @@ aux:
     eval: ${oc.eval:'Path("${aux.train_dir}/eval/${oc.pad_iter:${aux.ckpt_iter}}.done").exists()'}
 
   convert_time: "01:00:00"
-  convert_partition: small-g        # not dev-g: max 2 jobs per user there
-  # container of the convert jobs: the training container + nvidia-modelopt + pulp
-  convert_container: ${oc.env:PWD}/artifacts/MegatronTrainingLumi_bridge_x86_64.sif
+  convert_partition: small-g        # not dev-g: max 1 job per project there
+  # container of the convert jobs: the training container + nvidia-modelopt + pulp,
+  # built by container/megatron/build_lumi_bridge_container.sh
+  convert_container: ${.containers_dir}/MegatronTrainingLumi_bridge_x86_64.sif
   # ROCm eval container (laif, has vllm + transformers); lm-eval + oellm-eval are
   # installed on top into $HOME/eval_local (scripts/install_eval_env.sh)
-  eval_container: ${.project_dir}/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
+  eval_container: ${.containers_dir}/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
   eval_time: "04:00:00"
   eval_partition: small-g
   # extra shell check every job must pass before it is submitted (convert/eval jobs on
@@ -113,6 +112,7 @@ sweep:
           defaults:
             backend: megatron_bridge
             slurm: lumi_bridge
+            slurm.sbatch.account: "${aux.account}"   # lumi_bridge has lumi.yaml's account
             container.image: "${aux.convert_container}"
             job.name: "\\${aux.run_name}_convert_\\${aux.ckpt_iter}"   # SLURM job name
             job.base_output_dir: "\\${aux.train_dir}/convert/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
@@ -161,6 +161,7 @@ sweep:
             backend: oellm_eval
             container: lumi_eval
             slurm: lumi_eval
+            slurm.sbatch.account: "${aux.account}"   # lumi_eval has lumi.yaml's account
             job.name: "\\${aux.run_name}_eval_\\${aux.ckpt_iter}"   # SLURM job name
             job.base_output_dir: "\\${aux.train_dir}/eval/\\${oc.pad_iter:\\${aux.ckpt_iter}}"
             job.start_condition:

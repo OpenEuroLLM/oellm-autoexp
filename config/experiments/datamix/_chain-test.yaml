@@ -3,11 +3,13 @@
 # Test-run settings for the chain: per scale 1 node, 100 iterations (~26M tokens),
 # checkpoints at 50 and 100, short convert/eval jobs - everything on dev-g.
 #
-# dev-g allows 2 jobs per user (MaxJobs=MaxSubmit=2, `sacctmgr show assoc user=$USER`)
-# and autoexp drops a job whose sbatch is rejected instead of retrying it. So every job
-# (training, convert, eval) is submitted only while fewer than 2 of your jobs are on
-# dev-g (aux.submit_guard); they run two at a time. Don't keep other dev-g jobs around
-# during a test run. Include it after chain-datamix, see chain-datamix-test.yaml.
+# dev-g allows ONE job per project (QoS dev_g: MaxSubmitPA=MaxJobsPA=1, see
+# `sacctmgr show qos dev_g format=Name,MaxSubmitPA,MaxSubmitPU`), shared by everyone in
+# the billed project, and autoexp drops a job whose sbatch is rejected instead of
+# retrying it. So every job (training, convert, eval) is submitted only while the project
+# has no job on dev-g (aux.submit_guard); they run one at a time and wait while a
+# colleague uses dev-g. (small-g/standard-g have no such limit but queue for days.)
+# Include it after chain-datamix, see chain-datamix-test.yaml.
 
 aux:
   # 100 iters x 64 seqs x 4096 tokens -> train_iters=100, WSD cooldown=20
@@ -17,7 +19,10 @@ aux:
   convert_partition: dev-g
   eval_time: "01:00:00"
   eval_partition: dev-g
-  submit_guard: '[ "$(squeue -h -u $USER -p dev-g | wc -l)" -lt 2 ]'
+  submit_guard: '[ "$(squeue -h -A ${aux.account} -p dev-g | wc -l)" -lt 1 ]'
+  # small group (3 tasks, ~5 min per eval): oellm-eval starts one lm_eval process per task,
+  # and the very first eval after installing ~/eval_local is much slower (cold start)
+  eval_task_groups: [generic-multilingual]
   eval_limit: 50              # samples per task
 
 slurm:
