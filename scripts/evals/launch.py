@@ -164,8 +164,9 @@ def plan(spec: EvalSpec) -> tuple[list[tuple[JobSpec, dict]], list[tuple[str, fl
     items: list[tuple[str, float]] = []
     lm_rows = [r for r in todo if r.suite == "lm-eval-harness"]
     if spec.lm_eval.enabled and lm_rows:
-        items = flag_queue.plan([r.name for r in lm_rows], _times(ENGINE_TIMES),
-                                spec.lm_eval.split_s, spec.lm_eval.max_parts)
+        # a test run (rows.limit) evaluates the first documents of each row: no parts
+        split_s = 0 if spec.rows.limit else spec.lm_eval.split_s
+        items = flag_queue.plan([r.name for r in lm_rows], _times(ENGINE_TIMES), split_s, spec.lm_eval.max_parts)
         queue = str(results_root(spec) / "queue_lm")
         total = sum(s for _, s in items)
         workers = min(spec.lm_eval.workers, len(items))

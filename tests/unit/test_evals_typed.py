@@ -149,6 +149,13 @@ def test_explicit_rows_and_unknown_names(tmp_path):
         launch.plan(_spec(tmp_path, {"rows": {"names": ["vllm/nope/0"]}}))
 
 
+def test_a_limited_test_run_splits_no_rows(tmp_path):
+    _, items, _ = launch.plan(_spec(tmp_path, {"rows": {"limit": 20}}))
+    assert items and not any("@" in i for i, _ in items)
+    _, items, _ = launch.plan(_spec(tmp_path))
+    assert any("@" in i for i, _ in items)
+
+
 # ---------------------------------------------------------------- rendering
 
 

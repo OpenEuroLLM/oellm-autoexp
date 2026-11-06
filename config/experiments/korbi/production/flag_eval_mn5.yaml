@@ -42,6 +42,7 @@ aux:
   bench: "bash scripts/korbi/flag_eval/run_flag_mn5.sh ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} ${aux.limit} ${aux.flag_names}"
 
 job:
+  name: ${aux.name}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/flag_evals/logs/${aux.name}"
   est_step_time_s: 7200
   array_group: null
