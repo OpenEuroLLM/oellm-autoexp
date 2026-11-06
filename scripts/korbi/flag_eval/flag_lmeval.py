@@ -10,7 +10,11 @@ pretrained=<export>,trust_remote_code=True,dtype=bfloat16); results in lm-eval's
 
 A row with <out>/<export name>[_limit<l>]/done/<task>_<n_shot>.ok is skipped; a failing row is logged and
 the next one runs (exit status 1 at the end). <out>/<export name>/summary_shard<i>.tsv: one line
-per (row, metric)."""
+per (row, metric).
+
+A name with ``@<k>of<K>`` (e.g. vllm/mmlu/5@1of3) is part k of K of the row: every K-th document
+of its leaf tasks (lmeval_parts.py). Its per-document metrics go to parts/<task>_<n_shot>/; the part
+that completes the set merges them with lm-eval's aggregation into the row's results and marker."""
 
 import argparse
 import hashlib
@@ -22,6 +26,8 @@ import traceback
 from pathlib import Path
 
 import yaml
+
+from scripts.korbi.flag_eval import lmeval_parts
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -69,19 +75,28 @@ def main(argv=None):
     suite = {t["name"]: t for t in yaml.safe_load(open(a.suite))["tasks"]}
     rows = []
     for name in a.names:
-        t = suite.get(name)
+        base, k, n = lmeval_parts.parse(name)
+        t = suite.get(base)
         if t is None:
             sys.exit(f"{name}: not in {a.suite}")
         if t["half"] != "vllm" or t["suite"] != "lm-eval-harness":
             sys.exit(f"{name}: {t['half']} / {t['suite']} rows are not supported here (lm-eval on vLLM only)")
-        rows.append(t)
+        if k is not None and a.limit:
+            sys.exit(f"{name}: parts and --limit exclude each other (lm-eval samples vs limit)")
+        rows.append({**t, "name": name, "part": None if k is None else (k, n)})
     rows = rows[a.shard :: a.num_shards]
     export = Path(a.export).resolve()
     # test runs (--limit) never mark a full row done
     out = Path(a.out) / (export.name + (f"_limit{a.limit:g}" if a.limit else ""))
     done = out / "done"
     done.mkdir(parents=True, exist_ok=True)
-    todo = [t for t in rows if not (done / f"{t['task']}_{t['n_shot']}.ok").exists()]
+    def _key(t):
+        return (f"{t['task']}_{t['n_shot']}" if t["part"] is None
+                else lmeval_parts.part_key(t["task"], t["n_shot"], *t["part"]))
+
+    # a part is also done once its whole row is
+    todo = [t for t in rows if not (done / f"{_key(t)}.ok").exists()
+            and not (done / f"{t['task']}_{t['n_shot']}.ok").exists()]
     if a.dp > 1:
         import torch.distributed as dist
 
@@ -171,10 +186,15 @@ def main(argv=None):
         cache_prefix = str(cache_dir / f"shard{a.shard}")
     failed = []
     for t in todo:
-        key = f"{t['task']}_{t['n_shot']}"
+        key = _key(t)
         t1 = time.time()
         print(f"[flag_lmeval] --- {t['name']}", flush=True)
         try:
+            if t["part"] is not None:
+                if _run_part(t, a, lm, tm, out, done, cache_prefix, simple_evaluate, t1):
+                    continue
+                print(f"[flag_lmeval] {t['name']} part done in {time.time() - t1:.0f} s", flush=True)
+                continue
             tracker = EvaluationTracker(output_path=str(out / "results" / key))
             res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size=a.request_batch_size,
                                   log_samples=True, evaluation_tracker=tracker, task_manager=tm,
@@ -208,6 +228,41 @@ def main(argv=None):
     if a.dp > 1:
         lm.model.llm_engine.engine_core.shutdown()
     sys.exit(1 if failed else 0)
+
+
+def _run_part(t, a, lm, tm, out, done, cache_prefix, simple_evaluate, t1) -> bool:
+    """Part k of K of a row (lmeval_parts): evaluate its documents, keep their metric values, and
+    merge the row if this part completes the set. True on the ranks without results (DP > 1)."""
+    import fcntl
+
+    k, n = t["part"]
+    row_key = f"{t['task']}_{t['n_shot']}"
+    res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size=a.request_batch_size,
+                          log_samples=True, task_manager=tm, confirm_run_unsafe_code=True,
+                          samples=lmeval_parts.part_samples(tm, t["task"], k, n), use_cache=cache_prefix)
+    if res is None:
+        lm.barrier()
+        return True
+    parts_dir = out / "parts" / row_key
+    lmeval_parts.write_part(parts_dir / f"part{k}of{n}.json", t["task"], t["n_shot"], k, n, res.pop("samples"))
+    (done / f"{lmeval_parts.part_key(t['task'], t['n_shot'], k, n)}.ok").write_text(
+        json.dumps({"time_s": round(time.time() - t1, 1), "part": [k, n]}) + "\n")
+    # the part that completes the set merges (a lock: two parts may finish at once)
+    with open(parts_dir / ".merge.lock", "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        files = [parts_dir / f"part{i}of{n}.json" for i in range(n)]
+        if all(f.exists() for f in files) and not (done / f"{row_key}.ok").exists():
+            merged = lmeval_parts.merge(tm, t["task"], t["n_shot"], [json.loads(f.read_text()) for f in files])
+            res_dir = out / "results" / row_key
+            res_dir.mkdir(parents=True, exist_ok=True)
+            (res_dir / f"results_merged_{n}parts.json").write_text(json.dumps(merged, indent=2, default=str) + "\n")
+            (done / f"{row_key}.ok").write_text(json.dumps({"time_s": None, "parts": n, "limit": None,
+                                                           "results": merged["results"]}, default=str) + "\n")
+            print(f"[flag_lmeval] {t['task']}/{t['n_shot']} merged from {n} parts: "
+                  f"{json.dumps(merged['results'].get(t['task'], {}), default=str)[:400]}", flush=True)
+    if a.dp > 1:
+        lm.barrier()
+    return False
 
 
 if __name__ == "__main__":
