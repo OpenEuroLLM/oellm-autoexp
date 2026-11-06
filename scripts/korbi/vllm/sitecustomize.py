@@ -26,6 +26,53 @@ for _name in filter(None, (m.strip() for m in _HIDE.split(","))):
     sys.modules.setdefault(_name, None)
 
 
+def _nltk_local_index() -> None:
+    """nltk.download() fetches its package index from GitHub before it looks at the installed
+    data: without internet (MareNostrum 5 compute nodes) every call logged "Error loading
+    punkt_tab: <urlopen error>", ~10^5 lines per eval job. With an index.xml in an NLTK_DATA
+    directory the downloader reads that file instead, and an installed package is reported up
+    to date offline."""
+    index = next(
+        (
+            os.path.join(d, "index.xml")
+            for d in os.environ.get("NLTK_DATA", "").split(os.pathsep)
+            if d and os.path.isfile(os.path.join(d, "index.xml"))
+        ),
+        None,
+    )
+    if index is None:
+        return
+    import importlib.abc
+    import importlib.machinery
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name != "nltk.downloader":
+                return None
+            sys.meta_path.remove(self)
+            spec = importlib.machinery.PathFinder.find_spec(name, path)
+            if spec is None or spec.loader is None:
+                return spec
+            run = spec.loader.exec_module
+
+            def exec_module(module):
+                run(module)
+                default, url = module.Downloader.DEFAULT_URL, "file://" + index
+                module.Downloader.DEFAULT_URL = url
+                # nltk.download is the method of a Downloader made while the module ran
+                shared = getattr(module, "_downloader", None)
+                if shared is not None and getattr(shared, "_url", None) == default:
+                    shared._url = url
+
+            spec.loader.exec_module = exec_module
+            return spec
+
+    sys.meta_path.insert(0, _Finder())
+
+
+_nltk_local_index()
+
+
 def _chain() -> None:
     """Run the sitecustomize this file shadows (the image's /usr/lib/python3.12/sitecustomize.py)."""
     from importlib.machinery import PathFinder
