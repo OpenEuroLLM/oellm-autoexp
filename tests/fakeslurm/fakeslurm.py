@@ -365,6 +365,14 @@ def cmd_srun(argv: list[str]) -> int:
             return 1
     else:
         nodes = alloc[: int(opts.get("nodes", len(alloc)))]
+    # $FAKESLURM_DIR/stuck_nodes: nodes SLURM refuses steps on (a GRES never released after a
+    # job resize, MareNostrum 5 2026-11-06)
+    stuck_file = ROOT / "stuck_nodes"
+    stuck = set(stuck_file.read_text().split()) if stuck_file.exists() else set()
+    if "overlap" not in opts and any(n in stuck for n in nodes):
+        print(f"srun: error: Unable to create step for job {jid}: Insufficient GRES available in allocation",
+              file=sys.stderr)
+        return 1
     nnodes = int(opts.get("nodes", len(nodes)))
     if nnodes != len(nodes):
         print(

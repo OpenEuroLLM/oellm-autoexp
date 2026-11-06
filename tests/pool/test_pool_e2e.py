@@ -787,6 +787,32 @@ def test_excluded_node_runs_skip_removed_nodes_with_an_old_supervisor(pool):
     assert "NUM_NODES=3\n" in info.read_text(), "the old supervisor's view stays"
 
 
+def test_a_node_that_refuses_steps_is_marked_dead_and_skipped(pool):
+    """SLURM refused every step on one node of a running host ('Insufficient GRES', a GRES never
+    released after a job resize): a run sent there fails in seconds, the node is free again at
+    once and took the next run, 18 in a row (p134c host006 as01r1b12, 2026-11-06). The monitor
+    marks such a node dead after the first refused step; later runs -- also those that take
+    excluded nodes first -- never get it."""
+    # one run at a time, in enqueue order: the first takes n1000-0, the others follow its failure
+    pool.create_pool(*FAST, "job.pool_host.max_runs_per_host=1", "slurm.sbatch.nodes=3")
+    (pool.fs / "stuck_nodes").write_text("n1000-0\n")  # the first node: plain runs take it first
+    pool.enqueue("first", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.enqueue("plain", "aux.iters=20", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.enqueue("excl", "aux.iters=20", "aux.tick=0.1", "slurm.sbatch.nodes=1",
+                 "+job.metadata.pool_use_excluded_nodes=true")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_first"), 60, "the first run")[0]
+    pool.wait_for(lambda: (pool.pool_dir / "runs" / first / "rc").exists(), 60, "its refused step")
+    assert pool.run_state(first).started["nodes"] == "n1000-0"
+    dead = pool.layout.host_dir("host001") / "dead_nodes"
+    pool.wait_for(lambda: dead.exists() and "n1000-0" in dead.read_text(), 30, "the node marked dead")
+    for name in ("dummy_plain", "dummy_excl"):
+        st = pool.wait_for(
+            lambda n=name: (r := pool.runs_of(n)) and pool.run_state(r[0]).started, 60, f"{name} starts")
+        assert st["nodes"] != "n1000-0", f"{name} got the dead node"
+        pool.wait_for(lambda n=name: pool.record(n)["runtime"]["final_state"] == "finished", 120, name)
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,

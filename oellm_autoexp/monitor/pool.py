@@ -333,6 +333,65 @@ def removed_nodes(info: dict[str, str], live: list[str] | None) -> list[str]:
     return [n for n in (info.get("NODELIST") or "").split(",") if n and n not in held]
 
 
+_REFUSED_CHECKED: dict[str, set[str]] = {}  # pool root -> runs already checked for a refused step
+
+# A run step SLURM refused to create on its node: the node takes no step of this allocation (its
+# GRES held by a step SLURM never released after a job resize, 2026-11-06: p134c host006
+# as01r1b12, "Insufficient GRES available in allocation"). Such a run fails within seconds, and
+# the node, free again at once, took the next run: 18 runs in 20 min.
+STEP_REFUSED = re.compile(r"srun: error: Unable to create step for job \d+: (?P<why>[^\n]+)")
+STEP_REFUSED_WITHIN_S = 180.0
+
+
+def dead_nodes(layout: PoolLayout, hid: str) -> list[str]:
+    """``<host>/dead_nodes``: nodes of the allocation no run step can use."""
+    text = _read(layout.host_dir(hid) / "dead_nodes") or ""
+    return [n for n in (line.split("#")[0].strip() for line in text.splitlines()) if n]
+
+
+def mark_dead(layout: PoolLayout, hid: str, nodes: list[str], why: str) -> list[str]:
+    """Add nodes to the host's dead_nodes and exclude_nodes (plain runs and the usable count of
+    any supervisor); the nodes newly marked."""
+    known = set(dead_nodes(layout, hid))
+    new = [n for n in nodes if n and n not in known]
+    if not new:
+        return []
+    hdir = layout.host_dir(hid)
+    with open(hdir / "dead_nodes", "a") as f:
+        f.writelines(f"{n}  # {time.strftime('%Y-%m-%dT%H:%M:%S')} {why}\n" for n in new)
+    excl = set((_read(hdir / "exclude_nodes") or "").split())
+    with open(hdir / "exclude_nodes", "a") as f:
+        f.writelines(f"{n}\n" for n in new if n not in excl)
+    return new
+
+
+def step_refused(layout: PoolLayout, rid: str) -> tuple[list[str], str] | None:
+    """(nodes, reason) if the run ended within STEP_REFUSED_WITHIN_S because SLURM refused its step."""
+    rd = layout.run_dir(rid)
+    state = read_run_state(layout, rid)
+    if state.code in (None, 0) or not state.started.get("nodes"):
+        return None
+    try:
+        started = float(state.started.get("ts", "0"))
+    except ValueError:
+        return None
+    end = _mtime(rd / "rc")
+    if end is None or end - started > STEP_REFUSED_WITHIN_S:
+        return None
+    try:
+        log = json.loads(_read(rd / "run.json") or "{}").get("log") or ""
+        with open(log, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 65536))
+            tail = f.read().decode(errors="replace")
+    except OSError:
+        return None
+    m = STEP_REFUSED.search(tail)
+    if not m:
+        return None
+    return [n for n in state.started["nodes"].split(",") if n], m.group("why").strip()
+
+
 def add_run_exclude(layout: PoolLayout, rid: str, nodes: list[str]) -> list[str]:
     """Add ``nodes`` to a run's own EXCLUDE in its meta.env (the supervisor never gives the run a
     node of it, the pool-excluded ones included); the nodes actually added. Appended as a later
@@ -1317,6 +1376,40 @@ class PoolManager:
             or any(h.retiring and h.hid in busy and not h.dead for h in hosts)
         )
 
+        # 2b. nodes SLURM refuses steps on: a run that ended within seconds with "Unable to create
+        #     step" marks its node dead on its host (once per run), so no further run is sent there
+        #     (checked again per host right before its assignments: a run may end in between)
+        # (the pool's runs/, not the monitor's records: a failed run's record is final already)
+        checked = _REFUSED_CHECKED.setdefault(str(layout.root), set())
+
+        def check_refused(only_host: str | None = None) -> None:
+            try:
+                run_dirs = list((layout.root / "runs").iterdir())
+            except OSError:
+                return
+            for rd in run_dirs:
+                rid = rd.name
+                if rid in checked:
+                    continue
+                end = _mtime(rd / "rc")
+                if end is None:
+                    continue
+                if now - end > 3600:
+                    checked.add(rid)  # ended long ago: not a node of this host's present
+                    continue
+                rhost = read_run_state(layout, rid).host
+                if only_host is not None and rhost != only_host:
+                    continue
+                checked.add(rid)
+                refused = step_refused(layout, rid)
+                if refused and rhost:
+                    new = mark_dead(layout, rhost, refused[0], f"{rid}: {refused[1]}")
+                    if new:
+                        LOGGER.error("[pool %s] %s refused a step of %s (%s): marked dead on %s",
+                                     cfg.name, ",".join(new), rid, refused[1], rhost)
+
+        check_refused()
+
         # 3. queue
         queued = []
         for record in runs:
@@ -1392,6 +1485,7 @@ class PoolManager:
             if host.hid in unverified or host.hid in handover_old:
                 continue  # in its preflight / being handed over: no new run
             active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
+            check_refused(host.hid)  # runs of this host that ended since 2b
             # the supervisor puts a USE_EXCLUDED_NODES run on the excluded nodes first: free
             # healthy nodes, and free excluded ones only such runs may take
             excluded = max(0, host_total(host) - host.usable_nodes)
@@ -1441,6 +1535,12 @@ class PoolManager:
                                 len(gone),
                                 host.hid,
                             )
+                    # the host's dead nodes, through the run's own EXCLUDE (honoured by every
+                    # supervisor, also for runs that take excluded nodes first)
+                    dead = add_run_exclude(layout, rid, dead_nodes(layout, host.hid))
+                    if dead:
+                        LOGGER.info("[pool %s] %s: dead node(s) %s of %s kept off it",
+                                    cfg.name, rid, ",".join(dead), host.hid)
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
                     active.append(rid)
