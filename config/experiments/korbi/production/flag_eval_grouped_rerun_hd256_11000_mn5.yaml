@@ -64,8 +64,8 @@ sweep:
           aux.task: "AMC23,HumanEval,AIME24,LiveCodeBench,MATH500,AIME25,GPQADiamond,JEEBench"
           aux.n_shot: "0,0,0,0,0,0,0,0"
           aux.suite: "evalchemy"
-          job.est_step_time_s: 5553
-          slurm.sbatch.time: "04:00:00"
+          job.est_step_time_s: 9753
+          slurm.sbatch.time: "06:00:00"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"

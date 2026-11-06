@@ -105,10 +105,12 @@ def build(rows: list[dict], times: dict[str, float], nodes: int, load_s: float) 
     for h in HARNESSES:
         idx = [(secs[i], i) for i, r in enumerate(rows) if r["suite"] == h]
         for members in lpt(idx, per.get(h, 0)) if idx else []:
+            # evalchemy runs one harness call (one load) per task (mn5_oellm_run_one.sh)
+            loads = len(members) if h == "evalchemy" else 1
             groups.append({
                 "suite": h,
                 "rows": members,
-                "seconds": load_s + sum(secs[i] for i in members),
+                "seconds": loads * load_s + sum(secs[i] for i in members),
             })
     return groups
 
