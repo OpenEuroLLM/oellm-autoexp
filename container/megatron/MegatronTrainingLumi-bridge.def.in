@@ -120,11 +120,12 @@ python -c "from megatron.bridge import AutoBridge; print('AutoBridge OK')"
     Single image supporting both Megatron training on LUMI (OpenEuroLLM fork,
     ROCm) and Megatron-Bridge-based checkpoint conversion to HuggingFace format.
 
-    Build (same documented LUMI flow as MegatronTrainingLumi, different recipe):
+    Build (same documented LUMI flow as MegatronTrainingLumi, different recipe;
+    no --output, so the SIF lands in $CONTAINER_CACHE_DIR or the current
+    directory, where the chain config's container.image looks for it):
         python ./container/build_container_user.py --backend megatron \
             --definition MegatronTrainingLumi-bridge \
-            --requirements container/megatron/requirements_latest.txt \
-            --output ./artifacts
+            --requirements container/megatron/requirements_latest.txt
 
     Point the convert stage's `container.image` at the resulting
     MegatronTrainingLumi-bridge_*_x86_64.sif, and set

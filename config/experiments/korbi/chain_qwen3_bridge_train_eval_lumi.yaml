@@ -91,8 +91,9 @@ sweep:
           # The default container.image from /container=lumi (training image)
           # lacks nvidia-modelopt and /opt/megatron-bridge; use the bridge
           # image built from container/megatron/MegatronTrainingLumi-bridge.def.in
-          # (see container/README.md). The documented build command outputs
-          # MegatronTrainingLumi-bridge_x86_64.sif into ./artifacts.
+          # (see container/README.md). The documented build command (without
+          # --output) writes MegatronTrainingLumi-bridge_x86_64.sif into
+          # $CONTAINER_CACHE_DIR, or ./ if unset — matching the path below.
           container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingLumi-bridge_x86_64.sif"
           container.bind:
             - "/pfs/"

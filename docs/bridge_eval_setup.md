@@ -209,19 +209,17 @@ The training image built from `container/megatron/MegatronTrainingLumi.def.in`
 (the one `config/container/lumi.yaml` points to) does **not** include
 Megatron-Bridge's dependencies, so the convert stage cannot run in it —
 `AutoBridge` fails at import with `No module named 'modelopt'`. Build the
-dedicated bridge image from the repository's LUMI bridge recipe with the same
-documented command as the training image:
+dedicated bridge image from the repository's LUMI bridge recipe (no
+`--output`: the helper then writes to `$CONTAINER_CACHE_DIR`, or the current
+directory if unset — exactly where the chain config looks for it):
 
 ```bash
 python ./container/build_container_user.py --backend megatron \
     --definition MegatronTrainingLumi-bridge \
-    --requirements container/megatron/requirements_latest.txt \
-    --output ./artifacts
-# -> artifacts/MegatronTrainingLumi-bridge_x86_64.sif
+    --requirements container/megatron/requirements_latest.txt
+# -> $CONTAINER_CACHE_DIR/MegatronTrainingLumi-bridge_x86_64.sif
+#    (or ./MegatronTrainingLumi-bridge_x86_64.sif if CONTAINER_CACHE_DIR is unset)
 ```
-
-and point the convert stage at it in the chain config
-(`chain_qwen3_bridge_train_eval_lumi.yaml`):
 
 The chain config (`chain_qwen3_bridge_train_eval_lumi.yaml`) sets this up
 for the convert stage — `container.image` points at the bridge SIF, and the
