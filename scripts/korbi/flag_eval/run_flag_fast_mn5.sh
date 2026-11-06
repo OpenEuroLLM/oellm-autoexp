@@ -1,6 +1,7 @@
 #!/bin/bash
 # Tested MN5 vLLM path: node-local EP, host-table prefetch, cached bounded request batches.
 set -euo pipefail
+# FLAG_SUITE: rows from another suite file of the same schema (e.g. config/eval_tasks/flag_evals_extra.yaml)
 cd "$(dirname "$0")/../../.."
 export_dir=$1 out=$2 shard=$3 nshards=$4 limit=$5; shift 5
 source scripts/korbi/vllm/setup_vllm_uv.sh
@@ -22,4 +23,5 @@ args=()
  --max-num-seqs "${FLAG_MAX_NUM_SEQS:-256}" \
  --max-num-batched-tokens "${FLAG_TOKEN_BUDGET:-32768}" \
  --request-batch-size "${FLAG_REQUEST_BATCH_SIZE:-256}" --response-cache \
+ ${FLAG_SUITE:+--suite "$FLAG_SUITE"} \
  "${args[@]}" --names "$@"

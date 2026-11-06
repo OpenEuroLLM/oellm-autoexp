@@ -6,6 +6,7 @@
 # the JUPITER HF_HOME copy.
 #   run_flag_mn5.sh <export dir> <out dir> <shard> <num shards> <limit, 0 = all> <name> [<name> ...]
 set -euo pipefail
+# FLAG_SUITE: rows from another suite file of the same schema (e.g. config/eval_tasks/flag_evals_extra.yaml)
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 cd "$(dirname "$0")/../../.."
 export_dir=$1 out=$2 shard=$3 nshards=$4 limit=$5; shift 5
@@ -24,4 +25,5 @@ export HF_METRICS_CACHE=$HF_HOME/metrics/job_${SLURM_JOB_ID:-local}
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_EVALUATE_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export HF_ALLOW_CODE_EVAL=1 NLTK_DATA=$R/nltk_data TOKENIZERS_PARALLELISM=false
 python3 scripts/korbi/flag_eval/flag_lmeval.py --export "$export_dir" --out "$out" \
-    --shard "$shard" --num-shards "$nshards" $([ "$limit" = 0 ] || echo --limit "$limit") --names "$@"
+    --shard "$shard" --num-shards "$nshards" $([ "$limit" = 0 ] || echo --limit "$limit") \
+    ${FLAG_SUITE:+--suite "$FLAG_SUITE"} --names "$@"

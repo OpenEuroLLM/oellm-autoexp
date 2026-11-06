@@ -1,0 +1,6 @@
+# Rows outside the FLAG suite (flag_evals.yaml, generated from oellm-eval -- not edited by hand),
+# same schema. The vLLM runners read it with FLAG_SUITE=config/eval_tasks/flag_evals_extra.yaml.
+# winogrande/5: the 5-shot re-evaluation of the 0-shot gap of the ambitious runs (2026-11-06).
+count: 1
+tasks:
+  - {name: "vllm/winogrande/5", half: "vllm", row: 0, task: "winogrande", n_shot: 5, suite: "lm-eval-harness"}
