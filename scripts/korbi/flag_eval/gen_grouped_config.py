@@ -13,7 +13,7 @@ It inherits flag_eval_pipeline_mn5 (export stage, aux.step / aux.model knobs, ev
 replaces only the sweep: point 0 the export stage, points 1..G the groups, gated on the
 export's .downstream_ready.
 
-    python scripts/korbi/flag_eval/gen_grouped_config.py --nodes 16 \\
+    python scripts/korbi/flag_eval/gen_grouped_config.py --nodes 24 \\
         > config/experiments/korbi/production/flag_eval_grouped_mn5.yaml
 
     scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \\
@@ -148,8 +148,9 @@ def render(rows: list[dict], groups: list[dict], nodes: int, tag: str = "") -> s
     ]
     for g, grp in enumerate(groups, start=1):
         members = [rows[i] for i in grp["rows"]]
-        # the wall clock: twice the expectation, at least 2 h, at most 2 days
-        limit_h = min(48, max(2, math.ceil(2 * grp["seconds"] / 3600)))
+        # the wall clock: three times the expectation, at least 2 h, at most 2 days (a grouped
+        # lighteval call of 36 tasks ran ~2x its estimate and into a 2x limit, 11-06)
+        limit_h = min(48, max(2, math.ceil(3 * grp["seconds"] / 3600)))
         out += [
             f"        - aux.row: {g}",
             f'          aux.name: "oellm${{aux.step}}g{tag}_{g}_{grp["suite"]}_{len(members)}rows"',
@@ -172,7 +173,7 @@ def render(rows: list[dict], groups: list[dict], nodes: int, tag: str = "") -> s
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--nodes", type=int, default=16, help="groups = concurrent one-node jobs")
+    p.add_argument("--nodes", type=int, default=24, help="groups (one-node jobs; more than the host has nodes is fine: they queue)")
     p.add_argument("--load-s", type=float, default=600.0,
                    help="the model load inside a reference row time (subtracted)")
     p.add_argument("--times", type=Path, default=TIMES)
