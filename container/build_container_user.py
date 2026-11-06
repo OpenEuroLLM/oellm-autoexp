@@ -172,7 +172,6 @@ RUNTIME_SECTION_FILES = {
     "runscript": "runscript",
     "startscript": "startscript",
     "test": "test",
-    "help": "help",
 }
 
 
@@ -205,6 +204,13 @@ def write_runtime_sections(sandbox_dir: Path, sections: dict[str, str]) -> None:
         path = dotd / name
         path.write_text(content)
         path.chmod(0o755)
+
+    help_body = sections.get("help", "")
+    if help_body.strip():
+        # Plain text, not a script: Apptainer's run-help reads runscript.help
+        # (Singularity 3.x reads help), so write both without shebang/exec bit.
+        for name in ("help", "runscript.help"):
+            (dotd / name).write_text(help_body.rstrip() + "\n")
 
     labels_body = sections.get("labels", "")
     if labels_body.strip():
@@ -464,10 +470,10 @@ def main() -> None:
 
     test_script = sections.get("test", "")
     if test_script.strip():
+        # No --writable: the smoke test must not mutate the sandbox before packing.
         test_cmd = [
             container_cmd,
             "exec",
-            "--writable",
             "--no-home",
             "--no-umask",
             str(sandbox_dir),

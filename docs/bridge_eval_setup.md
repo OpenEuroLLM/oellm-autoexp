@@ -35,13 +35,12 @@ Both bridge images keep the OpenEuroLLM Megatron-LM fork as the primary
 `megatron.core` (matching the training checkpoint format) and layer Bridge
 on top, with two cluster-agnostic shims applied:
 
-- `container/megatron/patch_bridge_lazy_imports.py` is run once against the
-  Bridge copy that will actually be imported so missing model bridges
-  (mamba, certain VL/Omni variants) fail soft at import time. On LUMI that
-  copy is `/opt/megatron-bridge` inside the bridge image (the chain configs
-  bind-mount the host repository over `/workspace/oellm-autoexp`, which would hide
-  an in-image patched copy); `run_export.py` additionally re-applies the
-  idempotent patch to whatever `--bridge-root` points at.
+- `container/megatron/patch_bridge_lazy_imports.py` is run once at image
+  build time against the Bridge copy that will actually be imported, so
+  missing model bridges (mamba, certain VL/Omni variants) fail soft at import
+  time. On LUMI that copy is `/opt/megatron-bridge` inside the bridge image
+  (the chain configs bind-mount the host repository over
+  `/workspace/oellm-autoexp`, which would hide an in-image patched copy).
 - `oellm_autoexp/backends/megatron_bridge/run_export.py` monkey-patches
   `nvidia_resiliency_ext.__version__` (≥ 0.6.0), shims
   `_clean_metadata_for_serialization`, and registers a placeholder
@@ -224,14 +223,17 @@ python ./container/build_container_user.py --backend megatron \
 and point the convert stage at it in the chain config
 (`chain_qwen3_bridge_train_eval_lumi.yaml`):
 
+The chain config (`chain_qwen3_bridge_train_eval_lumi.yaml`) sets this up
+for the convert stage — `container.image` points at the bridge SIF, and the
+bridge image bakes the patched Bridge at `/opt/megatron-bridge` (outside the
+bind-mounted `/workspace/oellm-autoexp`), with `bridge_root` + PYTHONPATH
+pointed there so the patched copy is the one that gets imported:
+
 ```yaml
 - stage: convert
   backend: megatron_bridge
   slurm: lumi_bridge
   container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingLumi-bridge_x86_64.sif"
-  # The bridge image bakes the patched Bridge at /opt/megatron-bridge (outside
-  # the bind-mounted /workspace/oellm-autoexp); point bridge_root + PYTHONPATH
-  # there so the patched copy is the one that gets imported.
   backend.bridge_root: "/opt/megatron-bridge"
   backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/opt/megatron-bridge/src"
   ...

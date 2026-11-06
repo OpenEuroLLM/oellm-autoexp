@@ -6,8 +6,8 @@
 # container/megatron/MegatronTrainingLumi-bridge.def.in — the plain LUMI
 # training image lacks nvidia-modelopt and `from megatron.bridge import
 # AutoBridge` fails with `ModuleNotFoundError: No module named 'modelopt'`.
-# Set the convert stage's container.image to that SIF (see the commented
-# line below). The bridge image installs the patched Bridge at
+# The convert stage's container.image below points at that SIF. The bridge
+# image installs the patched Bridge at
 # /opt/megatron-bridge (outside /workspace/oellm-autoexp, which this config
 # bind-mounts from the host and would otherwise hide the in-image patch), so
 # the convert stage points backend.bridge_root/PYTHONPATH there. Eval runs
@@ -89,9 +89,11 @@ sweep:
           backend: megatron_bridge
           slurm: lumi_bridge
           # The default container.image from /container=lumi (training image)
-          # lacks nvidia-modelopt; point at the bridge image built from
-          # container/megatron/MegatronTrainingLumi-bridge.def.in, e.g.:
-          # container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingLumi-bridge_x86_64.sif"
+          # lacks nvidia-modelopt and /opt/megatron-bridge; use the bridge
+          # image built from container/megatron/MegatronTrainingLumi-bridge.def.in
+          # (see container/README.md). The documented build command outputs
+          # MegatronTrainingLumi-bridge_x86_64.sif into ./artifacts.
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingLumi-bridge_x86_64.sif"
           container.bind:
             - "/pfs/"
             - "/scratch/"

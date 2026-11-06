@@ -42,6 +42,7 @@ def test_write_runtime_sections_persists_def_metadata(tmp_path):
         "environment": "export PYTHONPATH=/opt/megatron-bridge/src:${PYTHONPATH}\n",
         "runscript": 'cd /workspace/oellm-autoexp\nexec "$@"\n',
         "test": 'python -c "import modelopt"\n',
+        "help": "Single image for training and conversion.\n",
         "labels": "Author OpenSci\nVersion 0.1.0\n",
     }
     module.write_runtime_sections(tmp_path, sections)
@@ -54,6 +55,14 @@ def test_write_runtime_sections_persists_def_metadata(tmp_path):
     assert 'exec "$@"' in runscript
 
     assert (tmp_path / ".singularity.d" / "test").read_text().strip().endswith('import modelopt"')
+
+    # %help is plain text (no shebang, not executable), written to both
+    # locations Apptainer/Singularity read: runscript.help and help.
+    for name in ("help", "runscript.help"):
+        help_file = tmp_path / ".singularity.d" / name
+        assert help_file.read_text() == "Single image for training and conversion.\n"
+        assert not help_file.read_text().startswith("#!")
+        assert not (help_file.stat().st_mode & 0o111)
 
     labels = json.loads((tmp_path / ".singularity.d" / "labels.json").read_text())
     assert labels == {"Author": "OpenSci", "Version": "0.1.0"}
@@ -89,3 +98,24 @@ def test_lumi_bridge_recipe_keeps_runtime_sections_and_mandatory_modelopt():
     assert "exit 1" in template
     assert "%test" in template
     assert "from megatron.bridge import AutoBridge" in template
+
+
+def test_lumi_chain_convert_stage_uses_bridge_image():
+    import yaml
+
+    chain = yaml.safe_load(
+        (
+            REPO_ROOT
+            / "config"
+            / "experiments"
+            / "korbi"
+            / "chain_qwen3_bridge_train_eval_lumi.yaml"
+        ).read_text()
+    )
+    convert = next(c for c in chain["sweep"]["groups"][0]["configs"] if c.get("stage") == "convert")
+    # container.image must be set actively (not commented out); otherwise the
+    # convert stage runs in the training image, where /opt/megatron-bridge
+    # does not exist.
+    assert "MegatronTrainingLumi-bridge" in convert["container.image"]
+    assert convert["backend.bridge_root"] == "/opt/megatron-bridge"
+    assert "/opt/megatron-bridge/src" in convert["backend.env.PYTHONPATH"]
