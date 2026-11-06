@@ -1,0 +1,122 @@
+Bootstrap: localimage
+From: /scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0-2026-03-19.sif
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Description Megatron training (OpenEuroLLM fork, ROCm) + NVIDIA-NeMo/Megatron-Bridge for HF ckpt conversion. Single image supporting both training and conversion.
+
+%environment
+    export PYTHONNOUSERSITE=1
+    # OpenEuroLLM Megatron-LM is the primary `megatron.core` (matches training).
+    # Bridge's src is appended; namespace package merge gives us `megatron.bridge`
+    # without shadowing `megatron.core`.
+    export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src:${PYTHONPATH}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
+
+%files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+
+%post
+# set -euo pipefail
+mkdir -p /workspace/oellm-autoexp/provenance
+mkdir -p /workspace/cache
+cd /workspace
+
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel antlr4-python3-runtime omegaconf hydra-core huggingface_hub typing_extensions transformers
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+fi
+
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    -e /workspace/oellm-autoexp
+
+python3 -m pip uninstall -y megatron-core || true
+
+# --- Megatron-Bridge ---------------------------------------------------------
+# Install with --no-deps so the existing transformer_engine / megatron.core
+# (the OpenEuroLLM fork, ROCm build) stay untouched. Add only the deps Bridge
+# needs that the base image doesn't already provide.
+python3 -m pip install --no-cache-dir --no-deps \
+    -e /workspace/oellm-autoexp/submodules/Megatron-Bridge
+
+# `nvidia-modelopt` is a hard requirement: Bridge's auto_bridge.py imports
+# `from modelopt.torch.quantization.utils import is_quantized` at module
+# level, so without it `from megatron.bridge import AutoBridge` fails with
+# `ModuleNotFoundError: No module named 'modelopt'` (the base laif-rocm image
+# does not ship it). Its core deps are arch-neutral and the constraints file
+# pins the installed ROCm torch, so it is safe to install with deps here.
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    "nvidia-modelopt" || \
+  echo "ERROR: nvidia-modelopt failed to install; Megatron-Bridge conversion will not work in this image"
+
+# Remaining bridge-only deps, best effort: the conversion path tolerates
+# their absence (missing model bridges fail soft after the patch below), but
+# installing them keeps parity with the JUPITER bridge recipe. CUDA-only
+# packages (flash-linear-attention) may fail on ROCm — that's fine.
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    "qwen-vl-utils" \
+    "mistral-common>=1.10.0" \
+    "peft>=0.18.1" \
+    "megatron-energon" \
+    "flash-linear-attention" || \
+  echo "WARNING: some bridge-only deps failed to install"
+
+# Patch Bridge's `models/__init__.py` so model bridges that reference
+# symbols missing from the OpenEuroLLM Megatron-LM fork (e.g. mamba,
+# certain gemma_vl variants) fail soft at import time instead of breaking
+# `from megatron.bridge import AutoBridge`. Qwen3 + Llama + the other
+# vanilla causal-LM bridges remain importable.
+python3 /workspace/oellm-autoexp/container/megatron/patch_bridge_lazy_imports.py \
+    /workspace/oellm-autoexp/submodules/Megatron-Bridge/src/megatron/bridge/models
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+cd /workspace/oellm-autoexp
+python scripts/run_autoexp.py --help >/dev/null
+# modelopt is imported by Bridge's auto_bridge.py at module level; AutoBridge
+# must be importable. Some bundled bridges may warn (mamba etc.) because
+# they reference symbols the OpenEuroLLM Megatron-LM fork lacks; that's fine
+# — the tolerant-import patch absorbs those.
+python -c "import modelopt; print('modelopt OK')"
+python -c "from megatron.bridge import AutoBridge; print('AutoBridge OK')"
+
+%help
+    Single image supporting both Megatron training on LUMI (OpenEuroLLM fork,
+    ROCm) and Megatron-Bridge-based checkpoint conversion to HuggingFace format.
+
+    Build (same documented LUMI flow as MegatronTrainingLumi, different recipe):
+        python ./container/build_container_user.py --backend megatron \
+            --definition MegatronTrainingLumi-bridge \
+            --requirements container/megatron/requirements_latest.txt \
+            --output ./artifacts
+
+    Point the convert stage's `container.image` at the resulting
+    MegatronTrainingLumi-bridge_*_x86_64.sif. Some bundled Bridge model
+    bridges (mamba, certain VL/Omni variants) are skipped at import time
+    because the OpenEuroLLM Megatron-LM fork lacks symbols upstream Bridge
+    expects. Bridges for Qwen3, Llama, and other causal-LM architectures
+    are unaffected.
