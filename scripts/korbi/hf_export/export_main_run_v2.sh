@@ -3,7 +3,7 @@
 # HF export of a main-run checkpoint, then the conversion checks: the convert stage of an
 # export -> eval chain (config/experiments/korbi/production/hf_export_v2_mn5.yaml runs it).
 #
-#   export_main_run.sh <ambitious|ambitious_v4|ambitious_v4_hd256|ambitious_v4_ldm|conservative> <step> [<export root>]
+#   export_main_run.sh <ambitious|ambitious_v4|ambitious_v4_ldm|conservative> <step> [<export root>]
 #   EXPERT_DTYPE=fp8: the ambitious runs' routed experts as the run's fsdp_fp8_param_gather tiles (E4M3,
 #   1 x 128 fp32 scales), the export named <name>_<step>_fp8
 #
@@ -21,11 +21,9 @@ model=$1; step=$2
 export HF_EXPORT_READER=${HF_EXPORT_READER:-fast}
 export HF_EXPORT_READ_THREADS=${HF_EXPORT_READ_THREADS:-8}
 export EXPERT_DTYPE=${EXPERT_DTYPE:-fp8}
-[ "$EXPERT_DTYPE" = fp8 ] || { echo "v2 currently supports FP8 experts only" >&2; exit 2; }
-case $model in
-  ambitious_v4|ambitious_v4_hd256) ;;
-  *) echo "v2 currently supports ambitious_v4 / ambitious_v4_hd256 with FP8 experts" >&2; exit 2 ;;
-esac
+[ "$model" = ambitious_v4 ] && [ "$EXPERT_DTYPE" = fp8 ] || {
+  echo "v2 currently supports ambitious_v4 with FP8 experts" >&2; exit 2;
+}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
 D=/gpfs/projects/ehpc533/users/korbip/data
 E=${3:-$R/hf_exports}
@@ -36,9 +34,6 @@ case $model in
   ambitious)        run=$R/production/main_ldm/ambitious_e360_eng80_v3; name=ambitious_v3
                     exporter=export_ambitious; score_args=$amb_score ;;
   ambitious_v4)     run=$R/production/main_mhc4/ambitious_e360_eng80_v4_2ph; name=ambitious_v4_2ph
-                    exporter=export_ambitious; score_args=$amb_score ;;
-  # same run continued from step 9815 with kv_channels 256 (checkpoint 9814 widened in place)
-  ambitious_v4_hd256) run=$R/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256; name=ambitious_v4_2ph_hd256
                     exporter=export_ambitious; score_args=$amb_score ;;
   ambitious_v4_ldm) run=$R/production/main_ldm/ambitious_e360_eng80_v4_ldm; name=ambitious_v4_ldm
                     exporter=export_ambitious; score_args=$amb_score ;;
@@ -109,7 +104,7 @@ paired_export() {
 }
 # This experimental v2 is scoped to the architecture tested below. Both
 # processes use the same tensors and arithmetic as v1; only GPU placement changes.
-case $model in ambitious_v4|ambitious_v4_hd256) ;; *) echo "v2 currently tested for ambitious_v4 / ambitious_v4_hd256 only" >&2; exit 2 ;; esac
+[ "$model" = ambitious_v4 ] || { echo "v2 currently tested for ambitious_v4 only" >&2; exit 2; }
 python -c 'import torch; assert torch.cuda.device_count() == 4, "v2 requires exactly four visible GPUs"'
 IFS=',' read -r -a validation_gpus <<< "${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 [ "${#validation_gpus[@]}" = 4 ] || { echo "expected four CUDA_VISIBLE_DEVICES entries" >&2; exit 2; }
