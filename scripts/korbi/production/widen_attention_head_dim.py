@@ -30,6 +30,8 @@ The checkpoint is not copied tensor by tensor: the new tree hard-links every .di
     # inspect / apply (inside the training container on MN5; login node is fine: ~1 GB read)
     python widen_attention_head_dim.py apply --src <ckpt>/iter_0009789 --dst <new ckpt>/iter_0009789 \\
         --layers 0,17,33,50,66,82 [--eps 1e-3] [--seed 1234]
+    # re-seed the new key channels of an already widened checkpoint (see reseed_k_layer)
+    python widen_attention_head_dim.py reseed-k --src <hd256 ckpt>/iter_N --dst <new ckpt>/iter_N
 """
 
 from __future__ import annotations
@@ -138,6 +140,48 @@ def widen_layer(t, *, heads, groups, d_old, d_new, eps, gen):
     return out
 
 
+
+def reseed_k_layer(t, *, heads, groups, d_old, d, gen):
+    """Re-seed the new key channels of a widened layer (head dim d, the first d_old channels the
+    original ones): k_new rows = M k_old rows per KV group, M a random orthogonal d_old x d_old matrix.
+
+    Why: with q_new and k_new both ~eps, the new score channels q_new . k_new have no first-order
+    gradient (each factor's gradient is ~eps); in the v4 main run they shrank (10500: q 3-7e-4, k 1-2e-4
+    of the old row norms) while v / proj grew. With k_new O(1), q_new's gradient is O(1).
+
+    Exact: an orthogonal mix keeps every token's sum of squares, so the RMS over d channels is the old
+    d_old-channel RMS, which removes the sqrt(d / d_old) the ~0 new channels gave the normalized old ones.
+    q_new stays tiny (its scores q_new . k_new are ~|q_new|), so q keeps that factor: gammas x
+    (d / d_old)^(1/4) each restore q.k / sqrt(d) (their Adam moments / that factor, / its square).
+    Muown row states of the new k rows: g = row norm, v_norm = median of the old k rows, m_u / m_g /
+    v_g = 0. Everything else (q / gate / v rows, proj) unchanged."""
+    if d == d_old:
+        raise ValueError("reseed needs a widened checkpoint (d > d_old)")
+    if d - d_old != d_old:
+        raise NotImplementedError("reseed_k assumes d = 2 d_old (one rotated copy of the old half)")
+    hpg = heads // groups
+    blocks = 2 * hpg + 2
+    kb = 2 * hpg  # the k block per group
+    out = {k: v.clone() for k, v in t.items()}
+    w = _qkv_view(out["qkv"], groups, blocks, d)
+    states = {s: _qkv_view(out[f"qkv.{s}"], groups, blocks, d) for s in ("g", "v_norm", "m_u", "m_g", "v_g")}
+    for grp in range(groups):
+        q, _ = torch.linalg.qr(torch.randn(d_old, d_old, generator=gen, dtype=torch.float64))
+        k_old = w[grp, kb, :d_old].double()
+        k_new = (q @ k_old).float()
+        w[grp, kb, d_old:] = k_new
+        states["g"][grp, kb, d_old:] = k_new.norm(dim=-1, keepdim=True)
+        states["v_norm"][grp, kb, d_old:] = states["v_norm"][grp, kb, :d_old].median()
+        for s in ("m_u", "m_g", "v_g"):
+            states[s][grp, kb, d_old:] = 0
+    f = (d / d_old) ** 0.25
+    for n in ("q_norm", "k_norm"):
+        out[n] = out[n] * f
+        out[f"{n}.exp_avg"] = out[f"{n}.exp_avg"] / f
+        out[f"{n}.exp_avg_sq"] = out[f"{n}.exp_avg_sq"] / f**2
+    out["k_norm"][d_old:] = out["k_norm"][:d_old].mean()
+    return out
+
 def reference_attention(x, w_qkv, g_q, g_k, w_proj, *, heads, groups, d, norm_eps=1e-6, xsa=True):
     """Megatron's gated GQA self attention (NoPE, qk RMSNorm, XSA, causal) on x [T, H], fp64."""
     hpg = heads // groups
@@ -192,6 +236,29 @@ def selftest():
     assert torch.allclose(n["qkv.g"][:, 0], n["qkv"].norm(dim=1), rtol=1e-5)
     assert torch.allclose(n["proj.g"].abs()[:, 0], n["proj"].norm(dim=1), rtol=1e-5)
     assert torch.equal(n["proj"].reshape(hidden, heads, hb)[:, :, :d_old].reshape(hidden, -1), t["proj"])
+    # re-seed of the new keys on the widened layer (as on a running checkpoint: q_new shrunk to ~3e-4)
+    n = widen_layer(t, heads=heads, groups=groups, d_old=d_old, d_new=d_new, eps=1e-3,
+                    gen=torch.Generator().manual_seed(1234))
+    nq = n["qkv"].reshape(groups, 2 * hpg + 2, d_new, hidden)
+    nq[:, :hpg, d_old:] *= 0.3
+    r = reseed_k_layer(n, heads=heads, groups=groups, d_old=d_old, d=d_new, gen=torch.Generator().manual_seed(7))
+    y = reference_attention(x, r["qkv"].double(), r["q_norm"].double(), r["k_norm"].double(),
+                            r["proj"].double(), heads=heads, groups=groups, d=d_new)
+    rel = ((y - ref).norm() / ref.norm()).item()
+    rk = r["qkv"].reshape(groups, 2 * hpg + 2, d_new, hidden)[:, 2 * hpg]
+    print(f"reseed k: relative output change {rel:.2e}; k_new / k_old row norm "
+          f"{(rk[:, d_old:].norm(dim=-1).median() / rk[:, :d_old].norm(dim=-1).median()).item():.3f}")
+    assert rel < 2e-3, rel
+    # the q_new gradient: before (k_new ~eps) vs after the re-seed (k_new O(1))
+    def qnew_grad(state):
+        w = state["qkv"].double().clone().requires_grad_(True)
+        out = reference_attention(x, w, state["q_norm"].double(), state["k_norm"].double(),
+                                  state["proj"].double(), heads=heads, groups=groups, d=d_new)
+        (out * torch.randn_like(out, generator=torch.Generator().manual_seed(3))).sum().backward()
+        gq = w.grad.reshape(groups, 2 * hpg + 2, d_new, hidden)[:, :hpg]
+        return (gq[:, :, d_old:].norm() / gq[:, :, :d_old].norm()).item()
+    print(f"q_new / q_old gradient norm: widened {qnew_grad(n):.2e} -> re-seeded {qnew_grad(r):.2e}")
+    assert qnew_grad(r) > 30 * qnew_grad(n)
     print("selftest passed")
 
 
@@ -247,13 +314,20 @@ def apply(a):
     log("read", len(want), "tensors")
 
     args = read_bytes_item(a.src, md, "args")
-    assert args.kv_channels == a.d_old, args.kv_channels
     heads, groups = args.num_attention_heads, args.num_query_groups
+    if a.cmd == "apply":
+        assert args.kv_channels == a.d_old, args.kv_channels
+        transform = lambda t: widen_layer(t, heads=heads, groups=groups, d_old=a.d_old,  # noqa: E731
+                                          d_new=a.d_new, eps=a.eps, gen=gen)
+    else:  # reseed-k: a widened checkpoint (kv_channels d_new, the first d_old channels the original)
+        assert args.kv_channels == a.d_new, args.kv_channels
+        transform = lambda t: reseed_k_layer(t, heads=heads, groups=groups, d_old=a.d_old,  # noqa: E731
+                                             d=a.d_new, gen=gen)
     gen = torch.Generator().manual_seed(a.seed)
     new_sd, report = {}, []
     for l, m in keymap.items():
         t = {short: want[k] for short, k in m.items()}
-        n = widen_layer(t, heads=heads, groups=groups, d_old=a.d_old, d_new=a.d_new, eps=a.eps, gen=gen)
+        n = transform(t)
         for short, k in m.items():
             new_sd[k] = n[short].contiguous()
         report.append((l, t["qkv.g"].median().item(), t["qkv.v_norm"].median().item(),
@@ -278,7 +352,14 @@ def apply(a):
     files = {}
     storage = {k: v for k, v in md.storage_data.items() if k.fqn not in replaced}
     for k, v in small.storage_data.items():
-        name = files.setdefault(v.relative_path, f"widen{a.d_new}_{len(files)}{v.relative_path}")
+        # a name no source file has (a re-seed links the widened checkpoint's widen256_* file)
+        tag = "widen" if a.cmd == "apply" else "reseedk"
+        if v.relative_path not in files:
+            i = len(files)
+            while os.path.exists(os.path.join(a.src, f"{tag}{a.d_new}_{i}{v.relative_path}")):
+                i += 1
+            files[v.relative_path] = f"{tag}{a.d_new}_{i}{v.relative_path}"
+        name = files[v.relative_path]
         storage[k] = copy.copy(v)
         storage[k].relative_path = name
     out.storage_data = storage
@@ -308,14 +389,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("selftest")
-    p = sub.add_parser("apply")
-    p.add_argument("--src", required=True)
-    p.add_argument("--dst", required=True)
-    p.add_argument("--layers", default="0,17,33,50,66,82")
-    p.add_argument("--d-old", type=int, default=128)
-    p.add_argument("--d-new", type=int, default=256)
-    p.add_argument("--eps", type=float, default=1e-3)
-    p.add_argument("--seed", type=int, default=1234)
+    for name in ("apply", "reseed-k"):
+        p = sub.add_parser(name)
+        p.add_argument("--src", required=True)
+        p.add_argument("--dst", required=True)
+        p.add_argument("--layers", default="0,17,33,50,66,82")
+        p.add_argument("--d-old", type=int, default=128)
+        p.add_argument("--d-new", type=int, default=256)
+        p.add_argument("--eps", type=float, default=1e-3)
+        p.add_argument("--seed", type=int, default=1234)
     a = ap.parse_args()
     if a.cmd == "selftest":
         selftest()

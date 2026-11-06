@@ -115,3 +115,36 @@ sweep:
           backend.megatron.save: null
           backend.megatron.save_interval: null
           backend.megatron.exit_interval: 6
+        # re-seed test (user 2026-11-06): in the main run the new q / k channels shrank (q_new . k_new has
+        # no first-order gradient at eps 1e-3) while v / proj grew. 8 nodes (mbs 2, same gbs 64):
+        #   c500    base continued at head dim 128 to step 500 (a less fresh model), save at 500
+        #   -- widen c500/ckpt/iter_500 -> c500/ckpt_hd256; reseed-k that -> c500/ckpt_hd256rk --
+        #   w256    plain widened, 500 -> 800, saves every 100 (the main run's situation)
+        #   w256rk  widened + re-seeded keys (k_new = rotated k_old, q_new ~eps), 500 -> 800
+        #   loss of both must match at 501; q_new must grow in w256rk and not in w256
+        - aux.arm: c500
+          aux.nodes: 8
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.load: ${aux.test_root}/base/ckpt
+          backend.megatron.exit_interval: 500
+          backend.megatron.save_interval: 500
+        - aux.arm: w256
+          aux.nodes: 8
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/c500/ckpt_hd256
+          backend.megatron.exit_interval: 800
+          backend.megatron.save_interval: 100
+        - aux.arm: w256rk
+          aux.nodes: 8
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/c500/ckpt_hd256rk
+          backend.megatron.exit_interval: 800
+          backend.megatron.save_interval: 100
