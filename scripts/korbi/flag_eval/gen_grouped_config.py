@@ -139,7 +139,10 @@ def render(rows: list[dict], groups: list[dict], nodes: int, tag: str = "") -> s
         '          aux.task: "export"',
         '          aux.suite: "pipeline"',
         "          aux.n_shot: 0",
-        "          aux.bench: ${aux.export_bench}",
+        # the parallel exporter (experiment 011: workers per layer, one output file each, Engram
+        # tables by row ranges); byte-identical to the sequential one, also on the hd256 run (11000,
+        # 1949 tensors compared, 2026-11-06); 102 s on a quiet GPFS vs ~8-13 min sequential
+        '          aux.bench: "HF_EXPORTER=parallel ${aux.export_bench}"',
         "          job.est_step_time_s: 1800",
         '          slurm.sbatch.time: "00:30:00"',
         "          job.metadata.pool_priority: 50",

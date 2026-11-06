@@ -20,7 +20,7 @@ sweep:
           aux.task: "export"
           aux.suite: "pipeline"
           aux.n_shot: 0
-          aux.bench: ${aux.export_bench}
+          aux.bench: "HF_EXPORTER=parallel ${aux.export_bench}"
           job.est_step_time_s: 1800
           slurm.sbatch.time: "00:30:00"
           job.metadata.pool_priority: 50
@@ -31,7 +31,7 @@ sweep:
           aux.n_shot: "0,0,0,5,0,5,0,0,5,0,0,5,0,0"
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 9452
-          slurm.sbatch.time: "06:00:00"
+          slurm.sbatch.time: "08:00:00"
           backend.env.OELLM_TP: "1"
           backend.env.OELLM_DP: "4"
           backend.env.OELLM_EP: "1"
@@ -48,7 +48,7 @@ sweep:
           aux.n_shot: "0,0,0,0,0,0,0,0,0,0,0,10,0,0,0"
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 9753
-          slurm.sbatch.time: "06:00:00"
+          slurm.sbatch.time: "09:00:00"
           backend.env.OELLM_TP: "1"
           backend.env.OELLM_DP: "4"
           backend.env.OELLM_EP: "1"
@@ -65,7 +65,7 @@ sweep:
           aux.n_shot: "0,0,0,0,0,0,0,0"
           aux.suite: "evalchemy"
           job.est_step_time_s: 9753
-          slurm.sbatch.time: "06:00:00"
+          slurm.sbatch.time: "09:00:00"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
