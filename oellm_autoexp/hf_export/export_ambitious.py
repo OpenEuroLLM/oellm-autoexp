@@ -196,17 +196,18 @@ def hf_config(m: dict, vocab: int) -> dict:
         "torch_dtype": "bfloat16",
         # the context window: vLLM falls back to 2048 when a config names none (every eval of
         # these exports ran with 2048 until 2026-11-06: few-shot contexts cut from the left,
-        # generations capped). No position embeddings (NoPE + CKDA): no positional limit, 64k
-        # the long-context phase; a run with RoPE / learned positions keeps its own.
+        # generations capped). No position embeddings (NoPE + CKDA): no positional limit, 100M
+        # (vLLM auto-fits max_model_len to its KV cache for these exports, submodules/vllm
+        # config/model.py); a run with RoPE / learned positions keeps its own.
         "max_position_embeddings": max_positions(m),
     }
 
 
 def max_positions(m: dict) -> int:
     """The exported context window: the run's own for position embeddings with a range, else
-    OELLM_EXPORT_MAX_POSITIONS (default 65536, the long-context phase of the curriculum)."""
+    OELLM_EXPORT_MAX_POSITIONS (default 100M: the model length-extrapolates; vLLM auto-fits)."""
     if str(m.get("position_embedding_type") or "none") == "none":
-        return int(os.environ.get("OELLM_EXPORT_MAX_POSITIONS", "65536"))
+        return int(os.environ.get("OELLM_EXPORT_MAX_POSITIONS", "100000000"))
     return int(m.get("max_position_embeddings") or m.get("seq_length"))
 
 
