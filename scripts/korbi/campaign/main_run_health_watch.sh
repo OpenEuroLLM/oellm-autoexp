@@ -17,7 +17,7 @@
 #            failed run is not requeued and a host is not looked after.
 # It changes nothing; re-arm it after handling an event.
 set -u
-HOST=${HOST:-marenostrum_new}
+MN5_HOST=${MN5_HOST:-marenostrum_new}  # not $HOST: shells can export HOST (github.com in a 2026-11-07 session)
 INTERVAL=${INTERVAL:-600}
 STALL_S=${STALL_S:-1800}
 SLOW_MS=${SLOW_MS:-40000}
@@ -29,7 +29,7 @@ OUT=${OUT:-$HOME/main_run_health.log}
 log() { echo "$(date '+%F %T') $*" | tee -a "$OUT"; }
 
 probe() {
-    timeout 120 ssh -o BatchMode=yes -o ConnectTimeout=30 "$HOST" "SINGLETON=$SINGLETON bash -s" <<'EOF' 2>/dev/null | grep '^STATUS'
+    timeout 120 ssh -o BatchMode=yes -o ConnectTimeout=30 "$MN5_HOST" "SINGLETON=$SINGLETON bash -s" <<'EOF' 2>/dev/null | grep '^STATUS'
 H=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/_singletons/$SINGLETON/holder.json
 read -r pool rid < <(python3 -c "import json,sys; d=json.load(open('$H')); print(d['pool'], d['rid'])")
 R=$pool/runs/$rid
