@@ -45,11 +45,20 @@ LM_EVAL_ENV = {
     "OELLM_TP": "1", "OELLM_DP": "4", "OELLM_EP": "1", "OELLM_REQUEST_BATCH_SIZE": "256",
     "OELLM_ENGRAM_TABLES": "uva", "OELLM_DECODE_GRAPHS": "0",
 }
-# The task list in single quotes: run_tests.sh gets the bench as one double-quoted argument, so
-# double quotes around ${aux.task} ended it and the list was split at a space in a task name
-# ("include_base_44_north macedonian": '$4: unbound variable', 11-06).
+# The task list without quotes and without spaces: the bench passes two shell layers (the pool
+# step's bash -c '...', then run_tests.sh's bash -c "$2"), and either kind of quotes around it
+# ended one of them -- a task name with a space ("include_base_44_north macedonian") split the
+# list ('$4: unbound variable' with double quotes, 'unexpected end of file' with single quotes,
+# 11-06). A space in a task name is written as "+" (no task name has one); mn5_oellm_run_one.sh
+# turns it back.
 BENCH = ("bash scripts/korbi/flag_eval/mn5_oellm_run_one.sh ${aux.export_dir} ${aux.out} "
-         "'${aux.task}' ${aux.n_shot} ${aux.suite} ${aux.limit}")
+         "${aux.task} ${aux.n_shot} ${aux.suite} ${aux.limit}")
+
+
+def task_arg(task: str) -> str:
+    if "+" in task:
+        raise ValueError(f"task name with a '+': {task!r}")
+    return task.replace(" ", "+")
 
 
 def expected_seconds(rows: list[dict], times: dict[str, float], load_s: float) -> list[float]:
@@ -97,6 +106,11 @@ def lpt(items: list[tuple[float, int]], groups: int) -> list[list[int]]:
     return [sorted(g) for g in out if g]
 
 
+# lighteval writes its results only at the end of a call: a group cut by its wall clock loses all
+# rows (11k, 36 rows after 12 h, 11-06), so its groups stay small
+MAX_ROWS = {"lighteval": 12}
+
+
 def build(rows: list[dict], times: dict[str, float], nodes: int, load_s: float) -> list[dict]:
     secs = expected_seconds(rows, times, load_s)
     total = {h: sum(s for s, r in zip(secs, rows) if r["suite"] == h) for h in HARNESSES}
@@ -104,7 +118,8 @@ def build(rows: list[dict], times: dict[str, float], nodes: int, load_s: float) 
     groups = []
     for h in HARNESSES:
         idx = [(secs[i], i) for i, r in enumerate(rows) if r["suite"] == h]
-        for members in lpt(idx, per.get(h, 0)) if idx else []:
+        n = max(per.get(h, 0), math.ceil(len(idx) / MAX_ROWS.get(h, len(idx) or 1)))
+        for members in lpt(idx, n) if idx else []:
             # evalchemy runs one harness call (one load) per task (mn5_oellm_run_one.sh)
             loads = len(members) if h == "evalchemy" else 1
             groups.append({
@@ -157,7 +172,7 @@ def render(rows: list[dict], groups: list[dict], nodes: int, tag: str = "") -> s
         out += [
             f"        - aux.row: {g}",
             f'          aux.name: "oellm${{aux.step}}g{tag}_{g}_{grp["suite"]}_{len(members)}rows"',
-            f"          aux.task: {json.dumps(','.join(r['task'] for r in members))}",
+            f"          aux.task: {json.dumps(','.join(task_arg(r['task']) for r in members))}",
             f"          aux.n_shot: {json.dumps(','.join(str(int(r['n_shot'])) for r in members))}",
             f"          aux.suite: {json.dumps(grp['suite'])}",
             f"          job.est_step_time_s: {int(grp['seconds'])}",

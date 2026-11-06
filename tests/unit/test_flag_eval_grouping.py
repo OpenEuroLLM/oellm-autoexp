@@ -31,7 +31,8 @@ def test_every_row_in_exactly_one_group_of_its_own_harness():
     rows = _rows()
     times = json.loads(gen.TIMES.read_text())
     groups = gen.build(rows, times, nodes=16, load_s=600)
-    assert len(groups) == 16
+    assert len(groups) >= 16  # lighteval's row cap may add groups
+    assert all(len(g["rows"]) <= gen.MAX_ROWS["lighteval"] for g in groups if g["suite"] == "lighteval")
     members = sorted(i for g in groups for i in g["rows"])
     assert members == list(range(len(rows)))
     for g in groups:
@@ -62,8 +63,9 @@ def test_rendered_config_lists_match_and_gate_on_the_export():
         total += len(tasks)
         assert p["job.start_condition"]["path"].endswith("/.downstream_ready")
     assert total == len(rows)
-    # the one task name with a space survives the comma list
-    assert any("include_base_44_north macedonian" in p["aux.task"] for p in points[1:])
+    # the one task name with a space: written with "+", no space in the argument
+    assert any("include_base_44_north+macedonian" in p["aux.task"] for p in points[1:])
+    assert not any(" " in p["aux.task"] for p in points[1:])
 
 
 def test_rows_done_markers_per_harness(tmp_path):

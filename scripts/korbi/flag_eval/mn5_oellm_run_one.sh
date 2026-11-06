@@ -60,6 +60,9 @@ if [ -d "$view_dir" ]; then
 fi
 key_of() { printf '%s' "$1" | tr '/:| ' '____'; }
 IFS=',' read -r -a all_tasks <<< "$tasks_arg"
+# a space in a task name arrives as "+" (gen_grouped_config.py: no quoting survives both shell
+# layers of the pool step)
+for i in "${!all_tasks[@]}"; do all_tasks[$i]=${all_tasks[$i]//+/ }; done
 IFS=',' read -r -a all_shots <<< "$shots_arg"
 if [ "${#all_shots[@]}" -eq 1 ]; then
     for i in "${!all_tasks[@]}"; do all_shots[$i]=${all_shots[0]}; done
