@@ -7,9 +7,11 @@
 # training image lacks nvidia-modelopt and `from megatron.bridge import
 # AutoBridge` fails with `ModuleNotFoundError: No module named 'modelopt'`.
 # Set the convert stage's container.image to that SIF (see the commented
-# line below). Bridge is made importable via patch_bridge_lazy_imports.py
-# (baked into the bridge image) plus a PYTHONPATH override that fronts the
-# OpenEuroLLM Megatron-LM fork. Eval runs inside the laif-rocm container
+# line below). The bridge image installs the patched Bridge at
+# /opt/megatron-bridge (outside /workspace/oellm-autoexp, which this config
+# bind-mounts from the host and would otherwise hide the in-image patch), so
+# the convert stage points backend.bridge_root/PYTHONPATH there. Eval runs
+# inside the laif-rocm container
 # which already has rocm torch + transformers; oellm-evals + lm-eval are
 # installed via `pip install --target` to $HOME/eval_local and added to
 # PYTHONPATH at runtime.
@@ -96,14 +98,17 @@ sweep:
             - "/flash/"
             - "${oc.env:HOME}"
             - "${oc.env:HOME}/Projects/oellm-autoexp:/workspace/oellm-autoexp"
-          backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src"
+          # /opt/megatron-bridge/src is the patched Bridge copy baked into the
+          # bridge image; the in-repo submodules path would be hidden by the
+          # host bind-mount above.
+          backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/opt/megatron-bridge/src"
           backend.hf_model: "Qwen/Qwen3-0.6B"
           backend.tokenizer: "Qwen/Qwen3-0.6B"
           backend.derive_hf_arch: "qwen3"
           backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
           backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
           backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
-          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.bridge_root: "/opt/megatron-bridge"
           backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
           job.start_condition:
             class_name: FileExistsCondition

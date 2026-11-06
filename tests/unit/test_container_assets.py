@@ -1,6 +1,17 @@
+import importlib.util
+import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_build_container_user():
+    spec = importlib.util.spec_from_file_location(
+        "build_container_user", REPO_ROOT / "container" / "build_container_user.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_container_def_template_has_placeholders():
@@ -23,3 +34,58 @@ def test_requirements_file_exists():
     assert requirements.exists()
     contents = requirements.read_text().strip().splitlines()
     assert any(line.strip() for line in contents)
+
+
+def test_write_runtime_sections_persists_def_metadata(tmp_path):
+    module = _load_build_container_user()
+    sections = {
+        "environment": "export PYTHONPATH=/opt/megatron-bridge/src:${PYTHONPATH}\n",
+        "runscript": 'cd /workspace/oellm-autoexp\nexec "$@"\n',
+        "test": 'python -c "import modelopt"\n',
+        "labels": "Author OpenSci\nVersion 0.1.0\n",
+    }
+    module.write_runtime_sections(tmp_path, sections)
+
+    env = (tmp_path / ".singularity.d" / "env" / "99-build-user-environment.sh").read_text()
+    assert "export PYTHONPATH=/opt/megatron-bridge/src:${PYTHONPATH}" in env
+
+    runscript = (tmp_path / ".singularity.d" / "runscript").read_text()
+    assert runscript.startswith("#!/bin/sh\n")
+    assert 'exec "$@"' in runscript
+
+    assert (tmp_path / ".singularity.d" / "test").read_text().strip().endswith('import modelopt"')
+
+    labels = json.loads((tmp_path / ".singularity.d" / "labels.json").read_text())
+    assert labels == {"Author": "OpenSci", "Version": "0.1.0"}
+
+
+def test_write_runtime_sections_merges_existing_labels(tmp_path):
+    module = _load_build_container_user()
+    dotd = tmp_path / ".singularity.d"
+    dotd.mkdir(parents=True)
+    (dotd / "labels.json").write_text(json.dumps({"Base": "laif-rocm"}))
+
+    module.write_runtime_sections(tmp_path, {"labels": "Version 0.2.0\n"})
+
+    labels = json.loads((dotd / "labels.json").read_text())
+    assert labels == {"Base": "laif-rocm", "Version": "0.2.0"}
+
+
+def test_lumi_bridge_recipe_keeps_runtime_sections_and_mandatory_modelopt():
+    template = (
+        REPO_ROOT / "container" / "megatron" / "MegatronTrainingLumi-bridge.def.in"
+    ).read_text()
+    # Runtime config must live in sections the build helper persists.
+    assert "%environment" in template
+    assert "/opt/megatron-bridge/src" in template
+    # Patched Bridge installed outside the bind-mounted repo path.
+    assert (
+        "cp -a /workspace/oellm-autoexp/submodules/Megatron-Bridge /opt/megatron-bridge" in template
+    )
+    assert "/opt/megatron-bridge/src/megatron/bridge/models" in template
+    # nvidia-modelopt is mandatory (failure aborts the build) and the %test
+    # section smoke-tests the actual imports.
+    assert '"nvidia-modelopt"' in template
+    assert "exit 1" in template
+    assert "%test" in template
+    assert "from megatron.bridge import AutoBridge" in template

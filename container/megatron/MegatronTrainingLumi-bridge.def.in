@@ -10,8 +10,11 @@ From: /scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4
     export PYTHONNOUSERSITE=1
     # OpenEuroLLM Megatron-LM is the primary `megatron.core` (matches training).
     # Bridge's src is appended; namespace package merge gives us `megatron.bridge`
-    # without shadowing `megatron.core`.
-    export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src:${PYTHONPATH}
+    # without shadowing `megatron.core`. Bridge lives at /opt/megatron-bridge
+    # (NOT under /workspace/oellm-autoexp): chain configs bind-mount the host
+    # repo over /workspace/oellm-autoexp at runtime, which would hide an
+    # in-image patched copy. Point backend.bridge_root at /opt/megatron-bridge.
+    export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/opt/megatron-bridge/src:${PYTHONPATH}
     export OELLM_AUTOEXP_CACHE=/workspace/cache
     export HF_HOME=/workspace/cache/hf
 
@@ -48,11 +51,17 @@ python3 -m pip install --no-cache-dir \
 python3 -m pip uninstall -y megatron-core || true
 
 # --- Megatron-Bridge ---------------------------------------------------------
+# Install Bridge from a copy OUTSIDE /workspace/oellm-autoexp: the chain
+# configs bind-mount the host repo over /workspace/oellm-autoexp at runtime,
+# which would hide a patch applied to the in-image copy. The patched Bridge
+# therefore lives at /opt/megatron-bridge and survives the bind mount.
 # Install with --no-deps so the existing transformer_engine / megatron.core
-# (the OpenEuroLLM fork, ROCm build) stay untouched. Add only the deps Bridge
-# needs that the base image doesn't already provide.
+# (the OpenEuroLLM fork, ROCm build) stay untouched.
+rm -rf /opt/megatron-bridge
+cp -a /workspace/oellm-autoexp/submodules/Megatron-Bridge /opt/megatron-bridge
+
 python3 -m pip install --no-cache-dir --no-deps \
-    -e /workspace/oellm-autoexp/submodules/Megatron-Bridge
+    -e /opt/megatron-bridge
 
 # `nvidia-modelopt` is a hard requirement: Bridge's auto_bridge.py imports
 # `from modelopt.torch.quantization.utils import is_quantized` at module
@@ -60,10 +69,13 @@ python3 -m pip install --no-cache-dir --no-deps \
 # `ModuleNotFoundError: No module named 'modelopt'` (the base laif-rocm image
 # does not ship it). Its core deps are arch-neutral and the constraints file
 # pins the installed ROCm torch, so it is safe to install with deps here.
+# Mandatory: exit 1 aborts the %post (and thus the build) on failure.
 python3 -m pip install --no-cache-dir \
     -c /workspace/constraints.installed.txt \
-    "nvidia-modelopt" || \
-  echo "ERROR: nvidia-modelopt failed to install; Megatron-Bridge conversion will not work in this image"
+    "nvidia-modelopt" || { \
+  echo "ERROR: nvidia-modelopt failed to install; Megatron-Bridge conversion will not work in this image"; \
+  exit 1; \
+}
 
 # Remaining bridge-only deps, best effort: the conversion path tolerates
 # their absence (missing model bridges fail soft after the patch below), but
@@ -78,13 +90,13 @@ python3 -m pip install --no-cache-dir \
     "flash-linear-attention" || \
   echo "WARNING: some bridge-only deps failed to install"
 
-# Patch Bridge's `models/__init__.py` so model bridges that reference
-# symbols missing from the OpenEuroLLM Megatron-LM fork (e.g. mamba,
-# certain gemma_vl variants) fail soft at import time instead of breaking
-# `from megatron.bridge import AutoBridge`. Qwen3 + Llama + the other
-# vanilla causal-LM bridges remain importable.
+# Patch the installed Bridge copy's `models/__init__.py` so model bridges
+# that reference symbols missing from the OpenEuroLLM Megatron-LM fork
+# (e.g. mamba, certain gemma_vl variants) fail soft at import time instead
+# of breaking `from megatron.bridge import AutoBridge`. Qwen3 + Llama + the
+# other vanilla causal-LM bridges remain importable.
 python3 /workspace/oellm-autoexp/container/megatron/patch_bridge_lazy_imports.py \
-    /workspace/oellm-autoexp/submodules/Megatron-Bridge/src/megatron/bridge/models
+    /opt/megatron-bridge/src/megatron/bridge/models
 
 %runscript
 cd /workspace/oellm-autoexp
@@ -115,8 +127,11 @@ python -c "from megatron.bridge import AutoBridge; print('AutoBridge OK')"
             --output ./artifacts
 
     Point the convert stage's `container.image` at the resulting
-    MegatronTrainingLumi-bridge_*_x86_64.sif. Some bundled Bridge model
-    bridges (mamba, certain VL/Omni variants) are skipped at import time
-    because the OpenEuroLLM Megatron-LM fork lacks symbols upstream Bridge
-    expects. Bridges for Qwen3, Llama, and other causal-LM architectures
-    are unaffected.
+    MegatronTrainingLumi-bridge_*_x86_64.sif, and set
+    `backend.bridge_root: /opt/megatron-bridge` plus
+    `/opt/megatron-bridge/src` on PYTHONPATH, so the patched Bridge copy
+    outside the bind-mounted repo is the one that gets imported. Some
+    bundled Bridge model bridges (mamba, certain VL/Omni variants) are
+    skipped at import time because the OpenEuroLLM Megatron-LM fork lacks
+    symbols upstream Bridge expects. Bridges for Qwen3, Llama, and other
+    causal-LM architectures are unaffected.

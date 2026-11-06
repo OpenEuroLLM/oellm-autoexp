@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -169,6 +170,35 @@ def _share_embeddings_from_config(megatron: dict) -> bool | None:
     return None
 
 
+def _ensure_bridge_patched(bridge_root: Path) -> None:
+    """Apply the tolerant-import patch to the Bridge tree we will import from.
+
+    Bridge images bake the patch into their installed Bridge copy, but chain
+    configs often bind-mount the host repo over the in-image tree, which hides
+    the patched files. The patch script is idempotent, so re-applying it to
+    ``bridge_root`` is safe; failures (e.g. read-only mount) are ignored and
+    surface later as the regular import error.
+    """
+    patch_script = (
+        Path(__file__).resolve().parents[3]
+        / "container"
+        / "megatron"
+        / "patch_bridge_lazy_imports.py"
+    )
+    models_dir = bridge_root / "src" / "megatron" / "bridge" / "models"
+    if not (patch_script.is_file() and models_dir.is_dir()):
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(patch_script), str(models_dir)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        pass
+
+
 def _run_convert(
     bridge_root: Path,
     megatron_path: Path,
@@ -225,6 +255,10 @@ def _run_convert(
     src_path = bridge_root / "src"
     if str(src_path) not in sys.path:
         sys.path.append(str(src_path))
+
+    # Make sure the Bridge tree on sys.path carries the tolerant-import patch
+    # (a host bind-mount over the in-image repo would hide the image's copy).
+    _ensure_bridge_patched(bridge_root)
 
     # Older OpenEuroLLM Megatron-LM forks lack
     # `_clean_metadata_for_serialization` (Bridge added it upstream). Shim

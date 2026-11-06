@@ -99,12 +99,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def substitute_env_vars(template: str, values: dict[str, str]) -> str:
-    env = os.environ.copy()
-    env.update(values)
+    """Substitute only the explicit build-time variables in ``values``.
+
+    All other ``$VAR``/``${VAR}`` occurrences (e.g. ``${PYTHONPATH}`` inside
+    %environment or the CUDA-fix startup script) are left untouched so they
+    expand at container runtime, not at render time on the build host.
+    """
+    env = dict(values)
+    if "BASE_IMAGE" not in env:
+        env["BASE_IMAGE"] = os.environ.get("BASE_IMAGE", "")
 
     def replacer(match: re.Match[str]) -> str:
         key = match.group(1) or match.group(2) or ""
-        return env.get(key, "")
+        if key in env:
+            return env[key]
+        return match.group(0)
 
     return ENV_VAR_PATTERN.sub(replacer, template)
 
@@ -154,6 +163,66 @@ def run_command(cmd, *, cwd=None, env=None):
     printable = " ".join(shlex.quote(str(c)) for c in cmd)
     print(f"[+] {printable}")
     subprocess.run(cmd, check=True, cwd=cwd, env=env)
+
+
+# Sections that a def-based `singularity build` would persist inside the image
+# under /.singularity.d. Building the final SIF straight from a sandbox packs
+# only the filesystem, so these are written explicitly to keep them.
+RUNTIME_SECTION_FILES = {
+    "runscript": "runscript",
+    "startscript": "startscript",
+    "test": "test",
+    "help": "help",
+}
+
+
+def write_runtime_sections(sandbox_dir: Path, sections: dict[str, str]) -> None:
+    """Write def metadata sections into the sandbox's /.singularity.d.
+
+    The final image is built from the sandbox directory, which preserves
+    the filesystem but not the definition's
+    %environment/%runscript/%test/%help/ %labels sections.
+    Singularity/Apptainer read those from /.singularity.d at runtime, so
+    persist them there before packing.
+    """
+    dotd = sandbox_dir / ".singularity.d"
+    env_dir = dotd / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    env_body = sections.get("environment", "")
+    if env_body.strip():
+        env_script = env_dir / "99-build-user-environment.sh"
+        env_script.write_text("#!/bin/sh\n" + env_body.rstrip() + "\n")
+        env_script.chmod(0o755)
+
+    for section, name in RUNTIME_SECTION_FILES.items():
+        body = sections.get(section, "")
+        if not body.strip():
+            continue
+        content = body.rstrip() + "\n"
+        if not content.startswith("#!"):
+            content = "#!/bin/sh\n" + content
+        path = dotd / name
+        path.write_text(content)
+        path.chmod(0o755)
+
+    labels_body = sections.get("labels", "")
+    if labels_body.strip():
+        labels_path = dotd / "labels.json"
+        labels: dict[str, str] = {}
+        if labels_path.exists():
+            try:
+                labels = json.loads(labels_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                labels = {}
+        for line in labels_body.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, _, value = line.partition(" ")
+            if key:
+                labels[key] = value.strip()
+        labels_path.write_text(json.dumps(labels, indent=2) + "\n", encoding="utf-8")
 
 
 def ensure_no_prohibited_commands(script: str) -> None:
@@ -386,6 +455,29 @@ def main() -> None:
         run_command(exec_cmd)
     else:
         print("[+] No %post section detected; skipping user-level install step.")
+
+    # Persist %environment/%runscript/%test/... into the sandbox so the final
+    # SIF keeps them (a sandbox->SIF build only packs the filesystem), then
+    # run %test inside the sandbox: a failing smoke test must abort the build
+    # before the image is packed.
+    write_runtime_sections(sandbox_dir, sections)
+
+    test_script = sections.get("test", "")
+    if test_script.strip():
+        test_cmd = [
+            container_cmd,
+            "exec",
+            "--writable",
+            "--no-home",
+            "--no-umask",
+            str(sandbox_dir),
+            "/bin/bash",
+            "-c",
+            f"{test_script}\n",
+        ]
+        run_command(test_cmd)
+    else:
+        print("[+] No %test section detected; skipping smoke test.")
 
     final_build_cmd = [container_cmd, "build"]
     if args.force:
