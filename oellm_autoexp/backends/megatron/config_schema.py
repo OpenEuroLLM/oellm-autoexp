@@ -547,6 +547,24 @@ class MegatronConfig(ConfigInterface):
     # compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
     engram_token_map: str | None = None
 
+    # A second set of Engram lookups (empty = off) over ids mapped by ``engram_aux_token_map``
+    # (e.g. a finer compression that keeps accents: NFKC + lowercasing only), with its own
+    # hash multipliers, sign hash and table rows appended after the main ones; its rows join
+    # the memory vector after the main ones. The main lookups (sizes, hashes, row offsets,
+    # conv dilation) do not change, so a checkpoint without it widens function-preservingly
+    # (zero key / value projection columns for the new rows:
+    # scripts/korbi/production/widen_engram_aux.py).
+    engram_aux_ngram_orders: list[int] = field(default_factory=lambda: [])
+
+    # Hash heads per order of the auxiliary lookups (0 = engram_num_heads).
+    engram_aux_num_heads: int = 0
+
+    # Rows per auxiliary table (0 = engram_table_size; distinct primes, after the main ones).
+    engram_aux_table_size: int = 0
+
+    # Token map of the auxiliary lookups (.npy, as engram_token_map); None = raw token ids.
+    engram_aux_token_map: str | None = None
+
     # Query and key head dimension for the gated delta net.
     linear_key_head_dim: int = 128
 
