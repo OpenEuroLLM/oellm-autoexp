@@ -1,0 +1,33 @@
+# @package _global_
+# One pool job of a typed eval launch (scripts/evals/launch.py renders the sweep of a launch: one
+# point per job, plain literals). The job's settings -- rows, engine layout, model-code switches --
+# are in its JobSpec JSON (aux.spec); the command passes only the runtime and that path.
+defaults:
+  - ../../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  # placeholders so the base resolves: every sweep point of a launch sets them
+  job: eval_job_base  # the job's name (its JobSpec file stem)
+  spec: none          # the JobSpec JSON
+  runtime: vllm       # scripts/evals/job.sh: vllm | plain
+  log_root: ${oc.env:OUTPUT_DIR,'./output'}/flag_evals_oellm/logs  # the launch sets <paths.out>/logs
+  name: ${aux.job}
+  bench: bash scripts/evals/job.sh ${aux.runtime} ${aux.spec}
+  # the export job's libraries (Megatron's checkpoint reader, the HF exporter's extras)
+  export_pythonpath: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}:${aux.hybrid_env}/pylibs_hfx"
+
+job:
+  name: ${aux.name}
+  base_output_dir: ${aux.log_root}/${aux.name}
+  est_step_time_s: 3600
+  array_group: null
+  metadata:
+    pool_priority: 55
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+    qos: acc_xehpc
+    account: cns144

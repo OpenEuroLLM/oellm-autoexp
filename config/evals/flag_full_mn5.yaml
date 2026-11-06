@@ -1,0 +1,38 @@
+# The full FLAG suite (config/eval_tasks/flag_evals.yaml, 438 rows) of one oellm_ambitious
+# checkpoint on MareNostrum 5 -- an EvalSpec (scripts/evals/spec.py; every key and value is
+# checked when it is loaded):
+#
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/flag_full_mn5.yaml --step 13000 [--dry-run]
+#
+# Unset fields keep the spec's defaults (spec.py); these are the ones worth seeing.
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel           # experiment 011, byte-identical to the sequential exporter
+  max_positions: 100000000     # NoPE: no window of its own (vLLM fits it to the KV cache)
+
+rows:
+  harnesses: [lm-eval-harness, lighteval, evalchemy]
+
+lm_eval:
+  workers: 10
+  split_s: 300                 # rows longer than this (engine seconds) become document parts
+  max_parts: 8
+  engine: {tp: 1, dp: 4, expert_parallel: true, max_num_seqs: 256, request_batch_size: 256}
+  job: {priority: 60}
+
+lighteval:
+  groups: 7
+  max_rows: 12                 # lighteval writes its results only at the end of a call
+  engine: {tp: 4, max_num_seqs: 64, max_model_length: 32768}
+  job: {priority: 55}
+
+evalchemy:
+  groups: 1
+  exclude_tasks: [LiveCodeBench]   # datasets.map PicklingError (2026-11-06)
+  engine: {tp: 4, max_num_seqs: 64}
+  job: {priority: 55}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p134c
