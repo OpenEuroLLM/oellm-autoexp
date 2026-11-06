@@ -133,6 +133,12 @@ class PoolHostConfig:
     # check read 507 of 514 usable and released a held 516-node allocation at once). Hosts
     # within min_hosts are never released for it -- the hold is the operator's call.
     insufficient_grace_s: float = 900.0
+    # A newer host that starts while the run's host is still younger than handover_min_age_s:
+    # False -- it waits (idle) until that host is old enough, then takes the run; True -- it is
+    # released at once (its queue age is spent anyway, and moving the run twice within minutes
+    # buys a few minutes of wall clock for a full restart). JUPITER 2026-11-06: two queued hosts
+    # due 4 min apart would have handed the run over twice.
+    handover_release_newer: bool = False
     # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
     # share shrank when another host started). False: never cancel a queued host automatically --
     # its queue age is the point (JUPITER 2026-11-05: the 2+2 account split cancelled e-sta hosts
@@ -1141,8 +1147,32 @@ class PoolManager:
         handover_waiting = False
         if cfg.handover and len(live) > cfg.max_hosts_running:
             excess = len(live) - cfg.max_hosts_running
-            for host in sorted(live, key=lambda h: h.start_ts)[:excess]:
+            ordered = sorted(live, key=lambda h: h.start_ts)
+            for host in ordered[:excess]:
                 if now - host.start_ts < cfg.handover_min_age_s:
+                    newer = [
+                        h
+                        for h in ordered
+                        if not h.retiring and h.start_ts > host.start_ts and h.hid not in busy
+                    ]
+                    if cfg.handover_release_newer and newer:
+                        victim = newer[-1]
+                        age = now - host.start_ts
+                        self._control(
+                            layout,
+                            victim.hid,
+                            "exit",
+                            f"a newer host while {host.hid} is only {age:.0f}s old: not worth a handover",
+                        )
+                        victim.retiring = True
+                        LOGGER.info(
+                            "[pool %s] releasing newer host %s (%s is only %.0fs old)",
+                            cfg.name,
+                            victim.hid,
+                            host.hid,
+                            age,
+                        )
+                        continue
                     handover_waiting = True
                     continue
                 self._control(layout, host.hid, "exit", "handover to a newer host")

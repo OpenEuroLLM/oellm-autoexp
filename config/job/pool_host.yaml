@@ -32,6 +32,9 @@ pool_host:
   insufficient_grace_s: 900
   # false: never cancel a queued host automatically (its queue age is the point); close still does
   cancel_surplus_queued: true
+  # true: a host starting while the run's host is younger than handover_min_age_s is released
+  # at once instead of waiting idle and taking the run (no second restart within minutes)
+  handover_release_newer: false
   stop_grace_s: 120
   preempt_grace_s: 900
   max_attempts: 20

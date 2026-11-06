@@ -690,6 +690,30 @@ def test_a_young_host_is_not_handed_over_and_its_successor_waits(env):
     assert (env.layout.host_dir(old) / "control" / "exit").exists()
 
 
+def test_handover_release_newer_frees_a_host_that_starts_right_after_a_handover(env):
+    # JUPITER 2026-11-06: two queued hosts due 4 min apart; the second must not take the run
+    # from the first (a second restart for 4 min of wall clock) -- it is released at once
+    meta = env.layout.load_meta()
+    meta["config"].update(
+        handover=True,
+        keep_pending=1,
+        idle_exit_s=3600,
+        handover_min_age_s=3600,
+        handover_release_newer=True,
+    )
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(2)
+    old = env.host_up(env.hosts()[0], start_ts=time.time() - 240)  # just took over the run
+    env.poll()
+    env.start_run(env.rec("train").runtime.runtime_job_id, old)
+    new = env.host_up(env.hosts()[1])
+    env.poll()
+    assert not (env.layout.host_dir(old) / "control" / "exit").exists(), "the run moved again"
+    exit_file = env.layout.host_dir(new) / "control" / "exit"
+    assert exit_file.exists() and "not worth a handover" in exit_file.read_text()
+
+
 def test_successor_delay_holds_back_the_pending_host(env):
     meta = env.layout.load_meta()
     meta["config"].update(handover=True, keep_pending=1, successor_delay_s=1800)
