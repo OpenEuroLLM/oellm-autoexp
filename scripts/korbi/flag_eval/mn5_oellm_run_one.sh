@@ -123,10 +123,15 @@ case "$suite" in
         model_args="pretrained=$export_dir,trust_remote_code=True,dtype=bfloat16,gpu_memory_utilization=0.9,max_num_seqs=$eval_seqs,tensor_parallel_size=${OELLM_TP:-4},enforce_eager=$VLLM_EAGER"
         [ "${OELLM_DP:-1}" -gt 1 ] && model_args="$model_args,data_parallel_size=${OELLM_DP:-1},data_parallel_backend=mp"
         [ "${OELLM_EP:-1}" = 1 ] && model_args="$model_args,enable_expert_parallel=True"
-        ( cd "$OELLM_STAGE/evalchemy" && \
-          OELLM_GRAPH_MAX_ROWS=$eval_graph_rows "$INFER_PY" -m eval.eval --model vllm --tasks "$task" --model_args "$model_args" \
-              --batch_size auto --output_path "$out/evalchemy_${run_key}" \
-              "${limit_args[@]}" ) || rc=$?
+        # One call per task: evalchemy writes all results at the end, and one task's crash
+        # (LiveCodeBench: a datasets.map PicklingError) lost the whole 8-task group (11-06).
+        # The load is short since the parallel prefetch / GPU dequant (~3-9 min).
+        for i in "${!tasks[@]}"; do
+            ( cd "$OELLM_STAGE/evalchemy" && \
+              OELLM_GRAPH_MAX_ROWS=$eval_graph_rows "$INFER_PY" -m eval.eval --model vllm --tasks "${tasks[$i]}" --model_args "$model_args" \
+                  --batch_size auto --output_path "$out/evalchemy_$(key_of "${tasks[$i]}")_${shots[$i]}" \
+                  "${limit_args[@]}" ) || rc=$?
+        done
         ;;
     lighteval)
         light_task=$(for i in "${!tasks[@]}"; do printf '%s|%s\n' "${tasks[$i]}" "${shots[$i]}"; done | paste -sd, -)
@@ -171,7 +176,8 @@ esac
 lm_done="$out_root/$export_name"
 [ "$limit" = 0 ] || lm_done="${lm_done}_limit${limit}"
 missing=$(python3 scripts/korbi/flag_eval/oellm_rows_done.py --suite "$suite" \
-    --results "$out/${suite}_${run_key}" --lm-done "$lm_done/done" --out-done "$out/done" \
+    --results "$( [ "$suite" = evalchemy ] && echo "$out" || echo "$out/${suite}_${run_key}" )" \
+    --lm-done "$lm_done/done" --out-done "$out/done" \
     --limit "$limit" --rows "$(for i in "${!tasks[@]}"; do printf '%s|%s\n' "${tasks[$i]}" "${shots[$i]}"; done)")
 if [ -n "$missing" ]; then
     echo "[mn5_oellm] rows without a result (rc $rc): $missing" >&2

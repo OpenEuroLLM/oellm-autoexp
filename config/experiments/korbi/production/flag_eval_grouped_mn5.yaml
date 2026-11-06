@@ -6,6 +6,9 @@ defaults:
   - flag_eval_pipeline_mn5
   - _self_
 
+aux:
+  bench: "bash scripts/korbi/flag_eval/mn5_oellm_run_one.sh ${aux.export_dir} ${aux.out} '${aux.task}' ${aux.n_shot} ${aux.suite} ${aux.limit}"
+
 sweep:
   type: list
   store_sweep_json: true
@@ -29,6 +32,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17062
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -40,6 +49,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 16974
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -51,6 +66,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17244
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -62,6 +83,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17001
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -73,6 +100,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 16974
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -84,6 +117,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 16974
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -95,6 +134,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17005
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -106,6 +151,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17006
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -117,6 +168,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17031
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -128,6 +185,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17003
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -139,6 +202,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 16974
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -150,6 +219,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 17002
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
@@ -161,6 +236,12 @@ sweep:
           aux.suite: "lm-eval-harness"
           job.est_step_time_s: 16974
           slurm.sbatch.time: "10:00:00"
+          backend.env.OELLM_TP: "1"
+          backend.env.OELLM_DP: "4"
+          backend.env.OELLM_EP: "1"
+          backend.env.OELLM_REQUEST_BATCH_SIZE: "256"
+          backend.env.OELLM_ENGRAM_TABLES: "uva"
+          backend.env.OELLM_DECODE_GRAPHS: "0"
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_dir}/.downstream_ready"
