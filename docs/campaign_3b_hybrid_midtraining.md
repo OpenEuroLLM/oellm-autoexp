@@ -784,6 +784,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - The oracle is not the ceiling beyond 64k: the dense attention's mass is itself length-miscalibrated.
   - The 128k retrieval and the indexer retrieval stopped on a bug (fixed); rerun as T2b at 128k / 256k.
 
+- **2026-11-06, T2b retrieval at 128k / 256k** (10-way choices; 3 passkey + 4 kvret64 + 4 vt questions per cell, so
+  each step of 0.25 is one question; dev job 48605264; `docs/campaign_3b_hybrid_midtraining_results/t2b_retrieval_v4_2ph_8000/`):
+
+  | policy | 128k passkey / kvret64 / vt | 256k passkey / kvret64 / vt |
+  |---|---|---|
+  | dense | 1.0 / 0.25 / 0.0 | 1.0 / 0.0 / 0.0 |
+  | dense + log-n | 1.0 / 0.25 / 0.5 | 1.0 / 0.0 / 0.5 |
+  | page_mean top-32 | 1.0 / 0.0 / 0.25 | 1.0 / 0.25 / 0.25 |
+  | quest top-32 | 1.0 / 0.25 / 0.25 | 1.0 / 0.25 / 0.0 |
+  | oracle top-32 | 1.0 / **0.75** / 0.5 | 1.0 / **0.5** / 0.25 |
+  | learned indexer (T2 warm-up) | 0.33 / 0.0 / 0.25 | 0.0 / 0.0 / 0.25 |
+
+  - **Passkey** stays 1.0 to 256k for dense and every training-free selector.
+  - **The oracle selection keeps the multi-key retrieval** (0.75 / 0.5 vs dense 0.25 / 0.0): the right pages
+    exist within a 2.7k-key budget. Pooled keys and Quest miss them.
+  - **The quick-warm-up indexer is worse than training-free**, even losing the passkey, so the T2 warm-up is
+    useless as is.
+  - **Next step for the selector:** a real indexer warm-up (far more tokens, the deep-layer KL down from
+    0.7-1.1), or better training-free scores. Candidates: Quest's bound per head, then max over heads instead of
+    summed; LSA-style clustering.
+  - The sample is tiny; the s3 arms and any decision need ≥ 50 questions per cell.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

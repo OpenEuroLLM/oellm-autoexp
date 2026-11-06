@@ -1,0 +1,62 @@
+{
+ "131072|dense": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.0
+ },
+ "131072|logn:base=65536": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.5
+ },
+ "131072|page_mean:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.25
+ },
+ "131072|quest:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.25
+ },
+ "131072|oracle:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.75,
+  "vt": 0.5
+ },
+ "131072|indexer:topk=32": {
+  "passkey": 0.3333333333333333,
+  "kvret64": 0.0,
+  "vt": 0.25
+ },
+ "262144|dense": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.0
+ },
+ "262144|logn:base=65536": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.5
+ },
+ "262144|page_mean:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.25
+ },
+ "262144|quest:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.0
+ },
+ "262144|oracle:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.5,
+  "vt": 0.25
+ },
+ "262144|indexer:topk=32": {
+  "passkey": 0.0,
+  "kvret64": 0.0,
+  "vt": 0.25
+ }
+}
