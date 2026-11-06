@@ -690,14 +690,15 @@ def test_a_young_host_is_not_handed_over_and_its_successor_waits(env):
     assert (env.layout.host_dir(old) / "control" / "exit").exists()
 
 
-def test_handover_release_newer_frees_a_host_that_starts_right_after_a_handover(env):
-    # JUPITER 2026-11-06: two queued hosts due 4 min apart; the second must not take the run
-    # from the first (a second restart for 4 min of wall clock) -- it is released at once
+def test_block_time_newcomer_idles_as_standby_and_is_released_without_a_handover(env):
+    # JUPITER 2026-11-06: two queued hosts started 3 min apart. Within the block time (the run's
+    # host younger than handover_min_age_s) the newcomer must not take the run; it idles as a
+    # standby and idle_exit_s releases it
     meta = env.layout.load_meta()
     meta["config"].update(
         handover=True,
         keep_pending=1,
-        idle_exit_s=3600,
+        idle_exit_s=900,
         handover_min_age_s=3600,
         handover_release_newer=True,
     )
@@ -708,10 +709,15 @@ def test_handover_release_newer_frees_a_host_that_starts_right_after_a_handover(
     env.poll()
     env.start_run(env.rec("train").runtime.runtime_job_id, old)
     new = env.host_up(env.hosts()[1])
+    env.poll(2)
+    exit_new = env.layout.host_dir(new) / "control" / "exit"
+    assert not (env.layout.host_dir(old) / "control" / "exit").exists(), "the run was handed over"
+    assert not exit_new.exists(), "the standby was released before idle_exit_s"
+    # idle beyond idle_exit_s: released as idle, still no handover
+    (env.layout.host_dir(new) / "state").write_text(f"idle {int(time.time()) - 1000} 4\n")
     env.poll()
-    assert not (env.layout.host_dir(old) / "control" / "exit").exists(), "the run moved again"
-    exit_file = env.layout.host_dir(new) / "control" / "exit"
-    assert exit_file.exists() and "not worth a handover" in exit_file.read_text()
+    assert exit_new.exists() and "idle for" in exit_new.read_text()
+    assert not (env.layout.host_dir(old) / "control" / "exit").exists()
 
 
 def test_successor_delay_holds_back_the_pending_host(env):

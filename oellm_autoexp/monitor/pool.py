@@ -133,11 +133,12 @@ class PoolHostConfig:
     # check read 507 of 514 usable and released a held 516-node allocation at once). Hosts
     # within min_hosts are never released for it -- the hold is the operator's call.
     insufficient_grace_s: float = 900.0
-    # A newer host that starts while the run's host is still younger than handover_min_age_s:
-    # False -- it waits (idle) until that host is old enough, then takes the run; True -- it is
-    # released at once (its queue age is spent anyway, and moving the run twice within minutes
-    # buys a few minutes of wall clock for a full restart). JUPITER 2026-11-06: two queued hosts
-    # due 4 min apart would have handed the run over twice.
+    # A newer host that starts while the run's host is still younger than handover_min_age_s
+    # (the "block time"): False -- it waits until that host is old enough, then takes the run
+    # (not released as idle meanwhile); True -- it never takes the run during the block time and
+    # is released like any idle host after idle_exit_s, a standby until then (if the running host
+    # fails meanwhile, the run moves to it). JUPITER 2026-11-06: two queued hosts started 3 min
+    # apart and the run was handed over twice.
     handover_release_newer: bool = False
     # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
     # share shrank when another host started). False: never cancel a queued host automatically --
@@ -1156,22 +1157,7 @@ class PoolManager:
                         if not h.retiring and h.start_ts > host.start_ts and h.hid not in busy
                     ]
                     if cfg.handover_release_newer and newer:
-                        victim = newer[-1]
-                        age = now - host.start_ts
-                        self._control(
-                            layout,
-                            victim.hid,
-                            "exit",
-                            f"a newer host while {host.hid} is only {age:.0f}s old: not worth a handover",
-                        )
-                        victim.retiring = True
-                        LOGGER.info(
-                            "[pool %s] releasing newer host %s (%s is only %.0fs old)",
-                            cfg.name,
-                            victim.hid,
-                            host.hid,
-                            age,
-                        )
+                        # block time: no handover, the newcomer idles and idle_exit_s releases it
                         continue
                     handover_waiting = True
                     continue
