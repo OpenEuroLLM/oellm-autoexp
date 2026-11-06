@@ -17,6 +17,8 @@ export OELLM_ENGRAM_LOOKUP=${OELLM_ENGRAM_LOOKUP:-leader}
 export OELLM_ENGRAM_MADVISE=${OELLM_ENGRAM_MADVISE:-normal}
 args=()
 [ "$limit" = 0 ] || args+=(--limit "$limit")
+# FLAG_QUEUE: a flag_queue.py queue instead of the names (a worker: one engine, items until empty)
+if [ -n "${FLAG_QUEUE:-}" ]; then sel=(--queue "$FLAG_QUEUE"); else sel=(--names "$@"); fi
 "$INFER_PY" scripts/korbi/flag_eval/flag_lmeval.py \
  --export "$export_dir" --out "$out" --shard "$shard" --num-shards "$nshards" \
  --tp "${FLAG_TP:-1}" --dp "${FLAG_DP:-4}" --ep 1 \
@@ -24,4 +26,4 @@ args=()
  --max-num-batched-tokens "${FLAG_TOKEN_BUDGET:-32768}" \
  --request-batch-size "${FLAG_REQUEST_BATCH_SIZE:-256}" --response-cache \
  ${FLAG_SUITE:+--suite "$FLAG_SUITE"} \
- "${args[@]}" --names "$@"
+ "${args[@]}" "${sel[@]}"

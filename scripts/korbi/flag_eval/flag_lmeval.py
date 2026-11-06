@@ -36,7 +36,9 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--export", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--names", nargs="+", required=True, help="flag_evals.yaml names half/task/n_shot")
+    p.add_argument("--names", nargs="+", help="flag_evals.yaml names half/task/n_shot")
+    p.add_argument("--queue", help="flag_queue.py queue dir: evaluate its items until it is empty "
+                                   "(one engine for all of them; instead of --names)")
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--tp", type=int, default=4)
@@ -54,6 +56,8 @@ def main(argv=None):
     p.add_argument("--include-path",
                    default=str(REPO / "submodules/oellm-eval/oellm/resources/custom_lm_eval_tasks"))
     a = p.parse_args(argv)
+    if bool(a.names) == bool(a.queue):
+        p.error("give --names or --queue")
     if a.dp < 1 or a.tp < 1:
         p.error("TP and DP sizes must be positive")
     if a.dp > 1 and not a.ep:
@@ -73,18 +77,22 @@ def main(argv=None):
         return
 
     suite = {t["name"]: t for t in yaml.safe_load(open(a.suite))["tasks"]}
-    rows = []
-    for name in a.names:
+
+    def make_row(name):
         base, k, n = lmeval_parts.parse(name)
         t = suite.get(base)
         if t is None:
-            sys.exit(f"{name}: not in {a.suite}")
+            raise ValueError(f"{name}: not in {a.suite}")
         if t["half"] != "vllm" or t["suite"] != "lm-eval-harness":
-            sys.exit(f"{name}: {t['half']} / {t['suite']} rows are not supported here (lm-eval on vLLM only)")
+            raise ValueError(f"{name}: {t['half']} / {t['suite']} rows are not supported here (lm-eval on vLLM only)")
         if k is not None and a.limit:
-            sys.exit(f"{name}: parts and --limit exclude each other (lm-eval samples vs limit)")
-        rows.append({**t, "name": name, "part": None if k is None else (k, n)})
-    rows = rows[a.shard :: a.num_shards]
+            raise ValueError(f"{name}: parts and --limit exclude each other (lm-eval samples vs limit)")
+        return {**t, "name": name, "part": None if k is None else (k, n)}
+
+    try:
+        rows = [make_row(name) for name in (a.names or [])][a.shard :: a.num_shards]
+    except ValueError as exc:
+        sys.exit(str(exc))
     export = Path(a.export).resolve()
     # test runs (--limit) never mark a full row done
     out = Path(a.out) / (export.name + (f"_limit{a.limit:g}" if a.limit else ""))
@@ -94,18 +102,27 @@ def main(argv=None):
         return (f"{t['task']}_{t['n_shot']}" if t["part"] is None
                 else lmeval_parts.part_key(t["task"], t["n_shot"], *t["part"]))
 
-    # a part is also done once its whole row is
-    todo = [t for t in rows if not (done / f"{_key(t)}.ok").exists()
-            and not (done / f"{t['task']}_{t['n_shot']}.ok").exists()]
-    if a.dp > 1:
-        import torch.distributed as dist
+    def is_done(t):  # a part is also done once its whole row is
+        return (done / f"{_key(t)}.ok").exists() or (done / f"{t['task']}_{t['n_shot']}.ok").exists()
 
-        shared = [todo if int(os.environ["FLAG_DP_RANK"]) == 0 else None]
-        dist.broadcast_object_list(shared, src=0)
-        todo = shared[0]
-    print(f"[flag_lmeval] {export.name} shard {a.shard}/{a.num_shards}: {len(rows)} rows, {len(todo)} to run", flush=True)
-    if not todo:
-        return
+    rank0 = a.dp == 1 or int(os.environ["FLAG_DP_RANK"]) == 0
+    if a.queue:
+        from scripts.korbi.flag_eval.flag_queue import Queue
+
+        queue = Queue(Path(a.queue))
+        print(f"[flag_lmeval] {export.name} queue {a.queue}: {queue.status()}", flush=True)
+        todo = None
+    else:
+        todo = [t for t in rows if not is_done(t)]
+        if a.dp > 1:
+            import torch.distributed as dist
+
+            shared = [todo if rank0 else None]
+            dist.broadcast_object_list(shared, src=0)
+            todo = shared[0]
+        print(f"[flag_lmeval] {export.name} shard {a.shard}/{a.num_shards}: {len(rows)} rows, {len(todo)} to run", flush=True)
+        if not todo:
+            return
 
     from lm_eval import simple_evaluate
     from lm_eval.loggers import EvaluationTracker
@@ -185,23 +202,25 @@ def main(argv=None):
             lm.barrier()
         cache_prefix = str(cache_dir / f"shard{a.shard}")
     failed = []
-    for t in todo:
+
+    def run_row(t) -> bool:
+        """Evaluate one row or part; False if it failed (single engine; DP > 1 raises)."""
         key = _key(t)
         t1 = time.time()
         print(f"[flag_lmeval] --- {t['name']}", flush=True)
         try:
             if t["part"] is not None:
                 if _run_part(t, a, lm, tm, out, done, cache_prefix, simple_evaluate, t1):
-                    continue
+                    return True
                 print(f"[flag_lmeval] {t['name']} part done in {time.time() - t1:.0f} s", flush=True)
-                continue
+                return True
             tracker = EvaluationTracker(output_path=str(out / "results" / key))
             res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size=a.request_batch_size,
                                   log_samples=True, evaluation_tracker=tracker, task_manager=tm,
                                   confirm_run_unsafe_code=True, limit=a.limit, use_cache=cache_prefix)
             if res is None:
                 lm.barrier()
-                continue
+                return True
             samples = res.pop("samples")
             tracker.save_results_aggregated(results=res, samples=samples)
             for task_name in res["configs"]:
@@ -218,16 +237,76 @@ def main(argv=None):
                   f"{json.dumps(res['results'].get(t['task'], {}), default=str)[:400]}", flush=True)
             if a.dp > 1:
                 lm.barrier()
+            return True
         except Exception:
             traceback.print_exc()
             if a.dp > 1:
                 raise
             failed.append(t["name"])
             print(f"[flag_lmeval] {t['name']} FAILED after {time.time() - t1:.0f} s", flush=True)
-    print(f"[flag_lmeval] shard {a.shard}: {len(todo) - len(failed)} ok, failed: {failed}; {time.time() - t0:.0f} s", flush=True)
+            return False
+
+    if todo is not None:
+        for t in todo:
+            run_row(t)
+        n_run = len(todo)
+    else:
+        n_run = _queue_loop(queue, make_row, is_done, run_row, a.dp, rank0)
+    print(f"[flag_lmeval] shard {a.shard}: {n_run - len(failed)} ok, failed: {failed}; {time.time() - t0:.0f} s", flush=True)
     if a.dp > 1:
         lm.model.llm_engine.engine_core.shutdown()
     sys.exit(1 if failed else 0)
+
+
+def _queue_loop(queue, make_row, is_done, run_row, dp: int, rank0: bool) -> int:
+    """Claim, evaluate and mark items until the queue is empty. With DP > 1 rank 0 claims and
+    broadcasts each item (None: stop); its claim file is touched while the item runs."""
+    import threading
+
+    n = 0
+    while True:
+        claim = None
+        if rank0:
+            while True:
+                claim = queue.claim()
+                if claim is None:
+                    break
+                path, data = claim
+                try:
+                    t = make_row(data["item"])
+                except ValueError as exc:
+                    print(f"[flag_lmeval] queue item {data['item']}: {exc}", flush=True)
+                    queue.fail(path, {**data, "attempts": queue.max_attempts})
+                    continue
+                if is_done(t):
+                    queue.complete(path)
+                    continue
+                break
+        name = claim[1]["item"] if claim else None
+        if dp > 1:
+            import torch.distributed as dist
+
+            shared = [name]
+            dist.broadcast_object_list(shared, src=0)
+            name = shared[0]
+        if name is None:
+            return n
+        stop = threading.Event()
+
+        def heartbeat(path=claim[0] if claim else None):
+            while not stop.wait(60):  # the claim's lease: other workers take it back if it ages
+                queue.touch(path)
+
+        if rank0:
+            threading.Thread(target=heartbeat, daemon=True).start()
+        ok = False
+        try:
+            ok = run_row(make_row(name))
+        finally:
+            stop.set()
+            if rank0:
+                (queue.complete(claim[0]) if ok else queue.fail(claim[0], claim[1]))
+        n += 1
 
 
 def _run_part(t, a, lm, tm, out, done, cache_prefix, simple_evaluate, t1) -> bool:
