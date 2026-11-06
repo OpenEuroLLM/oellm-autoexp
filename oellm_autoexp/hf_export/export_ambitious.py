@@ -11,6 +11,7 @@ modeling file.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import logging
 import re
@@ -193,7 +194,20 @@ def hf_config(m: dict, vocab: int) -> dict:
         "embedding_norm": bool(m.get("embedding_norm")),
         "tie_word_embeddings": not m.get("untie_embeddings_and_output_weights", False),
         "torch_dtype": "bfloat16",
+        # the context window: vLLM falls back to 2048 when a config names none (every eval of
+        # these exports ran with 2048 until 2026-11-06: few-shot contexts cut from the left,
+        # generations capped). No position embeddings (NoPE + CKDA): no positional limit, 64k
+        # the long-context phase; a run with RoPE / learned positions keeps its own.
+        "max_position_embeddings": max_positions(m),
     }
+
+
+def max_positions(m: dict) -> int:
+    """The exported context window: the run's own for position embeddings with a range, else
+    OELLM_EXPORT_MAX_POSITIONS (default 65536, the long-context phase of the curriculum)."""
+    if str(m.get("position_embedding_type") or "none") == "none":
+        return int(os.environ.get("OELLM_EXPORT_MAX_POSITIONS", "65536"))
+    return int(m.get("max_position_embeddings") or m.get("seq_length"))
 
 
 def export_hf_config(m: dict, vocab: int, dtype: str = "bf16", engram_table_dtype: str = "bf16",
