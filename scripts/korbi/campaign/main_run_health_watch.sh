@@ -38,6 +38,8 @@ L=$(sed -n 's/^LOG=//p' "$R/meta.env" | tr -d "'\"")
 hid=$(cat "$R/assigned" 2>/dev/null)
 jid=$(sed -n 's/^SLURM_JOB_ID=//p' "$pool/hosts/$hid/info.env" 2>/dev/null)
 hstate=$(squeue -h -j "$jid" -o %T 2>/dev/null)
+# squeue times out when slurmctld is busy ("Socket timed out", 2026-11-06 09:19): ask sacct, else unknown
+[ -n "$hstate" ] || hstate=$(sacct -X -n -j "$jid" -o State 2>/dev/null | awk 'NR==1{print $1}')
 age=$(( $(date +%s) - $(stat -c %Y "$L" 2>/dev/null || echo 0) ))
 last=$(grep -a '\[default3\].* iteration .*elapsed time per iteration' "$L" 2>/dev/null | tail -1)
 it=$(sed -nE 's/.* iteration +([0-9]+)\/.*/\1/p' <<<"$last")
@@ -78,7 +80,9 @@ while true; do
     [ -z "$first_rid" ] && first_rid=$rid
     if [ "$rid" != "$first_rid" ]; then log "EVENT RESTART: singleton moved $first_rid -> $rid"; exit 11; fi
     if [ "$(field rc "$s")" != none ]; then log "EVENT ENDED: $rid rc=$(field rc "$s")"; exit 12; fi
-    if [ "$(field hstate "$s")" != RUNNING ]; then log "EVENT HOST: job $(field job "$s") is $(field hstate "$s")"; exit 13; fi
+    hs=$(field hstate "$s")
+    if [ "$hs" != RUNNING ] && [ "$hs" != gone ]; then log "EVENT HOST: job $(field job "$s") is $(field hstate "$s")"; exit 13; fi
+    [ "$hs" = gone ] && log "  (host state unknown: squeue and sacct gave nothing; the log age decides)"
     if [ "$(field age "$s")" -gt "$STALL_S" ]; then log "EVENT STALL: no log line for $(field age "$s")s"; exit 14; fi
     case "$(field loss "$s")" in nan|inf) log "EVENT NAN: loss $(field loss "$s")"; exit 15;; esac
     if [ "$(field nan "$s")" != 0 ] || [ "$(field skip "$s")" != 0 ]; then log "EVENT NAN: nan=$(field nan "$s") skipped=$(field skip "$s")"; exit 15; fi
