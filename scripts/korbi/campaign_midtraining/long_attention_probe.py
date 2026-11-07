@@ -14,6 +14,9 @@ how the attention layers attend:
                                  (indexer: --train-indexer N trains one PageIndexer per attention layer first,
                                  KL to the dense page mass on N held-out long documents: the C2 warm-up)
                                  hierarchical selection: any page selector with hier_group=G,hier_topk=K
+                                 block-wise selection: select_block=B[,select_score=prev_max]; decode=token
+                                 selects per token where inference can afford it (the retrieval continuations
+                                 and the prompt's final block; prefill stays block-wise)
   lsa[:pool=4,block=512,...]     LSA (sparse_variants.LSA, no parameters: zero-shot); the bucket index is built
                                  incrementally per complete cluster block, like a KV-cache index
   nsa[:branch=1,...]             NSA's selection branch (branch=1: pages ranked by the mean-compressed blocks'
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
 import importlib.util
 import json
 import math
@@ -94,12 +98,17 @@ def parse_policy(text):
         return {"name": text, "kind": "logn", "base": kw.get("base", 65536)}
     if name == "dense":
         return {"name": text, "kind": "dense"}
+    decode = kw.pop("decode", None)
     if name in VARIANTS:
         branch = kw.pop("branch", 1)
         if name == "nsa":  # one branch alone (gates saturated): a converted model without trained gates
             kw["gate_init"] = tuple(30.0 if i == branch else -30.0 for i in range(3))
         return {"name": text, "kind": name, "cfg": VARIANTS[name](**kw)}
-    return {"name": text, "kind": "sparse", "cfg": ps.PageSparseConfig(selector=name, **kw)}
+    cfg = ps.PageSparseConfig(selector=name, **kw)
+    out = {"name": text, "kind": "sparse", "cfg": cfg}
+    if decode == "token":
+        out["decode_cfg"] = dataclasses.replace(cfg, select_block=1)
+    return out
 
 
 class AttentionPolicy:
@@ -116,6 +125,8 @@ class AttentionPolicy:
         self.modules = {}  # (policy name, layer) -> NSA / CSA2 module
         self.csa2_state = None  # trained CSA2 indexers {layer: state_dict}, loaded into every csa2 policy
         self.train_csa2 = False
+        self.decode_mode = False  # the continuation tokens of a choice (decode)
+        self.tail_end = None  # absolute end of a prompt whose final selection block selects per token
         self.losses = defaultdict(list)
         for i, layer in enumerate(model.model.layers):
             if layer.kind == "attention":
@@ -129,6 +140,28 @@ class AttentionPolicy:
                 idx = ps.PageIndexer(layer.mixer.q_proj.weight.shape[1], heads, dim, page).to(dev)
                 self.indexers[i] = idx
                 self.opts[i] = torch.optim.Adam(idx.parameters(), lr=lr)
+
+    def sparse(self, p, q, k, v, past, idx_scores):
+        """page_sparse with the policy's config; with decode=token the decode queries and the prompt's final
+        selection block select per token (inference re-selects there at no bandwidth cost)."""
+        scale = q.shape[-1] ** -0.5
+        cfg, dcfg = p["cfg"], p.get("decode_cfg")
+        if dcfg is None:
+            return ps.page_sparse_attention(q, k, v, cfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
+        if self.decode_mode:
+            return ps.page_sparse_attention(q, k, v, dcfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
+        s = q.shape[2]
+        end = past + s
+        if self.tail_end != end:
+            return ps.page_sparse_attention(q, k, v, cfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
+        t0 = max(((end - 1) // cfg.select_block) * cfg.select_block - past, 0)  # the final block's first row
+        parts = []
+        if t0 > 0:
+            parts.append(ps.page_sparse_attention(q[:, :, :t0], k, v, cfg, q_offset=past, scale=scale,
+                                                  indexer_scores=None if idx_scores is None else idx_scores[:, :t0]))
+        parts.append(ps.page_sparse_attention(q[:, :, t0:], k, v, dcfg, q_offset=past + t0, scale=scale,
+                                              indexer_scores=None if idx_scores is None else idx_scores[:, t0:]))
+        return torch.cat(parts, 2)
 
     def module(self, li, p, att_x, d, nh, nkv):
         """The NSA / CSA2 module of policy p at layer li (created on first use; csa2 gets the trained indexer)."""
@@ -247,8 +280,7 @@ class AttentionPolicy:
                 if p["kind"] in VARIANTS:
                     o = pol.variant(li, p, q, k, v, x, past, state is None)
                 elif p["kind"] == "sparse":
-                    o = ps.page_sparse_attention(q, k, v, p["cfg"], q_offset=past, scale=d**-0.5,
-                                                 indexer_scores=idx_scores)
+                    o = pol.sparse(p, q, k, v, past, idx_scores)
                 else:
                     o = ps.dense_attention(q, k, v, q_offset=past, scale=d**-0.5)
             o = o.transpose(1, 2)  # [b, s, nh, d]
@@ -295,8 +327,12 @@ def prefill(model, ids, chunk, cache=None, want_nll=False):
 def score_choice(model, ctx, conts, chunk, pol=None):
     """Index of the highest-logprob continuation after ctx (and the logprobs). ``pol``: its indexers' key cache
     is restored for every continuation, like the copied model cache."""
+    if pol is not None:
+        pol.tail_end = ctx.shape[1]  # the prompt's final block: per token under decode=token
     cache, last, _ = prefill(model, ctx, chunk)
     saved = dict(pol.index_keys) if pol is not None else None
+    if pol is not None:
+        pol.tail_end, pol.decode_mode = None, True
     lp0 = torch.log_softmax(model.lm_head(last).float(), -1)[0]
     scores = []
     dev = next(model.parameters()).device
@@ -311,6 +347,8 @@ def score_choice(model, ctx, conts, chunk, pol=None):
             s += float(lp.gather(-1, torch.tensor(cont[1:], device=lp.device)[:, None]).sum())
             del c
         scores.append(s)
+    if pol is not None:
+        pol.decode_mode = False
     del cache
     return int(np.argmax(scores)), scores
 
@@ -502,7 +540,9 @@ def main():
         _, _, chunked = prefill(model, ids, 700, want_nll=True)
         full, n = rp.nll(model, ids, next(model.parameters()).device)
         print(f"[probe] tiny chunked-prefill NLL {float(chunked.mean()):.6f} vs one forward {full / n:.6f}", flush=True)
-        pick, sc = score_choice(model, torch.randint(3, 50_000, (1, 3000)), [[5, 6, 7], [8, 9], [10]], args.chunk)
+        pol.policy = policies[-1]  # the choice path under the last policy (decode / tail selection)
+        pick, sc = score_choice(model, torch.randint(3, 50_000, (1, 3000)), [[5, 6, 7], [8, 9], [10]], args.chunk,
+                                pol)
         print(f"[probe] tiny choice scoring ok: {pick} {[round(x, 3) for x in sc]}", flush=True)
     write_summary(args.out, nll, ret)
     print(f"[probe] done in {time.time() - t0:.0f}s", flush=True)
