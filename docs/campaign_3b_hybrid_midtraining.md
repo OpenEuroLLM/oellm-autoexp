@@ -929,6 +929,29 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     setup is block-wise selection for training and prefill, per-token for decoding and the prompt tail
     (`decode=token` in the probe). T3d measures retrieval that way with 16 questions per task at 64k and 128k.
 
+- **2026-11-07, T4b: block-wise selection speed** (dev job 48695346, H100, 64k, fwd + bwd;
+  `docs/campaign_3b_hybrid_midtraining_results/t4b_sparse_speed/`):
+
+  | arm | attended blocks / dense | 64k ms | vs dense |
+  |---|---:|---:|---:|
+  | dense | 1 | 325 | 1.0× |
+  | window only | 0.019 | 131 | 0.40× |
+  | quest, per token | 0.30 | 849 | 2.6× |
+  | page_mean, per token | 0.94 | 2751 | 8.5× |
+  | quest, block 64 | 0.080 | 272 | 0.84× |
+  | page_mean, block 64 | 0.080 | 295 | 0.91× |
+
+  - Block-wise selection cuts the attended blocks to 8 % of dense attention's (from 30-94 %), but the time was
+    still 0.84-0.91× dense. Even the window alone (2 % of the blocks) took 0.40×. The cost is overhead:
+    - every block evaluated the per-token mask lookup;
+    - the selector scored all 64k queries (~275 GFLOP fp32 per layer) and then kept only the anchors.
+  - **Fixed** (Megatron ddf2de447):
+    - pages that every query of a block attends entirely are passed to flex as full blocks without a mask. This is
+      exact for any selector and covers nearly all selected pages under block-wise selection;
+    - block-wise selection scores the anchors only.
+    - Locally (32k, head dim 64): block-wise 0.34× dense, window 0.20×. T4e measures it on H100 with every arm in
+      its own process.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
