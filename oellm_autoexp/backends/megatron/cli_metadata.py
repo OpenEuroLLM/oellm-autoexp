@@ -6778,6 +6778,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_select_score": MegatronArgMetadata(
+        arg_type=str,
+        default="first",
+        help="Block selection score: first (the block's first query) or prev_max (max over it and the previous block's queries; causal).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "page_sparse_selector": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -14557,6 +14565,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1,
+    ),
+    "page_sparse_select_score": MegatronActionSpec(
+        option_strings=("--page-sparse-select-score",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="first",
     ),
     "page_sparse_selector": MegatronActionSpec(
         option_strings=("--page-sparse-selector",),

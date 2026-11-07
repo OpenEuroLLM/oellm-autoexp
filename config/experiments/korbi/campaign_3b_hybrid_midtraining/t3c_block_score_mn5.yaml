@@ -1,0 +1,13 @@
+# @package _global_
+# T3c: block selection scoring and size on frozen v4 (after T3b: the first-query anchor at block 64 costs
+# +0.02-0.03 nats at 64k vs per-token selection): prev_max (max over the first query and the previous block's
+# queries; causal) at blocks 64 / 32 / 16, the first-query anchor at 16. Same documents / questions as T3 / T3b.
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t3c_block_score_mn5 aux.dev_queue=true --yes
+defaults:
+  - t3_sparse_variants_mn5
+  - _self_
+
+aux:
+  name: t3c_block_score_v4_2ph_8000
+  policies: "page_mean:topk=32,select_block=64,select_score=prev_max/page_mean:topk=32,select_block=32,select_score=prev_max/page_mean:topk=32,select_block=16,select_score=prev_max/page_mean:topk=32,select_block=16/quest:topk=32,select_block=64,select_score=prev_max/oracle:topk=32,select_block=64,select_score=prev_max"

@@ -86,7 +86,10 @@ def parse_policy(text):
     kw = {}
     for item in filter(None, rest.split(",")):
         key, val = item.split("=")
-        kw[key] = int(val) if val.lstrip("-").isdigit() else float(val)
+        try:
+            kw[key] = int(val) if val.lstrip("-").isdigit() else float(val)
+        except ValueError:  # string options (select_score=prev_max)
+            kw[key] = val
     if name == "logn":
         return {"name": text, "kind": "logn", "base": kw.get("base", 65536)}
     if name == "dense":
