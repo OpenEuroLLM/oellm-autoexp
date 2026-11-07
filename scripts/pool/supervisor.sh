@@ -47,7 +47,7 @@ load_cfg() {
   POOL_POLL_S=10 POOL_IDLE_EXIT_S=1200 POOL_MONITOR_DEAD_EXIT_S=1800
   POOL_STOP_GRACE_S=120 POOL_PREEMPT_GRACE_S=900 POOL_MAX_RUNS_PER_HOST=1
   POOL_PRECHECK_COMMAND="" POOL_PRECHECK_TIMEOUT_S=600 POOL_PRECHECK_SLOW_TOL=0.10
-  POOL_SETTLE_TIMEOUT_S=600 POOL_SETTLE_GPU_MIB=2048
+  POOL_SETTLE_TIMEOUT_S=600 POOL_SETTLE_GPU_MIB=2048 POOL_SETTLE_MAX_EXCLUDE=8
   POOL_RANK_PATTERN='^[^ ]*python[^ ]*( +-[A-Za-z]+)* +(-m +torch\.distributed\.run|[^ ]*/(torchrun|ft_launcher))( |$)'
   # shellcheck disable=SC1091
   [ -f "$POOL/pool.env" ] && . "$POOL/pool.env"
@@ -153,6 +153,27 @@ finish_run() { # finish_run <rid> <code> <reason>
   log "run $1 ended: rc=$2 ($3)"
 }
 
+# A crashed or hung run's processes can outlive its SLURM step: SLURM drops the step, the ranks
+# (reparented, still in the step's cgroup) keep the GPUs, and the settle check below then excluded
+# nearly every node (JUPITER 2026-11-04 07:15, 22:05, 2026-11-05 09:12, 2026-11-06 23:30: 457-512
+# nodes, the requeued run never fitted). Kill whatever is still in the step's cgroup on its nodes.
+reap_step() { # reap_step <rid> <nodelist> <nnodes> <step id>
+  local out n
+  if [ -z "$4" ]; then
+    log "run $1: step id unknown, leftovers not reaped"
+    return
+  fi
+  out=$(POOL_REAP_CG="job[-_]${SLURM_JOB_ID}/step[-_]$4(/|$)" timeout 180 srun --overlap --mem=0 \
+    --jobid="$SLURM_JOB_ID" --nodelist="$2" --nodes="$3" --ntasks="$3" --ntasks-per-node=1 \
+    --cpus-per-task=1 --job-name="reap-$1" \
+    bash -c 'n=0; for p in $(pgrep -u "$(id -u)"); do grep -qE "$POOL_REAP_CG" /proc/$p/cgroup 2>/dev/null && kill -KILL "$p" 2>/dev/null && n=$((n+1)); done; echo "[reap] $(hostname -s) $n"' 2>/dev/null)
+  n=$(printf '%s\n' "$out" | awk '/^\[reap\]/ {s+=$3} END {print s+0}')
+  if [ "${n:-0}" -gt 0 ]; then
+    log "run $1: killed $n leftover process(es) of step $4"
+    ledger "$1" "reaped $n leftover process(es) of step $4"
+  fi
+}
+
 STEP_INDEX=0
 # run_one <rid> <nodelist> <step index>: one run on the nodes the main loop picked for it, in the
 # background (several runs side by side on disjoint nodes when POOL_MAX_RUNS_PER_HOST > 1). The
@@ -185,10 +206,11 @@ ts=$t0"
   ledger "$rid" "$prov"
   bash "$R/step.sh" >>"$LOG" 2>&1 &
   local pid=$!
-  local reason="" grace=0 stop_at=0 kill_at=0 killed=0
+  local reason="" grace=0 stop_at=0 kill_at=0 killed=0 sid=""
   while kill -0 "$pid" 2>/dev/null; do
     touch "$H/alive"
     t=$(now)
+    [ -n "$sid" ] || { sid=$(step_of "$rid"); sid=${sid#*.}; }
     if [ -z "$reason" ]; then
       load_cfg
       adopt_deadline_check
@@ -234,7 +256,11 @@ ts=$t0"
     elif [ "$rc" -eq 0 ]; then reason=completed; else reason=failed; fi
   fi
   echo "[pool] $(date +%FT%T) run $rid ended: rc=$rc ($reason)" >>"$LOG"
-  [ "$reason" = completed ] || { mkdir -p "$H/settle" && atomic "$H/settle/$rid" "$nl"; }
+  if [ "$reason" != completed ]; then
+    mkdir -p "$H/settle"
+    [ -n "$sid" ] && atomic "$H/settle/$rid.step" "$sid"
+    atomic "$H/settle/$rid" "$nl"
+  fi
   finish_run "$rid" "$rc" "$reason"
 }
 
@@ -317,6 +343,7 @@ settle() { # settle <rid of the ended run>: its nodes are in $H/settle/<rid>
   n=$(printf '%s' "$nodes" | tr ',' '\n' | grep -c .)
   deadline=$(($(now) + ${POOL_SETTLE_TIMEOUT_S:-600}))
   while [ -n "$(step_of "$rid")" ] && [ "$(now)" -lt "$deadline" ]; do sleep 5; done
+  [ "$n" -gt 0 ] && reap_step "$rid" "$nodes" "$n" "$(cat "$H/settle/$rid.step" 2>/dev/null)"
   while [ "$n" -gt 0 ]; do
     busy=$(timeout 60 srun --overlap --mem=0 --jobid="$SLURM_JOB_ID" --nodelist="$nodes" --nodes="$n" \
       --ntasks="$n" --ntasks-per-node=1 --cpus-per-task=1 --job-name="settle-$HID" \
@@ -325,12 +352,17 @@ settle() { # settle <rid of the ended run>: its nodes are in $H/settle/<rid>
     [ -z "$busy" ] || [ "$(now)" -ge "$deadline" ] && break
     sleep 15
   done
-  if [ -n "$busy" ]; then
+  if [ -n "$busy" ] && [ "$(printf '%s\n' "$busy" | grep -c .)" -gt "${POOL_SETTLE_MAX_EXCLUDE:-8}" ]; then
+    # not a few bad nodes but something systemic (leftovers the reaper could not kill): excluding
+    # them all would only strand the next run on too few nodes
+    log "run $rid left GPU memory in use on $(printf '%s\n' "$busy" | grep -c .) node(s), more than settle_max_exclude=${POOL_SETTLE_MAX_EXCLUDE:-8}: excluding none -- check the nodes"
+    ledger "$rid" "settle not trusted: $(printf '%s\n' "$busy" | grep -c .) busy node(s)"
+  elif [ -n "$busy" ]; then
     printf '%s\n' "$busy" >>"$H/exclude_nodes"
     log "run $rid left GPU memory in use on $(printf '%s' "$busy" | paste -sd' ' -): excluded for this allocation"
     ledger "$rid" "settle excluded $(printf '%s' "$busy" | paste -sd, -)"
   fi
-  rm -f "$H/settle/$rid"
+  rm -f "$H/settle/$rid" "$H/settle/$rid.step"
 }
 
 # Pre-run node check (pool setting precheck_command; nothing happens when it is empty): one
@@ -414,7 +446,7 @@ while true; do
     # an idle host only (packed runs would share the probes' nodes): first let an ended run's
     # leftovers go, then the node check
     if [ "${#RUN_PID[@]}" -eq 0 ]; then
-      for f in "$H"/settle/*; do [ -e "$f" ] && settle "$(basename "$f")"; done
+      for f in "$H"/settle/*; do [ -e "$f" ] && [ "${f%.step}" = "$f" ] && settle "$(basename "$f")"; done
       precheck "$need" "${meta#*|}"
     fi
     nl=$(free_nodes "${meta#*|}" | head -n "$need" | paste -sd, -)

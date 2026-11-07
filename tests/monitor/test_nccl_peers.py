@@ -360,6 +360,12 @@ FATAL = {
         437,
         "[default0]:[rank1748]: AssertionError: One or both of the .idx and .bin files cannot be found at the path prefix /e/fscratch/e-sta-openeurollm/training_v2/training/collection/flag/nemotron-cc-1.0/megatron-lm/high/actual/shard_0000_text_document",
     ),
+    "2724056": (  # 2026-11-06 23:30, pool run .0021: TP-overlap stall inside one node
+        1718,
+        "jpbo-090-24",
+        429,
+        "[default2]:[userbuffers.cu:kuserbuffers_pushrecv:2073] pushrecv [grank dst:1718 global src:1717][nvrank(GPU) dst: 2 src: 1]: expecting 79, observed 78",
+    ),
 }
 DRAINED = {
     "State": "IDLE+DRAIN",
@@ -404,6 +410,24 @@ def test_fatal_signature_excludes_the_one_corroborated_host(tmp_path, job_id):
     exclusions.write_text("jpbo-001-01\n")
     assert peers.apply(result, exclusions, tmp_path / "audit.jsonl") == [host]
     assert "# autoexp fatal_rank_signature event" in exclusions.read_text()
+
+
+def test_srun_bus_error_is_the_signature_and_names_the_host(tmp_path):
+    # 2026-11-06 00:26, pool run .0016: all four ranks of jpbo-008-32 "Caught signal 7 (Bus error)"
+    hosts = [f"jpbo-{1 + i // 48:03d}-{i % 48 + 1:02d}" for i in range(512)]
+    hosts[123] = "jpbo-008-32"
+    job = {"job_id": "2701784", "state": "FAILED", "start": 0, "end": 2e9, "hosts": hosts}
+    log = tmp_path / "slurm-2701784.log"
+    log.write_text(
+        "[default0]:using world size: 2048, data-parallel size: 128\n"
+        "[default2]:[jpbo-008-32:203858:0:203858] Caught signal 7 (Bus error: tkill(2) or tgkill(2))\n"
+        "srun: error: jpbo-008-32: task 123: Bus error\n"
+    )
+    nodes = {h: {"NodeName": h, "State": "ALLOCATED"} for h in hosts}
+    result = peers.scan(tmp_path, job, nodes, job_log=log)
+    assert result["exclude"] == ["jpbo-008-32"]
+    (event,) = (e for e in result["events"] if e["rule"] == "fatal_rank_signature")
+    assert event["signature"] == "Bus error" and event["rank"] is None
 
 
 def test_fatal_signature_without_srun_line_needs_the_health_drain(tmp_path):

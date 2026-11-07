@@ -214,6 +214,9 @@ class PoolHostConfig:
     # leave SLURM and its nodes' GPUs to drop below settle_gpu_mib in use; still busy -> excluded
     settle_timeout_s: float = 600.0
     settle_gpu_mib: int = 2048
+    # more nodes than this still busy after settle_timeout_s is systemic (leftovers that could
+    # not be killed), not a few bad nodes: exclude none rather than strand the next run
+    settle_max_exclude: int = 8
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -377,6 +380,7 @@ class PoolLayout:
                 "POOL_PRECHECK_SLOW_TOL": cfg.precheck_slow_tolerance,
                 "POOL_SETTLE_TIMEOUT_S": int(round(cfg.settle_timeout_s)),
                 "POOL_SETTLE_GPU_MIB": int(cfg.settle_gpu_mib),
+                "POOL_SETTLE_MAX_EXCLUDE": int(cfg.settle_max_exclude),
             },
         )
 

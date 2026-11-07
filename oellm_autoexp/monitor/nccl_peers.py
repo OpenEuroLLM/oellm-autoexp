@@ -20,7 +20,9 @@ missing_nccl_sidecar    An allocated host that wrote no NCCL_DEBUG_FILE (nccl-<h
                         2256442..2256692 (2026-10-09/10) all died loading iter_<garbage>
                         with exactly these hosts silent (jpbo-007-44/48 every time).
 fatal_rank_signature    A rank logged a node-local hardware/filesystem fault (GPU contained
-                        error, uncorrectable ECC, a data shard its node cannot see), at
+                        error, uncorrectable ECC, a data shard its node cannot see, a
+                        TE userbuffers stall, or srun reports the host's task died of a
+                        bus error), at
                         most FATAL_HOST_CAP hosts did, and the host the rank maps to
                         (rank // ranks-per-node over the ordered allocation) is
                         corroborated by Slurm: srun reported that host's task exiting with
@@ -72,8 +74,15 @@ FATAL_SIGNATURE = re.compile(
     r"\[rank(?P<rank>\d+)\]:.*?(?P<sig>Invalid access of peer GPU memory over nvlink"
     r"|uncorrectable ECC error|\.idx and \.bin files cannot be found)"
 )
+# A TP-overlap stall: the receiving rank names itself (JUPITER 2026-11-04 jpbo-005-38,
+# 2026-11-06 jpbo-090-24 -- an NVLink peer inside the node that stopped answering).
+UB_SIGNATURE = re.compile(
+    r"\[userbuffers\.cu:\w+:\d+\] \w+ \[grank dst:(?P<rank>\d+) global src:\d+\]"
+)
+# srun names the host whose task died; a SIGBUS (memory/mmap fault, JUPITER 2026-11-06
+# jpbo-008-32: all four ranks "Caught signal 7") is itself the node-local signature.
 SRUN_ERROR = re.compile(
-    r"srun: error: (?P<host>[\w.-]+): task (?P<task>\d+): Exited with exit code"
+    r"srun: error: (?P<host>[\w.-]+): task (?P<task>\d+): (?P<what>Exited with exit code|Bus error)"
 )
 WORLD_SIZE = re.compile(r"using world size: (\d+)")
 # More hosts than this with a node-local signature is a cascade or a bug, not a node.
@@ -292,24 +301,30 @@ def fatal_signatures(job, nodes, job_log):
     if not path.is_file():
         return []
     hosts = job["hosts"]
-    world, ranks, srun = None, {}, set()
+    world, ranks, srun, host_sigs = None, {}, set(), {}
     with path.open(errors="replace") as stream:
         for number, line in enumerate(stream, 1):
             if world is None and (m := WORLD_SIZE.search(line)):
                 world = int(m[1])
             if m := FATAL_SIGNATURE.search(line):
                 ranks.setdefault(int(m["rank"]), (number, line.strip(), m["sig"]))
+            elif m := UB_SIGNATURE.search(line):
+                ranks.setdefault(int(m["rank"]), (number, line.strip(), "userbuffers stall"))
             if m := SRUN_ERROR.search(line):
                 task = int(m["task"])
                 if task < len(hosts) and hosts[task] == m["host"]:
                     srun.add(m["host"])
-    if not ranks:
+                    if m["what"] == "Bus error":
+                        host_sigs.setdefault(m["host"], (number, line.strip(), "Bus error"))
+    if not ranks and not host_sigs:
         return []
     per_node = world // len(hosts) if world and world % len(hosts) == 0 else None
     by_host = {}
     for rank, evidence in sorted(ranks.items()):
         host = hosts[rank // per_node] if per_node and rank < world else None
         by_host.setdefault(host, (rank, *evidence))
+    for host, evidence in host_sigs.items():
+        by_host.setdefault(host, (None, *evidence))
     cascade = None in by_host or len(by_host) > FATAL_HOST_CAP
     events = []
     for host, (rank, number, line, sig) in by_host.items():

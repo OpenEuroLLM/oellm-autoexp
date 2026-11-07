@@ -68,3 +68,5 @@ pool_host:
   # after a failed run: wait for its leftovers to free the GPUs (see PoolHostConfig)
   settle_timeout_s: 600
   settle_gpu_mib: 2048
+  # more busy nodes than this after settle_timeout_s: exclude none (systemic, not bad nodes)
+  settle_max_exclude: 8

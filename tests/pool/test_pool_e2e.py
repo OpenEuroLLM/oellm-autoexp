@@ -1102,6 +1102,37 @@ def test_a_crashed_run_s_leftover_gpu_memory_keeps_the_next_run_off_its_node(poo
     assert node in (pool.layout.host_dir("host001") / "exclude_nodes").read_text().split()
 
 
+def test_settle_excludes_nothing_when_more_nodes_are_busy_than_settle_max_exclude(pool):
+    """JUPITER 2026-11-04/05/06: leftovers of a crashed run held the GPUs of 457-512 nodes and the
+    settle check excluded them all -- the requeued run never fitted. Beyond settle_max_exclude busy
+    nodes the check is not trusted: nothing is excluded and the next run starts."""
+    import subprocess
+
+    pool.create_pool(
+        *FAST,
+        "job.pool_host.settle_timeout_s=3",
+        "job.pool_host.settle_max_exclude=0",
+        "job.pool_host.idle_exit_s=60",
+    )
+    pool.enqueue("a", "aux.iters=400", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run a")[0]
+    pool.wait_for(lambda: max(_iterations(pool.run_log(first)) or [0]) >= 10, 60, "10 iterations")
+    node = pool.run_state(first).started["nodes"]
+    pool.enqueue("b", "aux.iters=20", "aux.tick=0.05")
+    (Path(pool.env["FAKESLURM_DIR"]) / "gpu_busy").write_text(node + "\n")
+    subprocess.run(
+        ["pkill", "-9", "-f", "sigterm_dummy_trainer.py.*dummy_a/checkpoints"], check=False
+    )
+    pool.wait_for(lambda: pool.run_state(first).status == "FAILED", 60, "run a to crash")
+    second = pool.wait_for(lambda: pool.runs_of("dummy_b"), 60, "run b")[0]
+    pool.wait_for(lambda: pool.run_state(second).status == "COMPLETED", 90, "run b")
+    assert pool.run_state(second).started["nodes"] == node
+    excl = pool.layout.host_dir("host001") / "exclude_nodes"
+    assert not excl.exists() or node not in excl.read_text().split()
+    assert "settle not trusted" in (pool.pool_dir / "ledger.tsv").read_text()
+
+
 def test_a_node_slurm_reports_down_is_skipped_by_the_next_run(pool):
     # the spare-node model: a host one node larger than its job, with --no-kill, survives a
     # node failure; the supervisor keeps the next run off a node SLURM reports unusable,
