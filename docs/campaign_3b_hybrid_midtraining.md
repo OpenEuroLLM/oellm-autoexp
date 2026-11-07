@@ -952,6 +952,32 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     - Locally (32k, head dim 64): block-wise 0.34× dense, window 0.20×. T4e measures it on H100 with every arm in
       its own process.
 
+- **2026-11-07, T3d: retrieval with block-wise prefill and per-token decode** (frozen v4; 16 questions per task,
+  one question = 0.06; dev jobs 48701260 (64k) and 48695807 (128k), which hit its 2 h limit after 5 of 6 policies;
+  `docs/campaign_3b_hybrid_midtraining_results/t3d_block_retrieval_v4_2ph_8000/`):
+
+  | policy | 64k kvret64 | 64k vt | 128k kvret64 | 128k vt |
+  |---|---:|---:|---:|---:|
+  | dense | 0.69 | 0.06 | 0.50 | 0.06 |
+  | page_mean, per token | 0.13 | 0.19 | 0.19 | 0.25 |
+  | page_mean, block 64 + per-token decode | 0.13 | 0.25 | 0.19 | 0.31 |
+  | page_mean, block 64 prev_max + per-token decode | 0.13 | 0.31 | 0.13 | 0.31 |
+  | oracle, per token | **0.75** | 0.06 | **0.56** | 0.25 |
+  | oracle, block 64 + per-token decode | 0.44 | 0.38 | (time limit) | |
+
+  Passkey is 1.0 everywhere.
+  - **With per-token decode, block-wise prefill costs a weak selector nothing:** page_mean scores the same, and
+    better on variable tracking.
+  - **The selector is the bottleneck.** Training-free page_mean keeps 0.13-0.19 of the multi-key retrieval; the
+    dense-mass oracle keeps 0.56-0.75, as much as dense attention or more. The training comparison (step 5) has to
+    show a trained selector closing this gap: CSA2's indexer, NSA's compression scores.
+  - **The oracle loses retrieval under block-wise prefill** (0.44 vs 0.75). In this run only the prompt's final
+    partial block selected per token. That block is often just a few tokens, so the start of the question sat in a
+    block selected before the question. T3e re-selects the prompt's last 128 / 256 / 512 tokens instead (`tail=N`),
+    which inference can afford.
+  - The 128k job ran ~6× slower per question than T2b's dense retrieval (cause unknown; heavy system time with
+    the pinned Engram tables). The probe now logs every question's time.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

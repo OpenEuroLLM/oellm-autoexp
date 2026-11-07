@@ -16,7 +16,7 @@ how the attention layers attend:
                                  hierarchical selection: any page selector with hier_group=G,hier_topk=K
                                  block-wise selection: select_block=B[,select_score=prev_max]; decode=token
                                  selects per token where inference can afford it (the retrieval continuations
-                                 and the prompt's final block; prefill stays block-wise)
+                                 and the prompt's last tail=N tokens, default 128; prefill stays block-wise)
   lsa[:pool=4,block=512,...]     LSA (sparse_variants.LSA, no parameters: zero-shot); the bucket index is built
                                  incrementally per complete cluster block, like a KV-cache index
   nsa[:branch=1,...]             NSA's selection branch (branch=1: pages ranked by the mean-compressed blocks'
@@ -99,6 +99,7 @@ def parse_policy(text):
     if name == "dense":
         return {"name": text, "kind": "dense"}
     decode = kw.pop("decode", None)
+    tail = kw.pop("tail", 128)
     if name in VARIANTS:
         branch = kw.pop("branch", 1)
         if name == "nsa":  # one branch alone (gates saturated): a converted model without trained gates
@@ -108,6 +109,7 @@ def parse_policy(text):
     out = {"name": text, "kind": "sparse", "cfg": cfg}
     if decode == "token":
         out["decode_cfg"] = dataclasses.replace(cfg, select_block=1)
+        out["tail"] = tail
     return out
 
 
@@ -142,8 +144,8 @@ class AttentionPolicy:
                 self.opts[i] = torch.optim.Adam(idx.parameters(), lr=lr)
 
     def sparse(self, p, q, k, v, past, idx_scores):
-        """page_sparse with the policy's config; with decode=token the decode queries and the prompt's final
-        selection block select per token (inference re-selects there at no bandwidth cost)."""
+        """page_sparse with the policy's config; with decode=token the decode queries and the prompt's last
+        ``tail`` tokens select per token (inference re-selects them cheaply)."""
         scale = q.shape[-1] ** -0.5
         cfg, dcfg = p["cfg"], p.get("decode_cfg")
         if dcfg is None:
@@ -154,7 +156,7 @@ class AttentionPolicy:
         end = past + s
         if self.tail_end != end:
             return ps.page_sparse_attention(q, k, v, cfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
-        t0 = max(((end - 1) // cfg.select_block) * cfg.select_block - past, 0)  # the final block's first row
+        t0 = max(end - p["tail"] - past, 0)  # the prompt's last `tail` tokens select per token
         parts = []
         if t0 > 0:
             parts.append(ps.page_sparse_attention(q[:, :, :t0], k, v, cfg, q_offset=past, scale=scale,
@@ -328,7 +330,7 @@ def score_choice(model, ctx, conts, chunk, pol=None):
     """Index of the highest-logprob continuation after ctx (and the logprobs). ``pol``: its indexers' key cache
     is restored for every continuation, like the copied model cache."""
     if pol is not None:
-        pol.tail_end = ctx.shape[1]  # the prompt's final block: per token under decode=token
+        pol.tail_end = ctx.shape[1]  # the prompt's last tokens: per token under decode=token
     cache, last, _ = prefill(model, ctx, chunk)
     saved = dict(pol.index_keys) if pol is not None else None
     if pol is not None:

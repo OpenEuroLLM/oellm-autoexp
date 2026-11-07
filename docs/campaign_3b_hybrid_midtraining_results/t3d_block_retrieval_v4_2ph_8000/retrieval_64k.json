@@ -1,0 +1,32 @@
+{
+ "65536|dense": {
+  "passkey": 1.0,
+  "kvret64": 0.6875,
+  "vt": 0.0625
+ },
+ "65536|page_mean:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.125,
+  "vt": 0.1875
+ },
+ "65536|page_mean:topk=32,select_block=64,decode=token": {
+  "passkey": 1.0,
+  "kvret64": 0.125,
+  "vt": 0.25
+ },
+ "65536|page_mean:topk=32,select_block=64,select_score=prev_max,decode=token": {
+  "passkey": 1.0,
+  "kvret64": 0.125,
+  "vt": 0.3125
+ },
+ "65536|oracle:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.75,
+  "vt": 0.0625
+ },
+ "65536|oracle:topk=32,select_block=64,decode=token": {
+  "passkey": 1.0,
+  "kvret64": 0.4375,
+  "vt": 0.375
+ }
+}

@@ -1,0 +1,13 @@
+# @package _global_
+# T3e: the prompt tail under block-wise selection (T3d at 64k: oracle selection block-wise + per-token decode kept
+# 0.44 of 64-fact retrieval vs 0.75 per token, with only the final partial block re-selected -- often a few tokens,
+# the question's start then in a block selected before it). The prompt's last 128 / 256 / 512 tokens per token.
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t3e_block_tail_mn5 aux.dev_queue=true --yes
+defaults:
+  - t3d_block_retrieval_mn5
+  - _self_
+
+aux:
+  name: t3e_block_tail_64k_v4_2ph_8000
+  policies: "oracle:topk=32,select_block=64,decode=token,tail=128/oracle:topk=32,select_block=64,decode=token,tail=256/oracle:topk=32,select_block=64,decode=token,tail=512/page_mean:topk=32,select_block=64,decode=token,tail=256"
