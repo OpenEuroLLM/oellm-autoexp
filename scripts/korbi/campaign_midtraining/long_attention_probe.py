@@ -436,15 +436,21 @@ def retrieval_rows(tok, args, L):
 def run_retrieval(model, pol, policies, args, out, tok):
     res = defaultdict(dict)
     for L in args.lengths:
+        t0 = time.time()
         rows = retrieval_rows(tok, args, L)
+        print(f"[ret] L={L}: {len(rows)} questions prepared in {time.time() - t0:.0f}s", flush=True)
         for p in policies:
             pol.policy = p
             t0 = time.time()
             acc = defaultdict(list)
-            for r in rows:
+            for j, r in enumerate(rows):
                 ctx = torch.tensor([r["items"][0]["ctx"]])
+                tq = time.time()
                 pick, _ = score_choice(model, ctx, [it["cont"] for it in r["items"]], args.chunk, pol)
                 acc[r["task"].split("_")[0]].append(pick == r["gold"])
+                print(f"[ret.q] {p['name']} {j + 1}/{len(rows)} {r['task']} ctx {ctx.shape[1]} "
+                      f"conts {sum(len(it['cont']) for it in r['items'])} {pick == r['gold']} "
+                      f"{time.time() - tq:.1f}s", flush=True)
             key = f"{L}|{p['name']}"
             for task, v in acc.items():
                 res[key][task] = float(np.mean(v))
