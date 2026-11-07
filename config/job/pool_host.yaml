@@ -35,6 +35,8 @@ pool_host:
   # true: a host starting while the run's host is younger than handover_min_age_s (block time)
   # never takes the run then; it idles as a standby and idle_exit_s releases it
   handover_release_newer: false
+  # seconds such a block-time standby is kept before release; < 0 = after idle_exit_s, 0 = at once
+  block_standby_s: -1
   stop_grace_s: 120
   preempt_grace_s: 900
   max_attempts: 20

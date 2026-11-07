@@ -140,6 +140,11 @@ class PoolHostConfig:
     # fails meanwhile, the run moves to it). JUPITER 2026-11-06: two queued hosts started 3 min
     # apart and the run was handed over twice.
     handover_release_newer: bool = False
+    # How long such a block-time newcomer is kept as a standby before it is released (seconds
+    # since it started); < 0 = like any idle host, after idle_exit_s. 0 = at once: a standby is
+    # used only if the running host fails within that window (JUPITER 2026-11-07: six standbys,
+    # ~520 GPU-h idle each, none used), so with a short queue it is mostly idle compute.
+    block_standby_s: float = -1.0
     # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
     # share shrank when another host started). False: never cancel a queued host automatically --
     # its queue age is the point (JUPITER 2026-11-05: the 2+2 account split cancelled e-sta hosts
@@ -1161,7 +1166,24 @@ class PoolManager:
                         if not h.retiring and h.start_ts > host.start_ts and h.hid not in busy
                     ]
                     if cfg.handover_release_newer and newer:
-                        # block time: no handover, the newcomer idles and idle_exit_s releases it
+                        # block time: no handover; the newcomer is a standby until block_standby_s
+                        # (or, < 0, until idle_exit_s releases it like any idle host)
+                        if cfg.block_standby_s >= 0:
+                            for victim in newer:
+                                if now - victim.start_ts >= cfg.block_standby_s:
+                                    self._control(
+                                        layout,
+                                        victim.hid,
+                                        "exit",
+                                        f"standby during the block time of {host.hid}: released",
+                                    )
+                                    victim.retiring = True
+                                    LOGGER.info(
+                                        "[pool %s] releasing standby %s (block time of %s)",
+                                        cfg.name,
+                                        victim.hid,
+                                        host.hid,
+                                    )
                         continue
                     handover_waiting = True
                     continue

@@ -720,6 +720,30 @@ def test_block_time_newcomer_idles_as_standby_and_is_released_without_a_handover
     assert not (env.layout.host_dir(old) / "control" / "exit").exists()
 
 
+def test_block_standby_s_zero_releases_the_newcomer_at_once(env):
+    # JUPITER 2026-11-07: six block-time standbys idled 15 min each and none was used
+    meta = env.layout.load_meta()
+    meta["config"].update(
+        handover=True,
+        keep_pending=1,
+        idle_exit_s=900,
+        handover_min_age_s=3600,
+        handover_release_newer=True,
+        block_standby_s=0,
+    )
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(2)
+    old = env.host_up(env.hosts()[0], start_ts=time.time() - 240)
+    env.poll()
+    env.start_run(env.rec("train").runtime.runtime_job_id, old)
+    new = env.host_up(env.hosts()[1])
+    env.poll()
+    exit_new = env.layout.host_dir(new) / "control" / "exit"
+    assert exit_new.exists() and "standby during the block time" in exit_new.read_text()
+    assert not (env.layout.host_dir(old) / "control" / "exit").exists(), "the run was handed over"
+
+
 def test_successor_delay_holds_back_the_pending_host(env):
     meta = env.layout.load_meta()
     meta["config"].update(handover=True, keep_pending=1, successor_delay_s=1800)
