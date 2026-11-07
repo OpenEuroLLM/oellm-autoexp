@@ -63,8 +63,9 @@ def test_rendered_config_lists_match_and_gate_on_the_export():
         total += len(tasks)
         assert p["job.start_condition"]["path"].endswith("/.downstream_ready")
     assert total == len(rows)
-    # the one task name with a space: written with "+", no space in the argument
-    assert any("include_base_44_north+macedonian" in p["aux.task"] for p in points[1:])
+    # include_base_44_north_macedonian: lm-eval's name since oellm-eval 03bfbcc (the suite had a
+    # space there); the "+" encoding of a space stays covered by the rows-done test below
+    assert any("include_base_44_north_macedonian" in p["aux.task"] for p in points[1:])
     assert not any(" " in p["aux.task"] for p in points[1:])
 
 
