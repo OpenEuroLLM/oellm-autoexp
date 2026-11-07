@@ -848,6 +848,39 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     - `csa2:...` with mean compression; its indexer is trained by `--train-csa2 N` or loaded (`--csa2`);
     - `<page selector>:...,hier_group=G,hier_topk=K`.
 
+- **2026-11-07, T4 speed check** (one v4 attention layer, 16×256 query heads over 2 KV heads, one 64k document,
+  bf16, fwd + bwd, H100; dev job 48690436; `docs/campaign_3b_hybrid_midtraining_results/t4_sparse_speed/`; the fwd
+  column of that run includes compilation, so only fwd + bwd counts):
+
+  | arm (~2.7k keys / query) | 16k | 64k | vs dense at 64k |
+  |---|---:|---:|---:|
+  | dense (SDPA) | 23 ms | 328 ms | 1.0× |
+  | window + sink (flex) | 33 | 128 | 0.39× |
+  | quest, per-token selection (flex) | 108 | 846 | 2.6× |
+  | page_mean, per-token selection (flex) | 165 | 2735 | 8.3× |
+  | page_mean + hierarchical (flex) | 166 | 2748 | 8.4× |
+  | page_mean (gathered reference) | 1384 | 5744 | 17.5× |
+  | csa2 incl. indexer loss (reference) | 986 | 6244 | 19× |
+  | nsa (reference) | 1779 | 8331 | 25× |
+  | lsa (reference) | 2093 | 8982 | 27× |
+
+  - **The exact references are not trainable at 64k:** 5-8 s extra per attention layer and sequence.
+  - **Per-token selection cannot beat dense by much at 64k, whatever the kernel.** With 16 query over 2 KV heads,
+    each query gathers its own ~2.7k keys: about 180 GB of K / V reads per layer forward at 64k, roughly a dense
+    flash pass. A block-sparse kernel (flex) serves a block of 64 queries the union of their pages. On these
+    random inputs page_mean's union is close to the whole context (the per-token mask then makes it slower than
+    dense), and Quest's is smaller.
+  - **Hence block-wise selection** (Megatron 86e561ee9, `page_sparse_select_block`):
+    - one selection per block of B queries, made by the block's first query and reused, which is V4.1's "Reuse"
+      and matches decoding (select at every B-th token);
+    - the union is then exactly the budget, so flex should cost about budget / context of dense.
+  - T4b measures that; T3b measures its quality on frozen v4 against per-token selection (same documents and
+    questions as T3). Whether real v4 queries select coherently enough per block for per-token selection to stay
+    cheap is part of the same question.
+  - The variants then follow the selection: NSA's selection and window branches are page selections (flex), and
+    its compression branch is a short causal attention over entries. CSA2 and LSA need block-wise selection over
+    entries / buckets for a fast path.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
