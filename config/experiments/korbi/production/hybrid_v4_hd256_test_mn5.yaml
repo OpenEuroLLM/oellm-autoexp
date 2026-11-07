@@ -184,3 +184,22 @@ sweep:
           backend.megatron.engram_aux_num_heads: 8
           backend.megatron.engram_aux_table_size: 811682
           backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k_keepaccents.npy
+        # ablation (user 2026-11-07): the same extra lookups (same size, same widened checkpoint) over the
+        # ORIGINAL compression map -- separates "more Engram table capacity" from "accent-preserving ids"
+        - aux.arm: eauxbase
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/engaux/ckpt
+          backend.megatron.exit_interval: 1200
+          backend.megatron.eval_interval: 100
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
