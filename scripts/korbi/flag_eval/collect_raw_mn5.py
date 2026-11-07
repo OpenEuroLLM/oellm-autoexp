@@ -162,6 +162,9 @@ def main():
             for row in rows:
                 if row["task"].startswith("sib200_") and row["metric"] == "acc_norm":
                     continue
+                # JUPITER's (and summarize-evals') spelling: lm-eval's name has an underscore
+                # (oellm-eval 03bfbcc), summarize-evals parses the language "north macedonian"
+                row["task"] = row["task"].replace("include_base_44_north_macedonian", "include_base_44_north macedonian")
                 k = (m, row["task"], str(row["n_shot"]), row["metric"], row["filter"])
                 files.setdefault(k[:3], set()).add(f)
                 if k not in best or float(row["result_time"]) >= float(best[k]["result_time"]):
