@@ -687,6 +687,35 @@ class MegatronConfig(ConfigInterface):
     # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
     page_sparse_flex_q_block: int = 64
 
+    # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
+    page_sparse_hier_group: int = 0
+
+    # Hierarchical selection: groups kept per query (pages are chosen only within them).
+    page_sparse_hier_topk: int = 8
+
+    # nsa: compression block (tokens); page_sparse_page is the selection block.
+    page_sparse_nsa_block: int = 32
+
+    # nsa: compression stride.
+    page_sparse_nsa_stride: int = 16
+
+    # nsa: local tokens (whole pages) of the selection branch; page_sparse_window is the
+    # window branch.
+    page_sparse_nsa_select_window: int = 64
+
+    # csa2: selected compressed entries (page_sparse_compress tokens each); page_sparse_window
+    # = the raw SWA.
+    page_sparse_csa2_topk_entries: int = 512
+
+    # lsa: tokens per pooled key.
+    page_sparse_lsa_pool: int = 4
+
+    # lsa: pooled keys per cluster block.
+    page_sparse_lsa_block: int = 512
+
+    # lsa: buckets per cluster block (page_sparse_topk buckets are selected).
+    page_sparse_lsa_buckets: int = 32
+
     # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
     # is the polar forget gate's init cap without its angle.
     linear_kronlstm_forget_offset: float = 0.0
