@@ -16,8 +16,8 @@ ones; the main lookups do not change. Per Engram layer this tool
                      m_u zero columns, and the spectral Muon scale grows sqrt(max(h, C + ...)) /
                      sqrt(max(h, C)): v_norm x that ratio, m_u / it (the rows' rotation rate stays)
 
-Run with Megatron on PYTHONPATH (the table sizes come from megatron.core.ssm.engram), single-threaded on
-a login node for small tables, else in a job (the production tables add ~160 GB):
+Run single-threaded on a login node for small tables (no Megatron needed; CUDA_VISIBLE_DEVICES= keeps torch off the GPUs),
+else in a job (the production tables add ~160 GB):
 
     python widen_engram_aux.py --src <ckpt>/iter_N --dst <new>/iter_N --aux-orders 2,3 --aux-heads 8 \\
         --aux-table-size 811682 --main-table-size 1623365 --main-orders 2,3,4 --main-heads 8
@@ -40,6 +40,39 @@ import torch
 
 OPT0 = "optimizer.0.state.module.module.module.decoder.layers.{l}.{n}.{s}"
 MUOWN = ("g", "m_u", "m_g", "v_g", "v_norm")
+
+
+def _is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    if n % 2 == 0:
+        return n == 2
+    f = 3
+    while f * f <= n:
+        if n % f == 0:
+            return False
+        f += 2
+    return True
+
+
+def engram_table_sizes(cfg) -> list:
+    """megatron.core.ssm.engram.engram_table_sizes without importing Megatron (its import, with
+    Transformer Engine, hangs for minutes on a busy GPFS login node); the selftest checks they agree."""
+    sizes, candidate = [], cfg.engram_table_size
+    for _ in range(len(cfg.engram_ngram_orders) * cfg.engram_num_heads):
+        while not _is_prime(candidate):
+            candidate += 1
+        sizes.append(candidate)
+        candidate += 1
+    aux = len(cfg.engram_aux_ngram_orders) * (cfg.engram_aux_num_heads or cfg.engram_num_heads)
+    candidate, used = cfg.engram_aux_table_size or cfg.engram_table_size, set(sizes)
+    for _ in range(aux):
+        while not _is_prime(candidate) or candidate in used:
+            candidate += 1
+        sizes.append(candidate)
+        used.add(candidate)
+        candidate += 1
+    return sizes
 
 
 def read_bytes_item(src, md, fqn):
@@ -68,8 +101,6 @@ def main():
     import torch.distributed.checkpoint as dcp
     from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
     from torch.distributed.checkpoint.metadata import ChunkStorageMetadata, MetadataIndex
-
-    from megatron.core.ssm.engram import engram_table_sizes
 
     t0 = time.time()
     log = lambda *x: print(f"[{time.time() - t0:7.1f}s]", *x, flush=True)  # noqa: E731
@@ -124,11 +155,8 @@ def main():
             log(f"layer {l} {n}: [{h}, {c}] -> [{h}, {c + add}], spectral ratio {ratio:.4f}")
     for k in opt_tables:
         rows[k] = torch.zeros((r_aux,) + tuple(smd[k].size[1:]), dtype=smd[k].properties.dtype)
-    args = read_bytes_item(a.src, md, "args")
-    args.engram_aux_ngram_orders = cfg.engram_aux_ngram_orders
-    args.engram_aux_num_heads = a.aux_heads
-    args.engram_aux_table_size = a.aux_table_size
-    full["args"] = args
+    # the stored args stay as they are (not read: unpickling them imports Megatron, which initializes
+    # CUDA, and that hangs on a login node whose driver check times out); loading never uses them
 
     os.makedirs(a.dst, exist_ok=False)
     tmp = os.path.join(a.dst, ".engaux_tmp")

@@ -148,3 +148,38 @@ sweep:
           backend.megatron.load: ${aux.test_root}/c500/ckpt_hd256rk
           backend.megatron.exit_interval: 800
           backend.megatron.save_interval: 100
+        # Engram auxiliary lookups (user 2026-11-06): accent-preserving token map (NFKC + lowercase,
+        # no accent stripping) as a second lookup set, medium size: orders [2, 3] x 8 heads x half
+        # the main table rows (1/16-scale model: 811,682). A/B from w256rk's step 800 (head dim 256,
+        # re-seeded keys) on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same
+        # batches in both arms, fixed held-out sets every 100 steps:
+        #   ectrl  as trained (no auxiliary lookups)
+        #   eaux   widened by widen_engram_aux.py (zero key / value columns: starts exactly as ectrl)
+        - aux.arm: ectrl
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/w256rk/ckpt
+          backend.megatron.exit_interval: 1200
+          backend.megatron.eval_interval: 100
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+        - aux.arm: eaux
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/engaux/ckpt
+          backend.megatron.exit_interval: 1200
+          backend.megatron.eval_interval: 100
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k_keepaccents.npy
