@@ -41,6 +41,11 @@ ARMS = {
     "page_mean_flex": ("flex", dict(BASE, selector="page_mean")),
     "quest_flex": ("flex", dict(BASE, selector="quest")),
     "page_mean_hier_flex": ("flex", dict(BASE, selector="page_mean", hier_group=16, hier_topk=8)),
+    # one selection per block of 64 queries (the block's first query selects): the page union is the budget
+    "page_mean_b64_flex": ("flex", dict(BASE, selector="page_mean", select_block=64)),
+    "quest_b64_flex": ("flex", dict(BASE, selector="quest", select_block=64)),
+    "page_mean_hier_b64_flex": ("flex", dict(BASE, selector="page_mean", hier_group=16, hier_topk=8,
+                                             select_block=64)),
     "page_mean_gathered": ("gathered", dict(BASE, selector="page_mean")),
     "nsa": ("nsa", dict(block=32, stride=16, page=64, topk=32, sink_pages=1, select_window=512, window=512,
                         gate_init=(0.0, 0.0, 0.0))),
@@ -71,6 +76,19 @@ def build(name, hidden, hq, g, d, dev):
         return f, list(m.parameters())
     m = sv.LSA(sv.LSAConfig(**kw))
     return lambda q, k, v, x: m(q, k, v, 0, d**-0.5), []
+
+
+@torch.no_grad()
+def union_share(L, hq, g, d, cfg, dev, q_block=64):
+    """Flex's attended (query block, page) pairs over the causal dense ones, on the bench's random inputs."""
+    gen = torch.Generator(device=dev).manual_seed(0)
+    q = torch.randn(1, hq, L, d, device=dev, dtype=torch.bfloat16, generator=gen)
+    k = torch.randn(1, g, L, d, device=dev, dtype=torch.bfloat16, generator=gen)
+    allowed = ps.select_pages(q, k, cfg, 0, d**-0.5)[0]
+    nq = -(-L // q_block)
+    blk = torch.nn.functional.pad(allowed, (0, 0, 0, nq * q_block - L)).view(nq, q_block, -1).any(1)
+    causal = sum(min(-(-((i + 1) * q_block) // cfg.page), blk.shape[1]) for i in range(nq))
+    return float(blk.sum()) / causal
 
 
 def timed(fn, iters):
@@ -120,7 +138,8 @@ def main():
                     for t in (q, k, v, x, *params):
                         t.grad = None
 
-                fwd_bwd()  # warm-up (flex compile, autotune)
+                fwd_bwd()  # warm-up (flex compile, autotune), both paths
+                fwd()
                 row["fwd_ms"] = timed(fwd, args.iters)
                 torch.cuda.reset_peak_memory_stats()
                 row["fwd_bwd_ms"] = timed(fwd_bwd, args.iters)
@@ -134,17 +153,24 @@ def main():
             rows.append(row)
             print(json.dumps(row), flush=True)
             (args.out / "speed.json").write_text(json.dumps(rows, indent=1))
+    # the attended page union per block of 64 queries (flex's work), as a share of the causal dense blocks
+    for r in rows:
+        spec = ARMS.get(r["arm"])
+        if spec and spec[0] == "flex" and "error" not in r:
+            r["union_share"] = union_share(r["L"], hq, g, d, ps.PageSparseConfig(**spec[1]), dev)
+    (args.out / "speed.json").write_text(json.dumps(rows, indent=1))
     lines = ["# Sparse-attention speed (one layer, one document, bf16, "
              f"{hq}x{d} q / {g} KV heads; {torch.cuda.get_device_name()})", "",
-             "| L | arm | fwd ms | fwd+bwd ms | vs dense | extra peak GB |", "|---|---|---:|---:|---:|---:|"]
+             "| L | arm | fwd ms | fwd+bwd ms | vs dense | extra peak GB | page union / dense |",
+             "|---|---|---:|---:|---:|---:|---:|"]
     dense = {r["L"]: r.get("fwd_bwd_ms") for r in rows if r["arm"] == "dense"}
     for r in rows:
         if "error" in r:
-            lines.append(f"| {r['L'] // 1024}k | {r['arm']} | {r['error']} | | | |")
+            lines.append(f"| {r['L'] // 1024}k | {r['arm']} | {r['error']} | | | | |")
             continue
         rel = r["fwd_bwd_ms"] / dense[r["L"]] if dense.get(r["L"]) else float("nan")
         lines.append(f"| {r['L'] // 1024}k | {r['arm']} | {r['fwd_ms']:.1f} | {r['fwd_bwd_ms']:.1f} | {rel:.2f}x | "
-                     f"{r['peak_gb']:.1f} |")
+                     f"{r['peak_gb']:.1f} | {r.get('union_share', float('nan')):.3f} |")
     (args.out / "summary.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines), flush=True)
 

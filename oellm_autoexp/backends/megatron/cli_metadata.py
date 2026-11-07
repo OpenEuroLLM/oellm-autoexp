@@ -6770,6 +6770,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_select_block": MegatronArgMetadata(
+        arg_type=int,
+        default=1,
+        help="Selection granularity: 1 = per query; B = one selection per block of B queries (the block's first query selects, the rest reuse it; V4.1's Reuse). Flex then attends just the budget per block (page_sparse_flex_q_block = B or a divisor).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "page_sparse_selector": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -14542,6 +14550,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=64,
+    ),
+    "page_sparse_select_block": MegatronActionSpec(
+        option_strings=("--page-sparse-select-block",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1,
     ),
     "page_sparse_selector": MegatronActionSpec(
         option_strings=("--page-sparse-selector",),

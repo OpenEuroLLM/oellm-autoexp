@@ -687,6 +687,11 @@ class MegatronConfig(ConfigInterface):
     # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
     page_sparse_flex_q_block: int = 64
 
+    # Selection granularity: 1 = per query; B = one selection per block of B queries (the
+    # block's first query selects, the rest reuse it; V4.1's Reuse). Flex then attends just
+    # the budget per block (page_sparse_flex_q_block = B or a divisor).
+    page_sparse_select_block: int = 1
+
     # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
     page_sparse_hier_group: int = 0
 
