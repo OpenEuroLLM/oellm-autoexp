@@ -52,6 +52,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -145,6 +146,16 @@ class PoolHostConfig:
     # used only if the running host fails within that window (JUPITER 2026-11-07: six standbys,
     # ~520 GPU-h idle each, none used), so with a short queue it is mostly idle compute.
     block_standby_s: float = -1.0
+    # Successor gate (empty-cluster regime): while a host trains the run and its block time
+    # (handover_min_age_s) is not over, a new host is submitted only if `sbatch --test-only`
+    # predicts it starts no earlier than `successor_lead_s` before the block ends -- else the
+    # monitor keeps polling every `successor_test_interval_s`. From `block end - lead` on it is
+    # submitted whatever the estimate (a successor is queued by the time a switch is allowed).
+    # In a full cluster the estimate is late and the host is submitted at once (it ages).
+    # JUPITER 2026-11-07: four successors started inside the block and were released at once.
+    successor_test_start: bool = False
+    successor_test_interval_s: float = 600.0
+    successor_lead_s: float = 900.0
     # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
     # share shrank when another host started). False: never cancel a queued host automatically --
     # its queue age is the point (JUPITER 2026-11-05: the 2+2 account split cancelled e-sta hosts
@@ -637,6 +648,21 @@ def run_fault_context(layout: PoolLayout, rid: str) -> dict | None:
     }
 
 
+_TEST_ONLY_START = re.compile(r"to start at (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)")
+
+
+def parse_test_only_start(text: str) -> float | None:
+    """`sbatch --test-only` reports "sbatch: Job 123 to start at 2026-11-08T03:12:00 using ...";
+    the start as an epoch (local time), or None."""
+    m = _TEST_ONLY_START.search(text or "")
+    if not m:
+        return None
+    try:
+        return time.mktime(time.strptime(m[1], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
 def exclude_in_pool(layout: PoolLayout, nodes) -> list[str]:
     """Append nodes to the pool's exclude_nodes (honoured at every step launch, also in
     hosts that are already up); returns the ones that were new."""
@@ -1034,7 +1060,10 @@ class PoolManager:
             if state.status not in ("PENDING", "RUNNING") or state.host is None:
                 continue
             host = self._hosts.get(pool_dir, {}).get(state.host)
-            gone = host is None or host.dead
+            # COMPLETING: SLURM is tearing the allocation down (it failed or ended) -- the run
+            # cannot survive that; waiting for the heartbeat to go stale only cost host_stale_s
+            # (JUPITER 2026-11-07 06:38: host024 COMPLETING for 15 min before host_lost)
+            gone = host is None or host.dead or host.status == "COMPLETING"
             if host is not None and not gone and host.status == "RUNNING" and host.info:
                 cfg = layout.load_config()
                 if (host.alive_age is None or host.alive_age > cfg.host_stale_s) and host.adopted:
@@ -1159,6 +1188,18 @@ class PoolManager:
             excess = len(live) - cfg.max_hosts_running
             ordered = sorted(live, key=lambda h: h.start_ts)
             for host in ordered[:excess]:
+                if host.hid not in busy and any(
+                    h.hid in busy and h.start_ts > host.start_ts for h in ordered
+                ):
+                    # nothing to hand over: the run went to a newer host (its own host died
+                    # meanwhile); without this it idled until handover_min_age_s
+                    # (JUPITER 2026-11-07 06:54: host027, up to 6 h with a 6 h block)
+                    self._control(layout, host.hid, "exit", "no run: a newer host has it")
+                    host.retiring = True
+                    LOGGER.info(
+                        "[pool %s] releasing %s: no run, a newer host has it", cfg.name, host.hid
+                    )
+                    continue
                 if now - host.start_ts < cfg.handover_min_age_s:
                     newer = [
                         h
@@ -1413,7 +1454,9 @@ class PoolManager:
             missing = min(missing, max(0, cfg.max_own_hosts - len(own)))
         # One host at a time while one is still waiting for its sbatch.
         if missing > 0 and not any(not h.submitted for h in current):
-            if waited >= backoff:
+            if waited >= backoff and not self._successor_held(
+                layout, cfg, state, running, busy, create_account, now
+            ):
                 state["last_host_id"] = self._create_host(loop, layout, cfg, create_account)
                 state["last_host_created_ts"] = now
             elif failures:
@@ -1866,6 +1909,75 @@ class PoolManager:
                 len(missing),
                 ",".join(missing[:10]),
             )
+
+    # set by tests; default: `sbatch --test-only` of the newest rendered host script
+    _sbatch_test_start = None
+
+    def _successor_held(self, layout, cfg, state, running, busy, account, now) -> bool:
+        """True while a successor should NOT be submitted yet (successor_test_start): a host
+        trains the run, its block time is not over, and a dry-run submission predicts a start
+        before `block end - successor_lead_s`. Fails open (submit) when the estimate is
+        unavailable."""
+        if not cfg.successor_test_start or cfg.handover_min_age_s <= 0:
+            return False
+        run_hosts = [h for h in running if h.hid in busy]
+        if not run_hosts:
+            return False  # nothing trains: the run waits, submit at once
+        block_end = max(h.start_ts for h in run_hosts) + cfg.handover_min_age_s
+        due = block_end - cfg.successor_lead_s
+        if now >= due:
+            return False
+        tests = state.setdefault("successor_test", {})
+        key = account or "-"
+        last = tests.get(key) or {}
+        if now - float(last.get("ts", 0.0)) < cfg.successor_test_interval_s:
+            return bool(last.get("held"))
+        est = self._test_start_estimate(layout, account)
+        held = est is not None and est < due
+        tests[key] = {"ts": now, "est": est, "held": held}
+        if est is None:
+            LOGGER.warning(
+                "[pool %s] successor gate: no start estimate (sbatch --test-only failed): submitting",
+                cfg.name,
+            )
+        elif held:
+            LOGGER.info(
+                "[pool %s] successor held: estimated start %s is before %s (block end - lead); "
+                "next test in %.0fs",
+                cfg.name,
+                time.strftime("%H:%M", time.localtime(est)),
+                time.strftime("%H:%M", time.localtime(due)),
+                cfg.successor_test_interval_s,
+            )
+        else:
+            LOGGER.info(
+                "[pool %s] successor gate: estimated start %s (block ends %s): submitting",
+                cfg.name,
+                time.strftime("%H:%M", time.localtime(est)),
+                time.strftime("%H:%M", time.localtime(block_end)),
+            )
+        return held
+
+    def _test_start_estimate(self, layout: PoolLayout, account: str | None) -> float | None:
+        if self._sbatch_test_start is not None:
+            return self._sbatch_test_start(layout, account)
+        scripts = sorted(layout.hosts_dir.glob("*/host.sbatch"), key=lambda p: p.stat().st_mtime)
+        if not scripts:
+            return None
+        base = layout.load_host_definition()
+        argv = ["sbatch", "--test-only"]
+        if account:
+            argv.append(f"--account={account}")
+        excluded = self._host_excludes(layout, base)
+        if excluded:
+            argv.append(f"--exclude={','.join(excluded)}")
+        argv.append(str(scripts[-1]))
+        try:
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            LOGGER.warning("[pool] sbatch --test-only failed: %s", exc)
+            return None
+        return parse_test_only_start(out.stdout + out.stderr)
 
     def _create_host(
         self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig, account: str | None = None

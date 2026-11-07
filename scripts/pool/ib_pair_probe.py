@@ -18,7 +18,8 @@ ALL GPUs of the step (the gradient reduction's pattern, crossing every cell the 
 rank 0 prints `[probe] allreduce gpus=<n> mb=<size> busbw_gbps=<x> min/median/max ...` over
 POOL_PROBE_ITERS repetitions -- a fabric health figure without a training run.
 
-Rendezvous from SLURM: MASTER_ADDR = first node of the step, MASTER_PORT from the environment.
+Rendezvous: MASTER_ADDR = first node of the step, its own port (POOL_PROBE_PORT, else 29500 +
+the step id mod 500 -- never the job's MASTER_PORT), POOL_PROBE_TIMEOUT_S (120) to rendezvous.
 Run inside the training container, e.g.
 
     apptainer exec --nv <sif> python3 scripts/pool/ib_pair_probe.py
@@ -84,7 +85,9 @@ def main():
     me = os.environ.get("SLURMD_NODENAME") or socket.gethostname().split(".")[0]
     if "POOL_PROBE_LOCAL" not in os.environ:  # the node's task: one process per GPU
         procs = [
-            subprocess.Popen([sys.executable, __file__], env={**os.environ, "POOL_PROBE_LOCAL": str(g)})
+            subprocess.Popen(
+                [sys.executable, __file__], env={**os.environ, "POOL_PROBE_LOCAL": str(g)}
+            )
             for g in range(gpus)
         ]
         for proc in procs:
@@ -100,14 +103,20 @@ def main():
         node_id = int(os.environ["SLURM_NODEID"])
         rank = node_id * gpus + local
         world = len(nodes) * gpus
-        os.environ.setdefault("MASTER_ADDR", nodes[0])
-        os.environ.setdefault("MASTER_PORT", os.environ.get("POOL_PROBE_PORT", "29517"))
+        os.environ["MASTER_ADDR"] = nodes[0]
+        # never the job's MASTER_PORT: a training run's leftover on the first node can still hold
+        # it (JUPITER 2026-11-07 host034: EADDRINUSE on 53394, every rank then waited 300 s)
+        os.environ["MASTER_PORT"] = os.environ.get("POOL_PROBE_PORT") or str(
+            29500 + int(os.environ.get("SLURM_STEP_ID", "0") or 0) % 500
+        )
         import torch
         import torch.distributed as dist
 
         torch.cuda.set_device(local)
+        # a rendezvous that fails should cost a minute or two, not the precheck timeout
+        timeout_s = int(os.environ.get("POOL_PROBE_TIMEOUT_S", "120"))
         dist.init_process_group(
-            "nccl", rank=rank, world_size=world, timeout=datetime.timedelta(seconds=300)
+            "nccl", rank=rank, world_size=world, timeout=datetime.timedelta(seconds=timeout_s)
         )
         size = int(os.environ.get("POOL_PROBE_MB", "256")) * 2**20 // 2  # bf16 elements
         buf = torch.ones(size, dtype=torch.bfloat16, device="cuda")

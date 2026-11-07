@@ -948,6 +948,21 @@ def test_precheck_drops_failed_and_slow_nodes_before_the_run(pool, tmp_path):
     )
 
 
+def test_a_precheck_that_fails_everywhere_is_logged_as_not_trusted(pool, tmp_path):
+    """JUPITER 2026-11-07 host034: the interconnect probe failed on every node; the verdict
+    excluded nothing (correctly: not trusted) but the log said "all 516 node(s) passed"."""
+    check = tmp_path / "check.sh"
+    check.write_text('#!/bin/bash\necho "[nodecheck] FAIL $SLURMD_NODENAME: ib probe: timed out"\n')
+    check.chmod(0o755)
+    pool.create_pool(*FAST, "slurm.sbatch.nodes=2", f"job.pool_host.precheck_command='{check}'")
+    pool.enqueue("a")
+    pool.start_monitor()
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(rid).status == "COMPLETED", 60, "the run")
+    host_log = next(pool.pool_dir.glob("slurm-*[0-9].log")).read_text()
+    assert "precheck: NOT trusted" in host_log and "precheck: all" not in host_log
+
+
 def test_two_node_job_gets_both_nodes_and_a_moving_port(pool):
     pool.create_pool(*FAST)
     for tag in ("a", "b"):

@@ -37,6 +37,12 @@ pool_host:
   handover_release_newer: false
   # seconds such a block-time standby is kept before release; < 0 = after idle_exit_s, 0 = at once
   block_standby_s: -1
+  # successor gate: during the block, submit a successor only if `sbatch --test-only` predicts
+  # a start no earlier than successor_lead_s before the block ends (re-tested every interval);
+  # from then on submit regardless. Off by default.
+  successor_test_start: false
+  successor_test_interval_s: 600
+  successor_lead_s: 900
   stop_grace_s: 120
   preempt_grace_s: 900
   max_attempts: 20

@@ -744,6 +744,112 @@ def test_block_standby_s_zero_releases_the_newcomer_at_once(env):
     assert not (env.layout.host_dir(old) / "control" / "exit").exists(), "the run was handed over"
 
 
+def test_an_older_host_without_the_run_is_released_when_a_newer_host_has_it(env):
+    # JUPITER 2026-11-07 06:54: host024 died, host027 and host028 started, the run went to the
+    # newer host028; host027 (older, no run) counted as "waiting for a handover" and idled
+    meta = env.layout.load_meta()
+    meta["config"].update(handover=True, keep_pending=1, idle_exit_s=3600, handover_min_age_s=21600)
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(3)
+    first, second = env.hosts()[:2]
+    newer = env.host_up(second, start_ts=time.time() - 120)
+    env.poll()
+    rid = env.rec("train").runtime.runtime_job_id
+    assert env.assigned(newer) == [rid]
+    env.start_run(rid, newer)
+    older = env.host_up(first, start_ts=time.time() - 900)
+    env.poll()
+    exit_older = env.layout.host_dir(older) / "control" / "exit"
+    assert exit_older.exists() and "no run: a newer host has it" in exit_older.read_text()
+    assert not (env.layout.host_dir(newer) / "control" / "exit").exists()
+    assert env.assigned(newer) == [rid]
+
+
+def test_a_completing_allocation_loses_its_run_at_once(env):
+    # JUPITER 2026-11-07 06:38: host024's allocation failed and sat in COMPLETING for 15 min;
+    # the run was only requeued once the heartbeat went stale (host_stale_s)
+    env.add_run("train")
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0])
+    env.poll()
+    rid = env.rec("train").runtime.runtime_job_id
+    env.start_run(rid, hid)
+    env.poll()
+    env.fake.set_state(env.hosts()[0].runtime.runtime_job_id, "COMPLETING")
+    env.poll()
+    assert read_run_state(env.layout, rid).status != "RUNNING"
+    assert "host_lost" in (env.layout.run_dir(rid) / "rc").read_text()
+
+
+def _gated_env(env, monkeypatch, estimate, host_age_s):
+    """One host trains the run (started host_age_s ago, block 1 h); keep_pending is then
+    raised to 1 so the pool wants a successor."""
+    meta = env.layout.load_meta()
+    meta["config"].update(
+        handover=True,
+        keep_pending=0,
+        handover_min_age_s=3600,
+        successor_test_start=True,
+        successor_test_interval_s=0,
+        successor_lead_s=900,
+    )
+    env.layout.write_meta(meta)
+    calls = []
+
+    def fake(layout, account):
+        calls.append(account)
+        return estimate[0]
+
+    monkeypatch.setattr(PoolManager, "_sbatch_test_start", staticmethod(fake))
+    env.add_run("train")
+    env.poll(2)
+    assert len(env.hosts()) == 1
+    assert not calls, "nothing trains yet: the first host is submitted without a dry run"
+    hid = env.host_up(env.hosts()[0], start_ts=time.time() - host_age_s)
+    env.poll()
+    env.start_run(env.rec("train").runtime.runtime_job_id, hid)
+    meta["config"].update(keep_pending=1)
+    env.layout.write_meta(meta)
+    return calls
+
+
+def test_successor_is_held_while_the_dry_run_starts_inside_the_block(env, monkeypatch):
+    estimate = [time.time() + 60]  # an empty cluster: it would start at once
+    calls = _gated_env(env, monkeypatch, estimate, host_age_s=60)
+    env.poll(2)
+    assert len(env.hosts()) == 1, "the successor must wait while it would start inside the block"
+    assert calls, "the dry run was not asked"
+    estimate[0] = time.time() + 5000  # the queue got long: it would start after the block
+    env.poll()
+    assert len(env.hosts()) == 2
+
+
+def test_successor_is_submitted_when_the_dry_run_fails(env, monkeypatch):
+    _gated_env(env, monkeypatch, [None], host_age_s=60)
+    env.poll()
+    assert len(env.hosts()) == 2
+
+
+def test_successor_is_submitted_once_the_block_end_is_near_whatever_the_estimate(env, monkeypatch):
+    calls = _gated_env(
+        env, monkeypatch, [time.time() + 60], host_age_s=3000
+    )  # block ends in 10 min
+    env.poll()
+    assert len(env.hosts()) == 2
+    assert not calls
+
+
+def test_parse_test_only_start():
+    from oellm_autoexp.monitor.pool import parse_test_only_start
+
+    line = "sbatch: Job 2741234 to start at 2026-11-08T03:12:00 using 2064 processors on nodes x"
+    assert parse_test_only_start(line) == time.mktime(
+        time.strptime("2026-11-08T03:12:00", "%Y-%m-%dT%H:%M:%S")
+    )
+    assert parse_test_only_start("sbatch: error: Batch job submission failed") is None
+
+
 def test_successor_delay_holds_back_the_pending_host(env):
     meta = env.layout.load_meta()
     meta["config"].update(handover=True, keep_pending=1, successor_delay_s=1800)

@@ -387,6 +387,9 @@ precheck() { # precheck <nodes the run needs> <extra exclude>
     printf '%s\n' "$excl" >>"$H/exclude_nodes"
     log "precheck: excluded for this allocation: $(printf '%s' "$excl" | paste -sd' ' -) (see $out)"
     ledger "-" "precheck excluded $(printf '%s' "$excl" | paste -sd, -)"
+  elif grep -q "check not trusted" "$out" 2>/dev/null; then
+    log "precheck: NOT trusted, nothing excluded: $(grep -m1 -o "check not trusted.*" "$out") (see $out)"
+    ledger "-" "precheck not trusted"
   else
     log "precheck: all $n node(s) passed"
   fi
