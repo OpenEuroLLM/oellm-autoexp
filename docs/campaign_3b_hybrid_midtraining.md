@@ -1024,6 +1024,33 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - With flex rows of 64 queries, block 16 attends up to 4 selections per row (≤ 4× the budget): blocks of 16-32
     are the likely compromise, to be priced by T4e. Training (step 5) may close the rest.
 
+- **2026-11-07, T4e: the fast paths on H100** (dev job 48708742; every arm in its own process; the same job ran
+  the 69 variant / page-sparse / CP tests, all passing; one layer, 64k, fwd + bwd;
+  `docs/campaign_3b_hybrid_midtraining_results/t4e_sparse_speed/`):
+
+  | arm (~2.7k keys / query, block 64) | 64k fwd | 64k fwd + bwd | vs dense |
+  |---|---:|---:|---:|
+  | dense | 56 | 321 | 1.0× |
+  | window only | 8 | 91 | 0.28× |
+  | quest | 17 | 141 | 0.44× |
+  | page_mean | 19 | 151 | 0.47× |
+  | page_mean hierarchical | 20 | 156 | 0.48× |
+  | LSA (kv blocks 16) | 40 | 275 | 0.86× |
+  | CSA2 + indexer KL (kv blocks 16) | 90 | 425 | 1.32× |
+  | NSA | 287 | 537 | 1.67× |
+  | page_mean / quest per token (reference) | 1240 / 341 | 2784 / 849 | 8.7× / 2.6× |
+
+  - **Full blocks and anchor-only scoring** (ddf2de447) took block-wise page selection from 0.91× to 0.47× of
+    dense. Forward is now 0.33× dense. The backward dominates (flex's backward is slower than flash's per block).
+  - **Every variant is affordable for the s3 comparison:** 0.4-1.7× dense per attention layer. At s3 attention is 3
+    of 24 layers, so that is a few % of the step either way.
+  - **NSA's forward was mostly the no-grad pass for page importances over all queries.** Under block-wise selection
+    only the anchors need it: now anchors only (Megatron 429e16c66).
+  - **Kernel-time priorities after step 5 (for the winners):**
+    - the flex backward;
+    - CSA2's entry part;
+    - a fused NSA compression and importance pass.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
