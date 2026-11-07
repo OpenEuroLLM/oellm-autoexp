@@ -68,6 +68,16 @@ def test_write_runtime_sections_persists_def_metadata(tmp_path):
     assert labels == {"Author": "OpenSci", "Version": "0.1.0"}
 
 
+def test_sandbox_test_cmd_uses_bash_e_without_writable(tmp_path):
+    module = _load_build_container_user()
+    cmd = module.build_sandbox_test_cmd("singularity", tmp_path, "python -c 'pass'")
+    assert cmd[:2] == ["singularity", "exec"]
+    assert "--writable" not in cmd
+    i = cmd.index("/bin/bash")
+    assert cmd[i + 1 : i + 3] == ["-e", "-c"]
+    assert cmd[-1] == "python -c 'pass'\n"
+
+
 def test_write_runtime_sections_merges_existing_labels(tmp_path):
     module = _load_build_container_user()
     dotd = tmp_path / ".singularity.d"

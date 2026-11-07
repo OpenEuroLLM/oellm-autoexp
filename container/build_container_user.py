@@ -175,6 +175,27 @@ RUNTIME_SECTION_FILES = {
 }
 
 
+def build_sandbox_test_cmd(container_cmd: str, sandbox_dir: Path, test_script: str) -> list[str]:
+    """Command that runs the %test section inside the sandbox.
+
+    `bash -e` so the first failing test command aborts with a non-zero
+    exit (without it only the last command's status would decide) and
+    the build stops before the image is packed. No --writable: the smoke
+    test must not mutate the sandbox.
+    """
+    return [
+        container_cmd,
+        "exec",
+        "--no-home",
+        "--no-umask",
+        str(sandbox_dir),
+        "/bin/bash",
+        "-e",
+        "-c",
+        f"{test_script}\n",
+    ]
+
+
 def write_runtime_sections(sandbox_dir: Path, sections: dict[str, str]) -> None:
     """Write def metadata sections into the sandbox's /.singularity.d.
 
@@ -470,18 +491,7 @@ def main() -> None:
 
     test_script = sections.get("test", "")
     if test_script.strip():
-        # No --writable: the smoke test must not mutate the sandbox before packing.
-        test_cmd = [
-            container_cmd,
-            "exec",
-            "--no-home",
-            "--no-umask",
-            str(sandbox_dir),
-            "/bin/bash",
-            "-c",
-            f"{test_script}\n",
-        ]
-        run_command(test_cmd)
+        run_command(build_sandbox_test_cmd(container_cmd, sandbox_dir, test_script))
     else:
         print("[+] No %test section detected; skipping smoke test.")
 
