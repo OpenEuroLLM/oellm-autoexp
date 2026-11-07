@@ -806,6 +806,48 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     summed; LSA-style clustering.
   - The sample is tiny; the s3 arms and any decision need ≥ 50 questions per cell.
 
+- **2026-11-07, the trained variants implemented** (Megatron a61c9789f, superproject a4dc67d5; plan: implement →
+  correctness → frozen-v4 signal where it applies → speed check at 64k → s3 training comparison → optimize the
+  1-2 winners):
+  - `experimental_attention_variant/sparse_variants.py`: exact pure-torch references, chunked and checkpointed (no
+    [s, L] tensor at 64k), one selection per token for all heads like the page selectors.
+    - **NSA** (`page_sparse_selector=nsa`): compression branch (blocks of `nsa_block`, stride `nsa_stride`,
+      learned compressors initialised to the mean + an intra-block position term), selection branch (pages ranked
+      by the compression attention's mass summed over heads), window branch, per-head sigmoid gates on the layer
+      input. Gate bias init: the selection branch on, so the converted model starts as page selection.
+    - **CSA2** (`csa2`): learned m:1 KV compression (V4.1's per-token weights, softmax within a group; zero init =
+      the mean), lightning indexer whose keys come from the compressed main keys, top `csa2_topk_entries` entries
+      + raw SWA (`page_sparse_window`) + sinks. KL warm-up to the dense mass per entry
+      (`page_sparse_indexer_loss_coeff`, `page_sparse_dense_forward` for a dense-forward warm-up).
+    - **LSA** (`lsa`): N-LSA flat search. Keys are normalised and pooled `lsa_pool`:1, then clustered per block of
+      `lsa_block` pooled keys into `lsa_buckets` buckets by spherical k-means (a stand-in for the paper's Ward
+      linkage). The top `page_sparse_topk` buckets by centroid cosine are attended. No parameters, so it can be
+      tested zero-shot.
+      - Limits: the partial block before the window is not selectable; buckets are capped at 4× the mean size.
+    - **Hierarchical selection** (`page_sparse_hier_group` / `_hier_topk`, any page selector): groups of pages
+      scored first (page_mean / quest / oracle score the coarse pages; indexer: max over each group's pages), pages
+      chosen only within the top groups. This is the 1M-context selection cost cut.
+  - `PageSparseCoreAttention` builds the variant, gathers CSA2's key-side compression weights under CP like the
+    index keys, and attaches the CSA2 KL to the output (MoEAuxLossAutoScaler). Mirror files regenerated.
+  - **Tests:**
+    - Local, float64: 13 in `test_sparse_variants.py` and 7 in `test_page_sparse_attention.py`. They cover:
+      - a full budget gives dense attention;
+      - causality;
+      - chunk invariance;
+      - every parameter gets gradients;
+      - CSA2 starts as mean compression;
+      - LSA buckets partition the blocks;
+      - hierarchical selection with all groups is flat, and hier_topk 1 keeps one group;
+      - packed THD equals the per-document reference.
+    - Still to run on MN5 (2 GPUs): CP=2 vs CP=1 including the parameter gradients, and the whole hybrid at CP=2
+      per variant. The job is queued behind another session's acc_debug tests.
+  - **Probe** (`long_attention_probe.py`) policies for the frozen-v4 signals:
+    - `lsa:...`, zero-shot, with the bucket index grown incrementally per complete block;
+    - `nsa[:branch=1]`, the selection branch alone: pages ranked by mean-compressed blocks' attention mass, training
+      free (`branch=0` for the compression branch alone);
+    - `csa2:...` with mean compression; its indexer is trained by `--train-csa2 N` or loaded (`--csa2`);
+    - `<page selector>:...,hier_group=G,hier_topk=K`.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

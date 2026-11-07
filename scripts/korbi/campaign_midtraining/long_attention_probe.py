@@ -13,6 +13,13 @@ how the attention layers attend:
                                  compress_mean, indexer) and PageSparseConfig fields, e.g. page_mean:topk=32
                                  (indexer: --train-indexer N trains one PageIndexer per attention layer first,
                                  KL to the dense page mass on N held-out long documents: the C2 warm-up)
+                                 hierarchical selection: any page selector with hier_group=G,hier_topk=K
+  lsa[:pool=4,block=512,...]     LSA (sparse_variants.LSA, no parameters: zero-shot); the bucket index is built
+                                 incrementally per complete cluster block, like a KV-cache index
+  nsa[:branch=1,...]             NSA's selection branch (branch=1: pages ranked by the mean-compressed blocks'
+                                 attention mass, training-free) or its compression branch alone (branch=0)
+  csa2[:compress=2,...]          CSA2 with mean compression; the lightning indexer is trained first by
+                                 --train-csa2 N (KL to the dense mass per compressed entry) or loaded (--csa2)
 
 Tasks:
   nll        per-position NLL (bins) on long held-out documents (v8ml-valid long_64k: 89 docs >= 128k, 23 >= 256k,
@@ -61,6 +68,19 @@ def load_page_sparse():
 ps = load_page_sparse()
 
 
+def load_sparse_variants():
+    path = REPO / "submodules/Megatron-LM/megatron/core/transformer/experimental_attention_variant/sparse_variants.py"
+    spec = importlib.util.spec_from_file_location("sparse_variants", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["sparse_variants"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+sv = load_sparse_variants()
+VARIANTS = {"lsa": sv.LSAConfig, "nsa": sv.NSAConfig, "csa2": sv.CSA2Config}
+
+
 def parse_policy(text):
     name, _, rest = text.partition(":")
     kw = {}
@@ -71,6 +91,11 @@ def parse_policy(text):
         return {"name": text, "kind": "logn", "base": kw.get("base", 65536)}
     if name == "dense":
         return {"name": text, "kind": "dense"}
+    if name in VARIANTS:
+        branch = kw.pop("branch", 1)
+        if name == "nsa":  # one branch alone (gates saturated): a converted model without trained gates
+            kw["gate_init"] = tuple(30.0 if i == branch else -30.0 for i in range(3))
+        return {"name": text, "kind": name, "cfg": VARIANTS[name](**kw)}
     return {"name": text, "kind": "sparse", "cfg": ps.PageSparseConfig(selector=name, **kw)}
 
 
@@ -85,6 +110,9 @@ class AttentionPolicy:
         self.n = 0
         self.indexers, self.opts, self.index_keys = {}, {}, {}
         self.train_indexer = False
+        self.modules = {}  # (policy name, layer) -> NSA / CSA2 module
+        self.csa2_state = None  # trained CSA2 indexers {layer: state_dict}, loaded into every csa2 policy
+        self.train_csa2 = False
         self.losses = defaultdict(list)
         for i, layer in enumerate(model.model.layers):
             if layer.kind == "attention":
@@ -98,6 +126,71 @@ class AttentionPolicy:
                 idx = ps.PageIndexer(layer.mixer.q_proj.weight.shape[1], heads, dim, page).to(dev)
                 self.indexers[i] = idx
                 self.opts[i] = torch.optim.Adam(idx.parameters(), lr=lr)
+
+    def module(self, li, p, att_x, d, nh, nkv):
+        """The NSA / CSA2 module of policy p at layer li (created on first use; csa2 gets the trained indexer)."""
+        key = (p["name"], li)
+        if key not in self.modules:
+            h = att_x.shape[-1]
+            if p["kind"] == "nsa":
+                m = sv.NSA(h, nh, d, p["cfg"])
+            else:
+                m = sv.CSA2(h, nkv, d, p["cfg"])
+                if self.csa2_state is not None and li in self.csa2_state:
+                    m.load_state_dict(self.csa2_state[li])
+            self.modules[key] = m.to(att_x.device).float()
+        return self.modules[key]
+
+    def variant(self, li, p, q, k, v, x, past, fresh):
+        """One chunk of queries (q [1, nh, s, d] at past..) over the cached k / v with an LSA / NSA / CSA2 policy.
+        LSA's bucket index grows by complete cluster blocks (kept in index_keys, restored per choice like the
+        indexer keys); CSA2 keeps its key-side compression features the same way."""
+        scale = q.shape[-1] ** -0.5
+        cfg = p["cfg"]
+        if p["kind"] == "lsa":
+            mod = sv.LSA(cfg)
+            ikey = ("lsa", p["name"], li)
+            idx = None if fresh else self.index_keys.get(ikey)
+            span = cfg.pool * cfg.block
+            done = 0 if idx is None else idx[4]
+            nblk = k.shape[2] // span
+            if nblk > done:  # the new complete blocks, indexed on their own (blocks are independent)
+                c, mem, ok, last = mod.index(k[:, :, done * span: nblk * span])
+                mem, last = mem + done * span, last + done * span
+                if idx is not None:
+                    c, mem, ok, last = self._cat_index(idx[:4], (c, mem, ok, last))
+                idx = (c, mem, ok, last, nblk)
+                self.index_keys[ikey] = idx
+            return mod(q, k, v, past, scale, None if idx is None else idx[:4])
+        mod = self.module(li, p, x, q.shape[-1], q.shape[1], k.shape[1])
+        if p["kind"] == "nsa":
+            return mod(q.float(), k.float(), v.float(), x.float(), past, scale).to(q.dtype)
+        zkey = ("csa2z", p["name"], li)
+        with torch.no_grad():
+            z = mod.token_features(x.float())
+        prev = None if fresh else self.index_keys.get(zkey)
+        z = z if prev is None else torch.cat([prev, z], 1)
+        self.index_keys[zkey] = z
+        if self.train_csa2:  # the warm-up: dense output, the indexer learns the dense mass per entry
+            with torch.enable_grad():
+                loss = mod.indexer_loss(q.float(), k.float(), x.float(), z, past, scale)
+                if loss.requires_grad:
+                    opt = self.opts.setdefault(("csa2", li), torch.optim.Adam(
+                        [prm for n, prm in mod.named_parameters() if n.startswith("idx_")], lr=self.csa2_lr))
+                    opt.zero_grad(set_to_none=True)
+                    loss.backward()
+                    opt.step()
+                    self.losses[li].append(float(loss))
+            return ps.dense_attention(q, k, v, q_offset=past, scale=scale)
+        return mod(q.float(), k.float(), v.float(), x.float(), z, past, scale, chunk=256).to(q.dtype)
+
+    @staticmethod
+    def _cat_index(a, b):
+        """Two LSA indexes (centroids, members [nb, M], valid [nb, M], last) -> one (members padded to max M)."""
+        M = max(a[1].shape[1], b[1].shape[1])
+        mem = [torch.nn.functional.pad(t[1], (0, M - t[1].shape[1])) for t in (a, b)]
+        ok = [torch.nn.functional.pad(t[2], (0, M - t[2].shape[1])) for t in (a, b)]
+        return (torch.cat([a[0], b[0]]), torch.cat(mem), torch.cat(ok), torch.cat([a[3], b[3]]))
 
     def _forward(self, li):
         pol = self
@@ -148,7 +241,9 @@ class AttentionPolicy:
                 f = torch.clamp(torch.log(pos.float() + 1) / math.log(p["base"]), min=1.0)
                 q = (q.float() * f[None, None, :, None]).to(q.dtype)
             with torch.cuda.device(x.device):
-                if p["kind"] == "sparse":
+                if p["kind"] in VARIANTS:
+                    o = pol.variant(li, p, q, k, v, x, past, state is None)
+                elif p["kind"] == "sparse":
                     o = ps.page_sparse_attention(q, k, v, p["cfg"], q_offset=past, scale=d**-0.5,
                                                  indexer_scores=idx_scores)
                 else:
@@ -244,6 +339,26 @@ def train_indexers(model, pol, args, out):
     (out / "indexer_losses.json").write_text(json.dumps({str(k): v for k, v in pol.losses.items()}))
 
 
+def train_csa2(model, pol, policy, args, out):
+    """CSA2's lightning-indexer warm-up (dense forward, KL to the dense attention mass per compressed entry) on
+    long held-out documents after the evaluation ones; the indexers then serve every csa2 policy."""
+    docs = long_docs(args.docs, args.indexer_len, args.nll_docs + args.train_csa2, args.bos)[args.nll_docs:]
+    pol.policy, pol.train_csa2, pol.csa2_lr = policy, True, args.indexer_lr
+    t0 = time.time()
+    for j, doc in enumerate(docs):
+        prefill(model, doc, args.chunk)
+        if j % 8 == 7 or j == len(docs) - 1:
+            mean = {li: round(float(np.mean(v[-16:])), 4) for li, v in pol.losses.items()}
+            print(f"[csa2] {j + 1}/{len(docs)} docs, KL (last 16 chunks) {mean} {time.time() - t0:.0f}s",
+                  flush=True)
+    pol.train_csa2 = False
+    pol.csa2_state = {li: {k: v.detach().clone() for k, v in m.state_dict().items()}
+                      for (name, li), m in pol.modules.items() if name == policy["name"]}
+    pol.modules = {}  # rebuilt per policy from csa2_state
+    torch.save({li: {k: v.cpu() for k, v in sd.items()} for li, sd in pol.csa2_state.items()}, out / "csa2.pt")
+    (out / "csa2_losses.json").write_text(json.dumps({str(k): v for k, v in pol.losses.items()}))
+
+
 def run_nll(model, pol, policies, args, out):
     res = {}
     for L in args.lengths:
@@ -337,6 +452,8 @@ def main():
     p.add_argument("--indexer-dim", type=int, default=64)
     p.add_argument("--indexer-lr", type=float, default=1e-3)
     p.add_argument("--indexers", default="", help="indexers.pt of an earlier run (instead of --train-indexer)")
+    p.add_argument("--train-csa2", type=int, default=0, help="documents for the CSA2 indexer warm-up (0: off)")
+    p.add_argument("--csa2", default="", help="csa2.pt of an earlier run (instead of --train-csa2)")
     args = p.parse_args()
     args.lengths = [int(x) for x in args.lengths.split(",")]
     args.out.mkdir(parents=True, exist_ok=True)
@@ -364,6 +481,11 @@ def main():
         state = torch.load(args.indexers)
         for li, sd in state.items():
             pol.indexers[int(li)].load_state_dict(sd)
+    csa2 = [x for x in policies if x["kind"] == "csa2"]
+    if csa2 and args.train_csa2 and (args.docs or args.tiny):
+        train_csa2(model, pol, csa2[0], args, args.out)
+    elif csa2 and args.csa2:
+        pol.csa2_state = {int(li): sd for li, sd in torch.load(args.csa2).items()}
     if "nll" in args.tasks:
         nll = run_nll(model, pol, policies, args, args.out)
     if "retrieval" in args.tasks and not args.tiny:
