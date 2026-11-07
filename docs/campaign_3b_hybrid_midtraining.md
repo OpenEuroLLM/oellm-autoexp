@@ -881,6 +881,26 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     its compression branch is a short causal attention over entries. CSA2 and LSA need block-wise selection over
     entries / buckets for a fast path.
 
+- **2026-11-07, CP tests on MN5 and the fast paths:**
+  - **Dev job 48692092** (2 H100s):
+    - The whole hybrid at CP=2 vs CP=1 passes for NSA, CSA2 (with its indexer loss) and LSA. Logits deviate by at
+      most 0.06-0.07 of their spread, mean 0.004, as for the all-gathered dense control (0.09 / 0.004). Parameter
+      gradients agree within the routed-expert noise.
+    - All 46 single-GPU variant tests pass.
+    - The float64 core-attention CP test failed for CSA2 only, on a test bug: it assumed every parameter has a
+      gradient, but the indexer gets none without its loss. Fixed in Megatron 28c14cbcf; rerun pending.
+  - **Flex paths** (Megatron 120cc41db, 6bf71f6c4), each equal to its reference forward and backward in the tests,
+    including chunks that start mid-block:
+    - **NSA:** compression branch as flex over the entries (causal entry mask), selection and window branches as
+      flex page selections, importances from a no-grad pass.
+    - **CSA2** (needs `select_block`): raw sinks + window and the selected entries as two flex calls merged
+      exactly by their LSEs. The indexer KL runs on the selecting (anchor) queries only, select_block× cheaper.
+    - **LSA** (needs `select_block`): keys permuted into bucket order, so each bucket is a contiguous span, plus
+      the raw part, LSE-merged.
+    - `kv_block` sets the block-mask granularity over entries / buckets. Below 64, the bf16 flex backward does
+      not compile on the local 24 GB GPU; the H100 bench tries 16.
+  - T4c (the fast arms at 16k / 64k on H100) and the CP-test rerun are queued in one dev job.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
