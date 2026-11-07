@@ -1,0 +1,78 @@
+# @package _global_
+# DRAFT (step 5 of the variant plan, S1 of docs/campaign_3b_hybrid_midtraining.md; not launched): which trained
+# sparse attention, at s3. Every arm continues the ctxlen4n_s3 s64k checkpoint (dense attention, 64k from scratch,
+# step 1000 = 1.05B tokens) for 500 steps at 64k (0.52B tokens) on the same data (diag_consumed_train_samples =
+# 1000 x 16), switching all 3 attention layers to one variant at a matched ~2.7k-key budget per query (page 64,
+# window 512, 1 sink page, 32 pages / buckets / 512 entries of 4 tokens), block-wise selection (64 queries) and the
+# flex paths. Arms: dense / window-only control / page_mean / quest / NSA / CSA2 (+ indexer KL) / LSA.
+# 4 nodes per arm as ctxlen4n_s3 (~10 s / step dense: ~1.4 h, ~23 GPU-h per arm before the sparse overhead).
+# Open before a launch: the T4e speed of the flex paths, the node budget (MN5 150-node cap), the evaluation path
+# (position-binned NLL at 64k / 128k from Megatron; retrieval needs the variants in the HF export).
+#
+#   ... --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t5_s3_sparse_branch_mn5 --yes
+defaults:
+  - ../production/hybrid_ctxlen_s3_mn5
+  - _self_
+
+aux:
+  suite: t5_s3_sparse
+  arm: dense
+  seq: 65536
+  gbs: 16
+
+backend:
+  megatron:
+    micro_batch_size: 1
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ctxlen4n_s3/s64k/ckpt
+    ckpt_step: 1000
+    diag_consumed_train_samples: 16000
+    override_opt_param_scheduler: true
+    train_iters: 1500
+    exit_interval: 1500
+    eval_interval: 250
+    save_interval: 500
+    save: ${job.base_output_dir}/ckpt
+    page_sparse_page: 64
+    page_sparse_topk: 32
+    page_sparse_window: 512
+    page_sparse_sink_pages: 1
+    page_sparse_select_block: 64
+    page_sparse_flex_q_block: 64
+    page_sparse_backend: flex
+
+job:
+  metadata:
+    pool_priority: 50
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dense
+          backend.megatron.page_sparse_selector: null
+        - aux.arm: window
+          backend.megatron.page_sparse_selector: window
+        - aux.arm: page_mean
+          backend.megatron.page_sparse_selector: page_mean
+        - aux.arm: quest
+          backend.megatron.page_sparse_selector: quest
+        - aux.arm: nsa
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
+        - aux.arm: csa2
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+        - aux.arm: lsa
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 32
