@@ -172,6 +172,7 @@ sweep:
           aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
           job.est_step_time_s: 5.0
           slurm.sbatch.time: "01:30:00"
+          slurm.sbatch.qos: acc_debug  # the fast lane (one job per user): ectrl goes to acc_ehpc
           backend.megatron.micro_batch_size: 2
           backend.megatron.kv_channels: 256
           backend.megatron.load: ${aux.test_root}/engaux/ckpt
