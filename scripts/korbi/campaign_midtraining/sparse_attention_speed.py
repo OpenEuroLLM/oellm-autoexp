@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -125,8 +126,25 @@ def main():
     p.add_argument("--groups", type=int, default=2)
     p.add_argument("--dim", type=int, default=256)
     p.add_argument("--hidden", type=int, default=2048)
+    p.add_argument("--child", action="store_true", help="measure one arm at one length (the --arms / --lengths)")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    if not args.child:  # every (length, arm) in its own process: an OOM or a compile error stays there
+        rows = []
+        for L in args.lengths.split(","):
+            for name in args.arms.split(","):
+                cmd = [sys.executable, __file__, "--child", "--out", str(args.out), "--lengths", L, "--arms", name,
+                       "--iters", str(args.iters), "--heads", str(args.heads), "--groups", str(args.groups),
+                       "--dim", str(args.dim), "--hidden", str(args.hidden)]
+                proc = subprocess.run(cmd, capture_output=True, text=True)
+                line = [x for x in proc.stdout.splitlines() if x.startswith("{")]
+                row = json.loads(line[-1]) if line else {"arm": name, "L": int(L),
+                                                         "error": f"exit {proc.returncode}: {proc.stderr[-300:]}"}
+                rows.append(row)
+                print(json.dumps(row), flush=True)
+                (args.out / "speed.json").write_text(json.dumps(rows, indent=1))
+        write_summary(rows, args)
+        return
     dev = torch.device("cuda")
     hq, g, d, h = args.heads, args.groups, args.dim, args.hidden
     rows = []
@@ -159,21 +177,21 @@ def main():
                 torch.cuda.reset_peak_memory_stats()
                 row["fwd_bwd_ms"] = timed(fwd_bwd, args.iters)
                 row["peak_gb"] = (torch.cuda.max_memory_allocated() - base) / 2**30
-            except torch.cuda.OutOfMemoryError:
-                row["error"] = "OOM"
+            except torch.cuda.OutOfMemoryError as exc:
+                row["error"] = "OOM: " + str(exc)[:160]
             except Exception as exc:  # noqa: BLE001 -- one arm failing does not stop the table
                 row["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
             finally:
                 q = k = v = x = fn = params = None
-            rows.append(row)
+            # the attended page union per block of 64 queries (flex's work), as a share of the causal dense blocks
+            spec = ARMS.get(name)
+            if spec and spec[0] == "flex" and "error" not in row:
+                row["union_share"] = union_share(L, hq, g, d, ps.PageSparseConfig(**spec[1]), dev)
             print(json.dumps(row), flush=True)
-            (args.out / "speed.json").write_text(json.dumps(rows, indent=1))
-    # the attended page union per block of 64 queries (flex's work), as a share of the causal dense blocks
-    for r in rows:
-        spec = ARMS.get(r["arm"])
-        if spec and spec[0] == "flex" and "error" not in r:
-            r["union_share"] = union_share(r["L"], hq, g, d, ps.PageSparseConfig(**spec[1]), dev)
-    (args.out / "speed.json").write_text(json.dumps(rows, indent=1))
+
+
+def write_summary(rows, args):
+    hq, g, d = args.heads, args.groups, args.dim
     lines = ["# Sparse-attention speed (one layer, one document, bf16, "
              f"{hq}x{d} q / {g} KV heads; {torch.cuda.get_device_name()})", "",
              "| L | arm | fwd ms | fwd+bwd ms | vs dense | extra peak GB | page union / dense |",
