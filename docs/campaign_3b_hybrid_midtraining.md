@@ -901,6 +901,34 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       not compile on the local 24 GB GPU; the H100 bench tries 16.
   - T4c (the fast arms at 16k / 64k on H100) and the CP-test rerun are queued in one dev job.
 
+- **2026-11-07, T3b: block-wise vs per-token selection on frozen v4** (dev job 48692155; same 4 documents as T2,
+  since T2's per-token oracle 1.9097 is reproduced exactly; 6 questions per retrieval task;
+  `docs/campaign_3b_hybrid_midtraining_results/t3b_block_selection_v4_2ph_8000/`):
+
+  | policy (2.7k keys / query) | 64k NLL | 128k NLL | 64k kvret64 | 128k kvret64 |
+  |---|---:|---:|---:|---:|
+  | dense (T2) | 1.9190 | 1.8987 | | |
+  | page_mean, per token (T2) | 1.9070 | 1.8428 | | |
+  | page_mean, block 64 | 1.9391 | 1.8607 | 0.00 | 0.00 |
+  | quest, per token (T2) | 1.9182 | 1.8492 | | |
+  | quest, block 64 | 1.9444 | 1.8605 | 0.17 | 0.17 |
+  | page_mean hierarchical (16-page groups, top 8), block 64 | 1.9428 | 1.8607 | 0.00 | 0.00 |
+  | oracle, per token | 1.9097 | 1.8714 | 0.67 | 0.83 |
+  | oracle, block 64 | 1.9324 | **1.8541** | 0.33 | 0.33 |
+
+  - **Untrained, block-wise selection by the block's first query costs +0.02-0.03 nats at 64k and +0.01-0.02 at
+    128k.** It still beats dense by 0.04 at 128k, and the block-wise oracle beats the per-token one there.
+  - **Hierarchical selection costs nothing at 128k** (1.8607 = flat). It can cut the scoring cost at 1M without a
+    loss; its 64k number is +0.004.
+  - **Block-wise selection halves the oracle's multi-key retrieval** (0.33 vs 0.67-0.83, one question = 0.17).
+    This is structural: the deciding queries are the question tokens at the end of the context and the
+    continuation, and in a block they attend pages chosen by the block's first query, written before the
+    question. The causal prev_max score (T3c) has the same blind spot.
+  - **Inference does not need that restriction.** Decoding is memory-bound either way, so every decoded token can
+    select its own pages, and the prompt's final block can re-select per token (≤ 64 queries). So the realistic
+    setup is block-wise selection for training and prefill, per-token for decoding and the prompt tail
+    (`decode=token` in the probe). T3d measures retrieval that way with 16 questions per task at 64k and 128k.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
