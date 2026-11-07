@@ -203,3 +203,61 @@ sweep:
           backend.megatron.engram_aux_num_heads: 8
           backend.megatron.engram_aux_table_size: 811682
           backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
+        # the final comparison (user 2026-11-07: "all" and multilingual -- ideally every set -- at one
+        # common step; the in-training evaluations every 100 steps (18-40 min per round at 8 nodes) cut the
+        # 1.5 h jobs short): the three arms again from step 800 on the same batches, no intermediate
+        # evaluation, every fixed set at step 1100, a save at 1100 (an interrupted evaluation can be redone
+        # from it). Run one after another on the debug lane (concurrency_group acc_debug, max_active 1).
+        - aux.arm: fctrl
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          job.concurrency_group: acc_debug
+          job.max_active: 1
+          slurm.sbatch.time: "02:00:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.exit_interval: 1100
+          backend.megatron.eval_interval: 1100
+          backend.megatron.save_interval: 1100
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/w256rk/ckpt
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fctrl/ckpt
+        - aux.arm: faux
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          job.concurrency_group: acc_debug
+          job.max_active: 1
+          slurm.sbatch.time: "02:00:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.exit_interval: 1100
+          backend.megatron.eval_interval: 1100
+          backend.megatron.save_interval: 1100
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/engaux/ckpt
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/faux/ckpt
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k_keepaccents.npy
+        - aux.arm: fauxbase
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          job.concurrency_group: acc_debug
+          job.max_active: 1
+          slurm.sbatch.time: "02:00:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.exit_interval: 1100
+          backend.megatron.eval_interval: 1100
+          backend.megatron.save_interval: 1100
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/engaux/ckpt
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fauxbase/ckpt
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
