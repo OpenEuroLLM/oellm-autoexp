@@ -11,8 +11,9 @@ defaults:
 
 aux:
   name: t4_sparse_speed
+  arms: "dense,window,page_mean_flex,quest_flex,page_mean_b64_flex,quest_b64_flex,page_mean_hier_b64_flex,nsa_flex,nsa_b64_flex,csa2_b64_flex,csa2_b64_kv16_flex,lsa_b64_flex,lsa_b64_kv16_flex"
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
-  bench: "python scripts/korbi/campaign_midtraining/sparse_attention_speed.py --out ${aux.out} --lengths 16384,65536 --iters 3"
+  bench: "python scripts/korbi/campaign_midtraining/sparse_attention_speed.py --out ${aux.out} --lengths 16384,65536 --iters 3 --arms ${aux.arms}"
 
 job:
   name: campaign_mid_${aux.name}

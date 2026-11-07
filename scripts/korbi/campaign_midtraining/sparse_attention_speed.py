@@ -49,7 +49,19 @@ ARMS = {
     "page_mean_gathered": ("gathered", dict(BASE, selector="page_mean")),
     "nsa": ("nsa", dict(block=32, stride=16, page=64, topk=32, sink_pages=1, select_window=512, window=512,
                         gate_init=(0.0, 0.0, 0.0))),
+    "nsa_flex": ("nsa_flex", dict(block=32, stride=16, page=64, topk=32, sink_pages=1, select_window=512,
+                                  window=512, gate_init=(0.0, 0.0, 0.0))),
+    "nsa_b64_flex": ("nsa_flex", dict(block=32, stride=16, page=64, topk=32, sink_pages=1, select_window=512,
+                                      window=512, gate_init=(0.0, 0.0, 0.0), select_block=64)),
     "csa2": ("csa2", dict(compress=4, topk_entries=512, window=512, page=64, sink_pages=1)),
+    "csa2_b64_flex": ("csa2_flex", dict(compress=4, topk_entries=512, window=512, page=64, sink_pages=1,
+                                        select_block=64)),
+    "csa2_b64_kv16_flex": ("csa2_flex", dict(compress=4, topk_entries=512, window=512, page=64, sink_pages=1,
+                                             select_block=64, kv_block=16)),
+    "lsa_b64_kv16_flex": ("lsa_flex", dict(pool=4, block=512, buckets=32, topk=32, window=512, page=64,
+                                           sink_pages=1, select_block=64, kv_block=16)),
+    "lsa_b64_flex": ("lsa_flex", dict(pool=4, block=512, buckets=32, topk=32, window=512, page=64, sink_pages=1,
+                                      select_block=64)),
     "lsa": ("lsa", dict(pool=4, block=512, buckets=32, topk=32, window=512, page=64, sink_pages=1)),
 }
 
@@ -64,17 +76,20 @@ def build(name, hidden, hq, g, d, dev):
         if kind == "flex":
             return lambda q, k, v, x: ps.flex_page_sparse_attention(q, k, v, cfg, 0, d**-0.5, None, 64), []
         return lambda q, k, v, x: ps.page_sparse_attention(q, k, v, cfg, 0, d**-0.5), []
-    if kind == "nsa":
+    if kind in ("nsa", "nsa_flex"):
         m = sv.NSA(hidden, hq, d, sv.NSAConfig(**kw)).to(dev, torch.bfloat16)
+        m.flex = kind == "nsa_flex"
         return lambda q, k, v, x: m(q, k, v, x, 0, d**-0.5), list(m.parameters())
-    if kind == "csa2":
+    if kind in ("csa2", "csa2_flex"):
         m = sv.CSA2(hidden, g, d, sv.CSA2Config(**kw)).to(dev, torch.bfloat16)
+        m.flex = kind == "csa2_flex"
 
         def f(q, k, v, x):
             z = m.token_features(x)
             return m(q, k, v, x, z, 0, d**-0.5) + 0 * m.indexer_loss(q, k, x, z, 0, d**-0.5)
         return f, list(m.parameters())
     m = sv.LSA(sv.LSAConfig(**kw))
+    m.flex = kind == "lsa_flex"
     return lambda q, k, v, x: m(q, k, v, 0, d**-0.5), []
 
 
