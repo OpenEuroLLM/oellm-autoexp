@@ -1051,6 +1051,16 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     - CSA2's entry part;
     - a fused NSA compression and importance pass.
 
+- **2026-11-07, T3e: the prompt tail** (frozen v4, 64k, 16 questions per task; dev job 48708991;
+  `.../t3d_block_retrieval_v4_2ph_8000/retrieval_64k_tail_t3e.json`):
+  - Oracle, block 64, re-selecting the prompt's last 128 / 256 / 512 tokens per token: kvret64 0.56 at every
+    tail length. That compares with 0.44 when only the final partial block re-selects (T3d) and 0.75 for
+    per-token selection throughout.
+  - page_mean with tail 256: 0.13, as before.
+  - **The tail recovers 2 of the 5 lost questions, and 128 tokens is enough.** The rest (0.56 vs 0.75) is not the
+    question tokens: block-wise prefill changes what the later layers compute over the context. Training should
+    have to absorb it; step 5 measures retrieval after training with block-wise selection.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
