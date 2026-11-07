@@ -978,6 +978,31 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - The 128k job ran ~6× slower per question than T2b's dense retrieval (cause unknown; heavy system time with
     the pinned Engram tables). The probe now logs every question's time.
 
+- **2026-11-07, T3: the variants without training on frozen v4** (dev job 48703229; per-token selection, ~2.7k
+  keys per query; same documents as T2; 6 questions per retrieval task;
+  `docs/campaign_3b_hybrid_midtraining_results/t3_sparse_variants_v4_2ph_8000/`):
+
+  | policy | 64k NLL | 128k NLL | 64k kvret / vt | 128k kvret / vt |
+  |---|---:|---:|---|---|
+  | dense | 1.9190 | 1.8987 | 0.33 / 0.00 | 0.33 / 0.00 |
+  | page_mean | 1.9070 | 1.8428 | 0.00 / 0.17 | 0.00 / 0.17 |
+  | quest | 1.9182 | 1.8492 | 0.33 / 0.17 | 0.17 / 0.17 |
+  | page_mean hierarchical (16-page groups, top 8) | 1.9203 | 1.8488 | 0.00 / 0.17 | 0.00 / 0.17 |
+  | quest hierarchical | 1.9352 | 1.8641 | 0.17 / 0.17 | 0.17 / 0.00 |
+  | LSA zero-shot (pool 4, 32 buckets per 2k tokens, top 32) | 1.9157 | 1.8690 | 0.33 / 0.33 | 0.17 / 0.17 |
+  | **NSA selection branch** (pages by mean-compressed blocks' mass) | **1.9022** | **1.8412** | 0.00 / 0.33 | 0.17 / 0.17 |
+
+  - **NSA's selection branch is the best training-free selector:** -0.017 vs dense at 64k, -0.058 at 128k, ahead
+    of page_mean. Its compressed blocks are overlapping (32 tokens, stride 16), scored by softmax mass summed over
+    heads. With trained compressors and gates it is the strongest candidate going into step 5.
+  - **LSA zero-shot** beats dense at 64k but trails page_mean at 128k. Two likely costs: tokens between the last
+    complete cluster block and the window cannot be selected, and the clustering is a stand-in (spherical k-means).
+    Its retrieval at 6 questions is the best of the lot at 64k, too few to rank.
+  - **Hierarchical selection** costs +0.013 / +0.006 (page_mean, 64k / 128k) and more for Quest. It is for the 1M
+    scoring cost, not for quality.
+  - Retrieval at 6 questions is noise: dense kvret64 at 64k is 0.33 here and 0.69 on T3d's 16 questions. Only
+    T3d / T3e (16 per task) carry weight.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
