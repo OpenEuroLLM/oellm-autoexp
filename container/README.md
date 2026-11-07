@@ -25,3 +25,15 @@ python ./container/build_container_user.py --backend megatron --definition Megat
     --requirements container/megatron/requirements_latest.txt \
     --output ./artifacts
 ```
+
+LUMI + Megatron-Bridge (conversion image; adds Bridge's extra dependencies,
+including `nvidia-modelopt`, which `MegatronTrainingLumi` lacks and
+`from megatron.bridge import AutoBridge` needs at import time)
+```bash
+python ./container/build_container_user.py --backend megatron --definition MegatronTrainingLumi-bridge \
+    --requirements container/megatron/requirements_latest.txt
+```
+No `--output`: the image lands in `$CONTAINER_CACHE_DIR` (or the current
+directory if unset) as `MegatronTrainingLumi-bridge_*_x86_64.sif`, which is
+where the chain config's convert-stage `container.image` looks; see
+[`docs/bridge_eval_setup.md`](../docs/bridge_eval_setup.md).

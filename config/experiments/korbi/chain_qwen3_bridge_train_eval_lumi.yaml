@@ -1,13 +1,20 @@
 # @package _global_
 #
 # Lumi port of chain_qwen3_bridge_train_eval_jupiter.yaml.
-# Reuses the existing MegatronTrainingLumi.sif container for train and
-# bridge (Bridge made importable via patch_bridge_lazy_imports.py applied
-# to the host's submodules/Megatron-Bridge tree, plus a PYTHONPATH
-# override that fronts the OpenEuroLLM Megatron-LM fork). Eval runs inside
-# the laif-rocm container which already has rocm torch + transformers;
-# oellm-evals + lm-eval are installed via `pip install --target` to
-# $HOME/eval_local and added to PYTHONPATH at runtime.
+# Train runs in the MegatronTrainingLumi.sif container (container: lumi).
+# The convert stage must use the bridge-enabled image built from
+# container/megatron/MegatronTrainingLumi-bridge.def.in — the plain LUMI
+# training image lacks nvidia-modelopt and `from megatron.bridge import
+# AutoBridge` fails with `ModuleNotFoundError: No module named 'modelopt'`.
+# The convert stage's container.image below points at that SIF. The bridge
+# image installs the patched Bridge at
+# /opt/megatron-bridge (outside /workspace/oellm-autoexp, which this config
+# bind-mounts from the host and would otherwise hide the in-image patch), so
+# the convert stage points backend.bridge_root/PYTHONPATH there. Eval runs
+# inside the laif-rocm container
+# which already has rocm torch + transformers; oellm-evals + lm-eval are
+# installed via `pip install --target` to $HOME/eval_local and added to
+# PYTHONPATH at runtime.
 
 defaults:
   - ../base
@@ -81,20 +88,30 @@ sweep:
         - stage: convert
           backend: megatron_bridge
           slurm: lumi_bridge
+          # The default container.image from /container=lumi (training image)
+          # lacks nvidia-modelopt and /opt/megatron-bridge; use the bridge
+          # image built from container/megatron/MegatronTrainingLumi-bridge.def.in
+          # (see container/README.md). The documented build command (without
+          # --output) writes MegatronTrainingLumi-bridge_x86_64.sif into
+          # $CONTAINER_CACHE_DIR, or ./ if unset — matching the path below.
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingLumi-bridge_x86_64.sif"
           container.bind:
             - "/pfs/"
             - "/scratch/"
             - "/flash/"
             - "${oc.env:HOME}"
             - "${oc.env:HOME}/Projects/oellm-autoexp:/workspace/oellm-autoexp"
-          backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src"
+          # /opt/megatron-bridge/src is the patched Bridge copy baked into the
+          # bridge image; the in-repo submodules path would be hidden by the
+          # host bind-mount above.
+          backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/opt/megatron-bridge/src"
           backend.hf_model: "Qwen/Qwen3-0.6B"
           backend.tokenizer: "Qwen/Qwen3-0.6B"
           backend.derive_hf_arch: "qwen3"
           backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
           backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
           backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
-          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.bridge_root: "/opt/megatron-bridge"
           backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
           job.start_condition:
             class_name: FileExistsCondition

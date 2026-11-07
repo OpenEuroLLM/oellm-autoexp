@@ -20,12 +20,27 @@ The chain has three SLURM jobs gated by `FileExistsCondition`:
    `oellm-eval schedule --local true …` which calls `lm_eval` per task and
    drops `results/<hash>_<ts>.json` files.
 
-The convert stage **does not** require a separate container — it reuses
-the training container, with two cluster-agnostic shims applied:
+The convert stage runs inside a **bridge-enabled image** — the plain
+training container does not ship Megatron-Bridge's extra dependencies
+(notably `nvidia-modelopt`, which Bridge's `auto_bridge.py` imports at
+module level), so `from megatron.bridge import AutoBridge` fails with
+`ModuleNotFoundError: No module named 'modelopt'` there. Build the
+cluster's bridge recipe on top of the training base and point the convert
+stage's `container.image` at it:
 
-- `container/megatron/patch_bridge_lazy_imports.py` is run once against
-  `submodules/Megatron-Bridge/src/megatron/bridge/models` so missing model
-  bridges (mamba, certain VL/Omni variants) fail soft at import time.
+- JUPITER: `container/megatron/MegatronTraining-JUPITER-bridge.def.in`
+- LUMI: `container/megatron/MegatronTrainingLumi-bridge.def.in`
+
+Both bridge images keep the OpenEuroLLM Megatron-LM fork as the primary
+`megatron.core` (matching the training checkpoint format) and layer Bridge
+on top, with two cluster-agnostic shims applied:
+
+- `container/megatron/patch_bridge_lazy_imports.py` is run once at image
+  build time against the Bridge copy that will actually be imported, so
+  missing model bridges (mamba, certain VL/Omni variants) fail soft at import
+  time. On LUMI that copy is `/opt/megatron-bridge` inside the bridge image
+  (the chain configs bind-mount the host repository over
+  `/workspace/oellm-autoexp`, which would hide an in-image patched copy).
 - `oellm_autoexp/backends/megatron_bridge/run_export.py` monkey-patches
   `nvidia_resiliency_ext.__version__` (≥ 0.6.0), shims
   `_clean_metadata_for_serialization`, and registers a placeholder
@@ -189,6 +204,38 @@ Lumi follows the same pattern as Leonardo but the container is
 `$HOME/eval_local` by way of `pip install --target` (Lumi's container has its
 own `/opt/venv` so `--user` is rejected; `--target` plus a `PYTHONPATH`
 override in `slurm/lumi_eval.yaml` is the workaround).
+
+The training image built from `container/megatron/MegatronTrainingLumi.def.in`
+(the one `config/container/lumi.yaml` points to) does **not** include
+Megatron-Bridge's dependencies, so the convert stage cannot run in it —
+`AutoBridge` fails at import with `No module named 'modelopt'`. Build the
+dedicated bridge image from the repository's LUMI bridge recipe (no
+`--output`: the helper then writes to `$CONTAINER_CACHE_DIR`, or the current
+directory if unset — exactly where the chain config looks for it):
+
+```bash
+python ./container/build_container_user.py --backend megatron \
+    --definition MegatronTrainingLumi-bridge \
+    --requirements container/megatron/requirements_latest.txt
+# -> $CONTAINER_CACHE_DIR/MegatronTrainingLumi-bridge_x86_64.sif
+#    (or ./MegatronTrainingLumi-bridge_x86_64.sif if CONTAINER_CACHE_DIR is unset)
+```
+
+The chain config (`chain_qwen3_bridge_train_eval_lumi.yaml`) sets this up
+for the convert stage — `container.image` points at the bridge SIF, and the
+bridge image bakes the patched Bridge at `/opt/megatron-bridge` (outside the
+bind-mounted `/workspace/oellm-autoexp`), with `bridge_root` + PYTHONPATH
+pointed there so the patched copy is the one that gets imported:
+
+```yaml
+- stage: convert
+  backend: megatron_bridge
+  slurm: lumi_bridge
+  container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingLumi-bridge_x86_64.sif"
+  backend.bridge_root: "/opt/megatron-bridge"
+  backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/opt/megatron-bridge/src"
+  ...
+```
 
 ```bash
 mkdir -p ~/eval_local/lib/python3.12/site-packages

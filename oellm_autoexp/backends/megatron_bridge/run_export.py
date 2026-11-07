@@ -190,7 +190,8 @@ def _run_convert(
 
     The Bridge import lives behind a runtime check: this whole step only works
     inside a container with Megatron-Bridge installed (see
-    ``container/megatron/MegatronTraining-JUPITER-bridge.def.in``).
+    ``container/megatron/MegatronTraining-JUPITER-bridge.def.in`` on JUPITER
+    or ``container/megatron/MegatronTrainingLumi-bridge.def.in`` on LUMI).
     """
     # Some installed `nvidia_resiliency_ext` versions don't expose
     # `__version__`; Megatron-LM's `dist_checkpointing/strategies/nvrx.py`
@@ -268,7 +269,9 @@ def _run_convert(
         raise RuntimeError(
             "Megatron-Bridge is not importable in this Python environment. "
             "Run inside the bridge-enabled apptainer image "
-            "(container/megatron/MegatronTraining-JUPITER-bridge.def.in)."
+            "(container/megatron/MegatronTraining-JUPITER-bridge.def.in on "
+            "JUPITER, container/megatron/MegatronTrainingLumi-bridge.def.in "
+            "on LUMI; the plain training image lacks nvidia-modelopt)."
         ) from exc
 
     LOGGER.info("Loading AutoBridge from %s", hf_ref_model)
