@@ -1,0 +1,23 @@
+# @package _global_
+# T4 (step 4 of the variant plan, docs/campaign_3b_hybrid_midtraining.md): one v4 attention layer (16 x 256 q,
+# 2 KV heads), one document at 16k / 64k, bf16, H100: fwd and fwd + bwd time and peak memory of each sparse variant's
+# current implementation (flex for the page selectors; the exact references for nsa / csa2 (+ its indexer loss) /
+# lsa) against dense SDPA (scripts/korbi/campaign_midtraining/sparse_attention_speed.py). One MN5 node, one GPU:
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t4_sparse_speed_mn5 aux.dev_queue=true --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t4_sparse_speed
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  bench: "python scripts/korbi/campaign_midtraining/sparse_attention_speed.py --out ${aux.out} --lengths 16384,65536 --iters 3"
+
+job:
+  name: campaign_mid_${aux.name}
+
+slurm:
+  sbatch:
+    time: "00:30:00"
+    account: ehpc533
