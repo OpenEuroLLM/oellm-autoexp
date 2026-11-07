@@ -133,6 +133,7 @@ def main(argv=None):
         from scripts.korbi.flag_eval.node_ep import distributed_adapter
 
         VLLM = distributed_adapter(VLLM)
+        allow_empty_dp_shards()
     t0 = time.time()
     # The OELLM custom decode graphs are controlled by OELLM_DECODE_GRAPHS; this
     # vLLM engine flag stays opt-in because vLLM's own graph capture is separate.
@@ -256,6 +257,32 @@ def main(argv=None):
     if a.dp > 1:
         lm.model.llm_engine.engine_core.shutdown()
     sys.exit(1 if failed else 0)
+
+
+def allow_empty_dp_shards() -> None:
+    """A DP rank whose shard of a (sub)task has no documents contributes no requests instead of
+    raising: lm-eval's build_all_requests raises "did not find any docs!" for an empty shard
+    (include_base_44_estonian_health_oriented_education has 2 test documents for 4 ranks), the
+    rank died and its peers waited in the next collective forever. The evaluator already pads
+    the ranks' request counts and iterates no documents on an empty shard."""
+    from lm_eval.api.task import Task
+
+    if getattr(Task.build_all_requests, "_oellm_empty_ok", False):
+        return
+    original = Task.build_all_requests
+
+    def build_all_requests(self, *args, **kwargs):
+        try:
+            return original(self, *args, **kwargs)
+        except ValueError as exc:
+            if "did not find any docs" not in str(exc) or kwargs.get("world_size", 1) <= 1:
+                raise
+            print(f"[flag_lmeval] {getattr(self, 'config', None) and self.config.task}: no documents on "
+                  f"rank {kwargs.get('rank')} of {kwargs.get('world_size')}", flush=True)
+            self._instances = []
+
+    build_all_requests._oellm_empty_ok = True
+    Task.build_all_requests = build_all_requests
 
 
 def _queue_loop(queue, make_row, is_done, run_row, dp: int, rank0: bool) -> int:
