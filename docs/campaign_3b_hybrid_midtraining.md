@@ -1003,6 +1003,27 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - Retrieval at 6 questions is noise: dense kvret64 at 64k is 0.33 here and 0.69 on T3d's 16 questions. Only
     T3d / T3e (16 per task) carry weight.
 
+- **2026-11-07, T3c: block size and block scoring** (frozen v4, NLL; dev job 48705818; same documents):
+
+  | block selection | 64k NLL | 128k NLL |
+  |---|---:|---:|
+  | page_mean per token (T3) | 1.9070 | 1.8428 |
+  | page_mean block 64, first query (T3b) | 1.9391 | 1.8607 |
+  | page_mean block 64, prev_max | 1.9438 | 1.8640 |
+  | page_mean block 32, prev_max | 1.9340 | 1.8571 |
+  | page_mean block 16, prev_max | 1.9243 | 1.8504 |
+  | page_mean block 16, first query | 1.9234 | 1.8480 |
+  | quest block 64, prev_max | 1.9467 | 1.8627 |
+  | oracle block 64, first query (T3b) | 1.9324 | 1.8541 |
+  | oracle block 64, prev_max | 1.9262 | 1.8458 |
+
+  - **prev_max does not help the cheap selectors** (page_mean / Quest slightly worse); it helps the oracle a
+    little.
+  - **The block-wise cost shrinks with the block:** +0.032 / +0.018 at 64, +0.016 / +0.005 at 16 (64k / 128k),
+    untrained.
+  - With flex rows of 64 queries, block 16 attends up to 4 selections per row (≤ 4× the budget): blocks of 16-32
+    are the likely compromise, to be priced by T4e. Training (step 5) may close the rest.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
