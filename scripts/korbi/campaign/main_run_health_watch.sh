@@ -86,8 +86,12 @@ while true; do
     if [ "$(field age "$s")" -gt "$STALL_S" ]; then log "EVENT STALL: no log line for $(field age "$s")s"; exit 14; fi
     case "$(field loss "$s")" in nan|inf) log "EVENT NAN: loss $(field loss "$s")"; exit 15;; esac
     if [ "$(field nan "$s")" != 0 ] || [ "$(field skip "$s")" != 0 ]; then log "EVENT NAN: nan=$(field nan "$s") skipped=$(field skip "$s")"; exit 15; fi
-    if [ "$(field mon_age "$s")" -gt "$MON_STALE_S" ] || [ "$(field mon "$s")" != 1 ] || [ "$(field wd "$s")" != 1 ]; then
-        log "EVENT MONITOR: pool monitor heartbeat $(field mon_age "$s")s, process $(field mon "$s"), watchdog $(field wd "$s")"; exit 17
+    # the MN5-side watchdog loop is restarted by the off-cluster one within ~5 min (it died 2026-11-07
+    # 20:10 and was back 20:17): only a loop missing in two polls in a row is an event; the pool
+    # monitor itself (heartbeat / process) is one at once
+    if [ "$(field wd "$s")" != 1 ]; then wd_miss=$((${wd_miss:-0} + 1)); else wd_miss=0; fi
+    if [ "$(field mon_age "$s")" -gt "$MON_STALE_S" ] || [ "$(field mon "$s")" != 1 ] || [ "$wd_miss" -ge 2 ]; then
+        log "EVENT MONITOR: pool monitor heartbeat $(field mon_age "$s")s, process $(field mon "$s"), watchdog $(field wd "$s") (missing $wd_miss polls)"; exit 17
     fi
     ms=$(field ms "$s"); ms=${ms%.*}
     if [ "${ms:-0}" -gt "$SLOW_MS" ]; then slow=$((slow + 1)); else slow=0; fi
