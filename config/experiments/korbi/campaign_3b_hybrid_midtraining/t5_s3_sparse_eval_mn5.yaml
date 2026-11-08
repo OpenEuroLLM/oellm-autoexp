@@ -1,0 +1,82 @@
+# @package _global_
+# Step-5 scoring: every t5_s3_sparse arm's final checkpoint (step 1500) with its own attention, and the pre-branch
+# dense checkpoint (ctxlen4n_s3 s64k step 1000, arm "base"), on the SAME validation samples (skip_train builds the
+# validation loader at position 0) at 64k (the training length) and 128k (2x: extrapolation), 50 batches each.
+# Eval only (no optimizer): one node per job.
+#   ... --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t5_s3_sparse_eval_mn5 ["aux.only=[...]"] --yes
+defaults:
+  - t5_s3_sparse_branch_mn5
+  - _self_
+
+aux:
+  suite: t5_s3_sparse_eval
+  ckpt_arm: dense
+  len: at64k
+  arm: ${aux.ckpt_arm}_${aux.len}
+  nodes: 1
+
+backend:
+  megatron:
+    skip_train: true
+    no_load_optim: true
+    no_load_rng: true
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t5_s3_sparse/${aux.ckpt_arm}/ckpt
+    ckpt_step: 1500
+    save: null
+    save_interval: null
+    eval_iters: 50
+    eval_interval: 2000
+
+job:
+  est_step_time_s: 60.0
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.ckpt_arm: base
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ctxlen4n_s3/s64k/ckpt
+          backend.megatron.ckpt_step: 1000
+        - aux.ckpt_arm: dense
+          backend.megatron.page_sparse_selector: null
+        - aux.ckpt_arm: window
+          backend.megatron.page_sparse_selector: window
+        - aux.ckpt_arm: page_mean
+          backend.megatron.page_sparse_selector: page_mean
+        - aux.ckpt_arm: quest
+          backend.megatron.page_sparse_selector: quest
+        - aux.ckpt_arm: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.ckpt_arm: page_mean_shared
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_share_source: 1
+        - aux.ckpt_arm: nsa
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
+        - aux.ckpt_arm: csa2
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+        - aux.ckpt_arm: lsa
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 32
+    - type: list
+      configs:
+        - {aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1, aux.len: at64k}
+        - {aux.seq: 131072, aux.gbs: 8, backend.megatron.micro_batch_size: 1, aux.len: at128k}
