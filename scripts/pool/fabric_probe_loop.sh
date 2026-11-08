@@ -39,6 +39,10 @@ while true; do
   if [ -z "$(squeue -u "$USER" -h -n fabric_probe -o %i 2>/dev/null)" ]; then
     submit fabric_probe ${exclude:+--exclude="$exclude"}
   fi
+  # a pinned probe still pending a round later lost a node to another job: pick again
+  stale=$(squeue -u "$USER" -h -n fabric_probe_cross -t PENDING -o %i 2>/dev/null)
+  [ -n "$stale" ] && scancel $stale && echo "$(date +%T) fabric_probe_cross: $stale still pending, re-picking"
+  [ -n "$stale" ] && sleep 5
   if [ -z "$(squeue -u "$USER" -h -n fabric_probe_cross -o %i 2>/dev/null)" ]; then
     nodes=$(cross_nodes "$exclude")
     n=$(tr , '\n' <<<"$nodes" | grep -c .)
