@@ -48,6 +48,29 @@ backend:
 job:
   metadata:
     pool_priority: 50
+  est_step_time_s: 15.0
+  # submitted directly (4 nodes per arm, ehpc533 acc_ehpc), not through a pool; no restart loop: one retry for a
+  # lost node, a failure or timeout ends the arm
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+      action: {class_name: RestartAction, reason: "lost its node -- one retry", exclude_file: "${slurm.exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: FinishAction, reason: "lost its node again"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (no retry)"}
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "timed out"}
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_ehpc
+    time: "03:00:00"
 
 sweep:
   type: product
