@@ -73,6 +73,12 @@ sweep:
           backend.megatron.page_sparse_indexer_heads: 4
           backend.megatron.page_sparse_indexer_dim: 64
           backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+        - aux.arm: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.arm: page_mean_shared
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_share_source: 1
         - aux.arm: lsa
           backend.megatron.page_sparse_selector: lsa
           backend.megatron.page_sparse_lsa_pool: 4

@@ -696,6 +696,15 @@ class MegatronConfig(ConfigInterface):
     # previous block's queries; causal).
     page_sparse_select_score: str = "first"
 
+    # One page selection per KV group (from that group's query heads and keys) instead of one
+    # for all heads.
+    page_sparse_per_group: bool = False
+
+    # Share one selection across the attention layers: the layer with this layer number
+    # selects, the others reuse it (0: every layer selects; page selectors; no pipeline
+    # parallelism).
+    page_sparse_share_source: int = 0
+
     # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
     page_sparse_hier_group: int = 0
 

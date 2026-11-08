@@ -6770,6 +6770,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_per_group": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="One page selection per KV group (from that group's query heads and keys) instead of one for all heads.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "page_sparse_select_block": MegatronArgMetadata(
         arg_type=int,
         default=1,
@@ -6790,6 +6798,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help="Page-sparse attention for the self-attention layers (experimental_attention_variant/page_sparse.py): every query attends to the sink pages, a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense, window, page_mean, quest, oracle, token_topk, compress_mean (CSA2-like), indexer (a learned PageIndexer) -- ONE selection per token for all heads. None: the configured core attention.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "page_sparse_share_source": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Share one selection across the attention layers: the layer with this layer number selects, the others reuse it (0: every layer selects; page selectors; no pipeline parallelism).",
         choices=None,
         nargs=None,
         element_type=None,
@@ -14559,6 +14575,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=64,
     ),
+    "page_sparse_per_group": MegatronActionSpec(
+        option_strings=("--page-sparse-per-group",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "page_sparse_select_block": MegatronActionSpec(
         option_strings=("--page-sparse-select-block",),
         action_type="store",
@@ -14579,6 +14602,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "page_sparse_share_source": MegatronActionSpec(
+        option_strings=("--page-sparse-share-source",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "page_sparse_sink_pages": MegatronActionSpec(
         option_strings=("--page-sparse-sink-pages",),
