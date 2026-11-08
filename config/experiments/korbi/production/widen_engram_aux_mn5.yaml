@@ -1,0 +1,39 @@
+# @package _global_
+# Engram auxiliary lookups: widen an fsdp_dtensor checkpoint on one compute node
+# (scripts/korbi/production/widen_engram_aux.py; login nodes kill it at 300 s CPU while it serializes the
+# new table rows). Defaults: the 8-node A/B of hybrid_v4_hd256_test_mn5 (w256rk step 800 -> engaux):
+#   cd $R/autoexp_engaux && scripts/korbi/mn5_autoexp_bg.sh engaux_widen scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/widen_engram_aux_mn5 --yes
+defaults:
+  - /experiments/base
+  - /backend: bash
+  - /container: none
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  src: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/w256rk/ckpt/iter_0000800
+  dst: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/engaux/ckpt/iter_0000800
+  main_table_size: 1623365
+  aux_table_size: 811682
+  sif: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+
+backend:
+  command: module load singularity/4.1.5; singularity exec --env CUDA_VISIBLE_DEVICES= --bind /gpfs ${aux.sif} python3 -u scripts/korbi/production/widen_engram_aux.py --src ${aux.src} --dst ${aux.dst} --main-table-size ${aux.main_table_size} --main-orders 2,3,4 --main-heads 8 --aux-orders 2,3 --aux-heads 8 --aux-table-size ${aux.aux_table_size}
+
+job:
+  name: widen_engram_aux
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/attn_widen/engaux_job
+  est_steps: 1
+  est_step_time_s: 1200
+  state_events: []
+
+slurm:
+  launcher_cmd: ""
+  sbatch:
+    nodes: 1
+    time: "00:45:00"
+    qos: acc_debug
+
+stage: storage

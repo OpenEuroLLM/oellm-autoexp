@@ -1,0 +1,9 @@
+as06r5b27
+GPU 0: NVIDIA H100 (UUID: GPU-8842038c-03bb-a2e9-2f4d-2a48a41b1385)
+GPU 1: NVIDIA H100 (UUID: GPU-270d7802-72e3-7ccd-7e56-c5eefa3dc9ce)
+GPU 2: NVIDIA H100 (UUID: GPU-168eb9bc-13eb-e145-6e25-155df95cf40a)
+GPU 3: NVIDIA H100 (UUID: GPU-734b411d-704d-1c31-6407-c35417e7b0eb)
+               total        used        free      shared  buff/cache   available
+Mem:             503          45         457           9          13         457
+Swap:              3           0           3
+2.13.0+cu130 3.7.1 5.19.0

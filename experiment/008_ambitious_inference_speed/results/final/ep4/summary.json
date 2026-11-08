@@ -1,0 +1,30 @@
+{
+  "layout": "ep4",
+  "tp": 1,
+  "dp": 4,
+  "expert_parallel": 4,
+  "startup_seconds": 108.99276801105589,
+  "global_token_budget": 8192,
+  "prefill_one_output_seconds": 2.629589272197336,
+  "settings": {
+    "OELLM_MHC_IMPL": "triton",
+    "OELLM_LOCAL_EXPERT_LOAD": "1",
+    "OELLM_ENGRAM_TABLES": "ram",
+    "OELLM_ENGRAM_LOOKUP": "leader",
+    "OELLM_ENGRAM_MADVISE": "normal"
+  },
+  "trials": [
+    {
+      "seconds": 11.316055519971997,
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "input_tokens_per_second": 723.9271657462027
+    },
+    {
+      "seconds": 2.7769096232950687,
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "input_tokens_per_second": 2950.041993185003
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "rank": 1,
+  "tp": 1,
+  "dp": 4,
+  "trials": [],
+  "startup_seconds": 110.81955251190811,
+  "memory_after_init": [
+    {
+      "pid": 1570464,
+      "parent_pid": 1570319,
+      "device": 1,
+      "free_bytes": 7000293376,
+      "total_bytes": 67952836608,
+      "allocated_bytes": 55225990144,
+      "reserved_bytes": 58837696512,
+      "peak_allocated_bytes": 57656850432,
+      "peak_reserved_bytes": 58837696512
+    }
+  ],
+  "single_profiles": [
+    {
+      "pid": 1570152,
+      "path": "single_profile_rank1_pid1570152.json",
+      "exit_code": 0
+    },
+    {
+      "pid": 1570319,
+      "path": "single_profile_rank1_pid1570319.json",
+      "exit_code": 0
+    },
+    {
+      "pid": 1570464,
+      "path": "single_profile_rank1_pid1570464.json",
+      "exit_code": 0
+    }
+  ]
+}

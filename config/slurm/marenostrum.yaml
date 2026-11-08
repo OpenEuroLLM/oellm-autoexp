@@ -3,7 +3,9 @@ defaults:
   - _self_
 
 
-template_path: templates/marenostrum.sbatch
+# absolute at render time (the snapshot run_autoexp runs in): a pool's monitor renders the step
+# script and resolves a relative path against ITS working directory -- another snapshot's template
+template_path: ${oc.env:PWD,.}/templates/marenostrum.sbatch
 
 launcher_cmd: "module load singularity ; \\\n\
  ${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\

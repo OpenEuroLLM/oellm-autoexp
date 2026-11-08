@@ -1,0 +1,10 @@
+{
+  "baseline": "5ecd322ea",
+  "candidate": "a1f185341",
+  "workflow": "f8a35f63",
+  "files": {
+    "megatron/core/distributed/fsdp/src/megatron_fsdp/param_and_grad_buffer.py": "2a0fbc0004075044b326c47104b0ab6293500b26a74e3546e8555911f6cb47dc",
+    "megatron/core/distributed/fsdp/src/megatron_fsdp/uneven_dtensor.py": "e1844febbf856c70509ea3ccc7416bbd6d34eeb1d3d127cb3142faa9d56b3b01",
+    "tests/unit_tests/distributed/test_uneven_dtensor_batched_metadata.py": "242e61e181b66f8d070016c3d85910b833e91c3a0b8219223cee6e0aef87b4e1"
+  }
+}

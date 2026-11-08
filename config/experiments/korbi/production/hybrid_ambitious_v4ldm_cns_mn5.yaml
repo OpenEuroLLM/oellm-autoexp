@@ -1,0 +1,21 @@
+# @package _global_
+# OBSOLETE (2026-11-04): never used; v4_ldm is stopped for good (user: the run is broken, no
+# reschedule; last checkpoint 2244). Kept as the record of the prepared migration only.
+# Prepared migration only (2026-11-03); do not enqueue before the user's execution go.
+# Resume v4 LDM on 128 compute nodes in the cns144 132-node allocation vacated by
+# v4 mHC (currently job 48094115, attached as mn5_pool_p129/host004).
+# Same arm, job name, singleton, checkpoints, data, DP=512 and phase mbs: plain
+# cyclic sampler keeps the same order without a reference-layout override.
+#
+# Move AFTER mHC has >=20 stable steps on cns264. Keep the ehpc533 host held,
+# gracefully stop LDM, wait for final checkpoint + process exit, resume ONLY p1
+# here, then verify correct resume and >=20 stable steps. Release the ehpc533
+# allocation only after all its other work has finished or moved; close its host
+# replenishment first so releasing it actually stops charges on this account.
+defaults:
+  - hybrid_ambitious_v4ldm_mn5
+  - _self_
+
+slurm:
+  sbatch:
+    account: cns144

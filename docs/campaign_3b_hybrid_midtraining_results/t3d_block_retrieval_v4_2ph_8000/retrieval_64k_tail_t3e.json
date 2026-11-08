@@ -1,0 +1,23 @@
+{
+ "65536|oracle:topk=32,select_block=64,decode=token,tail=128": {
+  "passkey": 1.0,
+  "kvret64": 0.5625,
+  "vt": 0.375
+ },
+ "65536|oracle:topk=32,select_block=64,decode=token,tail=256": {
+  "passkey": 1.0,
+  "kvret64": 0.5625,
+  "vt": 0.375
+ },
+ "65536|oracle:topk=32,select_block=64,decode=token,tail=512": {
+  "passkey": 1.0,
+  "kvret64": 0.5625,
+  "vt": 0.375
+ },
+ "65536|page_mean:topk=32,select_block=64,decode=token,tail=256": {
+  "passkey": 1.0,
+  "kvret64": 0.125,
+  "vt": 0.1875
+ }
+}
+

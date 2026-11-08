@@ -1,0 +1,51 @@
+[
+  {
+    "max_seqs": 32,
+    "token_budget": 8192,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 1022.47505235672
+  },
+  {
+    "max_seqs": 64,
+    "token_budget": 8192,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 354.29861640930176
+  },
+  {
+    "max_seqs": 128,
+    "token_budget": 8192,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 276.6475052833557
+  },
+  {
+    "max_seqs": 256,
+    "token_budget": 8192,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 269.6604115962982
+  },
+  {
+    "max_seqs": 64,
+    "token_budget": 32768,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 320.1621952056885
+  },
+  {
+    "max_seqs": 128,
+    "token_budget": 32768,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 280.1964159011841
+  },
+  {
+    "max_seqs": 256,
+    "token_budget": 32768,
+    "exit_code": 0,
+    "status": "ok",
+    "wall_seconds": 537.1900508403778
+  }
+]

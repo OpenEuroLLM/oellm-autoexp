@@ -1,0 +1,286 @@
+{
+  "layout": "ep4",
+  "max_seqs": 32,
+  "token_budget": 8192,
+  "dp": 4,
+  "tp": 1,
+  "startup_seconds": 706.5388554576784,
+  "prompt_sha256": "119c54acf582acaf185777805dafdef74f196a99c92738d8f748e91f7e7362df",
+  "trials": [
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "mode": "scoring",
+      "trial": 0,
+      "seconds": 18.437564922031015,
+      "requests_per_second": 55.538787487952064,
+      "input_tokens_per_second": 14217.929596915728,
+      "output_tokens_per_second": 55.538787487952064,
+      "mean_nll": 1.6887118230906042,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 7,
+            "waiting": 247,
+            "cache_usage": 0.03361505954667687,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 7,
+            "waiting": 247,
+            "cache_usage": 0.03361505954667687,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 7,
+            "waiting": 247,
+            "cache_usage": 0.03361505954667687,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 6,
+            "waiting": 246,
+            "cache_usage": 0.02881290818286597,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "device": 0,
+            "free_bytes": 6633291776,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 59200503808,
+            "peak_allocated_bytes": 58000635392,
+            "peak_reserved_bytes": 59200503808
+          }
+        ],
+        [
+          {
+            "device": 1,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 58000635392,
+            "peak_reserved_bytes": 58932068352
+          }
+        ],
+        [
+          {
+            "device": 2,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 58000635392,
+            "peak_reserved_bytes": 58932068352
+          }
+        ],
+        [
+          {
+            "device": 3,
+            "free_bytes": 6914310144,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58919485440,
+            "peak_allocated_bytes": 57865367040,
+            "peak_reserved_bytes": 58919485440
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "mode": "scoring",
+      "trial": 1,
+      "seconds": 18.54627877799794,
+      "requests_per_second": 55.21323238248768,
+      "input_tokens_per_second": 14134.587489916847,
+      "output_tokens_per_second": 55.21323238248768,
+      "mean_nll": 1.6886381180294785,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 8,
+            "waiting": 247,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 8,
+            "waiting": 247,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 8,
+            "waiting": 246,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 8,
+            "waiting": 247,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "device": 0,
+            "free_bytes": 6633291776,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 59200503808,
+            "peak_allocated_bytes": 58000635392,
+            "peak_reserved_bytes": 59200503808
+          }
+        ],
+        [
+          {
+            "device": 1,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 58000635392,
+            "peak_reserved_bytes": 58932068352
+          }
+        ],
+        [
+          {
+            "device": 2,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 57865367040,
+            "peak_reserved_bytes": 58932068352
+          }
+        ],
+        [
+          {
+            "device": 3,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 58000635392,
+            "peak_reserved_bytes": 58932068352
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 32768,
+      "mode": "generation",
+      "trial": 0,
+      "seconds": 194.74119574204087,
+      "requests_per_second": 5.2582608220009925,
+      "input_tokens_per_second": 1346.114770432254,
+      "output_tokens_per_second": 168.26434630403176,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 8,
+            "waiting": 248,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 8,
+            "waiting": 248,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 8,
+            "waiting": 248,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 8,
+            "waiting": 248,
+            "cache_usage": 0.03841721091048789,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "device": 0,
+            "free_bytes": 6633291776,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 59200503808,
+            "peak_allocated_bytes": 57569964032,
+            "peak_reserved_bytes": 59200503808
+          }
+        ],
+        [
+          {
+            "device": 1,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 57569964032,
+            "peak_reserved_bytes": 58932068352
+          }
+        ],
+        [
+          {
+            "device": 2,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 57560458240,
+            "peak_reserved_bytes": 58932068352
+          }
+        ],
+        [
+          {
+            "device": 3,
+            "free_bytes": 6901727232,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 57053704192,
+            "reserved_bytes": 58932068352,
+            "peak_allocated_bytes": 57569964032,
+            "peak_reserved_bytes": 58932068352
+          }
+        ]
+      ]
+    }
+  ]
+}

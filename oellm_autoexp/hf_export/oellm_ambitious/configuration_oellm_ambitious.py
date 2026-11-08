@@ -73,6 +73,13 @@ class OellmAmbitiousConfig(PretrainedConfig):
         engram_sign_multipliers: dict | None = None,  # {layer index (str): [[...]]}
         engram_table_dtype: str | None = None,
         engram_scale_dtype: str = "fp32",
+        # the embedding output: x * embedding_multiplier, then (embedding_norm) an fp32 RMSNorm with a gain
+        embedding_multiplier: float = 1.0,
+        embedding_norm: bool = False,
+        # the routed experts: "bf16", or "fp8" = E4M3 bytes (uint8) + one fp32 scale per 128 elements of a
+        # row (Megatron's fsdp_fp8_param_gather tiles: the weights the run's forward used)
+        expert_weight_dtype: str = "bf16",
+        expert_scale_block: int = 128,
         tie_word_embeddings: bool = False,
         use_cache: bool = True,
         bos_token_id: int | None = None,
@@ -134,6 +141,12 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.engram_sign_multipliers = engram_sign_multipliers or {}
         self.engram_table_dtype = engram_table_dtype
         self.engram_scale_dtype = engram_scale_dtype
+        self.embedding_multiplier = embedding_multiplier
+        self.embedding_norm = embedding_norm
+        if expert_weight_dtype not in ("bf16", "fp8"):
+            raise ValueError(f"expert_weight_dtype {expert_weight_dtype!r}")
+        self.expert_weight_dtype = expert_weight_dtype
+        self.expert_scale_block = expert_scale_block
         self.sliding_window = None
         self.use_cache = use_cache
         # transformers 5: no defaults in PretrainedConfig, each config declares its own

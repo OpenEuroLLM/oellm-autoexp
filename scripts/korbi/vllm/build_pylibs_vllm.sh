@@ -28,6 +28,8 @@ if [ ! -f "$DEST/.installed_$VER" ]; then
 fi
 # our Python on top (no binaries in the source tree; nothing deleted from the install)
 tar -C "$SRC/vllm" --exclude='*.so' --exclude=__pycache__ -cf - . | tar -C "$DEST/vllm" -xf -
+# hides the image's optional packages that cannot load next to this torch (see the file)
+cp scripts/korbi/vllm/sitecustomize.py "$DEST/sitecustomize.py"
 echo "$SHA" > "$DEST/VLLM_COMMIT"
 python3 - "$DEST" <<'PY'
 import sys

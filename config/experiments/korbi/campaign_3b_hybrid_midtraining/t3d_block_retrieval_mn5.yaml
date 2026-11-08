@@ -1,0 +1,16 @@
+# @package _global_
+# T3d: retrieval under block-wise selection with inference-time per-token selection (decode=token: the prompt's
+# final selection block and the continuations select per token, prefill stays block-wise), 16 questions per task
+# (T3b's 6 cannot separate the arms). Frozen v4, page 64, window 512, 32 pages. One length per job (2 h limit):
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t3d_block_retrieval_mn5 aux.dev_queue=true --yes
+#   ... aux.name=t3d_block_retrieval_128k_v4_2ph_8000 aux.lengths=131072
+defaults:
+  - t3_sparse_variants_mn5
+  - _self_
+
+aux:
+  name: t3d_block_retrieval_64k_v4_2ph_8000
+  lengths: "65536"
+  policies: "dense/page_mean:topk=32/page_mean:topk=32,select_block=64,decode=token/page_mean:topk=32,select_block=64,select_score=prev_max,decode=token/oracle:topk=32/oracle:topk=32,select_block=64,decode=token"
+  args: "--tasks retrieval --n 16 --chunk 16384 --parity 0"

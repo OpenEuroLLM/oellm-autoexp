@@ -13,7 +13,9 @@ all visible GPUs (``device_map="auto"``), so a 35-91B model fits one node.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import os
 import random
 import struct
 import time
@@ -70,6 +72,9 @@ def layer_device_map(cfg, gib: float, engram_tables_cpu: bool = False) -> dict[s
     through a module's forward, which the mHC read / write (methods) never call."""
     from transformers import AutoModelForCausalLM
 
+    if os.environ.get("OELLM_HF_MOE", "reference") == "grouped":
+        cfg = copy.deepcopy(cfg)
+        cfg.expert_weight_dtype = "bf16"
     with torch.device("meta"):
         model = AutoModelForCausalLM.from_config(cfg, trust_remote_code=True, dtype=torch.bfloat16)
     skip = {id(getattr(m, n)) for m, n in _engram_tables(model)} if engram_tables_cpu else set()
@@ -81,6 +86,9 @@ def layer_device_map(cfg, gib: float, engram_tables_cpu: bool = False) -> dict[s
     cap[n - 1] -= tail
     dmap["model.embed_tokens"] = 0
     used[0] += size(model.model.embed_tokens)
+    if getattr(model.model, "embed_norm", None) is not None:  # embedding_norm (v4_ldm)
+        dmap["model.embed_norm"] = 0
+        used[0] += size(model.model.embed_norm)
     if getattr(model.model, "ldm_boundary", None) is not None:  # LDM: the embedding write / first query
         dmap["model.ldm_boundary"] = 0
         used[0] += size(model.model.ldm_boundary)
@@ -108,6 +116,38 @@ def load_engram_tables_cpu(model_dir: Path, dmap: dict[str, int]):
     from transformers import AutoModelForCausalLM
 
     model = AutoModelForCausalLM.from_pretrained(model_dir, trust_remote_code=True, dtype=torch.bfloat16)
+    if os.environ.get("OELLM_HF_MOE", "reference") == "grouped":
+        prepared = 0
+        for module in model.modules():
+            prepare = getattr(module, "prepare_grouped_experts", None)
+            if prepare is not None:
+                prepare()
+                prepared += 1
+        if not prepared:
+            raise ValueError("Refresh the export's model code for grouped MoE support")
+        model.config.expert_weight_dtype = "bf16"
+    table_root = os.environ.get("OELLM_ENGRAM_MODEL_DIR")
+    if table_root:
+        from safetensors import safe_open
+
+        table_root = Path(table_root)
+        index = json.loads((table_root / "model.safetensors.index.json").read_text())["weight_map"]
+        for prefix, module in model.named_modules():
+            if not hasattr(module, "offload_table"):
+                continue
+            for name in ("table", "table_scale"):
+                old = getattr(module, name, None)
+                if old is None:
+                    continue
+                key = f"{prefix}.{name}"
+                with safe_open(table_root / index[key], framework="pt", device="cpu") as f:
+                    mapped = f.get_tensor(key)
+                if mapped.shape != old.shape or mapped.dtype != old.dtype:
+                    raise ValueError(f"Offloaded Engram table metadata differs: {key}")
+                if isinstance(old, torch.nn.Parameter):
+                    module._parameters[name] = torch.nn.Parameter(mapped, requires_grad=False)
+                else:
+                    module._buffers[name] = mapped
     held = []
     for mod, name in _engram_tables(model):
         store = mod._parameters if name in mod._parameters else mod._buffers

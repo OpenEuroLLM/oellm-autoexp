@@ -1,0 +1,88 @@
+# @package _global_
+# 009: isolated 4-node mHC/Muown/Engram resume correctness and profiling.
+defaults:
+  - hybrid_ambitious_v4_2ph_256_mn5
+  - _self_
+aux:
+  experiment_group: sharding_checks
+  suite: mhc256_009
+  arm: ref
+  nodes: 4
+  phase: 1
+  seq: 1024
+  gbs: 32
+  stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
+  only: []
+backend:
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    ENGRAM_STEP_GROUP: '1'
+    MEGATRON_DEBUG_OPT_STATE: '1'
+    MEGATRON_DEBUG_OPT_STATE_FILE: ${job.base_output_dir}/opt_state/dump
+  megatron:
+    num_experts: 8
+    engram_table_size: 65539
+    micro_batch_size: 1
+    data_sampler_reference_dp_size: 8
+    data_sampler_reference_micro_batch_size: 1
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    validation_set_names: null
+    train_iters: 30
+    exit_interval: null
+    eval_interval: 100000
+    eval_iters: 0
+    split: '1000,0,0'
+    arch_metrics_interval: 1000
+    wandb_project: null
+    wandb_exp_name: null
+    save_retain_interval: null
+    save_interval: 1000
+    non_persistent_save_interval: 1000
+    profile: true
+    use_pytorch_profiler: true
+    profile_ranks: [0, 8]
+    profile_step_start: 4
+    profile_step_end: 6
+job:
+  name: mhc256_009_${aux.arm}
+  metadata:
+    pool_singleton: null
+  start_condition: null
+  log_events: []
+  state_events:
+    - name: failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: '009: failed; no automatic retry'}
+  est_startup_min: 10.0
+slurm:
+  sbatch:
+    account: cns144
+    time: '01:00:00'
+  env:
+    WAIT_FOR_JOB_NAME: ''
+sweep:
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ref
+          backend.megatron.non_persistent_save_interval: 20
+          backend.megatron.profile_step_start: 14
+          backend.megatron.profile_step_end: 16
+        - aux.arm: control
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/sharding_checks/mhc256_009/ref/ckpt_rolling
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/sharding_checks/mhc256_009/ref/ckpt_rolling/iter_0000020/.metadata
+            persistent_pass: true
+        - aux.arm: hsdp2
+          backend.megatron.num_distributed_optimizer_instances: 2
+          backend.megatron.outer_dp_sharding_strategy: no_shard
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/sharding_checks/mhc256_009/ref/ckpt_rolling
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/sharding_checks/mhc256_009/ref/ckpt_rolling/iter_0000020/.metadata
+            persistent_pass: true

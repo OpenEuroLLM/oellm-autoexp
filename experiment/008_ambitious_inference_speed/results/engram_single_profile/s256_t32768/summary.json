@@ -1,0 +1,10 @@
+{
+  "layout": "ep4",
+  "max_seqs": 256,
+  "token_budget": 32768,
+  "dp": 4,
+  "tp": 1,
+  "startup_seconds": 110.81955251190811,
+  "prompt_sha256": "119c54acf582acaf185777805dafdef74f196a99c92738d8f748e91f7e7362df",
+  "trials": []
+}

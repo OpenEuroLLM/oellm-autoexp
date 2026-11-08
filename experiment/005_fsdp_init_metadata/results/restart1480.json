@@ -1,0 +1,61 @@
+{
+  "job": 48335386,
+  "host": "mn5_pool_p132/host002",
+  "run": "mn5-pool-p132.0232",
+  "nodes": 128,
+  "checkpoint": 1480,
+  "source_snapshot": "autoexp_ambv4resume1480",
+  "patch": "a1f185341",
+  "watchdog_disabled": true,
+  "training_and_container_config_differences": [],
+  "launch_time": "2026-11-03 09:17:19 CET",
+  "milestones": [
+    "[default0]:[after in-process setup and before initialize_megatron] datetime: 2026-11-03 09:18:27.309821 ",
+    "[default0]:[after in-job setup and before initialize_megatron] datetime: 2026-11-03 09:18:27.377321 ",
+    "[default0]:[before library-setup] datetime: 2026-11-03 09:17:42.249672",
+    "[default0]:[after library-setup] datetime: 2026-11-03 09:18:21.749962",
+    "[default0]:[before megatron-init] datetime: 2026-11-03 09:18:27.309820",
+    "[default0]:[after megatron is initialized] datetime: 2026-11-03 09:20:40.728176 ",
+    "[default0]:[after model, optimizer, and learning rate scheduler are built] datetime: 2026-11-03 09:24:25.854690 ",
+    "[default0]:[after dataloaders are built] datetime: 2026-11-03 09:25:17.759132 ",
+    "[default0]:[before the start of training step] datetime: 2026-11-03 09:25:17.979368 "
+  ],
+  "steps": [
+    {
+      "time": "2026-11-03 09:28:53.800109",
+      "iteration": 1481,
+      "reported_seconds": 215.8211,
+      "loss": 1.445771,
+      "grad_norm": 0.214
+    },
+    {
+      "time": "2026-11-03 09:29:23.761623",
+      "iteration": 1482,
+      "reported_seconds": 122.89089999999999,
+      "loss": 1.45893,
+      "grad_norm": 0.222
+    },
+    {
+      "time": "2026-11-03 09:29:53.190622",
+      "iteration": 1483,
+      "reported_seconds": 29.4285,
+      "loss": 1.470727,
+      "grad_norm": 0.232
+    },
+    {
+      "time": "2026-11-03 09:30:22.517442",
+      "iteration": 1484,
+      "reported_seconds": 29.3265,
+      "loss": 1.460506,
+      "grad_norm": 0.21
+    },
+    {
+      "time": "2026-11-03 09:30:51.941803",
+      "iteration": 1485,
+      "reported_seconds": 29.4234,
+      "loss": 1.461835,
+      "grad_norm": 0.203
+    }
+  ],
+  "note": "Different host/checkpoint from previous run; these timings are not a controlled A/B comparison."
+}

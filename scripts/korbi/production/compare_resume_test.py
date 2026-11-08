@@ -56,7 +56,10 @@ def read_dump(path):
 
 
 def dumps(root, arm, tag, kind):
-    pat = f"{root}/{arm}/opt_state/dump.{tag}{'.model' if kind == 'model' else ''}.rank*.txt"
+    suffix = {"model": ".model", "buffers": ".buffers", "buffers_np": ".buffers_nonpersistent"}.get(
+        kind, ""
+    )
+    pat = f"{root}/{arm}/opt_state/dump.{tag}{suffix}.rank*.txt"
     files = sorted(glob.glob(pat), key=lambda p: int(re.search(r"rank(\d+)", p).group(1)))
     return {int(re.search(r"rank(\d+)", p).group(1)): read_dump(p) for p in files}
 
@@ -93,6 +96,9 @@ def compare_state(root, arm, kind, ref_arm="ref"):
     rt, rs = summed(ref)
     nt, ns = summed(new)
     ok = True
+    if not rt and not nt:
+        print(f"  [{kind}] no entries")
+        return True
     missing = sorted(set(rt) ^ set(nt))
     if missing:
         ok = False
@@ -189,6 +195,11 @@ def main():
         print(f"== state: {ref_arm} step-20 save vs {arm} after load")
         compare_state(root, arm, "model", ref_arm)
         verdict[arm] = compare_state(root, arm, "opt", ref_arm)
+        # aggregate / EMA state: persistent buffers (expert_bias, qb_beta, _initial_expert_rms,
+        # route_bias) must reload; non-persistent accumulators are per global batch, printed
+        # for information only (they are not in the checkpoint).
+        verdict[f"{arm}:buffers"] = compare_state(root, arm, "buffers", ref_arm)
+        compare_state(root, arm, "buffers_np", ref_arm)
     compare_losses(root)
     compare_losses(root, "ref_s", ("grow_s",))
     print("\nstate verdict:", {a: ("exact" if v else "MISMATCH") for a, v in verdict.items()})

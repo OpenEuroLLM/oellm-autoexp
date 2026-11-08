@@ -269,15 +269,46 @@ adopt_deadline_check() {
   fi
 }
 
-load_cfg
-START_TS=$(now)
-atomic "$H/info.env" "SLURM_JOB_ID=${SLURM_JOB_ID:-}
+write_info() {
+  atomic "$H/info.env" "SLURM_JOB_ID=${SLURM_JOB_ID:-}
 NUM_NODES=$NUM_NODES
 NODELIST=$(printf '%s\n' "$ALL_NODES" | paste -sd, -)
 START_TS=$START_TS
 JOB_START_TS=${JOB_START_TS:-$START_TS}
 ADOPTED=$ADOPTED
 BATCH_HOST=$(hostname)"
+}
+
+# The allocation as SLURM holds it NOW. A job shrunk with `scontrol update JobId=.. NodeList=..`
+# keeps the SLURM_JOB_NODELIST of its start, so ALL_NODES would still list the removed nodes:
+# the shrink puts them into <host>/exclude_nodes, which hides them from plain runs -- but a
+# USE_EXCLUDED_NODES run takes excluded nodes FIRST and was handed one that was gone ("Requested
+# node configuration is not available", p134c host006, 2026-11-05). Checked every
+# POOL_ALLOC_REFRESH_S; an empty or unparsable answer (a squeue hiccup) keeps the current list,
+# and only nodes of the current list are kept (a running job cannot grow).
+ALLOC_CHECKED=0
+refresh_alloc() {
+  [ $(($(now) - ALLOC_CHECKED)) -ge "${POOL_ALLOC_REFRESH_S:-60}" ] || return 0
+  ALLOC_CHECKED=$(now)
+  local list live kept gone
+  list=$(squeue -h -j "$SLURM_JOB_ID" -o %N 2>/dev/null | head -n1)
+  [ -n "$list" ] || return 0
+  live=$(expand_hosts "$list")
+  [ -n "$live" ] || return 0
+  kept=$(printf '%s\n' "$ALL_NODES" | grep -xF -f <(printf '%s\n' "$live"))
+  [ -n "$kept" ] && [ "$kept" != "$ALL_NODES" ] || return 0
+  gone=$(printf '%s\n' "$ALL_NODES" | grep -vxF -f <(printf '%s\n' "$kept") | paste -sd, -)
+  ALL_NODES=$kept
+  NUM_NODES=$(printf '%s\n' "$ALL_NODES" | grep -c .)
+  write_info
+  LAST_STATE="" # the usable node count in the state changes with it
+  log "allocation shrunk to $NUM_NODES node(s), gone: $gone"
+  ledger "-" "host resized nodes=$NUM_NODES gone=$gone"
+}
+
+load_cfg
+START_TS=$(now)
+write_info
 touch "$H/alive"
 set_state idle
 ledger "-" "host start nodes=$NUM_NODES"
@@ -296,13 +327,20 @@ gpu_probe() {
     --ntasks="$n" --ntasks-per-node=1 --cpus-per-task=1 --job-name=gpu-probe \
     bash -c 'echo "GPU_PROBE ${SLURMD_NODENAME:-$(hostname -s)} $(eval "$POOL_PREFLIGHT_GPU_CMD")"' 2>&1)
   bad=""
+  local ok=0 table=""
   for node in $(printf '%s' "$nl" | tr ',' ' '); do
     count=$(printf '%s\n' "$out" | awk -v n="$node" '$1 == "GPU_PROBE" && $2 == n {print $3; exit}')
+    table="$table$node ${count:-no-answer}"$'\n'
     if ! [ "${count:-x}" -ge "$POOL_PREFLIGHT_GPUS" ] 2>/dev/null; then
       bad="$bad $node"
       log "GPU probe: $node has ${count:-no answer} GPU(s), expected $POOL_PREFLIGHT_GPUS: excluded"
+    else
+      ok=$((ok + 1))
     fi
   done
+  # every node's count ("<node> <gpus>") and the raw srun output (errors included), for inspection
+  atomic "$H/gpu_probe.txt" "$(printf '%s# raw srun output\n%s\n' "$table" "$out")"
+  log "GPU probe: $ok of $n node(s) show $POOL_PREFLIGHT_GPUS GPU(s)${bad:+; excluded:$bad} (per node: $H/gpu_probe.txt)"
   if [ -n "$bad" ]; then
     printf '%s\n' $bad >>"$H/exclude_nodes"
     ledger "-" "gpu probe excluded:$bad"
@@ -378,6 +416,7 @@ idle_since=$(now)
 while true; do
   touch "$H/alive"
   load_cfg
+  refresh_alloc
   adopt_deadline_check
   reap
   stopping=""

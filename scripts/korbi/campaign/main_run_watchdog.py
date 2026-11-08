@@ -20,7 +20,8 @@ files with a stdlib-only reader (the login node has neither tensorboard nor prot
      ``--stall-min`` minutes (crash / restart loops; state in <run-dir>/watchdog_state.json);
   6. extra rules (``--rule TAG:OP:LIMIT:MIN_STEP:WINDOW``, repeatable): the median of TAG's last
      WINDOW readings from MIN_STEP on is beyond LIMIT (OP ``>`` or ``<``); a TAG ending in ``*``
-     is the max (``>``) / min (``<``) over every tag with that prefix, per step. For the LDM run
+     is the max (``>``) / min (``<``) over every tag with that prefix, per step, one ending in
+     ``*mean`` their mean. For the LDM run
      the v3 precursors: front-layer expert overload and the first site's write ratio moved
      300-600 steps before the grad norm (docs/hybrid_moe_3b_campaign.md).
 On a trip it writes ``<run-dir>/watchdog_tripped.json`` and cancels ``--job`` in every ``--pool``
@@ -124,10 +125,19 @@ def parse_rule(text):
     return tag, op, float(limit), int(min_step), int(window)
 
 
+def _prefix(tag):
+    """(prefix, aggregate) of a prefix rule tag (``...*`` max / min, ``...*mean``), else None."""
+    if tag.endswith("*mean"):
+        return tag[: -len("*mean")], "mean"
+    if tag.endswith("*"):
+        return tag[:-1], "extreme"
+    return None
+
+
 def rule_tags(rules):
     """(exact tags, prefixes) the rules read."""
-    exact = tuple(r[0] for r in rules if not r[0].endswith("*"))
-    return exact, tuple(r[0][:-1] for r in rules if r[0].endswith("*"))
+    exact = tuple(r[0] for r in rules if _prefix(r[0]) is None)
+    return exact, tuple(_prefix(r[0])[0] for r in rules if _prefix(r[0]) is not None)
 
 
 def load(run_dir, rules=()):
@@ -141,16 +151,21 @@ def load(run_dir, rules=()):
 
 
 def rule_series(series, tag, op):
-    """{step: value} of a rule's tag; a prefix tag is the per-step max / min over its matches."""
-    if not tag.endswith("*"):
+    """{step: value} of a rule's tag; a prefix tag is the per-step max / min (``*``) or mean
+    (``*mean``) over its matches."""
+    pre = _prefix(tag)
+    if pre is None:
         return series.get(tag, {})
-    pick = max if op == ">" else min
-    out = {}
+    prefix, how = pre
+    per_step = {}
     for t, s in series.items():
-        if t.startswith(tag[:-1]):
+        if t.startswith(prefix):
             for step, v in s.items():
-                out[step] = v if step not in out else pick(out[step], v)
-    return out
+                per_step.setdefault(step, []).append(v)
+    if how == "mean":
+        return {step: sum(vs) / len(vs) for step, vs in per_step.items()}
+    pick = max if op == ">" else min
+    return {step: pick(vs) for step, vs in per_step.items()}
 
 
 def check_rules(series, rules):

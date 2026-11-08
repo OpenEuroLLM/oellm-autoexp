@@ -1,0 +1,9 @@
+[
+  {
+    "max_seqs": 32,
+    "token_budget": 8192,
+    "exit_code": -15,
+    "status": "failed",
+    "wall_seconds": 1035.351557970047
+  }
+]

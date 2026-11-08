@@ -60,6 +60,9 @@ pool_host:
   preflight_max_rounds: 3
   preflight_check: ""
   preflight_check_overrides: []
+  # "host": a preflight exclusion stays on that host (<host>/exclude_nodes); "pool": also every
+  # later host, and pushed into queued hosts (scontrol update -- needs the user's go)
+  preflight_exclude_scope: host
   # verified handover: the old host's runs are stopped, the old host is KEPT until the moved
   # runs logged handover_healthy_steps lines matching handover_healthy_pattern on the new one;
   # if they fail or time out the NEW host is released and the runs go back to the old one

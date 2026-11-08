@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "gpu_kernel_counts_and_ns": [
+    [
+      0,
+      16,
+      72704
+    ],
+    [
+      1,
+      16,
+      72032
+    ],
+    [
+      2,
+      16,
+      72224
+    ],
+    [
+      3,
+      16,
+      72352
+    ]
+  ],
+  "sqlite": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_profile009/experiment/009_ambitious_decode_gpu_profile/results/smoke.sqlite"
+}

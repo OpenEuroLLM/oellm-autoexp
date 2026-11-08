@@ -277,6 +277,35 @@ at the save and after each load.
 | 4 -> 8 nodes, single sampler (`grow_s`) | summed over ranks, max rel diff 7e-10 | 7.545552 = 7.545552 | \|d loss\| <= 0.003 to step 25; 0.043 at 27 after a grad-norm spike at 26 (31.6 vs 41.2: rounding drift amplified, another reduction order on 32 ranks), 0.004 at 30 |
 | 4 -> 8 nodes, production cyclic sampler (`grow`) | max rel diff 5e-10 | 7.6667 vs 7.6492 | other batches (not paired) |
 
+Rerun 2026-11-02 (`aux.suite=amb_rs4`, 8k x mbs 4 on the opt81 phase-1 mix) after the packed
+fsdp_dtensor optimizer scalars (Megatron ac1020efc: the parameter-group metadata and the per-parameter
+`step` counters as a few pickled items keyed by each rank's parameter set, instead of one DCP item per
+leaf; the 84B checkpoint had 559k such items, a 485 MB `.metadata` and ~30 min loads at 128 nodes):
+
+| resume | optimizer state (15,345 entries) | step 21 lm loss | steps 22-30 |
+|---|---|---|---|
+| 4 -> 4 nodes (`cont`) | rank by rank exact | 7.748000 = 7.748000 | \|d loss\| <= 0.0009 to step 25, <= 0.018 after |
+| 4 -> 8 nodes (`grow`) | summed over ranks, max rel diff 5.7e-10 | (cyclic sampler: other batches) | - |
+
+Reruns 2026-11-03 with the batched Muown row-state metadata (Megatron 5ecd322ea) and the batched
+FSDP parameter metadata (a1f185341), snapshot `autoexp_rowmeta3`, `train_iters` 30 for every arm
+(`amb_rs5` was invalid: ref trained to 40, its step-40 rolling save replaced step 20, cont loaded
+40), on pool spare nodes (`hybrid_ambitious_resume_test_mn5_pool`, `amb_rs6_chain.sh`):
+
+| test | optimizer state (15,345 entries) | persistent buffers (48) | step 21 lm loss | steps 22-30 |
+|---|---|---|---|---|
+| `amb_rs6` cont | rank by rank exact | - | 7.874615 = 7.874615 | \|d loss\| <= 0.096 |
+| `amb_rs7` cont | rank by rank exact | rank by rank exact (router expert_bias, ...) | 7.868867 = 7.868867 | \|d loss\| <= 0.015 |
+
+Not covered by a resume test: the opt-in rank-local load planning (`FSDP_DCP_LOCAL_LOAD_PLAN=1`,
+Megatron 404b5f2fa); in production since 2026-11-04 (v4_2ph, loss continuous across the load).
+
+The test checkpoint holds 30 non-tensor items (19.5 MB `.metadata`). The arms need `exit_interval=null`
+(train to 40): stopped at 30 < `train_iters`, the monitor resubmits them and the second job overwrites
+the after-load dumps. The first packed version (a6d3ffda1) failed this test three ways (iteration and
+scheduler state lost, a step counter missing from the template not restored, one packed key per
+sub-optimizer deduplicated across EP ranks); fixed in ac1020efc.
+
 - The production sampler (`dataloader_type cyclic` + `data_sharding`) gives every step after a DP
   change different samples, so a node-count change shows as a loss / grad-norm shift that is data,
   not state (`grow`: grad norm 38 at step 21; `ref_s` alone has 33 and 32 at steps 19 / 26).

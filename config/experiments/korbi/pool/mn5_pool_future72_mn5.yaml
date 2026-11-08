@@ -1,0 +1,49 @@
+# @package _global_
+# Additional CNS allocations, 2026-11-03. Prepare with --no-monitor, then
+# scripts/korbi/production/submit_prepared_host_once.py for each pool.
+# No recurring monitor: no queued exclusion updates, replacements, or cancellation.
+defaults:
+  - /backend: pool_host
+  - /slurm: marenostrum_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+aux:
+  nodes: 134
+job:
+  name: mn5_pool_f72_${aux.nodes}c_20261103
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/${job.name}
+  pool_host:
+    hold_hosts: true
+    handover: false
+    handover_verify: false
+    max_hosts_running: 1
+    max_own_hosts: 1
+    max_runs_per_host: 6
+    min_hosts: 1
+    keep_pending: 0
+    keep_monitor: false
+    max_attempts: 1
+    preflight: false
+    preflight_gpus_per_node: 0
+    monitor_dead_exit_s: 259200
+    poll_s: 30
+    stop_grace_s: 1800
+    preempt_grace_s: 2700
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: '3-00:00:00'
+    account: cns144
+    qos: acc_xehpc
+    signal: 'B:USR1@2700'
+    no_kill: true
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - aux.nodes: 134
+        - aux.nodes: 264
+index: 0
+stage: ''

@@ -1,0 +1,21 @@
+{
+  "layout": "tp4",
+  "tp": 4,
+  "dp": 1,
+  "expert_parallel": 4,
+  "startup_seconds": 284.4932036350947,
+  "trials": [
+    {
+      "seconds": 13.411496323999017,
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "input_tokens_per_second": 610.8192406048636
+    },
+    {
+      "seconds": 9.794919974170625,
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "input_tokens_per_second": 836.3519070704453
+    }
+  ]
+}

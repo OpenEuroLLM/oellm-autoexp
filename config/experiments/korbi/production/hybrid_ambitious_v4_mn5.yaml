@@ -16,6 +16,9 @@ defaults:
 
 aux:
   arm: ambitious_e360_eng80_v4
+  # thorough node check before every (re)start of the main run (user 2026-11-04): o134c's
+  # throttling GPUs (sustained 0.58-0.69 x) made a 128-node segment 27 % slower; ~4-5 min
+  node_check: thorough
 
 backend:
   megatron:

@@ -1,0 +1,37 @@
+{
+  "layer": 1,
+  "torch": "2.13.0+cu130",
+  "trials": [
+    {
+      "tokens": 1,
+      "reference_seconds": 0.0017951549962162971,
+      "cached_seconds": 0.0012856860412284732,
+      "cached_bitwise_equal": true,
+      "grouped_seconds": 0.0006630105199292302,
+      "max_abs_diff": 0.0,
+      "rms_diff": 0.0,
+      "reference_rms": 0.029391130432486534
+    },
+    {
+      "tokens": 128,
+      "reference_seconds": 0.06083125702571124,
+      "cached_seconds": 0.044359834981150925,
+      "cached_bitwise_equal": true,
+      "grouped_seconds": 0.0019695254741236567,
+      "max_abs_diff": 0.00048828125,
+      "rms_diff": 2.2682857888867147e-05,
+      "reference_rms": 0.030886748805642128
+    },
+    {
+      "tokens": 512,
+      "reference_seconds": 0.07646609959192574,
+      "cached_seconds": 0.0559284589253366,
+      "cached_bitwise_equal": true,
+      "grouped_seconds": 0.0025536809116601944,
+      "max_abs_diff": 0.0009765625,
+      "rms_diff": 2.1240968635538593e-05,
+      "reference_rms": 0.031123356893658638
+    }
+  ],
+  "dequantize_once_seconds": 0.023582908092066646
+}

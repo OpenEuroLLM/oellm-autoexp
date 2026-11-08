@@ -1,0 +1,26 @@
+# @package _global_
+# vLLM decode settings of experiment 012 for the oellm_ambitious exports (validated on
+# ambitious_v4_2ph_fp8_6000, TP1/DP4/EP4: 100 tok/s per request at one request per GPU, decode
+# logprobs consistent with the reference; experiment/012_ambitious_full_decode_graphs/log.md).
+# Included by the eval configs; the switches only affect the oellm_ambitious model code (the
+# CUDA-graph preset only applies to oellm_ambitious exports), the conservative q35 runs keep
+# their engine. Override any of them per run, e.g. backend.env.OELLM_MOE_FP8="".
+#
+# - OELLM_ENGRAM_TABLES=uva: Engram tables staged per node in /dev/shm (~160 GB RAM), pinned,
+#   gathered on the GPU; the eval runners remove them when the job ends
+# - OELLM_DECODE_KERNELS=triton: fused decode kernels (Engram hash, router, SwiGLU + post-act
+#   norm, merged CKDA projections, gated output norm, CKDA in-place recurrence, mHC split)
+# - OELLM_MOE_FP8=w8a16: routed experts stay E4M3 on the GPU, dequantized in the MoE kernel
+# - OELLM_VLLM_CUDAGRAPH=full_decode: vLLM FULL_DECODE_ONLY CUDA graphs (no torch.compile)
+backend:
+  env:
+    OELLM_ENGRAM_TABLES: uva
+    OELLM_DECODE_KERNELS: triton
+    OELLM_MOE_FP8: w8a16
+    OELLM_VLLM_CUDAGRAPH: full_decode
+    OELLM_VLLM_ENFORCE_EAGER: "0"
+    OELLM_FUSION_IMPL: triton
+    OELLM_MHC_IMPL: triton
+    OELLM_ENGRAM_DECODE_IMPL: batched
+    OELLM_DECODE_GRAPHS: "0"
+    OELLM_LOCAL_EXPERT_LOAD: "1"

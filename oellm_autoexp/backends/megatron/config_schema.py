@@ -547,6 +547,24 @@ class MegatronConfig(ConfigInterface):
     # compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
     engram_token_map: str | None = None
 
+    # A second set of Engram lookups (empty = off) over ids mapped by ``engram_aux_token_map``
+    # (e.g. a finer compression that keeps accents: NFKC + lowercasing only), with its own
+    # hash multipliers, sign hash and table rows appended after the main ones; its rows join
+    # the memory vector after the main ones. The main lookups (sizes, hashes, row offsets,
+    # conv dilation) do not change, so a checkpoint without it widens function-preservingly
+    # (zero key / value projection columns for the new rows:
+    # scripts/korbi/production/widen_engram_aux.py).
+    engram_aux_ngram_orders: list[int] = field(default_factory=lambda: [])
+
+    # Hash heads per order of the auxiliary lookups (0 = engram_num_heads).
+    engram_aux_num_heads: int = 0
+
+    # Rows per auxiliary table (0 = engram_table_size; distinct primes, after the main ones).
+    engram_aux_table_size: int = 0
+
+    # Token map of the auxiliary lookups (.npy, as engram_token_map); None = raw token ids.
+    engram_aux_token_map: str | None = None
+
     # Query and key head dimension for the gated delta net.
     linear_key_head_dim: int = 128
 
@@ -622,6 +640,90 @@ class MegatronConfig(ConfigInterface):
 
     # The length where the scaling is 1 (the training sequence length).
     attention_length_scaling_base: int = 8192
+
+    # Page-sparse attention for the self-attention layers
+    # (experimental_attention_variant/page_sparse.py): every query attends to the sink pages,
+    # a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense,
+    # window, page_mean, quest, oracle, token_topk, compress_mean (CSA2-like), indexer (a
+    # learned PageIndexer) -- ONE selection per token for all heads. None: the configured core
+    # attention.
+    page_sparse_selector: str | None = None
+
+    # Page size (tokens) of page_sparse_selector.
+    page_sparse_page: int = 64
+
+    # Selected pages per query (token_topk: page_sparse_topk * page tokens; compress_mean:
+    # that many tokens' worth of compressed entries).
+    page_sparse_topk: int = 32
+
+    # Local window (tokens, a multiple of the page) before the query's own page.
+    page_sparse_window: int = 512
+
+    # Always-attended pages at the sequence (document) start.
+    page_sparse_sink_pages: int = 1
+
+    # compress_mean: tokens per mean-pooled entry.
+    page_sparse_compress: int = 4
+
+    # indexer: index-query heads.
+    page_sparse_indexer_heads: int = 4
+
+    # indexer: index key / query dim (the GPU index per page at inference).
+    page_sparse_indexer_dim: int = 64
+
+    # indexer: weight of the KL to the dense attention's page mass (0: trained only through
+    # the LM loss, which does not reach the selection).
+    page_sparse_indexer_loss_coeff: float = 0.0
+
+    # indexer warm-up: the LM keeps dense attention while the indexer learns the dense page
+    # mass.
+    page_sparse_dense_forward: bool = False
+
+    # page selectors' kernel: "flex" (FlexAttention, fused Triton forward / backward, a block
+    # mask of each query block's page union) or "gathered" (the exact torch reference);
+    # token_topk / compress_mean are always gathered.
+    page_sparse_backend: str = "flex"
+
+    # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
+    page_sparse_flex_q_block: int = 64
+
+    # Selection granularity: 1 = per query; B = one selection per block of B queries (the
+    # block's first query selects, the rest reuse it; V4.1's Reuse). Flex then attends just
+    # the budget per block (page_sparse_flex_q_block = B or a divisor).
+    page_sparse_select_block: int = 1
+
+    # Block selection score: first (the block's first query) or prev_max (max over it and the
+    # previous block's queries; causal).
+    page_sparse_select_score: str = "first"
+
+    # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
+    page_sparse_hier_group: int = 0
+
+    # Hierarchical selection: groups kept per query (pages are chosen only within them).
+    page_sparse_hier_topk: int = 8
+
+    # nsa: compression block (tokens); page_sparse_page is the selection block.
+    page_sparse_nsa_block: int = 32
+
+    # nsa: compression stride.
+    page_sparse_nsa_stride: int = 16
+
+    # nsa: local tokens (whole pages) of the selection branch; page_sparse_window is the
+    # window branch.
+    page_sparse_nsa_select_window: int = 64
+
+    # csa2: selected compressed entries (page_sparse_compress tokens each); page_sparse_window
+    # = the raw SWA.
+    page_sparse_csa2_topk_entries: int = 512
+
+    # lsa: tokens per pooled key.
+    page_sparse_lsa_pool: int = 4
+
+    # lsa: pooled keys per cluster block.
+    page_sparse_lsa_block: int = 512
+
+    # lsa: buckets per cluster block (page_sparse_topk buckets are selected).
+    page_sparse_lsa_buckets: int = 32
 
     # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
     # is the polar forget gate's init cap without its angle.
@@ -2142,9 +2244,31 @@ class MegatronConfig(ConfigInterface):
     muown_expert_orthogonal: bool = False
 
     # muown_classical: hold every routed-expert matrix at sigma_max <= this factor x its init
-    # sigma_max (per shape) after each step (deflation of the top singular directions; 0 =
-    # off).
+    # sigma_max (per shape) after each step (the matrix scaled by min(1, cap / sigma_max); 0 =
+    # off). With --muown-expert-spectral-cap-end, the factor at the start of the ramp.
     muown_expert_spectral_cap: float = 0.0
+
+    # muown_classical: the spectral-cap factor at the end of the ramp (0 = no ramp). The
+    # factor moves geometrically from --muown-expert-spectral-cap to this value over --muown-
+    # expert-spectral-cap-ramp-steps optimizer steps.
+    muown_expert_spectral_cap_end: float = 0.0
+
+    # muown_classical: the optimizer step (the parameters' step counter: iteration + 1 without
+    # skipped steps) at which the spectral-cap ramp starts.
+    muown_expert_spectral_cap_ramp_start: int = 0
+
+    # muown_classical: length of the spectral-cap ramp in optimizer steps.
+    muown_expert_spectral_cap_ramp_steps: int = 0
+
+    # muown_classical on Megatron-FSDP: measure the expert spectral cap at the owner ranks
+    # (matrices exchanged per application) or in the experts' forward on the gathered weights
+    # (MoonEP experts; no exchange).
+    muown_expert_spectral_cap_source: Literal["owner", "forward"] = "owner"
+
+    # muown_classical: apply the routed-expert bounds (floor, cap, orthogonal) every this many
+    # optimizer steps (on Megatron-FSDP each application exchanges every expert matrix with
+    # its owner rank).
+    muown_expert_bound_interval: int = 1
 
     # muown_classical: hold every routed-expert matrix at stable rank |W|_F^2 / sigma_max^2 >=
     # this value after each step (rank-1 deflation of the top singular direction at fixed row

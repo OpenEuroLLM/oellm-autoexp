@@ -3,7 +3,7 @@ CompressedTokenizer) as a token map for Megatron's ``engram_token_map``:
 
     uv run --no-project --with transformers --with sentencepiece --with tokenizers \
         --with numpy --with protobuf python scripts/korbi/campaign/engram_token_map.py \
-        <tokenizer dir> <out.npy>
+        <tokenizer dir> <out.npy> [--keep-accents]
 
 Every token id is decoded alone and normalized (NFKC, NFD, strip accents, lowercase, runs of
 whitespace -> one space, strip; a token that is only whitespace stays one space); tokens with
@@ -20,19 +20,27 @@ from tokenizers import Regex, normalizers
 from transformers import AutoTokenizer
 
 SENTINEL = ""
-NORMALIZER = normalizers.Sequence([
-    normalizers.NFKC(),
-    normalizers.NFD(),
-    normalizers.StripAccents(),
-    normalizers.Lowercase(),
-    normalizers.Replace(Regex(r"[ \t\r\n]+"), " "),
-    normalizers.Replace(Regex(r"^ $"), SENTINEL),
-    normalizers.Strip(),
-    normalizers.Replace(SENTINEL, " "),
-])
+def make_normalizer(keep_accents: bool = False):
+    """DeepSeek's normalizer; ``keep_accents`` drops NFD + StripAccents (2026-11-06: stripping merges
+    distinct letters -- Finnish a/ä, Czech c/č, Polish l/ł, Cyrillic и/й, Vietnamese tones, Thai vowel
+    and tone marks -- 9,192 of the 256k map's canonical ids join accent-distinct forms)."""
+    steps = [normalizers.NFKC()]
+    if not keep_accents:
+        steps += [normalizers.NFD(), normalizers.StripAccents()]
+    steps += [
+        normalizers.Lowercase(),
+        normalizers.Replace(Regex(r"[ \t\r\n]+"), " "),
+        normalizers.Replace(Regex(r"^ $"), SENTINEL),
+        normalizers.Strip(),
+        normalizers.Replace(SENTINEL, " "),
+    ]
+    return normalizers.Sequence(steps)
 
 
-def build(tokenizer) -> np.ndarray:
+NORMALIZER = make_normalizer()
+
+
+def build(tokenizer, normalizer=NORMALIZER) -> np.ndarray:
     key_to_new: dict[str, int] = {}
     n = len(tokenizer)
     old_to_new = np.empty(n, dtype=np.int64)
@@ -41,7 +49,7 @@ def build(tokenizer) -> np.ndarray:
         if "�" in text:
             key = tokenizer.convert_ids_to_tokens(tid)
         else:
-            norm = NORMALIZER.normalize_str(text)
+            norm = normalizer.normalize_str(text)
             key = norm if norm else text
         old_to_new[tid] = key_to_new.setdefault(key, len(key_to_new))
     padded = -(-n // 128) * 128
@@ -50,13 +58,14 @@ def build(tokenizer) -> np.ndarray:
 
 
 def main():
-    tok_dir, out = sys.argv[1], sys.argv[2]
+    keep_accents = "--keep-accents" in sys.argv
+    tok_dir, out = [a for a in sys.argv[1:] if not a.startswith("--")]
     tokenizer = AutoTokenizer.from_pretrained(tok_dir)
-    table, unique = build(tokenizer)
+    table, unique = build(tokenizer, make_normalizer(keep_accents))
     np.save(out, table)
     print(f"{len(tokenizer)} tokens -> {unique} canonical ids "
           f"({unique / len(tokenizer):.1%}); map of {len(table)} written to {out}")
-    for text in ("The Great", " the great", "THE", "Über", "uber"):
+    for text in ("The Great", " the great", "THE", "Über", "uber", " sää", " saa", " й", " и"):
         ids = tokenizer(text, add_special_tokens=False).input_ids
         print(f"  {text!r}: {ids} -> {table[ids].tolist()}")
 

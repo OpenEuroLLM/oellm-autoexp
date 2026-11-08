@@ -1,0 +1,47 @@
+{
+ "65536|dense": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.0
+ },
+ "65536|window": {
+  "passkey": 0.0,
+  "kvret64": 0.0,
+  "vt": 0.0
+ },
+ "65536|page_mean:topk=16": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.25
+ },
+ "65536|page_mean:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.25
+ },
+ "65536|page_mean:topk=64": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.5
+ },
+ "65536|quest:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.25,
+  "vt": 0.0
+ },
+ "65536|oracle:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.75,
+  "vt": 0.25
+ },
+ "65536|token_topk:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.75,
+  "vt": 0.25
+ },
+ "65536|compress_mean:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.25
+ }
+}

@@ -1,0 +1,48 @@
+{
+  "reference_dp": 512,
+  "actual_dp": 1024,
+  "checks": [
+    {
+      "phase": 1,
+      "micro_batch_size": 8,
+      "start_step": 0,
+      "steps": 12,
+      "same_samples": true
+    },
+    {
+      "phase": 1,
+      "micro_batch_size": 8,
+      "start_step": 4000,
+      "steps": 12,
+      "same_samples": true
+    },
+    {
+      "phase": 1,
+      "micro_batch_size": 4,
+      "start_step": 0,
+      "steps": 12,
+      "same_samples": true
+    },
+    {
+      "phase": 1,
+      "micro_batch_size": 4,
+      "start_step": 4000,
+      "steps": 12,
+      "same_samples": true
+    },
+    {
+      "phase": 2,
+      "micro_batch_size": 1,
+      "start_step": 0,
+      "steps": 12,
+      "same_samples": true
+    },
+    {
+      "phase": 2,
+      "micro_batch_size": 1,
+      "start_step": 4000,
+      "steps": 12,
+      "same_samples": true
+    }
+  ]
+}

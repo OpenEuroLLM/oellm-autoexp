@@ -1,0 +1,2 @@
+Filesystem     Type   Size  Used Avail Use% Mounted on
+rw             tmpfs  252G  1.2G  251G   1% /tmp

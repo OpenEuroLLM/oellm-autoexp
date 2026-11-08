@@ -1,0 +1,27 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "oellm_autoexp.hf_export.score_on_flag",
+    "--model-dir",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/ambitious_v4_2ph_fp8_3700",
+    "--datamix",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/datamix_v8ml-valid_all.txt",
+    "--num-docs",
+    "64",
+    "--seq-len",
+    "4096",
+    "--gpu-mem-gib",
+    "54",
+    "--engram-tables-cpu",
+    "--out",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/ambitious_v4_2ph_fp8_3700.score.json"
+  ],
+  "started_at": "2026-11-03T10:50:28.838842+00:00",
+  "finished_at": "2026-11-03T11:03:09.360984+00:00",
+  "wall_seconds": 760.5221509593539,
+  "user_seconds": 363.870066,
+  "system_seconds": 147.11601,
+  "max_rss_kib": 21558168,
+  "exit_code": 0
+}

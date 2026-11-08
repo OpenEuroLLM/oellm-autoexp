@@ -1,0 +1,27 @@
+# @package _global_
+# HF (transformers) inference settings of experiment 013 for the oellm_ambitious exports
+# (validated on ambitious_v4_2ph_fp8_6000, one node 4 x H100: 22.4k tok/s for 8k-token batches,
+# 34.1k for 32 x 1024, 2.25x experiment 008's HF path; NLL within +0.0005 of the reference;
+# experiment/013_hf_prefill_speed/log.md). These are the model code's defaults, set explicitly;
+# they only affect the oellm_ambitious model code. Override any per run, e.g.
+# backend.env.OELLM_HF_IMPL=reference.
+#
+# - OELLM_HF_IMPL=fast: the inference kernels (FP8 experts grouped in a Triton GEMM, fused mHC,
+#   router / combine, Engram hashes + zero-copy gather from pinned host tables)
+# - OELLM_HF_MOE=fused, OELLM_HF_ENGRAM_UVA=1, OELLM_HF_PLACEMENT=oellm (from_pretrained with
+#   device_map="auto" places whole layers on the GPUs, Engram tables pinned in host memory),
+#   OELLM_HF_PIPELINE=1 (micro-batches over the GPUs from 8k tokens each), OELLM_HF_GRAD=0
+#   (eval-mode scoring without autograd)
+# - OELLM_HF_REFRESH_CODE=1: the HF runners copy this checkout's model code into the export
+#   (view) they load (scripts/korbi/hf_export/refresh_code.sh) -- older exports carry old code
+# The lighteval rows keep vLLM by default (generative tasks: vLLM's decode is far faster);
+# OELLM_LIGHTEVAL_BACKEND=accelerate puts a row on this HF path (it fits now: ~21 GiB per GPU).
+backend:
+  env:
+    OELLM_HF_IMPL: fast
+    OELLM_HF_MOE: fused
+    OELLM_HF_ENGRAM_UVA: "1"
+    OELLM_HF_PLACEMENT: oellm
+    OELLM_HF_PIPELINE: "1"
+    OELLM_HF_GRAD: "0"
+    OELLM_HF_REFRESH_CODE: "1"

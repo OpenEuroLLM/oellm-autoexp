@@ -1,0 +1,16 @@
+[
+  {
+    "layout": "ep4",
+    "max_seqs": 32,
+    "token_budget": 8192,
+    "status": "in_progress",
+    "partial_trials_per_rank": {}
+  },
+  {
+    "layout": "tp4",
+    "max_seqs": 32,
+    "token_budget": 8192,
+    "status": "in_progress",
+    "partial_trials_per_rank": {}
+  }
+]

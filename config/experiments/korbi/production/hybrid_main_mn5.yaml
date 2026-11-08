@@ -27,6 +27,8 @@ defaults:
   - _self_
 
 aux:
+  # the pre-training node check (off | light | thorough), see slurm.env.NODE_CHECK
+  node_check: "off"
   # MoonEP built from submodules/MoonEP (OpenEuroLLM fork, branch oellm/main) by
   # scripts/korbi/build_moonep.sh into $HYBRID_ENV/pylibs_moonep_<commit>; ec3eb8b = upstream
   # d86fda4 + the no-multicast fallback + the barrier timeout (= the old pylibs_moonep2)
@@ -285,10 +287,15 @@ job:
     - name: timeout_completing
       transition: ["COMPLETING", "TIMEOUT"]
       action: {class_name: RestartAction, reason: "3-day wall time -- resume from the latest checkpoint", exclude_file: "${slurm.exclude_file}"}
+    # nccl_peer_scan (2026-11-04): before the retry, the failed attempt's log is scanned for a
+    # node-local fault (oellm_autoexp/monitor/nccl_peers.py: one rank's GPU fault -- "unspecified
+    # launch failure", ECC, ... -- on at most 2 hosts, corroborated by srun) and that node is
+    # appended to the exclusion file, so the retry avoids it. A pool run is scanned inside its
+    # live host (scan_pool_run). v4_2ph's GPU fault on as04r4b22 was retried on the same node.
     - name: retry_node_fail
       transition: [null, NODE_FAIL]
       condition: {class_name: MaxActionFiresCondition, max_fires: 20}
-      action: {class_name: RestartAction, reason: "lost its node -- resuming", exclude_file: "${slurm.exclude_file}"}
+      action: {class_name: RestartAction, reason: "lost its node -- resuming", exclude_file: "${slurm.exclude_file}", nccl_peer_scan: true}
     - name: retry_oom
       transition: [null, OUT_OF_MEMORY]
       condition: {class_name: MaxActionFiresCondition, max_fires: 3}
@@ -296,7 +303,7 @@ job:
     - name: retry_failed
       transition: [null, FAILED]
       condition: {class_name: MaxActionFiresCondition, max_fires: 20}
-      action: {class_name: RestartAction, reason: "failed -- resuming (transient GPFS / NCCL / node errors)", exclude_file: "${slurm.exclude_file}"}
+      action: {class_name: RestartAction, reason: "failed -- resuming (transient GPFS / NCCL / node errors)", exclude_file: "${slurm.exclude_file}", nccl_peer_scan: true}
     - name: give_up_node_fail
       transition: [null, NODE_FAIL]
       action: {class_name: CancelAction, reason: "lost its node again (20 restarts used)"}
@@ -364,3 +371,7 @@ slurm:
   env:
     # startup at 128 nodes (dataset index of the flag blend, compile)
     WATCHDOG_STARTUP_S: "3600"
+    # node check on the step's own nodes before the training (templates/marenostrum*.sbatch):
+    # off | light | thorough (aux.node_check; bad nodes -> this host's exclude list + restart)
+    NODE_CHECK: ${aux.node_check}
+    NODE_CHECK_DIR: ${job.base_output_dir}/node_check

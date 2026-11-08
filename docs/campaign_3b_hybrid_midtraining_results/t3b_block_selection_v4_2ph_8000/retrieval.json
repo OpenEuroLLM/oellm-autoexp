@@ -1,0 +1,52 @@
+{
+ "65536|page_mean:topk=32,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.3333333333333333
+ },
+ "65536|quest:topk=32,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.0
+ },
+ "65536|page_mean:topk=32,hier_group=16,hier_topk=8,select_block=64": {
+  "passkey": 0.6666666666666666,
+  "kvret64": 0.0,
+  "vt": 0.3333333333333333
+ },
+ "65536|oracle:topk=32,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.3333333333333333,
+  "vt": 0.5
+ },
+ "65536|oracle:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.6666666666666666,
+  "vt": 0.16666666666666666
+ },
+ "131072|page_mean:topk=32,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.16666666666666666
+ },
+ "131072|quest:topk=32,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.0
+ },
+ "131072|page_mean:topk=32,hier_group=16,hier_topk=8,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.3333333333333333
+ },
+ "131072|oracle:topk=32,select_block=64": {
+  "passkey": 1.0,
+  "kvret64": 0.3333333333333333,
+  "vt": 0.0
+ },
+ "131072|oracle:topk=32": {
+  "passkey": 1.0,
+  "kvret64": 0.8333333333333334,
+  "vt": 0.3333333333333333
+ }
+}

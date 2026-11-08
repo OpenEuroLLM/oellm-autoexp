@@ -1,0 +1,296 @@
+[
+  {
+    "layout": "ep4",
+    "batch": 32,
+    "status": "ok",
+    "excluded_initial_seconds_per_worker": 5,
+    "sampled_worker_main_thread_seconds": 7.510204081632601,
+    "component_percent": {
+      "Engram": 27.173913043478464,
+      "MoE": 23.64130434782627,
+      "CKDA": 20.65217391304364,
+      "MHC": 18.750000000000146,
+      "other": 9.782608695652248
+    },
+    "hot_leaves": [
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1020,
+        "percent": 17.39130434782622
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 162,
+        "percent": 3.8043478260869823
+      },
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1021,
+        "percent": 3.532608695652198
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 159,
+        "percent": 2.717391304347845
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 173,
+        "percent": 2.173913043478276
+      },
+      {
+        "function": "OellmRMSNorm.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 119,
+        "percent": 1.9021739130434911
+      },
+      {
+        "function": "OellmMoE._route",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 743,
+        "percent": 1.9021739130434911
+      },
+      {
+        "function": "Module._call_impl",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/torch/nn/modules/module.py",
+        "line": 1789,
+        "percent": 1.9021739130434911
+      },
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1018,
+        "percent": 1.9021739130434911
+      },
+      {
+        "function": "all_reduce",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/torch/distributed/distributed_c10d.py",
+        "line": 3252,
+        "percent": 1.6304347826087067
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 168,
+        "percent": 1.6304347826087067
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 171,
+        "percent": 1.6304347826087067
+      }
+    ],
+    "sources": [
+      "profile_b32_rank0_pid1556395.json",
+      "profile_b32_rank1_pid1556396.json",
+      "profile_b32_rank2_pid1556387.json",
+      "profile_b32_rank3_pid1556390.json"
+    ]
+  },
+  {
+    "layout": "ep4",
+    "batch": 256,
+    "status": "ok",
+    "excluded_initial_seconds_per_worker": 5,
+    "sampled_worker_main_thread_seconds": 10.020408163265317,
+    "component_percent": {
+      "Engram": 71.07942973523366,
+      "MoE": 8.961303462321789,
+      "MHC": 7.9429735234215855,
+      "CKDA": 6.924643584521381,
+      "other": 5.091649694501015
+    },
+    "hot_leaves": [
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1020,
+        "percent": 41.75152749490811
+      },
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1021,
+        "percent": 15.274949083503051
+      },
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1018,
+        "percent": 6.720977596741341
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 162,
+        "percent": 1.629327902240324
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 166,
+        "percent": 1.4256619144602836
+      },
+      {
+        "function": "all_reduce",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/torch/distributed/distributed_c10d.py",
+        "line": 3252,
+        "percent": 1.4256619144602836
+      },
+      {
+        "function": "OellmRMSNorm.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 119,
+        "percent": 1.2219959266802427
+      },
+      {
+        "function": "OellmMoE._route",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 738,
+        "percent": 1.2219959266802427
+      },
+      {
+        "function": "OellmEngram.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1075,
+        "percent": 1.0183299389002023
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 159,
+        "percent": 1.0183299389002023
+      },
+      {
+        "function": "OellmCKDA._o_norm",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 490,
+        "percent": 1.0183299389002023
+      },
+      {
+        "function": "OellmCKDA.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 581,
+        "percent": 0.814663951120162
+      }
+    ],
+    "sources": [
+      "profile_b256_rank0_pid1556395.json",
+      "profile_b256_rank1_pid1556396.json",
+      "profile_b256_rank2_pid1556387.json",
+      "profile_b256_rank3_pid1556390.json"
+    ]
+  },
+  {
+    "layout": "tp4",
+    "batch": 32,
+    "status": "ok",
+    "excluded_initial_seconds_per_worker": 5,
+    "sampled_worker_main_thread_seconds": 9.3673469387755,
+    "component_percent": {
+      "Engram": 60.34858387799535,
+      "CKDA": 12.85403050108935,
+      "MoE": 11.328976034858409,
+      "MHC": 10.4575163398693,
+      "other": 5.010893246187371
+    },
+    "hot_leaves": [
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1020,
+        "percent": 30.718954248365975
+      },
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1021,
+        "percent": 12.418300653594795
+      },
+      {
+        "function": "OellmEngram._rows",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1018,
+        "percent": 6.971677559912866
+      },
+      {
+        "function": "OellmEngram.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1075,
+        "percent": 3.267973856209154
+      },
+      {
+        "function": "OellmEngram.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 1097,
+        "percent": 2.178649237472769
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 171,
+        "percent": 1.3071895424836615
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 162,
+        "percent": 1.3071895424836615
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 168,
+        "percent": 1.0893246187363845
+      },
+      {
+        "function": "OellmMHC.write",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 179,
+        "percent": 1.0893246187363845
+      },
+      {
+        "function": "Module._call_impl",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/torch/nn/modules/module.py",
+        "line": 1789,
+        "percent": 1.0893246187363845
+      },
+      {
+        "function": "OellmRMSNorm.forward",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 119,
+        "percent": 1.0893246187363845
+      },
+      {
+        "function": "OellmMHC.read",
+        "file": "/tmp/oellm_vllm032_1a63b2cbca418278/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+        "line": 159,
+        "percent": 0.8714596949891077
+      }
+    ],
+    "sources": [
+      "profile_b32_rank0_pid2022013.json",
+      "profile_b32_rank0_pid2022014.json",
+      "profile_b32_rank0_pid2022015.json",
+      "profile_b32_rank0_pid2022016.json"
+    ]
+  },
+  {
+    "layout": "tp4",
+    "batch": 256,
+    "status": "insufficient_confirmed_decode_tail",
+    "excluded_initial_seconds_per_worker": 8,
+    "sources": [
+      "profile_b256_rank0_pid2022013.json",
+      "profile_b256_rank0_pid2022014.json",
+      "profile_b256_rank0_pid2022015.json",
+      "profile_b256_rank0_pid2022016.json"
+    ]
+  }
+]

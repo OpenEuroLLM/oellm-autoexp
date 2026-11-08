@@ -1,0 +1,391 @@
+[pool] 2026-11-03T01:20:03 run mn5-pool-o134e.0017 starting on host host001 (job 48269247, step index 8), nodes as01r4b22
+[pool] provenance: code unchanged since enqueue
+Launching job kernel_tests_fsdpmeta005
+unload SINGULARITY/4.1.5 (PATH)
+load SINGULARITY/4.1.5 (PATH)
+/usr/bin/rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+........................                                                                   [100%]                                                                   [100%]                                                                   [100%]
+
+                                                                   [100%]=============================== warnings summary ===============================
+=============================== warnings summary ===============================
+
+=============================== warnings summary ===============================
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491  /usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+
+  /usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+=============================== warnings summary ===============================../../../../../../../../../usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491
+
+  /usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11
+
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491
+  /usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum, block_copy
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum, block_copy
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:11: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    layout_c: cutlass.utils.LayoutEnum,  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum, block_copy
+
+
+
+
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    layout_c: cutlass.utils.LayoutEnum,
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/reduce.py:10../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/reduce.py:10../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560
+
+
+  /usr/local/lib/python3.12/dist-packages/quack/reduce.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch  /usr/local/lib/python3.12/dist-packages/quack/reduce.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    layout_c: cutlass.utils.LayoutEnum,
+
+
+
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum, block_copy
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/reduce.py:10
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39  /usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+  /usr/local/lib/python3.12/dist-packages/quack/reduce.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+  /usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/softmax.py:23
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560  /usr/local/lib/python3.12/dist-packages/quack/softmax.py:23: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39
+  /usr/local/lib/python3.12/dist-packages/quack/copy_utils.py:560: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    layout_c: cutlass.utils.LayoutEnum,../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/softmax.py:23
+
+
+
+  /usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+  /usr/local/lib/python3.12/dist-packages/quack/softmax.py:23: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26
+  /usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/reduce.py:10../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/softmax.py:23
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26
+  /usr/local/lib/python3.12/dist-packages/quack/reduce.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch  /usr/local/lib/python3.12/dist-packages/quack/softmax.py:23: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch  /usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rounding.py:22
+  /usr/local/lib/python3.12/dist-packages/quack/rounding.py:22: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rounding.py:22
+
+
+  /usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+  /usr/local/lib/python3.12/dist-packages/quack/rmsnorm.py:39: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch  /usr/local/lib/python3.12/dist-packages/quack/rounding.py:22: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rounding.py:22
+  /usr/local/lib/python3.12/dist-packages/quack/rounding.py:22: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/softmax.py:23
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20
+
+  /usr/local/lib/python3.12/dist-packages/quack/softmax.py:23: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+  /usr/local/lib/python3.12/dist-packages/quack/cross_entropy.py:26: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/rounding.py:22
+  /usr/local/lib/python3.12/dist-packages/quack/rounding.py:22: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd.py:20: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+  /usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+  /usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:14: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31
+
+  /usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm90.py:18: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31
+
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11
+  /usr/local/lib/python3.12/dist-packages/quack/sm90_utils.py:11: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm100.py:31: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10
+
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_fwd_sm120.py:10: DeprecationWarning: Arch from arch.py is deprecated. Use Arch from enums.py instead.
+    from cutlass.base_dsl.arch import Arch
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm90.py:13: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+megatron/core/dist_checkpointing/strategies/torch.py:69
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/dist_checkpointing/strategies/torch.py:69: DeprecationWarning: transformer_engine.pytorch.float8_tensor is deprecated and will be removed in a future release. Float8Tensor should be imported directly through `from transformer_engine.pytorch import Float8Tensor`
+    from transformer_engine.pytorch.float8_tensor import Float8Tensor
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15megatron/core/dist_checkpointing/strategies/torch.py:69
+
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/dist_checkpointing/strategies/torch.py:69: DeprecationWarning: transformer_engine.pytorch.float8_tensor is deprecated and will be removed in a future release. Float8Tensor should be imported directly through `from transformer_engine.pytorch import Float8Tensor`
+    from transformer_engine.pytorch.float8_tensor import Float8Tensor
+
+
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_sm100.py:12: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+megatron/core/tensor_parallel/random.py:87
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/tensor_parallel/random.py:87: DeprecationWarning: Using deprecated internal API from Transformer Engine. transformer_engine.pytorch.fp8 will be removed in a future release.
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, fp8_autocast
+
+megatron/core/tensor_parallel/random.py:87
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/tensor_parallel/random.py:87: DeprecationWarning: Using deprecated internal API from Transformer Engine. transformer_engine.pytorch.fp8 will be removed in a future release.
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, fp8_autocast
+
+megatron/core/dist_checkpointing/strategies/torch.py:69
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/dist_checkpointing/strategies/torch.py:69: DeprecationWarning: transformer_engine.pytorch.float8_tensor is deprecated and will be removed in a future release. Float8Tensor should be imported directly through `from transformer_engine.pytorch import Float8Tensor`
+    from transformer_engine.pytorch.float8_tensor import Float8Tensor
+
+megatron/core/inference/contexts/__init__.py:9
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/inference/contexts/__init__.py:9: DeprecationWarning: The following imports from `dynamic_context.py` will be removed in this file in `megatron-core` 0.14. The imports here result in a cyclic import issue that causes rotary embeddings to import from Apex rather than Transformer Engine.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+megatron/core/inference/contexts/__init__.py:9
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/inference/contexts/__init__.py:9: DeprecationWarning: The following imports from `dynamic_context.py` will be removed in this file in `megatron-core` 0.14. The imports here result in a cyclic import issue that causes rotary embeddings to import from Apex rather than Transformer Engine.
+    warnings.warn(
+megatron/core/tensor_parallel/random.py:87
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/tensor_parallel/random.py:87: DeprecationWarning: Using deprecated internal API from Transformer Engine. transformer_engine.pytorch.fp8 will be removed in a future release.
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, fp8_autocast
+
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+../../../../../../../../../usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15
+  /usr/local/lib/python3.12/dist-packages/flash_attn/cute/flash_bwd_postprocess.py:15: DeprecationWarning: cutlass.utils.LayoutEnum is deprecated; use cutlass.tensor_utils.LayoutEnum instead. It will be removed in a future release.
+    from cutlass.utils import LayoutEnum
+
+6 passed, 27 warnings in 12.94s
+6 passed, 27 warnings in 12.94s
+megatron/core/inference/contexts/__init__.py:9
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/inference/contexts/__init__.py:9: DeprecationWarning: The following imports from `dynamic_context.py` will be removed in this file in `megatron-core` 0.14. The imports here result in a cyclic import issue that causes rotary embeddings to import from Apex rather than Transformer Engine.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+megatron/core/dist_checkpointing/strategies/torch.py:69
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/dist_checkpointing/strategies/torch.py:69: DeprecationWarning: transformer_engine.pytorch.float8_tensor is deprecated and will be removed in a future release. Float8Tensor should be imported directly through `from transformer_engine.pytorch import Float8Tensor`
+    from transformer_engine.pytorch.float8_tensor import Float8Tensor
+
+6 passed, 27 warnings in 12.94s
+megatron/core/tensor_parallel/random.py:87
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/tensor_parallel/random.py:87: DeprecationWarning: Using deprecated internal API from Transformer Engine. transformer_engine.pytorch.fp8 will be removed in a future release.
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, fp8_autocast
+
+megatron/core/inference/contexts/__init__.py:9
+  /gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_fsdpmeta005/submodules/Megatron-LM/megatron/core/inference/contexts/__init__.py:9: DeprecationWarning: The following imports from `dynamic_context.py` will be removed in this file in `megatron-core` 0.14. The imports here result in a cyclic import issue that causes rotary embeddings to import from Apex rather than Transformer Engine.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 27 warnings in 12.94s
+[run_tests] exit 0
+[SLURM] JOB_ID:   48269247
+[SLURM] NODELIST: as01r1b[19,25,27-28],as01r4b[21-22,24,26-27,30,32],as01r5b[21-23,26-27],as02r1b[02,05,15],as02r4b[09-12,24-27,30-32],as03r2b[17,19-25,27-28,30-31],as03r4b[09-10,14-15],as04r1b[20,23-25],as04r2b[01-04,06-09,11,13,25-28,30-32],as04r4b[17-19,24,29],as05r2b[11-13,15-17,19-24,26-32],as05r3b[05,07,09,11-12,16],as05r4b[02,04,06-07],as05r5b[06-07,15],as07r1b[02,04,07-08,13,17-20,27-28,30-31],as07r2b[01-02,15-16],as07r3b[01,09-11,15,18-19,25],as07r4b[03,05,08-09,13]
+[SLURM] NNODES:   134
+[pool] 2026-11-03T01:21:03 run mn5-pool-o134e.0017 ended: rc=0 (completed)

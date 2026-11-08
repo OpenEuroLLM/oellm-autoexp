@@ -1,0 +1,263 @@
+# @package _global_
+# End-to-end test of the attention head-dim widening 128 -> 256 (user 2026-11-05: the 6 attention
+# layers' head dim caps long-range retrieval; widen the stopped v4_2ph checkpoint with small noise
+# on the new channels): scripts/korbi/production/widen_attention_head_dim.py.
+#
+# The production stack (hybrid_ambitious_v4_2ph_256_mn5: Megatron-FSDP, EP 4, MoonEP, muown_classical,
+# gated GQA attention with qk RMSNorm + XSA, rank-local DCP load plans) on 2 nodes as the capspeed
+# suite (8 experts, Engram 1/16, gbs 64):
+#   base   kv_channels 128, 30 steps, persistent save at 30
+#   -- widen base/ckpt/iter_0000030 -> base/ckpt_hd256/iter_0000030 (login node) --
+#   r128   resume base/ckpt at 128, steps 31-40 (the reference)
+#   s128_64k / s256_64k  fresh init at the 64k phase shape (seq 65536, mbs 1, gbs 8), 6 steps: step time
+#          and peak memory at head dim 128 vs 256
+#   r256   resume base/ckpt_hd256 at kv_channels 256, steps 31-40: same batches, so its losses must
+#          track r128 (step 31 within bf16 noise) and it must train on
+#
+#   in the main run's pool (its spare nodes; user 2026-11-05), own test_root:
+#   cd $R/autoexp_hd256p && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p134c \
+#       --config-name experiments/korbi/production/hybrid_v4_hd256_test_mn5 --yes aux.only=[base,s128_64k,s256_64k] \
+#       aux.test_root=/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool
+defaults:
+  - hybrid_ambitious_v4_2ph_256_mn5
+  - _self_
+
+aux:
+  suite: v4_hd256_test
+  arm: base
+  only: []
+  nodes: 2
+  phase: 1
+  seq: 8192
+  gbs: 64
+  stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/capspeed_datamix.txt
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256test
+
+backend:
+  megatron:
+    num_experts: 8
+    engram_table_size: 1623365
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    micro_batch_size: 8
+    load: null
+    exit_on_missing_checkpoint: false
+    exit_interval: 30
+    log_interval: 1
+    timing_log_level: 1
+    eval_interval: 100000
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 30
+    save_retain_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+
+job:
+  name: v4_hd256_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  metadata:
+    pool_singleton: null
+  est_step_time_s: 20.0
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (test: no retry)"}
+
+slurm:
+  sbatch:
+    account: ehpc533
+    time: "01:00:00"
+    qos: acc_ehpc
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: r128
+          backend.megatron.load: ${aux.test_root}/base/ckpt
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 40
+        - aux.arm: r256
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/base/ckpt_hd256
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 40
+        # the 64k phase shape (phase 2: seq 65536, mbs 1), fresh init, 6 steps: step time and peak
+        # memory at head dim 256 vs 128 (the main run sits at 0.95 device memory)
+        - aux.arm: s128_64k
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.phase_transition_iterations: null
+          backend.megatron.phase_transition_variable_batch: false
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 6
+        - aux.arm: s256_64k
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.kv_channels: 256
+          backend.megatron.phase_transition_iterations: null
+          backend.megatron.phase_transition_variable_batch: false
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.exit_interval: 6
+        # re-seed test (user 2026-11-06): in the main run the new q / k channels shrank (q_new . k_new has
+        # no first-order gradient at eps 1e-3) while v / proj grew. 8 nodes (mbs 2, same gbs 64):
+        #   c500    base continued at head dim 128 to step 500 (a less fresh model), save at 500
+        #   -- widen c500/ckpt/iter_500 -> c500/ckpt_hd256; reseed-k that -> c500/ckpt_hd256rk --
+        #   w256    plain widened, 500 -> 800, saves every 100 (the main run's situation)
+        #   w256rk  widened + re-seeded keys (k_new = rotated k_old, q_new ~eps), 500 -> 800
+        #   loss of both must match at 501; q_new must grow in w256rk and not in w256
+        - aux.arm: c500
+          aux.nodes: 8
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.load: ${aux.test_root}/base/ckpt
+          backend.megatron.exit_interval: 500
+          backend.megatron.save_interval: 500
+        - aux.arm: w256
+          aux.nodes: 8
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/c500/ckpt_hd256
+          backend.megatron.exit_interval: 800
+          backend.megatron.save_interval: 100
+        - aux.arm: w256rk
+          aux.nodes: 8
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/c500/ckpt_hd256rk
+          backend.megatron.exit_interval: 800
+          backend.megatron.save_interval: 100
+        # Engram auxiliary lookups (user 2026-11-06): accent-preserving token map (NFKC + lowercase,
+        # no accent stripping) as a second lookup set, medium size: orders [2, 3] x 8 heads x half
+        # the main table rows (1/16-scale model: 811,682). A/B from w256rk's step 800 (head dim 256,
+        # re-seeded keys) on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same
+        # batches in both arms, fixed held-out sets every 100 steps:
+        #   ectrl  as trained (no auxiliary lookups)
+        #   eaux   widened by widen_engram_aux.py (zero key / value columns: starts exactly as ectrl)
+        - aux.arm: ectrl
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/w256rk/ckpt
+          backend.megatron.exit_interval: 1200
+          backend.megatron.eval_interval: 100
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+        - aux.arm: eaux
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          slurm.sbatch.qos: acc_debug  # the fast lane (one job per user): ectrl goes to acc_ehpc
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/engaux/ckpt
+          backend.megatron.exit_interval: 1200
+          backend.megatron.eval_interval: 100
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k_keepaccents.npy
+        # ablation (user 2026-11-07): the same extra lookups (same size, same widened checkpoint) over the
+        # ORIGINAL compression map -- separates "more Engram table capacity" from "accent-preserving ids"
+        - aux.arm: eauxbase
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          slurm.sbatch.time: "01:30:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.load: ${aux.test_root}/engaux/ckpt
+          backend.megatron.exit_interval: 1200
+          backend.megatron.eval_interval: 100
+          backend.megatron.save: null
+          backend.megatron.save_interval: null
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
+        # the final comparison (user 2026-11-07: "all" and multilingual -- ideally every set -- at one
+        # common step; the in-training evaluations every 100 steps (18-40 min per round at 8 nodes) cut the
+        # 1.5 h jobs short): the three arms again from step 800 on the same batches, no intermediate
+        # evaluation, every fixed set at step 1100, a save at 1100 (an interrupted evaluation can be redone
+        # from it). Run one after another on the debug lane (concurrency_group acc_debug, max_active 1).
+        - aux.arm: fctrl
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          job.concurrency_group: acc_debug
+          job.max_active: 1
+          slurm.sbatch.time: "02:00:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.exit_interval: 1100
+          backend.megatron.eval_interval: 1100
+          backend.megatron.save_interval: 1100
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/w256rk/ckpt
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fctrl/ckpt
+        - aux.arm: faux
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          job.concurrency_group: acc_debug
+          job.max_active: 1
+          slurm.sbatch.time: "02:00:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.exit_interval: 1100
+          backend.megatron.eval_interval: 1100
+          backend.megatron.save_interval: 1100
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/engaux/ckpt
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/faux/ckpt
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k_keepaccents.npy
+        - aux.arm: fauxbase
+          aux.nodes: 8
+          aux.stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+          job.est_step_time_s: 5.0
+          job.concurrency_group: acc_debug
+          job.max_active: 1
+          slurm.sbatch.time: "02:00:00"
+          slurm.sbatch.qos: acc_debug
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.kv_channels: 256
+          backend.megatron.exit_interval: 1100
+          backend.megatron.eval_interval: 1100
+          backend.megatron.save_interval: 1100
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/engaux/ckpt
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fauxbase/ckpt
+          backend.megatron.engram_aux_ngram_orders: [2, 3]
+          backend.megatron.engram_aux_num_heads: 8
+          backend.megatron.engram_aux_table_size: 811682
+          backend.megatron.engram_aux_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy

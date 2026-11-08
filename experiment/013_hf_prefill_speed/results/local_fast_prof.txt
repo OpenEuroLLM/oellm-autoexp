@@ -1,0 +1,66 @@
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                           aten::matmul         0.06%      47.540us         0.93%     703.934us      35.197us       0.000us         0.00%      57.829ms       2.891ms            20  
+                                               aten::mm         0.59%     449.494us         0.83%     630.704us      31.535us      57.829ms        75.41%      57.829ms       2.891ms            20  
+                                           aten::linear         0.03%      25.800us         0.76%     574.514us      38.301us       0.000us         0.00%      57.341ms       3.823ms            15  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      53.575ms        69.86%      53.575ms       7.654ms             7  
+                                   _grouped_gemm_kernel         0.00%       0.000us         0.00%       0.000us       0.000us       9.703ms        12.65%       9.703ms       2.426ms             4  
+                                      _mhc_write_kernel         0.00%       0.000us         0.00%       0.000us       0.000us       2.452ms         3.20%       2.452ms     490.361us             5  
+ampere_bf16_s16816gemm_bf16_256x128_ldg8_f2f_stages_...         0.00%       0.000us         0.00%       0.000us       0.000us       2.035ms         2.65%       2.035ms       1.017ms             2  
+                                       _mhc_read_kernel         0.00%       0.000us         0.00%       0.000us       0.000us       1.373ms         1.79%       1.373ms     274.550us             5  
+                                            aten::copy_         0.24%     181.700us         0.53%     404.540us      10.114us       1.137ms         1.48%       1.137ms      28.432us            40  
+ampere_bf16_s1688gemm_bf16_128x128_ldg8_f2f_stages_3...         0.00%       0.000us         0.00%       0.000us       0.000us     986.699us         1.29%     986.699us     328.900us             3  
+                                       ChunkKDAFunction         1.05%     797.948us         1.46%       1.108ms       1.108ms     809.322us         1.06%     970.892us     970.892us             1  
+                                              aten::mul         0.10%      74.280us         0.17%     126.859us      10.572us     691.911us         0.90%     691.911us      57.659us            12  
+                                               aten::to         0.03%      23.380us         0.59%     448.355us       8.791us       0.000us         0.00%     688.906us      13.508us            51  
+                                         aten::_to_copy         0.08%      64.329us         0.56%     424.975us      14.654us       0.000us         0.00%     688.906us      23.755us            29  
+                                 ampere_sgemm_128x64_tn         0.00%       0.000us         0.00%       0.000us       0.000us     557.798us         0.73%     557.798us     278.899us             2  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     517.957us         0.68%     517.957us     103.591us             5  
+                                            aten::clone         0.03%      24.339us         0.23%     175.878us      19.542us       0.000us         0.00%     445.988us      49.554us             9  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     445.988us         0.58%     445.988us      49.554us             9  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us     423.814us         0.55%     423.814us      38.529us            11  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     422.245us         0.55%     422.245us      70.374us             6  
+                                       aten::contiguous         0.01%       5.300us         0.16%     120.939us      20.157us       0.000us         0.00%     307.875us      51.312us             6  
+                                        _combine_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     260.834us         0.34%     260.834us     130.417us             2  
+                                         _swiglu_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     245.378us         0.32%     245.378us      61.345us             4  
+                                              aten::cat         0.06%      47.620us         0.10%      76.190us      15.238us     228.258us         0.30%     228.258us      45.652us             5  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     225.730us         0.29%     225.730us      75.243us             3  
+                                             aten::mean         0.04%      30.950us         0.06%      48.240us      16.080us     186.881us         0.24%     186.881us      62.294us             3  
+                                           aten::conv1d         0.00%       2.780us         0.07%      49.529us      49.529us       0.000us         0.00%     179.426us     179.426us             1  
+                                      aten::convolution         0.01%       4.200us         0.06%      46.749us      46.749us       0.000us         0.00%     179.426us     179.426us             1  
+                                     aten::_convolution         0.02%      17.010us         0.06%      42.549us      42.549us       0.000us         0.00%     179.426us     179.426us             1  
+                                aten::_conv_depthwise2d         0.01%       5.880us         0.03%      20.860us      20.860us     179.426us         0.23%     179.426us     179.426us             1  
+void at::native::(anonymous namespace)::conv_depthwi...         0.00%       0.000us         0.00%       0.000us       0.000us     179.426us         0.23%     179.426us     179.426us             1  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     174.465us         0.23%     174.465us      29.077us             6  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us     164.418us         0.21%     164.418us     164.418us             1  
+                                              aten::pow         0.04%      29.640us         0.06%      45.290us      15.097us     158.819us         0.21%     158.819us      52.940us             3  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     158.819us         0.21%     158.819us      52.940us             3  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     149.249us         0.19%     149.249us      74.624us             2  
+                           recompute_w_u_fwd_kda_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     144.866us         0.19%     144.866us     144.866us             1  
+                     aten::scaled_dot_product_attention         0.03%      20.219us         0.09%      69.309us      69.309us       0.000us         0.00%     142.402us     142.402us             1  
+              aten::_scaled_dot_product_flash_attention         0.01%       7.280us         0.06%      49.090us      49.090us       0.000us         0.00%     142.402us     142.402us             1  
+                         aten::_flash_attention_forward         0.02%      12.630us         0.05%      35.810us      35.810us     142.402us         0.19%     142.402us     142.402us             1  
+void pytorch_flash::flash_fwd_kernel<Flash_fwd_kerne...         0.00%       0.000us         0.00%       0.000us       0.000us     142.402us         0.19%     142.402us     142.402us             1  
+                                 chunk_gla_fwd_kernel_o         0.00%       0.000us         0.00%       0.000us       0.000us     140.610us         0.18%     140.610us     140.610us             1  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us     138.658us         0.18%     138.658us     138.658us             1  
+                                          aten::reshape         0.08%      60.749us         0.27%     207.447us       3.096us       0.000us         0.00%     138.113us       2.061us            67  
+         chunk_gated_delta_rule_fwd_kernel_h_blockdim64         0.00%       0.000us         0.00%       0.000us       0.000us     132.450us         0.17%     132.450us     132.450us             1  
+                                          aten::argsort         0.01%       4.390us         0.28%     210.258us     105.129us       0.000us         0.00%     130.274us      65.137us             2  
+                                             aten::sort         0.07%      52.050us         0.27%     205.868us     102.934us     127.905us         0.17%     130.274us      65.137us             2  
+                                              aten::sub         0.06%      46.110us         0.10%      77.999us       8.667us     122.849us         0.16%     122.849us      13.650us             9  
+                                              aten::add         0.10%      72.599us         0.15%     117.738us      10.703us     117.312us         0.15%     117.312us      10.665us            11  
+                                            _rms_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     115.011us         0.15%     115.011us      28.753us             4  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     111.873us         0.15%     111.873us     111.873us             1  
+                                   CausalConv1dFunction         0.23%     172.768us         0.25%     190.048us     190.048us     111.681us         0.15%     111.681us     111.681us             1  
+                               causal_conv1d_fwd_kernel         0.00%       0.000us         0.00%       0.000us       0.000us     111.681us         0.15%     111.681us     111.681us             1  
+void at::native::reduce_kernel<128, 4, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us      96.193us         0.13%      96.193us      96.193us             1  
+                 chunk_kda_fwd_kernel_inter_solve_fused         0.00%       0.000us         0.00%       0.000us       0.000us      95.777us         0.12%      95.777us      95.777us             1  
+                                l2norm_gauge_fwd_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      94.977us         0.12%      94.977us      47.489us             2  
+                                              aten::sum         0.04%      29.450us         0.06%      46.459us      15.486us      94.080us         0.12%      94.080us      31.360us             3  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us      94.080us         0.12%      94.080us      31.360us             3  
+void at_cuda_detail::cub::DeviceRadixSortOnesweepKer...         0.00%       0.000us         0.00%       0.000us       0.000us      93.952us         0.12%      93.952us       5.872us            16  
+                   chunk_kda_fwd_kernel_intra_sub_chunk         0.00%       0.000us         0.00%       0.000us       0.000us      93.089us         0.12%      93.089us      93.089us             1  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 76.094ms
+Self CUDA time total: 76.688ms

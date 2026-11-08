@@ -1,0 +1,20 @@
+# @package _global_
+# Packed batches under context parallelism (fla_cp.ThdStream; Complex KDA and Engram at CP=2 vs CP=1), plus the
+# existing packed / CP tests of the touched modules, on one MN5 node (2 ranks):
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/cp_packed_tests_mn5 aux.dev_queue=true --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: cp_packed
+  bench: "cd submodules/Megatron-LM && python -m torch.distributed.run --standalone --nproc-per-node 2 -m pytest -q -p no:cacheprovider -o addopts= -rfE -s tests/unit_tests/ssm/test_cp_packed.py tests/unit_tests/transformer/test_page_sparse_attention.py tests/unit_tests/transformer/test_page_sparse.py tests/unit_tests/models/test_hybrid_cp_packed.py tests/unit_tests/models/test_hybrid_packed_docs.py tests/unit_tests/ssm/test_complex_kda_packed.py tests/unit_tests/ssm/test_kronlstm_cp.py"
+
+job:
+  name: campaign_mid_${aux.name}
+
+slurm:
+  sbatch:
+    time: "00:30:00"
+    account: ehpc533

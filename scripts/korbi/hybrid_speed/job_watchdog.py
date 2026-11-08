@@ -14,7 +14,10 @@ does not move for WATCHDOG_STALL_S. Then node 0 writes <dir>/STALL; every node d
 py-spy stacks of its Python processes (all threads, native frames) into
 <dir>/stacks_<host>.txt; node 0 prints one WATCHDOG line per node to the job log (last
 iteration, peak / current memory, whether any GPU was near-full: the "too much memory"
-signature is memory >= WATCHDOG_MEM_FULL_FRAC with utilisation 0) and scancels the job.
+signature is memory >= WATCHDOG_MEM_FULL_FRAC with utilisation 0) and cancels the pool RUN
+through pool_ctl (scripts/pool_ctl.py <AUTOEXP_POOL_DIR> cancel <AUTOEXP_RUN_ID>, both exported
+by the pool supervisor). Never scancel: inside a pool the SLURM job is the whole allocation,
+shared with other runs (user 2026-11-04). Outside a pool it only reports.
 
 Bad-GPU nodes (WATCHDOG_EXCLUDE_FILE set, config/slurm/marenostrum_autoexclude.yaml): every
 node records ITSELF in the shared exclusion file, which the next submissions read
@@ -278,15 +281,15 @@ def main():
                 verdict = "memory-saturated" if full else "not-memory"
                 with open(log, "a") as f:
                     f.write("\nWATCHDOG: no progress for %.0f s (last iteration %s, %s, GPUs idle=%s) -> "
-                            "cancelling job %s; stacks/memory in %s\n"
-                            % (waited, last_it, verdict, idle, os.environ.get("SLURM_JOB_ID"), wdir))
+                            "cancelling pool run %s; stacks/memory in %s\n"
+                            % (waited, last_it, verdict, idle, os.environ.get("AUTOEXP_RUN_ID", "-"), wdir))
                     for name in sorted(os.listdir(wdir)):
                         if name.startswith("mem_") and name.endswith(".csv"):
                             f.write("WATCHDOG_MEM %s %s\n" % (name[4:-4], summarize(os.path.join(wdir, name))))
                 if not dry:
-                    job = os.environ.get("SLURM_ARRAY_JOB_ID")
-                    job = "%s_%s" % (job, os.environ["SLURM_ARRAY_TASK_ID"]) if job else os.environ.get("SLURM_JOB_ID")
-                    subprocess.call(["scancel", job])
+                    outcome = cancel_pool_run()
+                    with open(log, "a") as f:
+                        f.write("WATCHDOG: %s\n" % outcome)
         time.sleep(min(interval, 5) if seen_at is not None and not recorded else interval)
     if scan is not None and not recorded:  # the job is ending: decide on what the log holds now
         scan.update()
@@ -295,6 +298,30 @@ def main():
             record_bad_node(exclude_file, host, reason)
     with open(os.path.join(wdir, "peak_%s.txt" % host), "w") as f:
         f.write(" ".join("gpu%d=%dMiB" % (k, v) for k, v in sorted(peak.items())) + "\n")
+
+
+def cancel_pool_run():
+    """Cancel this pool run via pool_ctl; a description of what happened. Without a pool
+    (AUTOEXP_POOL_DIR / AUTOEXP_RUN_ID unset) nothing is cancelled. On MN5 pool_ctl runs through
+    scripts/korbi/mn5_autoexp.sh (its packed Python environment: the node's python3 lacks
+    autoexp's dependencies)."""
+    pool, rid = os.environ.get("AUTOEXP_POOL_DIR"), os.environ.get("AUTOEXP_RUN_ID")
+    if not pool or not rid:
+        return "not a pool run (AUTOEXP_POOL_DIR / AUTOEXP_RUN_ID unset): not cancelled"
+    root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+    wrapper = os.path.join(root, "scripts", "korbi", "mn5_autoexp.sh")
+    if os.path.exists(wrapper):
+        cmd = [wrapper, "scripts/pool_ctl.py"]
+    else:
+        cmd = [sys.executable, os.path.join(root, "scripts", "pool_ctl.py")]
+    cmd += [pool, "cancel", rid]
+    try:
+        proc = subprocess.run(cmd, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              universal_newlines=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "pool_ctl cancel %s failed: %s" % (rid, exc)
+    tail = " | ".join(proc.stdout.strip().splitlines()[-2:])
+    return "pool_ctl cancel %s: rc %d (%s)" % (rid, proc.returncode, tail)
 
 
 def summarize(path):

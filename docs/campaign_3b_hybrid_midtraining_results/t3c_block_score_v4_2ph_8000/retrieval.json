@@ -1,0 +1,62 @@
+{
+ "65536|page_mean:topk=32,select_block=64,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.16666666666666666
+ },
+ "65536|page_mean:topk=32,select_block=32,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.16666666666666666
+ },
+ "65536|page_mean:topk=32,select_block=16,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.3333333333333333
+ },
+ "65536|page_mean:topk=32,select_block=16": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.16666666666666666
+ },
+ "65536|quest:topk=32,select_block=64,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.0
+ },
+ "65536|oracle:topk=32,select_block=64,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.5,
+  "vt": 0.16666666666666666
+ },
+ "131072|page_mean:topk=32,select_block=64,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.16666666666666666
+ },
+ "131072|page_mean:topk=32,select_block=32,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.16666666666666666
+ },
+ "131072|page_mean:topk=32,select_block=16,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.16666666666666666
+ },
+ "131072|page_mean:topk=32,select_block=16": {
+  "passkey": 1.0,
+  "kvret64": 0.0,
+  "vt": 0.16666666666666666
+ },
+ "131072|quest:topk=32,select_block=64,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.0
+ },
+ "131072|oracle:topk=32,select_block=64,select_score=prev_max": {
+  "passkey": 1.0,
+  "kvret64": 0.16666666666666666,
+  "vt": 0.16666666666666666
+ }
+}

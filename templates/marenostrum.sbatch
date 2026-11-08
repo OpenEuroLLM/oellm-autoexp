@@ -12,6 +12,49 @@ if [ -n "$WAIT_FOR_JOB_NAME" ]; then
     done
 fi
 
+# NODE_CHECK (off | light | thorough; unset = off): the node-health benchmark
+# (oellm_autoexp/node_health/bench.py --profile ..., ~1-2 / ~4-5 min) on THIS step's nodes before
+# the training, in the training's container (verdict: NC_OUT json). Pass: the training starts. Bad nodes in a
+# pool step: they go into this host's <host>/exclude_nodes (honoured by the host's supervisor;
+# never pushed into SLURM jobs) and the step exits 86, so the run fails, its job's restart policy
+# requeues it and it is placed on other nodes -- at most NODE_CHECK_MAX_ROUNDS (default 2) times
+# per NODE_CHECK_DIR, then the training starts anyway. Outside a pool, or a broken check (other
+# exit codes): reported, never blocks the training. NODE_CHECK_ARGS: more bench.py flags.
+if [ -n "$NODE_CHECK" ] && [ "$NODE_CHECK" != "off" ]; then
+    NC_DIR=$NODE_CHECK_DIR
+    [ -n "$NC_DIR" ] || NC_DIR=$HOME/node_check
+    mkdir -p "$NC_DIR"
+    NC_TAG=$AUTOEXP_RUN_ID
+    [ -n "$NC_TAG" ] || NC_TAG=$SLURM_JOB_ID
+    export NC_OUT=$NC_DIR/check_$NC_TAG.json NC_PORT=$(( MASTER_PORT + 101 )) NODE_CHECK NODE_CHECK_ARGS
+    NC_NODES=$AUTOEXP_STEP_NUM_NODES
+    [ -n "$NC_NODES" ] || NC_NODES=$SLURM_NNODES
+    rm -f "$NC_OUT"
+    echo "[node_check] $NODE_CHECK check on $NC_NODES node(s) before the training -> $NC_OUT"
+    srun {srun_opts} bash -c '{launcher_cmd} torchrun --nnodes $SLURM_NNODES --nproc-per-node 4 --node-rank $SLURM_NODEID --master-addr $MASTER_ADDR --master-port $NC_PORT -m oellm_autoexp.node_health.bench --profile $NODE_CHECK --check-out $NC_OUT $NODE_CHECK_ARGS'
+    NC_RC=$?
+    # the verdict file decides (torchrun turns any worker's exit code into 1)
+    NC_STATUS=$(python3 -c "import json, sys; print(json.load(open(sys.argv[1]))['status'])" "$NC_OUT" 2>/dev/null)
+    NC_MAX=$NODE_CHECK_MAX_ROUNDS
+    [ -n "$NC_MAX" ] || NC_MAX=2
+    NC_ROUNDS=$(cat "$NC_DIR/exclusion_rounds" 2>/dev/null || echo 0)
+    if [ "$NC_STATUS" = pass ]; then
+        echo "[node_check] passed"
+        rm -f "$NC_DIR/exclusion_rounds"
+    elif [ "$NC_STATUS" = exclude ]; then
+        NC_BAD=$(python3 -c "import json, sys; print(' '.join(json.load(open(sys.argv[1]))['exclude']))" "$NC_OUT" 2>/dev/null)
+        if [ -n "$NC_BAD" ] && [ -n "$AUTOEXP_POOL_DIR" ] && [ -n "$AUTOEXP_POOL_HOST" ] && [ "$NC_ROUNDS" -lt "$NC_MAX" ]; then
+            printf '%s\n' $NC_BAD >> "$AUTOEXP_POOL_DIR/hosts/$AUTOEXP_POOL_HOST/exclude_nodes"
+            echo $(( NC_ROUNDS + 1 )) > "$NC_DIR/exclusion_rounds"
+            echo "[node_check] excluded on host $AUTOEXP_POOL_HOST: $NC_BAD (round $(( NC_ROUNDS + 1 )) of $NC_MAX); restarting on other nodes"
+            exit 86
+        fi
+        echo "[node_check] bad node(s) $NC_BAD, not excluded (outside a pool or round $NC_ROUNDS of $NC_MAX): training anyway"
+    else
+        echo "[node_check] the check itself failed (rc $NC_RC, no verdict): training anyway"
+    fi
+fi
+
 echo "Launching job {job_name}"
 srun {srun_opts} bash -c '{launcher_cmd} {command}'
 # keep the training step's exit status: the echo lines below would otherwise make every job

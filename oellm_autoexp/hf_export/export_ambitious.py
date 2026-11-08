@@ -11,8 +11,10 @@ modeling file.
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -21,7 +23,7 @@ import torch
 
 from .convert_megatron_to_hf import _fla_layer_spec
 from .export_q35 import megatron_args, split_gated_qkv, write_config
-from .fsdp_dtensor import ShardedSafetensorsWriter, iter_layers, stack_experts
+from .fsdp_dtensor import ShardedSafetensorsWriter, iter_layers
 
 LOGGER = logging.getLogger(__name__)
 _HERE = Path(__file__).resolve().parent
@@ -78,6 +80,25 @@ def engram_sign_table_np(m: dict) -> np.ndarray:
     return (2.0 * bits - 1.0).astype(np.float32)
 
 
+FP8_BLOCK = 128
+FP8_MAX = 448.0  # E4M3 (float8_e4m3fn) largest finite value
+
+
+def fp8_tiles(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Megatron's fsdp_fp8_param_gather quantization of a bf16 weight (fp8_param_gather.quantize_pack):
+    1 x 128 tiles along the last dim, scale = amax / 448 (1 for an all-zero tile), E4M3 of
+    clamp(w / scale). The gathered shards' tiles are these rows' tiles: every expert tensor and every
+    rank shard starts at a multiple of 128 elements, and the rows (2048 / 768) are multiples of 128.
+    Returns (E4M3 bytes as uint8, fp32 scales [..., last / 128])."""
+    if w.dtype != torch.bfloat16 or w.shape[-1] % FP8_BLOCK:
+        raise ValueError(f"expects bf16 rows of a multiple of {FP8_BLOCK}, got {w.dtype} {tuple(w.shape)}")
+    xb = w.float().reshape(-1, FP8_BLOCK)
+    amax = xb.abs().amax(dim=1, keepdim=True)
+    scale = torch.where(amax > 0, amax / FP8_MAX, torch.ones_like(amax))
+    q = (xb / scale).clamp_(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn).view(torch.uint8)
+    return q.view(w.shape), scale.view(*w.shape[:-1], w.shape[-1] // FP8_BLOCK)
+
+
 def _balancing(m: dict) -> str:
     lb = m.get("moe_router_load_balancing_type")
     types = lb if isinstance(lb, (list, tuple)) else [lb]
@@ -108,6 +129,8 @@ def hf_config(m: dict, vocab: int) -> dict:
         raise ValueError("gated shared expert not ported")
     if m.get("position_embedding_type") not in (None, "none"):
         raise ValueError("expects NoPE attention")
+    if m.get("use_mup"):
+        raise ValueError("muP embedding / output scaling not ported")
     if m.get("linear_xsa"):
         raise ValueError("linear XSA in CKDA not ported")
     heads = m["num_attention_heads"]
@@ -167,101 +190,162 @@ def hf_config(m: dict, vocab: int) -> dict:
         "engram_sign_hash": sign,
         "engram_sign_table_size": int(m.get("engram_sign_table_size", 8192)),
         "engram_sign_multipliers": {str(i): engram_sign_multipliers(m, i + 1) for i in engram_layers} if sign else {},
+        "embedding_multiplier": float(m.get("embedding_multiplier") or 1.0),
+        "embedding_norm": bool(m.get("embedding_norm")),
         "tie_word_embeddings": not m.get("untie_embeddings_and_output_weights", False),
         "torch_dtype": "bfloat16",
+        # the context window: vLLM falls back to 2048 when a config names none (every eval of
+        # these exports ran with 2048 until 2026-11-06: few-shot contexts cut from the left,
+        # generations capped). No position embeddings (NoPE + CKDA): no positional limit, 100M
+        # (vLLM auto-fits max_model_len to its KV cache for these exports, submodules/vllm
+        # config/model.py); a run with RoPE / learned positions keeps its own.
+        "max_position_embeddings": max_positions(m),
     }
 
 
-def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | None, dtype: str = "bf16",
-            engram_table_dtype: str = "bf16") -> Path:
-    m = megatron_args(config_yaml)
-    cast = {"bf16": torch.bfloat16, "fp32": torch.float32}[dtype]
-    tcast = {"bf16": torch.bfloat16, "fp32": torch.float32}[engram_table_dtype]
-    out_dir = Path(out_dir)
-    writer = ShardedSafetensorsWriter(out_dir)
-    cfg = None
-    for i, t in iter_layers(Path(ckpt_dir)):
-        if i is None:
-            vocab = t["embedding.word_embeddings.weight"].shape[0]
-            cfg = hf_config(m, vocab)
-            cfg["engram_table_dtype"] = engram_table_dtype
-            writer.add("model.embed_tokens.weight", t.pop("embedding.word_embeddings.weight").to(cast))
-            if cfg["residual"] == "ldm":  # the embedding write and the first query
-                for site in ("embed_write", "first_query"):
-                    names = _LDM_NET + (("forget_logit",) if site == "embed_write" else ("read_gain",))
-                    for n in names:
-                        writer.add(f"model.ldm_boundary.{site}.{n}", t.pop(f"decoder.ldm_stream_boundary.{site}.{n}").to(cast))
-            writer.add("model.norm.weight", t.pop("decoder.final_norm.weight").to(cast))
-            if not cfg["tie_word_embeddings"]:
-                writer.add("lm_head.weight", t.pop("output_layer.weight").to(cast))
-            if t:
-                raise KeyError(f"unmapped non-layer tensors {sorted(t)}")
-            continue
-        kind = cfg["block_types"][i]
-        p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
-        g = lambda name: t.pop(p + name)  # noqa: E731
-        mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
-                 "engram": "residual_scheme.mhc_mixer"}[kind]
-        if cfg["residual"] == "ldm":  # this layer's write and the next read's query
-            for n in _LDM_NET + ("forget_logit",):
-                writer.add(hp + f"ldm_mixer.write_site.{n}", g(f"{mixer}.write_site.{n}").to(cast))
-            for n in _LDM_NET + ("read_gain",):
-                writer.add(hp + f"ldm_mixer.next_query.{n}", g(f"{mixer}.next_query.{n}").to(cast))
+def max_positions(m: dict) -> int:
+    """The exported context window: the run's own for position embeddings with a range, else
+    OELLM_EXPORT_MAX_POSITIONS (default 100M: the model length-extrapolates; vLLM auto-fits)."""
+    if str(m.get("position_embedding_type") or "none") == "none":
+        return int(os.environ.get("OELLM_EXPORT_MAX_POSITIONS", "100000000"))
+    return int(m.get("max_position_embeddings") or m.get("seq_length"))
+
+
+def export_hf_config(m: dict, vocab: int, dtype: str = "bf16", engram_table_dtype: str = "bf16",
+                     expert_dtype: str = "bf16") -> dict:
+    cfg = hf_config(m, vocab)
+    cfg["engram_table_dtype"] = engram_table_dtype
+    cfg["expert_weight_dtype"] = expert_dtype
+    if expert_dtype == "fp8" and dtype != "bf16":
+        raise ValueError("fp8 experts are the bf16 weights' tiles: --dtype bf16")
+    return cfg
+
+
+def convert_nonlayer(t: dict, cfg: dict, add, cast: torch.dtype) -> None:
+    """The non-layer tensors (embedding, final norm, LDM boundary, output layer) -> ``add(name, tensor)``."""
+    add("model.embed_tokens.weight", t.pop("embedding.word_embeddings.weight").to(cast))
+    if cfg["embedding_norm"]:
+        add("model.embed_norm.weight", t.pop("embedding.embedding_norm_weight").to(cast))
+    if cfg["residual"] == "ldm":  # the embedding write and the first query
+        for site in ("embed_write", "first_query"):
+            names = _LDM_NET + (("forget_logit",) if site == "embed_write" else ("read_gain",))
+            for n in names:
+                add(f"model.ldm_boundary.{site}.{n}", t.pop(f"decoder.ldm_stream_boundary.{site}.{n}").to(cast))
+    add("model.norm.weight", t.pop("decoder.final_norm.weight").to(cast))
+    if not cfg["tie_word_embeddings"]:
+        add("lm_head.weight", t.pop("output_layer.weight").to(cast))
+    if t:
+        raise KeyError(f"unmapped non-layer tensors {sorted(t)}")
+
+
+def _expert_ids(t: dict, prefix: str, suffix: str = "") -> list[str]:
+    """The keys ``{prefix}{e}{suffix}``, e = 0..E-1 (a contiguous set)."""
+    pat = re.compile(re.escape(prefix) + r"(\d+)" + re.escape(suffix) + "$")
+    found = sorted((int(mm.group(1)), k) for k in t if (mm := pat.match(k)))
+    if not found or [e for e, _ in found] != list(range(len(found))):
+        raise KeyError(f"experts {prefix}N{suffix}: not a contiguous 0..E-1 set ({len(found)} found)")
+    return [k for _, k in found]
+
+
+def routed_experts(t: dict, p: str, cast: torch.dtype, expert_dtype: str) -> dict[str, torch.Tensor]:
+    """The routed experts as [E, ...] tensors, one expert at a time (host memory: the stacked fp32 copies
+    of 360 experts were ~15 GB per layer). Megatron's linear_fc1 rows: gate then up, as here. The fp8
+    tiles are 1 x 128 along the last dim, so per expert = per stacked tensor."""
+    fc1 = p + "mlp.experts.linear_fc1.weight"
+    gates, ups = _expert_ids(t, fc1, "_w"), _expert_ids(t, fc1, "_v")
+    downs = _expert_ids(t, p + "mlp.experts.linear_fc2.weight")
+    if not len(gates) == len(ups) == len(downs):
+        raise KeyError(f"{p}: {len(gates)} / {len(ups)} / {len(downs)} expert gate / up / down weights")
+    parts = {
+        "gate_up_proj": [lambda g=g, u=u: torch.cat([t.pop(g), t.pop(u)], dim=0) for g, u in zip(gates, ups)],
+        "down_proj": [lambda d=d: t.pop(d) for d in downs],
+    }
+    out = {}
+    for n, fetch in parts.items():
+        for e, f in enumerate(fetch):
+            w = f().to(cast)
+            pieces = {n: w} if expert_dtype != "fp8" else dict(zip((n, n + "_scale"), fp8_tiles(w)))
+            for k, v in pieces.items():
+                if e == 0:
+                    out[k] = torch.empty((len(fetch), *v.shape), dtype=v.dtype)
+                out[k][e] = v
+    return out
+
+
+def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, tcast: torch.dtype,
+                  expert_dtype: str, table: bool = True) -> None:
+    """Decoder layer ``i``'s tensors (training names) -> ``add(hf name, tensor)``. ``table=False``: the
+    Engram table is converted elsewhere (export_parallel's row ranges), see :func:`engram_table_rows`."""
+    kind = cfg["block_types"][i]
+    p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
+    g = lambda name: t.pop(p + name)  # noqa: E731
+    mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
+             "engram": "residual_scheme.mhc_mixer"}[kind]
+    if cfg["residual"] == "ldm":  # this layer's write and the next read's query
+        for n in _LDM_NET + ("forget_logit",):
+            add(hp + f"ldm_mixer.write_site.{n}", g(f"{mixer}.write_site.{n}").to(cast))
+        for n in _LDM_NET + ("read_gain",):
+            add(hp + f"ldm_mixer.next_query.{n}", g(f"{mixer}.next_query.{n}").to(cast))
+    else:
+        for n in _MHC:  # mHC coefficients stay fp32 (Megatron computes them in fp32)
+            add(hp + f"mhc.{n}", g(f"{mixer}.{n}").float())
+    if kind == "attention":
+        q, z, kk, v = _split_attention(g("self_attention.linear_qkv.weight"), cfg)
+        for n, w in (("q_proj", q), ("gate_proj", z), ("k_proj", kk), ("v_proj", v)):
+            add(hp + f"mixer.{n}.weight", w.to(cast))
+        add(hp + "mixer.o_proj.weight", g("self_attention.linear_proj.weight").to(cast))
+        add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
+        add(hp + "mixer.k_norm.weight", g("self_attention.k_layernorm.weight").to(cast))
+        add(hp + "input_layernorm.weight", g("self_attention.linear_qkv.layer_norm_weight").to(cast))
+    elif kind == "ckda":
+        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        pre = p + "self_attention.layer."
+        for k in sorted(k for k in t if k.startswith(pre)):
+            add(hp + "mixer.layer." + k[len(pre):], t.pop(k).to(cast))
+    elif kind == "moe":
+        add(hp + "input_layernorm.weight", g("pre_mlp_layernorm.weight").to(cast))
+        add(hp + "mixer.gate", g("mlp.router.weight").float())
+        if cfg["router_balancing"] == "quantile":
+            add(hp + "mixer.qb_beta", g("mlp.router.qb_beta").float())
         else:
-            for n in _MHC:  # mHC coefficients stay fp32 (Megatron computes them in fp32)
-                writer.add(hp + f"mhc.{n}", g(f"{mixer}.{n}").float())
-        if kind == "attention":
-            q, z, kk, v = _split_attention(g("self_attention.linear_qkv.weight"), cfg)
-            for n, w in (("q_proj", q), ("gate_proj", z), ("k_proj", kk), ("v_proj", v)):
-                writer.add(hp + f"mixer.{n}.weight", w.to(cast))
-            writer.add(hp + "mixer.o_proj.weight", g("self_attention.linear_proj.weight").to(cast))
-            writer.add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
-            writer.add(hp + "mixer.k_norm.weight", g("self_attention.k_layernorm.weight").to(cast))
-            writer.add(hp + "input_layernorm.weight", g("self_attention.linear_qkv.layer_norm_weight").to(cast))
-        elif kind == "ckda":
-            writer.add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
-            pre = p + "self_attention.layer."
-            for k in sorted(k for k in t if k.startswith(pre)):
-                writer.add(hp + "mixer.layer." + k[len(pre):], t.pop(k).to(cast))
-        elif kind == "moe":
-            writer.add(hp + "input_layernorm.weight", g("pre_mlp_layernorm.weight").to(cast))
-            writer.add(hp + "mixer.gate", g("mlp.router.weight").float())
-            if cfg["router_balancing"] == "quantile":
-                writer.add(hp + "mixer.qb_beta", g("mlp.router.qb_beta").float())
-            else:
-                writer.add(hp + "mixer.e_score_correction_bias", g("mlp.router.expert_bias").float())
-            gate = stack_experts(t, p + "mlp.experts.linear_fc1.weight", "_w")
-            up = stack_experts(t, p + "mlp.experts.linear_fc1.weight", "_v")
-            writer.add(hp + "mixer.gate_up_proj", torch.cat([gate, up], dim=1).to(cast))
-            del gate, up
-            writer.add(hp + "mixer.down_proj", stack_experts(t, p + "mlp.experts.linear_fc2.weight").to(cast))
-            if cfg["shared_expert_intermediate_size"]:
-                writer.add(hp + "mixer.shared_gate_proj.weight", g("mlp.shared_experts.linear_fc1.weight_w").to(cast))
-                writer.add(hp + "mixer.shared_up_proj.weight", g("mlp.shared_experts.linear_fc1.weight_v").to(cast))
-                writer.add(hp + "mixer.shared_down_proj.weight", g("mlp.shared_experts.linear_fc2.weight").to(cast))
-        else:  # engram: drop the 4096-row alignment padding
+            add(hp + "mixer.e_score_correction_bias", g("mlp.router.expert_bias").float())
+        experts = routed_experts(t, p, cast, expert_dtype)
+        for n in list(experts):
+            add(hp + f"mixer.{n}", experts.pop(n))
+        if cfg["shared_expert_intermediate_size"]:
+            add(hp + "mixer.shared_gate_proj.weight", g("mlp.shared_experts.linear_fc1.weight_w").to(cast))
+            add(hp + "mixer.shared_up_proj.weight", g("mlp.shared_experts.linear_fc1.weight_v").to(cast))
+            add(hp + "mixer.shared_down_proj.weight", g("mlp.shared_experts.linear_fc2.weight").to(cast))
+    else:  # engram: drop the 4096-row alignment padding
+        if table:
             rows = sum(cfg["engram_table_sizes"])
-            table = g("table")
-            if table.shape[0] < rows:
-                raise ValueError(f"layer {i}: table has {table.shape[0]} rows < {rows}")
-            writer.add(hp + "mixer.table", table[:rows].to(tcast))
-            del table
-            for n in ("key_proj.weight", "value_proj.weight", "hidden_norm.weight", "key_norm.weight", "conv1d.weight"):
-                writer.add(hp + f"mixer.{n}", g(n).to(cast))
-            if cfg["engram_conv_prenorm"]:
-                writer.add(hp + "mixer.conv_norm.weight", g("conv_norm.weight").to(cast))
-            if cfg["engram_sign_hash"]:  # not in the checkpoint: a function of Megatron's fixed seed
-                writer.add(hp + "mixer.sign_table", torch.from_numpy(engram_sign_table_np(m)))
-            if cfg["engram_token_map"]:
-                # the map covers the padded tokenizer vocabulary; ids >= vocab never reach the model
-                tmap = np.load(m["engram_token_map"]).astype(np.int64)[: cfg["vocab_size"]]
-                writer.add(hp + "mixer.token_map", torch.from_numpy(tmap))
-        if t:
-            raise KeyError(f"layer {i} ({kind}): unmapped tensors {sorted(t)}")
-        LOGGER.info("layer %d (%s) done", i, kind)
-    writer.close()
+            tab = g("table")
+            if tab.shape[0] < rows:
+                raise ValueError(f"layer {i}: table has {tab.shape[0]} rows < {rows}")
+            # host memory: the fp32 table (160 GB for v3 / v4) goes before the cast copy is written
+            # (the writer's serialization copies it once more); peak ~385 -> ~240 GB
+            cast_table = tab[:rows].to(tcast)
+            del tab
+            add(hp + "mixer.table", cast_table)
+            del cast_table
+        for n in ("key_proj.weight", "value_proj.weight", "hidden_norm.weight", "key_norm.weight", "conv1d.weight"):
+            add(hp + f"mixer.{n}", g(n).to(cast))
+        if cfg["engram_conv_prenorm"]:
+            add(hp + "mixer.conv_norm.weight", g("conv_norm.weight").to(cast))
+        if cfg["engram_sign_hash"]:  # not in the checkpoint: a function of Megatron's fixed seed
+            add(hp + "mixer.sign_table", torch.from_numpy(engram_sign_table_np(m)))
+        if cfg["engram_token_map"]:
+            # the map covers the padded tokenizer vocabulary; ids >= vocab never reach the model
+            tmap = np.load(m["engram_token_map"]).astype(np.int64)[: cfg["vocab_size"]]
+            add(hp + "mixer.token_map", torch.from_numpy(tmap))
+    if t:
+        raise KeyError(f"layer {i} ({kind}): unmapped tensors {sorted(t)}")
+
+
+def finish_export(out_dir: Path, cfg: dict, tokenizer: Path | None, ckpt_dir: Path, config_yaml: Path) -> None:
+    """config.json, the model code, the tokenizer and megatron_source.json next to the weights."""
     write_config(out_dir, cfg, tokenizer)
-    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py"):
+    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py"):
         shutil.copy2(_PKG / f, out_dir / f)
     # the reused modules (CKDA wrapper, Engram base, norm, cache) and their config
     for f in ("modeling_oellm_hybrid.py", "configuration_oellm_hybrid.py"):
@@ -271,6 +355,25 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             if (Path(tokenizer) / name).exists():
                 shutil.copy2(Path(tokenizer) / name, out_dir / name)
     (out_dir / "megatron_source.json").write_text(json.dumps({"checkpoint": str(ckpt_dir), "config": str(config_yaml)}, indent=2) + "\n")
+
+
+def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | None, dtype: str = "bf16",
+            engram_table_dtype: str = "bf16", expert_dtype: str = "bf16") -> Path:
+    m = megatron_args(config_yaml)
+    cast = {"bf16": torch.bfloat16, "fp32": torch.float32}[dtype]
+    tcast = {"bf16": torch.bfloat16, "fp32": torch.float32}[engram_table_dtype]
+    out_dir = Path(out_dir)
+    writer = ShardedSafetensorsWriter(out_dir)
+    cfg = None
+    for i, t in iter_layers(Path(ckpt_dir)):
+        if i is None:
+            cfg = export_hf_config(m, t["embedding.word_embeddings.weight"].shape[0], dtype, engram_table_dtype, expert_dtype)
+            convert_nonlayer(t, cfg, writer.add, cast)
+            continue
+        convert_layer(i, t, cfg, m, writer.add, cast, tcast, expert_dtype)
+        LOGGER.info("layer %d (%s) done", i, cfg["block_types"][i])
+    writer.close()
+    finish_export(out_dir, cfg, tokenizer, ckpt_dir, config_yaml)
     return out_dir
 
 
@@ -292,9 +395,11 @@ def main() -> None:
     p.add_argument("--tokenizer", type=Path)
     p.add_argument("--dtype", default="bf16", choices=["bf16", "fp32"])
     p.add_argument("--engram-table-dtype", default="bf16", choices=["bf16", "fp32"])
+    p.add_argument("--expert-dtype", default="bf16", choices=["bf16", "fp8"],
+                   help="routed experts; fp8 = the run's fsdp_fp8_param_gather tiles (E4M3, 1 x 128 fp32 scales)")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    convert(a.ckpt_dir, a.config, a.out_dir, a.tokenizer, a.dtype, a.engram_table_dtype)
+    convert(a.ckpt_dir, a.config, a.out_dir, a.tokenizer, a.dtype, a.engram_table_dtype, a.expert_dtype)
 
 
 if __name__ == "__main__":

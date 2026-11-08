@@ -224,9 +224,12 @@
    "bias_globalaux",
    "pab",
    "no_emb_router_wd",
-   "opt81"
+   "opt81",
+   "zloss",
+   "expert_spectral_cap",
+   "hd256"
   ],
-  "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets; option8_1 data mix (opt81) from step ~100 on, resumed in place (user 2026-11-02)."
+  "notes": "Ambitious v4 (fresh, 8k -> 64k at step 23,691): 84B-A2.9B-E80B, mHC-4 (mixer lr x0.25), expert bias + global_aux_loss 1e-4, pab, CKDA beta on Adam, no weight decay on the embedding / routers, fixed held-out validation sets; option8_1 data mix (opt81) from step ~100 on, resumed in place (user 2026-11-02). From step 9790 (2026-11-05): output z-loss 1e-5 + routed-expert spectral cap ramp 80 -> 15 from step 9200, measured in the experts' forward. From step 9815: attention head dim 256 instead of 128 (checkpoint 9814 widened function-preserving, eps 1e-3; run dir ..._v4_2ph_hd256), 128 nodes."
  },
  "ambitious_v4_ldm_main": {
   "name": "ambitious_v4_ldm",

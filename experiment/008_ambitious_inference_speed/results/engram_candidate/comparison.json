@@ -1,0 +1,322 @@
+{
+  "component_parity": {
+    "cases": 96,
+    "all_outputs_exact": true,
+    "all_states_exact": true,
+    "max_abs_difference": 0.0
+  },
+  "performance": {
+    "scoring": {
+      "reference_seconds": 9.989948928821832,
+      "batched_seconds": 10.293499623425305,
+      "speedup": 0.9705104477866137,
+      "reference_input_tokens_per_second": 26240.77478951797,
+      "batched_input_tokens_per_second": 25466.94609124277,
+      "reference_output_tokens_per_second": 102.50302652155457,
+      "batched_output_tokens_per_second": 99.48025816891708
+    },
+    "generation": {
+      "reference_seconds": 68.47574104974046,
+      "batched_seconds": 30.93099932698533,
+      "speedup": 2.2138224609510027,
+      "reference_input_tokens_per_second": 3828.2754736393404,
+      "batched_input_tokens_per_second": 8475.122230250608,
+      "reference_output_tokens_per_second": 478.53443420491755,
+      "batched_output_tokens_per_second": 1059.390278781326
+    }
+  },
+  "numerics": {
+    "mean_nll_delta": -0.00010013668839414791,
+    "generated_tokens": 32768,
+    "generated_tokens_matched": 27705,
+    "complete_sequences_matched": 704,
+    "first_tokens_matched": 1011,
+    "separate_reference_mode_control": {
+      "tokens": 32768,
+      "tokens_matched": 27792,
+      "first_tokens_matched": 1016,
+      "complete_sequences_matched": 712
+    }
+  },
+  "quality": {
+    "hellaswag": {
+      "unique_docs": 17,
+      "records": 17,
+      "all_prompt_hashes_match": true,
+      "records_with_same_correctness": 15
+    },
+    "gsm8k": {
+      "unique_docs": 17,
+      "records": 34,
+      "all_prompt_hashes_match": true,
+      "records_with_same_correctness": 34
+    }
+  },
+  "single_profile": {
+    "frontend": {
+      "pid": 1570151,
+      "sampled_main_thread_seconds": 7.979591836734637,
+      "component_percent": {
+        "other": 100.0
+      },
+      "hot_leaves": [
+        {
+          "function": "Condition.wait",
+          "file": "/usr/lib/python3.12/threading.py",
+          "line": 355,
+          "percent": 100.0
+        }
+      ]
+    },
+    "engine_core": {
+      "pid": 1570307,
+      "sampled_main_thread_seconds": 6.8571428571428115,
+      "component_percent": {
+        "other": 100.0
+      },
+      "hot_leaves": [
+        {
+          "function": "SpinCondition.wait",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 208,
+          "percent": 30.952380952381166
+        },
+        {
+          "function": "MessageQueue.acquire_read",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 864,
+          "percent": 16.369047619047738
+        },
+        {
+          "function": "sched_yield",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/utils.py",
+          "line": 46,
+          "percent": 11.309523809523894
+        },
+        {
+          "function": "all_reduce",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/distributed/distributed_c10d.py",
+          "line": 3252,
+          "percent": 7.440476190476243
+        },
+        {
+          "function": "MessageQueue.ReadTimeoutWithWarnings.timeout_ms",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 818,
+          "percent": 5.654761904761943
+        },
+        {
+          "function": "MessageQueue.acquire_read",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 856,
+          "percent": 3.2738095238095455
+        },
+        {
+          "function": "memory_fence",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 100,
+          "percent": 3.2738095238095455
+        },
+        {
+          "function": "SpinCondition.wait",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 206,
+          "percent": 2.976190476190496
+        },
+        {
+          "function": "MessageQueue.acquire_read.<locals>.check",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 844,
+          "percent": 2.380952380952397
+        },
+        {
+          "function": "MessageQueue.ReadTimeoutWithWarnings.timeout_ms",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 815,
+          "percent": 2.380952380952397
+        },
+        {
+          "function": "MessageQueue.ReadTimeoutWithWarnings.should_warn",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 824,
+          "percent": 2.380952380952397
+        },
+        {
+          "function": "MessageQueue.ReadTimeoutWithWarnings.should_warn",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/distributed/device_communicators/shm_broadcast.py",
+          "line": 828,
+          "percent": 2.0833333333333472
+        }
+      ]
+    },
+    "worker": {
+      "pid": 1570463,
+      "sampled_main_thread_seconds": 6.71428571428567,
+      "component_percent": {
+        "MoE": 27.659574468085314,
+        "CKDA": 23.708206686930268,
+        "MHC": 20.364741641337535,
+        "other": 20.06079027355638,
+        "Engram": 8.206686930091243
+      },
+      "hot_leaves": [
+        {
+          "function": "all_reduce",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/distributed/distributed_c10d.py",
+          "line": 3252,
+          "percent": 6.686930091185457
+        },
+        {
+          "function": "OellmRMSNorm.forward",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 119,
+          "percent": 3.9513677811550405
+        },
+        {
+          "function": "OellmMHC.read",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 162,
+          "percent": 3.647416413373884
+        },
+        {
+          "function": "OellmEngram._lookup_host",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 1012,
+          "percent": 3.647416413373884
+        },
+        {
+          "function": "OellmMHC.read",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 168,
+          "percent": 3.03951367781157
+        },
+        {
+          "function": "dynamic_func",
+          "file": "<string>",
+          "line": 4,
+          "percent": 2.127659574468099
+        },
+        {
+          "function": "Linear.forward",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/torch/nn/modules/linear.py",
+          "line": 134,
+          "percent": 2.127659574468099
+        },
+        {
+          "function": "BasevLLMParameter.__torch_function__",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/parameter.py",
+          "line": 124,
+          "percent": 2.127659574468099
+        },
+        {
+          "function": "OellmRMSNorm.forward",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 121,
+          "percent": 2.127659574468099
+        },
+        {
+          "function": "OellmEngram._rows_decode",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 1052,
+          "percent": 1.823708206686942
+        },
+        {
+          "function": "OellmMHC.read",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 171,
+          "percent": 1.823708206686942
+        },
+        {
+          "function": "OellmMHC.read",
+          "file": "/tmp/oellm_vllm032_7055a88eda71d9f1/pylibs_vllm/vllm/model_executor/models/oellm_ambitious.py",
+          "line": 166,
+          "percent": 1.823708206686942
+        }
+      ]
+    }
+  },
+  "decode_scaling": {
+    "reference": [
+      {
+        "batch": 1,
+        "tokens_per_request": 128,
+        "wall_seconds": 21.843942117877305,
+        "end_to_end_output_tokens_per_second": 5.85974817682947,
+        "decode_span_seconds": 19.212345200125128,
+        "decode_output_tokens_per_second": 6.610333026869248,
+        "mean_per_request_decode_tokens_per_second": 6.610333026869248,
+        "mean_time_to_first_token_seconds": 0.21526312828063965,
+        "dummy_start_requests": 3,
+        "decode_speedup_vs_single": 1.0,
+        "linear_scaling_efficiency": 1.0
+      },
+      {
+        "batch": 32,
+        "tokens_per_request": 128,
+        "wall_seconds": 26.756861185654998,
+        "end_to_end_output_tokens_per_second": 153.08223081846256,
+        "decode_span_seconds": 24.281698698177934,
+        "decode_output_tokens_per_second": 167.36885052877116,
+        "mean_per_request_decode_tokens_per_second": 5.291671862468158,
+        "mean_time_to_first_token_seconds": 0.479784831404686,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 25.319276630762964,
+        "linear_scaling_efficiency": 0.7912273947113426
+      },
+      {
+        "batch": 256,
+        "tokens_per_request": 128,
+        "wall_seconds": 63.19704433903098,
+        "end_to_end_output_tokens_per_second": 518.5052614836012,
+        "decode_span_seconds": 61.036236809100956,
+        "decode_output_tokens_per_second": 532.6671777240405,
+        "mean_per_request_decode_tokens_per_second": 2.1496558359012017,
+        "mean_time_to_first_token_seconds": 1.8903260948136449,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 80.58098972606824,
+        "linear_scaling_efficiency": 0.31476949111745406
+      }
+    ],
+    "batched": [
+      {
+        "batch": 1,
+        "tokens_per_request": 128,
+        "wall_seconds": 21.61262840917334,
+        "end_to_end_output_tokens_per_second": 5.922463366171198,
+        "decode_span_seconds": 19.014295971021056,
+        "decode_output_tokens_per_second": 6.679184977111733,
+        "mean_per_request_decode_tokens_per_second": 6.679184977111733,
+        "mean_time_to_first_token_seconds": 0.21133184432983398,
+        "dummy_start_requests": 3,
+        "decode_speedup_vs_single": 1.0,
+        "linear_scaling_efficiency": 1.0
+      },
+      {
+        "batch": 32,
+        "tokens_per_request": 128,
+        "wall_seconds": 22.758529813028872,
+        "end_to_end_output_tokens_per_second": 179.9764762333246,
+        "decode_span_seconds": 20.275204326957464,
+        "decode_output_tokens_per_second": 200.44187641535112,
+        "mean_per_request_decode_tokens_per_second": 6.351238542840274,
+        "mean_time_to_first_token_seconds": 0.4858698397874832,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 30.00993041849064,
+        "linear_scaling_efficiency": 0.9378103255778325
+      },
+      {
+        "batch": 256,
+        "tokens_per_request": 128,
+        "wall_seconds": 24.95076365303248,
+        "end_to_end_output_tokens_per_second": 1313.3064965735998,
+        "decode_span_seconds": 22.78327848156914,
+        "decode_output_tokens_per_second": 1427.0114824036868,
+        "mean_per_request_decode_tokens_per_second": 6.103644470753128,
+        "mean_time_to_first_token_seconds": 2.0443069329485297,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 213.65054079109615,
+        "linear_scaling_efficiency": 0.8345724249652193
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+# @package _global_
+# lm-eval workers on a shared queue (scripts/korbi/flag_eval/flag_queue.py): one job per node, one
+# engine per job (the fast layout of flag_eval_fast_mn5: TP1 x DP4 x EP, UVA Engram tables), items
+# claimed until the queue is empty -- one model load per node instead of one per group, no
+# guessed wall clocks, long rows split into document parts (lmeval_parts.py) so that no item
+# decides the wall clock. A worker that dies loses only its item (its claim returns to the queue).
+#
+# Fill the queue and start the workers with scripts/korbi/flag_eval/run_queue_eval_mn5.sh:
+#   bash scripts/korbi/flag_eval/run_queue_eval_mn5.sh <export> <workers> <short|lm-eval> [overrides]
+defaults:
+  - flag_eval_fast_mn5
+  - _self_
+
+aux:
+  # results where the 438-suite aggregation reads them (override for test runs)
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  queue: ${aux.out}/${aux.export}/queue_lm
+  shards: [0, 1, 2, 3]  # one worker per entry (its summary_shard<i>.tsv); the launcher sets them
+  num_shards: 1
+  flag_names: queue  # unused: the workers read the queue
+  name: flag_q_${aux.export}_w${aux.shard}${aux.name_suffix}
+  bench: >-
+    FLAG_QUEUE=${aux.queue}
+    FLAG_TP=${aux.tp} FLAG_DP=${aux.dp} FLAG_MAX_NUM_SEQS=${aux.max_num_seqs}
+    FLAG_TOKEN_BUDGET=${aux.token_budget} FLAG_REQUEST_BATCH_SIZE=${aux.request_batch_size}
+    OELLM_MHC_IMPL=${aux.mhc_impl} OELLM_ENGRAM_TABLES=${aux.engram_tables}
+    OELLM_ENGRAM_DECODE_IMPL=${aux.engram_decode_impl}
+    OELLM_FUSION_IMPL=${aux.fusion_impl} OELLM_DECODE_GRAPHS=${aux.decode_graphs}
+    OELLM_GRAPH_MAX_ROWS=${aux.graph_max_rows}
+    bash scripts/korbi/flag_eval/run_flag_fast_mn5.sh
+    ${aux.export_dir} ${aux.out} ${aux.shard} ${aux.num_shards} ${aux.limit} ${aux.flag_names}
+
+job:
+  # a worker runs until the queue is empty: its wall clock is a safety bound only
+  est_step_time_s: 7200
+  metadata:
+    pool_priority: 60
+
+slurm:
+  sbatch:
+    time: "12:00:00"

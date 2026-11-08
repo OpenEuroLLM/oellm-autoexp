@@ -1,0 +1,1 @@
+host as01r2b04 cpus 16 503 GB

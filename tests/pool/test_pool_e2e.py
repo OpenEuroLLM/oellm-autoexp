@@ -719,6 +719,100 @@ def test_cpu_runs_may_use_the_excluded_nodes_first(pool):
         )
 
 
+def _shrink_host(pool: PoolEnv, jid: str, keep: list[str], gone: list[str]) -> None:
+    """The MareNostrum 5 shrink of a running host: its removed nodes into the host's exclude
+    list first (plain runs never get them), then `scontrol update NodeList=` of the job."""
+    excl = pool.layout.host_dir("host001") / "exclude_nodes"
+    excl.write_text("".join(f"{n}\n" for n in gone))
+    pool.slurm("scontrol", "update", f"JobId={jid}", f"NodeList={','.join(keep)}")
+    assert next(j for j in pool.fake_jobs() if j["id"] == jid)["nodelist"] == keep
+
+
+def _excluded_run_after_a_shrink(pool: PoolEnv) -> dict:
+    """A 3-node host shrunk to 2 nodes (n1000-2 gone) while a run keeps it busy; then a
+    USE_EXCLUDED_NODES run. Its start record (it must not be handed the gone node)."""
+    pool.create_pool(*FAST, "job.pool_host.max_runs_per_host=2", "slurm.sbatch.nodes=3")
+    pool.enqueue("keep", "aux.iters=400", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.start_monitor()
+    keep = pool.wait_for(
+        lambda: (r := pool.runs_of("dummy_keep")) and pool.run_state(r[0]).started,
+        60,
+        "the first run holds the host",
+    )
+    jid = keep["job"]
+    _shrink_host(pool, jid, [f"n{jid}-0", f"n{jid}-1"], [f"n{jid}-2"])
+    pool.enqueue(
+        "cpu",
+        "aux.iters=30",
+        "aux.tick=0.1",
+        "slurm.sbatch.nodes=1",
+        "+job.metadata.pool_use_excluded_nodes=true",
+    )
+    cpu = pool.wait_for(
+        lambda: (r := pool.runs_of("dummy_cpu")) and pool.run_state(r[0]).started,
+        60,
+        "the excluded-nodes run starts",
+    )
+    assert cpu["job"] == jid
+    assert cpu["nodes"] != f"n{jid}-2", f"handed the node the shrink removed: {cpu['nodes']}"
+    assert cpu["nodes"] not in keep["nodes"].split(","), "and not the busy one"
+    pool.wait_for(
+        lambda: pool.record("dummy_cpu")["runtime"]["final_state"] == "finished", 120, "cpu run"
+    )
+    return cpu
+
+
+def test_excluded_node_runs_skip_the_nodes_a_shrink_removed(pool):
+    """A shrunk host's removed nodes sit in its exclude list, and a USE_EXCLUDED_NODES run takes
+    excluded nodes first: the supervisor follows the live allocation (refresh_alloc), so it never
+    hands out a node the job no longer holds (p134c host006 134 -> 16, 2026-11-05: 'Requested
+    node configuration is not available')."""
+    pool.env["POOL_ALLOC_REFRESH_S"] = "1"
+    _excluded_run_after_a_shrink(pool)
+    info = pool.layout.host_dir("host001") / "info.env"
+    assert "NUM_NODES=2\n" in info.read_text(), info.read_text()
+    assert "host resized nodes=2" in (pool.pool_dir / "ledger.tsv").read_text()
+
+
+def test_excluded_node_runs_skip_removed_nodes_with_an_old_supervisor(pool):
+    """The same with a supervisor that never refreshes its allocation (one started before the
+    fix, still running): the monitor reads the live allocation from SLURM and puts the removed
+    nodes into the run's own EXCLUDE before it assigns the run."""
+    pool.env["POOL_ALLOC_REFRESH_S"] = "1000000"
+    cpu = _excluded_run_after_a_shrink(pool)
+    rid = pool.runs_of("dummy_cpu")[0]
+    meta = (pool.pool_dir / "runs" / rid / "meta.env").read_text()
+    assert meta.rstrip().splitlines()[-1] == f"EXCLUDE=n{cpu['job']}-2", meta
+    info = pool.layout.host_dir("host001") / "info.env"
+    assert "NUM_NODES=3\n" in info.read_text(), "the old supervisor's view stays"
+
+
+def test_a_node_that_refuses_steps_is_marked_dead_and_skipped(pool):
+    """SLURM refused every step on one node of a running host ('Insufficient GRES', a GRES never
+    released after a job resize): a run sent there fails in seconds, the node is free again at
+    once and took the next run, 18 in a row (p134c host006 as01r1b12, 2026-11-06). The monitor
+    marks such a node dead after the first refused step; later runs -- also those that take
+    excluded nodes first -- never get it."""
+    # one run at a time, in enqueue order: the first takes n1000-0, the others follow its failure
+    pool.create_pool(*FAST, "job.pool_host.max_runs_per_host=1", "slurm.sbatch.nodes=3")
+    (pool.fs / "stuck_nodes").write_text("n1000-0\n")  # the first node: plain runs take it first
+    pool.enqueue("first", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.enqueue("plain", "aux.iters=20", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.enqueue("excl", "aux.iters=20", "aux.tick=0.1", "slurm.sbatch.nodes=1",
+                 "+job.metadata.pool_use_excluded_nodes=true")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_first"), 60, "the first run")[0]
+    pool.wait_for(lambda: (pool.pool_dir / "runs" / first / "rc").exists(), 60, "its refused step")
+    assert pool.run_state(first).started["nodes"] == "n1000-0"
+    dead = pool.layout.host_dir("host001") / "dead_nodes"
+    pool.wait_for(lambda: dead.exists() and "n1000-0" in dead.read_text(), 30, "the node marked dead")
+    for name in ("dummy_plain", "dummy_excl"):
+        st = pool.wait_for(
+            lambda n=name: (r := pool.runs_of(n)) and pool.run_state(r[0]).started, 60, f"{name} starts")
+        assert st["nodes"] != "n1000-0", f"{name} got the dead node"
+        pool.wait_for(lambda n=name: pool.record(n)["runtime"]["final_state"] == "finished", 120, name)
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,

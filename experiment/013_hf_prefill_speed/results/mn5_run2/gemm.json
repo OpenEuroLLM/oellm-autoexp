@@ -1,0 +1,62 @@
+[
+ {
+  "tokens": 512,
+  "block_m": 16,
+  "fp8_swap0_ms": 1.2814496040344239,
+  "fp8_swap0_tflops": 18.85301689893925,
+  "fp8_swap0_best": "BN: 64, SWAP: 0, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "fp8_swap1_ms": 1.2830400466918945,
+  "fp8_swap1_tflops": 18.829646901739707,
+  "fp8_swap1_best": "BN: 64, SWAP: 1, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "bf16_grouped_mm_ms": 2.3402496337890626,
+  "bf16_grouped_mm_tflops": 10.323339310124888
+ },
+ {
+  "tokens": 2048,
+  "block_m": 32,
+  "fp8_swap0_ms": 1.5921088218688966,
+  "fp8_swap0_tflops": 60.69733603169346,
+  "fp8_swap0_best": "BN: 128, SWAP: 0, num_warps: 4, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "fp8_swap1_ms": 1.5932031631469727,
+  "fp8_swap1_tflops": 60.65564417353926,
+  "fp8_swap1_best": "BN: 128, SWAP: 1, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "bf16_grouped_mm_ms": 2.5004127502441404,
+  "bf16_grouped_mm_tflops": 38.64832482179768
+ },
+ {
+  "tokens": 8192,
+  "block_m": 64,
+  "fp8_swap0_ms": 2.2956960678100584,
+  "fp8_swap0_tflops": 168.3790210995745,
+  "fp8_swap0_best": "BN: 256, SWAP: 0, num_warps: 8, num_ctas: 1, num_stages: 4, maxnreg: None",
+  "fp8_swap1_ms": 2.4719167709350587,
+  "fp8_swap1_tflops": 156.3754335036854,
+  "fp8_swap1_best": "BN: 256, SWAP: 1, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "bf16_grouped_mm_ms": 3.018403244018555,
+  "bf16_grouped_mm_tflops": 128.06342472829112
+ },
+ {
+  "tokens": 16384,
+  "block_m": 128,
+  "fp8_swap0_ms": 3.458268737792969,
+  "fp8_swap0_tflops": 223.54946127563835,
+  "fp8_swap0_best": "BN: 256, SWAP: 0, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "fp8_swap1_ms": 3.720783996582031,
+  "fp8_swap1_tflops": 207.77720877916482,
+  "fp8_swap1_best": "BN: 256, SWAP: 1, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "bf16_grouped_mm_ms": 3.8442977905273437,
+  "bf16_grouped_mm_tflops": 201.1015159088262
+ },
+ {
+  "tokens": 32768,
+  "block_m": 128,
+  "fp8_swap0_ms": 5.907142257690429,
+  "fp8_swap0_tflops": 261.7489403690995,
+  "fp8_swap0_best": "BN: 256, SWAP: 0, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "fp8_swap1_ms": 7.008358764648437,
+  "fp8_swap1_tflops": 220.6205872848979,
+  "fp8_swap1_best": "BN: 256, SWAP: 1, num_warps: 8, num_ctas: 1, num_stages: 3, maxnreg: None",
+  "bf16_grouped_mm_ms": 6.539727783203125,
+  "bf16_grouped_mm_tflops": 236.4300591427194
+ }
+]

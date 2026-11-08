@@ -15,5 +15,50 @@ defaults:
 aux:
   arm: ambitious_e360_eng80_v4_2ph
 
+backend:
+  megatron:
+    # ADDED 2026-11-05 at step 9118 (user: introduce a spectral bound gradually + z-loss as in the
+    # 32B run; restarted in place on o260c from the run's own checkpoint 9118, same data order;
+    # o260c.0035 ran 9118-9789 with the owner cap only; cap measured in the forward + z-loss
+    # from the restart after 9789).
+    #
+    # Routed-expert spectral cap with a ramp (Megatron fad580083). Checkpoints 5800 / 8000 / 8900 /
+    # 9000 showed one runaway expert per deep MoE layer: in blocks 35-45 one expert's fc2 sigma_max
+    # was 50-79x its init value at step 9000 (x1.7-1.9 per 2200 steps; healthy experts p99 <= 6.6x,
+    # max 13.6x), and these experts carried the deep band's growing expert output / residual
+    # stream. Weight decay on the Muown magnitudes g would act on the healthy matrices instead
+    # (every expert's g grows ~10 % per 2200 steps alike). The cap is a hard projection after each
+    # step (a matrix with sigma_max > cap is scaled by cap / sigma_max; g follows): start 80 =
+    # holds the largest (78.7x at 9000) where it is, then geometric x0.8 per 250 steps to 15
+    # (above every healthy expert) over 1875 optimizer steps from step 9200 (optimizer step =
+    # iteration + 1). Cost ~0.25 % of a 256-node step (hybrid_v4mhc_capspeed_mn5). The factor is
+    # logged as arch/muown/expert_cap_factor, the bound as arch/muown/expert_768x2048|2048x768/*.
+    # To hold the cap where it is (e.g. on a loss bump): set muown_expert_spectral_cap_end to the
+    # logged factor.
+    muown_expert_spectral_cap: 80.0
+    muown_expert_spectral_cap_end: 15.0
+    muown_expert_spectral_cap_ramp_start: 9200
+    muown_expert_spectral_cap_ramp_steps: 1875
+    # Measured in the experts' forward (Megatron 6b5aa0980 / 3d8071635): sigma_max of the full
+    # expert matrices that Megatron-FSDP gathers for the forward anyway (their FP8 round trip),
+    # applied as a per-matrix scale to each rank's local fp32 rows and g at the next due step -- no
+    # matrix moves. The first version (o260c.0035, 'owner' source) sent every expert matrix to an
+    # owner rank and back per application: ~0.8 s per step at 256 nodes (15.86 vs 15.04 s on the
+    # same nodes). Forward measurement: 216 ms per due step per GPU (90 experts x 48 layers), at
+    # interval 20 ~11 ms per step (0.07 % at 256 nodes); the runaways grow < 0.1 % per step, so
+    # they overshoot the cap by ~1-2 % between applications. 20 divides arch_metrics_interval
+    # (500): the cap metrics (arch/muown/expert_*/{capped,sigma_over_cap}) are recorded.
+    muown_expert_spectral_cap_source: forward
+    muown_expert_bound_interval: 20
+    # z-loss on the output logits, coefficient as the 32B dense flag run (b1_reborn_base): a pure
+    # gradient term coeff * logZ^2 (the logged lm loss stays the cross entropy), against drifting
+    # logit norms (no softcap). Logged as output_z_loss = mean(logZ^2) (32B at step 339k: 68.1).
+    # The v4 head + loss is Liger's fused kernel (liger_fused_linear_cross_entropy, chunk 2048): the
+    # first restart with the z-loss (o260c.0029, 01:51) failed at startup, as that path had none
+    # (o260c.0035 then ran the cap only). The z-loss is computed inside the Liger kernel since
+    # Megatron 144dd6867 (tests/unit_tests/fusions/test_liger_z_loss.py; zloss arm of
+    # hybrid_v4mhc_capspeed_mn5); needs Megatron >= 144dd6867.
+    output_z_loss_coeff: 1.0e-5
+
 job:
   name: ambitious_v4_2ph_128n_p${aux.phase}

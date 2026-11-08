@@ -131,6 +131,8 @@ def kv_rows(tok, raw_path, lengths=(2048, 4096, 8192, 16384, 32768), n=50, pairs
             question = tok.encode(f" What is the special number for {words[ask]}? The special number for "
                                   f"{words[ask]} is", add_special_tokens=False)
             body = L - sum(map(len, facts)) - len(question) - 8
+            if body >= len(filler):  # contexts longer than the filler (>= 256k): the filler repeated
+                filler = filler * (body // len(filler) + 2)
             start = rng.randrange(0, len(filler) - body)
             hay = filler[start:start + body]
             seg = len(hay) // pairs
@@ -176,6 +178,8 @@ def vt_rows(tok, raw_path, lengths=(4096, 8192, 16384, 32768, 65536), n=50, chai
             body = L - sum(map(len, seq)) - len(question) - 8
             if body <= 0:
                 continue
+            if body >= len(filler):  # contexts longer than the filler (>= 256k): the filler repeated
+                filler = filler * (body // len(filler) + 2)
             start = rng.randrange(0, len(filler) - body)
             hay = filler[start:start + body]
             seg = len(hay) // len(seq)

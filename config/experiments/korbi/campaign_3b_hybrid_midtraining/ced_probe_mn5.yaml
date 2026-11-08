@@ -1,0 +1,31 @@
+# @package _global_
+# CED retrofit probe (docs/campaign_3b_hybrid_midtraining.md §7): per-layer linear maps from the middle
+# layer's mHC streams to the upper attention / CKDA layers' state-writing inputs (k / v / beta / f), held-out
+# R^2 and the NLL with the predicted inputs; one MN5 node (scripts/korbi/campaign_midtraining/ced_probe.py).
+#   dev queue:  scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/ced_probe_mn5 aux.dev_queue=true --yes
+#   a pool:     add --no-monitor --monitor-state-dir $R/pool_state --pool <pool> slurm.sbatch.account=<host account>
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: ced_v4_2ph_8000
+  export: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_fp8_8000
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  # 16 rows x 2k (short sets), 1 x 64k (long_64k); fit on 8 batches per set, evaluate on 2 held-out ones
+  args: "--seq-len 2048 --rows 16 --fit-batches 8 --eval-batches 2"
+  bench: "bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh ced_probe.py ${aux.export} ${aux.out} ${aux.args}"
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 3600
+  array_group: null
+  metadata:
+    pool_priority: 30
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+    account: ehpc533

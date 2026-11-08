@@ -1,0 +1,122 @@
+# @package _global_
+# Cost of the routed-expert spectral cap (muown_expert_spectral_cap, Megatron-FSDP row-sharded
+# path) for the v4 main run (user 2026-11-04: introduce the cap with a ramp; speed test first).
+# The cap runs once per optimizer step: every expert matrix goes to its owner rank (the row
+# exchange the Newton-Schulz step uses), 10 power iterations there, the change comes back. Its
+# cost does not depend on the micro-batches of a step, so the optimizer timer (timing_log_level 1)
+# measures it directly, and per rank it scales with the expert matrices the rank owns.
+#
+# The production stack (hybrid_ambitious_v4_2ph_256_mn5: FSDP optim_grads_params, EP 4, MoonEP,
+# muown_classical) on 2 nodes, fresh init, no saves, 8 steps:
+#   - 8 routed experts instead of 360 (2 per EP rank, expert DP 2): a rank owns 48 x 8 x 3 / 8 =
+#     144 expert matrices and holds 48 x 2 x 3 / 2 = 144 matrices' rows, against ~51 at 256 nodes
+#     (48 x 360 x 3 / 1024): the measured cost x ~0.35 is the production estimate
+#   - Engram tables 1/16 (memory; not part of the cap)
+#   - gbs 64 (1 micro-batch of 8 per GPU) on 4 shards of the stage-1 mix (a small index build)
+# Arms (concurrent, 2 nodes each):
+#   off     no cap (the reference)
+#   cap40   kappa 40: at init nothing is capped -- the pure cost (exchange + power iteration)
+#   cap1    kappa 1: nearly every matrix capped every step -- the worst case (scaling, g update)
+#   zloss   the production change of 2026-11-05: cap ramp 80 -> 15 + output z-loss 1e-5 on the Liger
+#           fused head (Megatron: z-loss in the Liger kernel); its lm loss must track 'off' (the
+#           logged loss stays the CE) and output_z_loss (mean logZ^2) must be logged
+#
+#   cd $R/autoexp_capramp1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#     --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#     --config-name experiments/korbi/production/hybrid_v4mhc_capspeed_mn5 --yes
+defaults:
+  - hybrid_ambitious_v4_2ph_256_mn5
+  - _self_
+
+aux:
+  suite: v4mhc_capspeed
+  arm: off
+  only: []
+  nodes: 2
+  phase: 1
+  seq: 8192
+  gbs: 64
+  stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/capspeed_datamix.txt
+  node_check: "off"
+
+backend:
+  env:
+    FSDP_DCP_LOCAL_LOAD_PLAN: "0"
+  megatron:
+    num_experts: 8
+    engram_table_size: 1623365
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    micro_batch_size: 8
+    load: null
+    exit_on_missing_checkpoint: false
+    exit_interval: 8
+    log_interval: 1
+    timing_log_level: 1
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+
+job:
+  name: v4mhc_capspeed_${aux.arm}
+  base_output_dir: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/capspeed/${aux.arm}
+  metadata:
+    pool_singleton: null
+    pool_priority: 70
+  est_step_time_s: 20.0
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "speed test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # (the production config carries the cap ramp + z-loss since 2026-11-05: these arms clear them)
+        - aux.arm: "off"
+          backend.megatron.muown_expert_spectral_cap: 0.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: null
+        - aux.arm: cap40
+          backend.megatron.muown_expert_spectral_cap: 40.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: null
+        - aux.arm: cap1
+          backend.megatron.muown_expert_spectral_cap: 1.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: null
+        # z-loss alone (2026-11-05: the zloss arm's forward-backward was +30 % on other nodes)
+        - aux.arm: zlossonly
+          backend.megatron.muown_expert_spectral_cap: 0.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.output_z_loss_coeff: 1.0e-5
+        # the cap measured in the experts' forward (no exchange): kappa 1 caps nearly every
+        # matrix, every 2nd step, with the per-step log of the scaled matrices
+        - aux.arm: fwdcap
+          backend.megatron.muown_expert_spectral_cap: 1.0
+          backend.megatron.muown_expert_spectral_cap_end: 0.0
+          backend.megatron.muown_expert_spectral_cap_source: forward
+          backend.megatron.muown_expert_bound_interval: 2
+          backend.megatron.output_z_loss_coeff: null
+          backend.env.MEGATRON_FWDCAP_LOG: "1"
+        - aux.arm: zloss
+          backend.megatron.muown_expert_spectral_cap: 80.0
+          backend.megatron.muown_expert_spectral_cap_end: 15.0
+          backend.megatron.muown_expert_spectral_cap_ramp_start: 2
+          backend.megatron.muown_expert_spectral_cap_ramp_steps: 4
+          backend.megatron.output_z_loss_coeff: 1.0e-5

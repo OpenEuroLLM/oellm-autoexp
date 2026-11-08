@@ -1,0 +1,41 @@
+# The short FLAG set (21 lm-eval rows: English / German MC, generation, lambada, multiblimp) of one
+# oellm_ambitious checkpoint on MareNostrum 5 -- an EvalSpec (scripts/evals/spec.py):
+#
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/flag_short_mn5.yaml --step 13000 [--dry-run]
+export:
+  model: ambitious_v4_hd256
+
+rows:
+  harnesses: [lm-eval-harness]
+  names:
+    - vllm/arc_challenge/25
+    - vllm/hellaswag/0
+    - vllm/piqa/10
+    - vllm/winogrande/0
+    - vllm/boolq/10
+    - vllm/mmlu/5
+    - vllm/arc_challenge_mt_de/25
+    - vllm/hellaswag_de/0
+    - vllm/global_mmlu_full_de/5
+    - vllm/belebele_deu_Latn/5
+    - vllm/sib200_deu_Latn/0
+    - vllm/global_piqa_completions_deu_latn/0
+    - vllm/include_base_44_german/0
+    - vllm/xcsqa_deu_Latn/0
+    - vllm/gsm8k/4
+    - vllm/global_mgsm_de/5
+    - vllm/polymath_en_low/0
+    - vllm/ifeval/0
+    - vllm/mbpp/3
+    - vllm/lambada_openai/0
+    - vllm/multiblimp_deu/0
+
+lm_eval:
+  workers: 8
+  job: {priority: 65}
+
+lighteval: {enabled: false}
+evalchemy: {enabled: false}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_fast

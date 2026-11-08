@@ -1,0 +1,2229 @@
+{
+  "layout": "ep4",
+  "max_seqs": 256,
+  "token_budget": 32768,
+  "dp": 4,
+  "tp": 1,
+  "startup_seconds": 137.25522351590917,
+  "prompt_sha256": "119c54acf582acaf185777805dafdef74f196a99c92738d8f748e91f7e7362df",
+  "trials": [
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "variant": "reference",
+      "mode": "scoring",
+      "trial": 0,
+      "seconds": 10.025653305929154,
+      "requests_per_second": 102.13798230928334,
+      "input_tokens_per_second": 26147.323471176536,
+      "output_tokens_per_second": 102.13798230928334,
+      "mean_nll": 1.6886250674381822,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 32,
+            "waiting": 217,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 213,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 209,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 214,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1565324,
+            "device": 0,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226004480,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565323,
+            "device": 1,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226002432,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565318,
+            "device": 2,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226002432,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565317,
+            "device": 3,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226002432,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "variant": "reference",
+      "mode": "scoring",
+      "trial": 1,
+      "seconds": 9.989948928821832,
+      "requests_per_second": 102.50302652155457,
+      "input_tokens_per_second": 26240.77478951797,
+      "output_tokens_per_second": 102.50302652155457,
+      "mean_nll": 1.6886227911195182,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 64,
+            "waiting": 211,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 206,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 207,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 205,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1565324,
+            "device": 0,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226002432,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565323,
+            "device": 1,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565318,
+            "device": 2,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565317,
+            "device": 3,
+            "free_bytes": 6966738944,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 32768,
+      "variant": "reference",
+      "mode": "generation",
+      "trial": 0,
+      "seconds": 68.47574104974046,
+      "requests_per_second": 14.954201068903673,
+      "input_tokens_per_second": 3828.2754736393404,
+      "output_tokens_per_second": 478.53443420491755,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 64,
+            "waiting": 215,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 214,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 215,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 208,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1565324,
+            "device": 0,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226010624,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565323,
+            "device": 1,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226010624,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565318,
+            "device": 2,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226010624,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565317,
+            "device": 3,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226008576,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "variant": "batched",
+      "mode": "scoring",
+      "trial": 0,
+      "seconds": 10.115657857153565,
+      "requests_per_second": 101.22920471018604,
+      "input_tokens_per_second": 25914.676405807626,
+      "output_tokens_per_second": 101.22920471018604,
+      "mean_nll": 1.6885830160059745,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 32,
+            "waiting": 214,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 205,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 208,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 32,
+            "waiting": 206,
+            "cache_usage": 0.20586721564590837,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1565324,
+            "device": 0,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226002432,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565323,
+            "device": 1,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565318,
+            "device": 2,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565317,
+            "device": 3,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 1024,
+      "variant": "batched",
+      "mode": "scoring",
+      "trial": 1,
+      "seconds": 10.293499623425305,
+      "requests_per_second": 99.48025816891708,
+      "input_tokens_per_second": 25466.94609124277,
+      "output_tokens_per_second": 99.48025816891708,
+      "mean_nll": 1.688522654431124,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 64,
+            "waiting": 217,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 203,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 209,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 199,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1565324,
+            "device": 0,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226004480,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565323,
+            "device": 1,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226000384,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565318,
+            "device": 2,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226002432,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565317,
+            "device": 3,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55225998336,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57657064448,
+            "peak_reserved_bytes": 58867056640
+          }
+        ]
+      ]
+    },
+    {
+      "requests": 1024,
+      "input_tokens": 262144,
+      "output_tokens": 32768,
+      "variant": "batched",
+      "mode": "generation",
+      "trial": 0,
+      "seconds": 30.93099932698533,
+      "requests_per_second": 33.10594621191644,
+      "input_tokens_per_second": 8475.122230250608,
+      "output_tokens_per_second": 1059.390278781326,
+      "scheduler_peaks_by_frontend": [
+        {
+          "0": {
+            "running": 64,
+            "waiting": 213,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 210,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 213,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        },
+        {
+          "0": {
+            "running": 64,
+            "waiting": 211,
+            "cache_usage": 0.41173443129181675,
+            "preemptions": 0
+          }
+        }
+      ],
+      "worker_memory_by_frontend": [
+        [
+          {
+            "pid": 1565324,
+            "device": 0,
+            "free_bytes": 6962544640,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226010624,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565323,
+            "device": 1,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226008576,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565318,
+            "device": 2,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226010624,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ],
+        [
+          {
+            "pid": 1565317,
+            "device": 3,
+            "free_bytes": 6964641792,
+            "total_bytes": 67952836608,
+            "allocated_bytes": 55226008576,
+            "reserved_bytes": 58867056640,
+            "peak_allocated_bytes": 57656904192,
+            "peak_reserved_bytes": 58867056640
+          }
+        ]
+      ]
+    }
+  ],
+  "engram_checks_by_rank": [
+    [
+      [
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0031325803138315678,
+            0.002946305088698864,
+            0.0029153828509151936
+          ],
+          "batched_seconds": [
+            0.0029196920804679394,
+            0.002914583310484886,
+            0.0034599374048411846
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.02000717306509614,
+            0.01993347005918622,
+            0.020311442203819752
+          ],
+          "batched_seconds": [
+            0.003458163235336542,
+            0.0029786089435219765,
+            0.0030945581384003162
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0749345188960433,
+            0.0746691501699388,
+            0.0743424347601831
+          ],
+          "batched_seconds": [
+            0.003281661309301853,
+            0.0035327509976923466,
+            0.0035346467047929764
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.1490355059504509,
+            0.14843642711639404,
+            0.15031906822696328
+          ],
+          "batched_seconds": [
+            0.00353244598954916,
+            0.003122901078313589,
+            0.0031042899936437607
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.29868387524038553,
+            0.2978236321359873,
+            0.2957901260815561
+          ],
+          "batched_seconds": [
+            0.0036718938499689102,
+            0.0037293191999197006,
+            0.0033102883026003838
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5883981832303107,
+            0.5894069699570537,
+            0.6048362292349339
+          ],
+          "batched_seconds": [
+            0.0037620961666107178,
+            0.003531381953507662,
+            0.003577716648578644
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.00296934787184,
+            0.0029288623481988907,
+            0.0029479688964784145
+          ],
+          "batched_seconds": [
+            0.0028792787343263626,
+            0.0028775623068213463,
+            0.002886905800551176
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.019399248994886875,
+            0.019131597131490707,
+            0.019979225005954504
+          ],
+          "batched_seconds": [
+            0.003003181889653206,
+            0.002993922680616379,
+            0.00294150086119771
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0747715150937438,
+            0.07981044426560402,
+            0.07523389998823404
+          ],
+          "batched_seconds": [
+            0.00308031914755702,
+            0.0030119898729026318,
+            0.003056114539504051
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.15061091631650925,
+            0.14924423396587372,
+            0.14832926681265235
+          ],
+          "batched_seconds": [
+            0.0032056402415037155,
+            0.003106397110968828,
+            0.003146946895867586
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.2997764889150858,
+            0.30080809630453587,
+            0.29508083313703537
+          ],
+          "batched_seconds": [
+            0.0034679407253861427,
+            0.003493411000818014,
+            0.0032736118882894516
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5939114880748093,
+            0.5918962801806629,
+            0.5971277202479541
+          ],
+          "batched_seconds": [
+            0.003808902110904455,
+            0.003531849943101406,
+            0.003521889913827181
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        }
+      ]
+    ],
+    [
+      [
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.003194681368768215,
+            0.003004244063049555,
+            0.0029604900628328323
+          ],
+          "batched_seconds": [
+            0.002956326585263014,
+            0.0028918511234223843,
+            0.002919431310147047
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.019497647881507874,
+            0.019530207850039005,
+            0.019459424074739218
+          ],
+          "batched_seconds": [
+            0.0030058170668780804,
+            0.0030065388418734074,
+            0.002985613886266947
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.07604387402534485,
+            0.07498027756810188,
+            0.07538553699851036
+          ],
+          "batched_seconds": [
+            0.0033407476730644703,
+            0.0031574610620737076,
+            0.003495977260172367
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.15030959714204073,
+            0.15178752038627863,
+            0.15027360897511244
+          ],
+          "batched_seconds": [
+            0.0032333177514374256,
+            0.0032096621580421925,
+            0.0031409296207129955
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.2982147322036326,
+            0.2988437390886247,
+            0.3013953980989754
+          ],
+          "batched_seconds": [
+            0.0036069899797439575,
+            0.0037703621201217175,
+            0.0037750047631561756
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5984577098861337,
+            0.5944964089430869,
+            0.5955080660060048
+          ],
+          "batched_seconds": [
+            0.0037911590188741684,
+            0.003554088994860649,
+            0.0035318341106176376
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0029766676016151905,
+            0.0029390868730843067,
+            0.0029980377294123173
+          ],
+          "batched_seconds": [
+            0.0033628828823566437,
+            0.0034243911504745483,
+            0.00341903418302536
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.019449037965387106,
+            0.019463582895696163,
+            0.019747148733586073
+          ],
+          "batched_seconds": [
+            0.0030125887133181095,
+            0.00297355093061924,
+            0.002973280381411314
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.07514099171385169,
+            0.07534870877861977,
+            0.07537037087604403
+          ],
+          "batched_seconds": [
+            0.0031021488830447197,
+            0.003050403203815222,
+            0.003046387806534767
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.15185037814080715,
+            0.1503420053049922,
+            0.14916999312117696
+          ],
+          "batched_seconds": [
+            0.00320142088457942,
+            0.0031355260871350765,
+            0.003149233292788267
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.3013495486229658,
+            0.2982820337638259,
+            0.3040030081756413
+          ],
+          "batched_seconds": [
+            0.0035191052593290806,
+            0.0033469288609921932,
+            0.003251713700592518
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5950350421480834,
+            0.5986799970269203,
+            0.6045292811468244
+          ],
+          "batched_seconds": [
+            0.0037351096980273724,
+            0.003540727775543928,
+            0.0035115228965878487
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        }
+      ]
+    ],
+    [
+      [
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0029210089705884457,
+            0.0026902719400823116,
+            0.002642225008457899
+          ],
+          "batched_seconds": [
+            0.002663856837898493,
+            0.00261787511408329,
+            0.002611611969769001
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.018310655374079943,
+            0.018791114911437035,
+            0.01877105701714754
+          ],
+          "batched_seconds": [
+            0.0038039102219045162,
+            0.0029718969017267227,
+            0.0031083980575203896
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.07017184374853969,
+            0.07145915506407619,
+            0.0735273901373148
+          ],
+          "batched_seconds": [
+            0.0032922951504588127,
+            0.003242401871830225,
+            0.0031861611641943455
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.13637235993519425,
+            0.13628178974613547,
+            0.13452852377668023
+          ],
+          "batched_seconds": [
+            0.003382449969649315,
+            0.00313641969114542,
+            0.00325202289968729
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.26950626727193594,
+            0.268027663230896,
+            0.2650332008488476
+          ],
+          "batched_seconds": [
+            0.0032275659032166004,
+            0.003031663130968809,
+            0.0031867618672549725
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5319956359453499,
+            0.5292539531365037,
+            0.5286074089817703
+          ],
+          "batched_seconds": [
+            0.003575555980205536,
+            0.003278648015111685,
+            0.0033042458817362785
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0027000647969543934,
+            0.002655080985277891,
+            0.0026345490477979183
+          ],
+          "batched_seconds": [
+            0.002598140388727188,
+            0.0025905449874699116,
+            0.0026026498526334763
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.018050563987344503,
+            0.01809902163222432,
+            0.017289663664996624
+          ],
+          "batched_seconds": [
+            0.0027189329266548157,
+            0.002686695195734501,
+            0.002888282760977745
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.06698466977104545,
+            0.06810899078845978,
+            0.06937579391524196
+          ],
+          "batched_seconds": [
+            0.0032448326237499714,
+            0.003187103196978569,
+            0.003185591194778681
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.134724207688123,
+            0.13427848415449262,
+            0.13270208099856973
+          ],
+          "batched_seconds": [
+            0.002931926865130663,
+            0.0028601717203855515,
+            0.0028914869762957096
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.2708479301072657,
+            0.2662776908837259,
+            0.26496797427535057
+          ],
+          "batched_seconds": [
+            0.0033927890472114086,
+            0.0033714361488819122,
+            0.002992514055222273
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5302374199964106,
+            0.5287991310469806,
+            0.5281161232851446
+          ],
+          "batched_seconds": [
+            0.0035355440340936184,
+            0.003761861938983202,
+            0.003702768124639988
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        }
+      ]
+    ],
+    [
+      [
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.002883670385926962,
+            0.0026867850683629513,
+            0.0026629669591784477
+          ],
+          "batched_seconds": [
+            0.002688325010240078,
+            0.0026454878970980644,
+            0.0028824913315474987
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.019622087012976408,
+            0.018981741275638342,
+            0.01971971895545721
+          ],
+          "batched_seconds": [
+            0.0032086889259517193,
+            0.0031623179093003273,
+            0.0031415759585797787
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.06977188214659691,
+            0.0686116460710764,
+            0.06873166793957353
+          ],
+          "batched_seconds": [
+            0.0028890068642795086,
+            0.0032320870086550713,
+            0.0032078130170702934
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.13766396790742874,
+            0.13434663182124496,
+            0.1348277200013399
+          ],
+          "batched_seconds": [
+            0.0033699539490044117,
+            0.003350311890244484,
+            0.0033036861568689346
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.2668701000511646,
+            0.2678249320015311,
+            0.2758418000303209
+          ],
+          "batched_seconds": [
+            0.003271625377237797,
+            0.0030175731517374516,
+            0.0029854420572519302
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5328795849345624,
+            0.5325350477360189,
+            0.5387749467045069
+          ],
+          "batched_seconds": [
+            0.003651722799986601,
+            0.0037536360323429108,
+            0.0033999872393906116
+          ]
+        },
+        {
+          "module": "model.layers.2.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0026978710666298866,
+            0.0026422468945384026,
+            0.0026174369268119335
+          ],
+          "batched_seconds": [
+            0.0026454105973243713,
+            0.0026054666377604008,
+            0.0026076347567141056
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 1,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.018910570070147514,
+            0.018452588003128767,
+            0.017399863805621862
+          ],
+          "batched_seconds": [
+            0.002739103976637125,
+            0.002755270339548588,
+            0.0026956438086926937
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 8,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.0678941048681736,
+            0.06855312222614884,
+            0.06818527495488524
+          ],
+          "batched_seconds": [
+            0.0028351061046123505,
+            0.0028274180367588997,
+            0.0027789343148469925
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 32,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.13439053110778332,
+            0.135019076988101,
+            0.1336187468841672
+          ],
+          "batched_seconds": [
+            0.0030817422084510326,
+            0.003109445795416832,
+            0.003505432978272438
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 64,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.2664475147612393,
+            0.26817185804247856,
+            0.2718120999634266
+          ],
+          "batched_seconds": [
+            0.003493538126349449,
+            0.0030962908640503883,
+            0.0030026650056242943
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 128,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": false,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0,
+          "reference_seconds": [
+            0.5321546327322721,
+            0.5320136789232492,
+            0.5429960112087429
+          ],
+          "batched_seconds": [
+            0.003631790168583393,
+            0.0037827282212674618,
+            0.003501573111861944
+          ]
+        },
+        {
+          "module": "model.layers.49.mixer",
+          "batch": 256,
+          "mixed": true,
+          "rows_equal": true,
+          "conv_state_equal": true,
+          "id_state_equal": true,
+          "output_equal": true,
+          "max_abs_output_difference": 0.0,
+          "rms_output_difference": 0.0
+        }
+      ]
+    ]
+  ],
+  "decode_scaling_by_variant": {
+    "reference": [
+      {
+        "batch": 1,
+        "tokens_per_request": 128,
+        "wall_seconds": 21.843942117877305,
+        "end_to_end_output_tokens_per_second": 5.85974817682947,
+        "decode_span_seconds": 19.212345200125128,
+        "decode_output_tokens_per_second": 6.610333026869248,
+        "mean_per_request_decode_tokens_per_second": 6.610333026869248,
+        "mean_time_to_first_token_seconds": 0.21526312828063965,
+        "dummy_start_requests": 3,
+        "decode_speedup_vs_single": 1.0,
+        "linear_scaling_efficiency": 1.0
+      },
+      {
+        "batch": 32,
+        "tokens_per_request": 128,
+        "wall_seconds": 26.756861185654998,
+        "end_to_end_output_tokens_per_second": 153.08223081846256,
+        "decode_span_seconds": 24.281698698177934,
+        "decode_output_tokens_per_second": 167.36885052877116,
+        "mean_per_request_decode_tokens_per_second": 5.291671862468158,
+        "mean_time_to_first_token_seconds": 0.479784831404686,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 25.319276630762964,
+        "linear_scaling_efficiency": 0.7912273947113426
+      },
+      {
+        "batch": 256,
+        "tokens_per_request": 128,
+        "wall_seconds": 63.19704433903098,
+        "end_to_end_output_tokens_per_second": 518.5052614836012,
+        "decode_span_seconds": 61.036236809100956,
+        "decode_output_tokens_per_second": 532.6671777240405,
+        "mean_per_request_decode_tokens_per_second": 2.1496558359012017,
+        "mean_time_to_first_token_seconds": 1.8903260948136449,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 80.58098972606824,
+        "linear_scaling_efficiency": 0.31476949111745406
+      }
+    ],
+    "batched": [
+      {
+        "batch": 1,
+        "tokens_per_request": 128,
+        "wall_seconds": 21.61262840917334,
+        "end_to_end_output_tokens_per_second": 5.922463366171198,
+        "decode_span_seconds": 19.014295971021056,
+        "decode_output_tokens_per_second": 6.679184977111733,
+        "mean_per_request_decode_tokens_per_second": 6.679184977111733,
+        "mean_time_to_first_token_seconds": 0.21133184432983398,
+        "dummy_start_requests": 3,
+        "decode_speedup_vs_single": 1.0,
+        "linear_scaling_efficiency": 1.0
+      },
+      {
+        "batch": 32,
+        "tokens_per_request": 128,
+        "wall_seconds": 22.758529813028872,
+        "end_to_end_output_tokens_per_second": 179.9764762333246,
+        "decode_span_seconds": 20.275204326957464,
+        "decode_output_tokens_per_second": 200.44187641535112,
+        "mean_per_request_decode_tokens_per_second": 6.351238542840274,
+        "mean_time_to_first_token_seconds": 0.4858698397874832,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 30.00993041849064,
+        "linear_scaling_efficiency": 0.9378103255778325
+      },
+      {
+        "batch": 256,
+        "tokens_per_request": 128,
+        "wall_seconds": 24.95076365303248,
+        "end_to_end_output_tokens_per_second": 1313.3064965735998,
+        "decode_span_seconds": 22.78327848156914,
+        "decode_output_tokens_per_second": 1427.0114824036868,
+        "mean_per_request_decode_tokens_per_second": 6.103644470753128,
+        "mean_time_to_first_token_seconds": 2.0443069329485297,
+        "dummy_start_requests": 0,
+        "decode_speedup_vs_single": 213.65054079109615,
+        "linear_scaling_efficiency": 0.8345724249652193
+      }
+    ]
+  }
+}

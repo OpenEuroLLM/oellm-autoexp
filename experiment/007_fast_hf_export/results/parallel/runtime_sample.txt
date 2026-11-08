@@ -1,0 +1,12 @@
+Tue Nov  3 11:53:19 CET 2026
+               total        used        free      shared  buff/cache   available
+Mem:             503          46         375           0          85         457
+Swap:              3           2           1
+0, 55451 MiB, 0 %
+1, 30795 MiB, 0 %
+2, 55521 MiB, 0 %
+3, 30795 MiB, 0 %
+    PID %CPU   RSS COMMAND
+3100649 73.1 10523132 python -m oellm_autoexp.hf_export.paired_valid_check --model-dir /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/ambitious_v4_2ph_fp8_3700 --config /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph/config-mn5-pool-p129.0338.yaml --prefix /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/paired/v8ml-valid-sub64/all_text_document --seq-len 4096 --gpu-mem-gib 54 --engram-tables-cpu --out /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/ambitious_v4_2ph_fp8_3700.paired.json
+3100648 74.2 10088212 python -m oellm_autoexp.hf_export.score_on_flag --model-dir /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/ambitious_v4_2ph_fp8_3700 --datamix /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/datamix_v8ml-valid_all.txt --num-docs 64 --seq-len 4096 --gpu-mem-gib 54 --engram-tables-cpu --out /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007parallel/ambitious_v4_2ph_fp8_3700.score.json
+3084244  0.0 16568 Singularity runtime parent

@@ -1,0 +1,233 @@
+{
+ "L0.attention.mhc_read_in": {
+  "equal": false,
+  "max_abs": 0.00390625,
+  "frac_diff": 2.384185791015625e-06,
+  "ref_rms": 0.9999955296516418
+ },
+ "L0.attention.h_post": {
+  "equal": false,
+  "max_abs": 2.384185791015625e-07,
+  "frac_diff": 0.3184814453125,
+  "ref_rms": 1.157519817352295
+ },
+ "L0.attention.h_res": {
+  "equal": false,
+  "max_abs": 2.980232238769531e-07,
+  "frac_diff": 0.805023193359375,
+  "ref_rms": 0.3447537422180176
+ },
+ "L0.attention.mixer": {
+  "equal": false,
+  "max_abs": 0.00048828125,
+  "frac_diff": 0.00019359588623046875,
+  "ref_rms": 0.025881413370370865
+ },
+ "L0.attention.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.0216097831726074
+ },
+ "L1.moe.mhc_read_in": {
+  "equal": false,
+  "max_abs": 0.0078125,
+  "frac_diff": 2.6226043701171875e-06,
+  "ref_rms": 0.9999970197677612
+ },
+ "L1.moe.h_post": {
+  "equal": false,
+  "max_abs": 2.384185791015625e-07,
+  "frac_diff": 0.3223876953125,
+  "ref_rms": 1.1623419523239136
+ },
+ "L1.moe.h_res": {
+  "equal": false,
+  "max_abs": 2.384185791015625e-07,
+  "frac_diff": 0.80523681640625,
+  "ref_rms": 0.3484085202217102
+ },
+ "L1.moe.mixer": {
+  "equal": false,
+  "max_abs": 0.015625,
+  "frac_diff": 0.3660271167755127,
+  "ref_rms": 0.28683385252952576
+ },
+ "L1.moe.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.0679572820663452
+ },
+ "L2.engram.mhc_read_in": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 2.214745044708252
+ },
+ "L2.engram.h_post": {
+  "equal": false,
+  "max_abs": 3.5762786865234375e-07,
+  "frac_diff": 0.3204345703125,
+  "ref_rms": 1.1607098579406738
+ },
+ "L2.engram.h_res": {
+  "equal": false,
+  "max_abs": 2.980232238769531e-07,
+  "frac_diff": 0.8070068359375,
+  "ref_rms": 0.34831082820892334
+ },
+ "L2.engram.mixer": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 0.4576563835144043
+ },
+ "L2.engram.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.1844210624694824
+ },
+ "L3.ckda.mhc_read_in": {
+  "equal": false,
+  "max_abs": 0.0078125,
+  "frac_diff": 9.775161743164062e-06,
+  "ref_rms": 0.999996542930603
+ },
+ "L3.ckda.h_post": {
+  "equal": false,
+  "max_abs": 2.384185791015625e-07,
+  "frac_diff": 0.3211669921875,
+  "ref_rms": 1.1529388427734375
+ },
+ "L3.ckda.h_res": {
+  "equal": false,
+  "max_abs": 2.682209014892578e-07,
+  "frac_diff": 0.81158447265625,
+  "ref_rms": 0.345767617225647
+ },
+ "L3.ckda.mixer": {
+  "equal": false,
+  "max_abs": 0.0078125,
+  "frac_diff": 0.3119816780090332,
+  "ref_rms": 0.285182923078537
+ },
+ "L3.ckda.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.2103444337844849
+ },
+ "L4.moe.mhc_read_in": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 0.9999983310699463
+ },
+ "L4.moe.h_post": {
+  "equal": false,
+  "max_abs": 3.5762786865234375e-07,
+  "frac_diff": 0.3199462890625,
+  "ref_rms": 1.17621648311615
+ },
+ "L4.moe.h_res": {
+  "equal": false,
+  "max_abs": 2.980232238769531e-07,
+  "frac_diff": 0.8055419921875,
+  "ref_rms": 0.3434862196445465
+ },
+ "L4.moe.mixer": {
+  "equal": false,
+  "max_abs": 0.015625,
+  "frac_diff": 0.3658573627471924,
+  "ref_rms": 0.2867870628833771
+ },
+ "L4.moe.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.2446637153625488
+ },
+ "L5.ckda.mhc_read_in": {
+  "equal": false,
+  "max_abs": 0.015625,
+  "frac_diff": 4.0531158447265625e-06,
+  "ref_rms": 0.9999983310699463
+ },
+ "L5.ckda.h_post": {
+  "equal": false,
+  "max_abs": 3.5762786865234375e-07,
+  "frac_diff": 0.3245849609375,
+  "ref_rms": 1.1556583642959595
+ },
+ "L5.ckda.h_res": {
+  "equal": false,
+  "max_abs": 2.980232238769531e-07,
+  "frac_diff": 0.8065185546875,
+  "ref_rms": 0.3444596529006958
+ },
+ "L5.ckda.mixer": {
+  "equal": false,
+  "max_abs": 0.0078125,
+  "frac_diff": 0.31470227241516113,
+  "ref_rms": 0.2850426137447357
+ },
+ "L5.ckda.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.278237223625183
+ },
+ "L6.moe.mhc_read_in": {
+  "equal": false,
+  "max_abs": 0.03125,
+  "frac_diff": 0.00020694732666015625,
+  "ref_rms": 1.000002145767212
+ },
+ "L6.moe.h_post": {
+  "equal": false,
+  "max_abs": 0.0020966827869415283,
+  "frac_diff": 0.3399658203125,
+  "ref_rms": 1.1513010263442993
+ },
+ "L6.moe.h_res": {
+  "equal": false,
+  "max_abs": 0.0028406381607055664,
+  "frac_diff": 0.812652587890625,
+  "ref_rms": 0.34914493560791016
+ },
+ "L6.moe.mixer": {
+  "equal": false,
+  "max_abs": 0.015625,
+  "frac_diff": 0.36549997329711914,
+  "ref_rms": 0.2869284451007843
+ },
+ "L6.moe.mhc_write": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 1.311646819114685
+ },
+ "engram.pinned_vs_gpu_table": {
+  "equal": true,
+  "max_abs": 0.0,
+  "frac_diff": 0.0,
+  "ref_rms": 0.4566101133823395
+ },
+ "logits": {
+  "equal": false,
+  "max_abs": 1.41796875,
+  "frac_diff": 0.8724220991134644,
+  "ref_rms": 0.9051135182380676
+ },
+ "nll": {
+  "reference": 12.907219886779785,
+  "fast": 12.907527923583984,
+  "delta": 0.00030803680419921875
+ },
+ "host_syncs": {
+  "count": 0,
+  "first": []
+ }
+}

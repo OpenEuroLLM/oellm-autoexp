@@ -155,7 +155,7 @@ class PoolHostConfig:
     # it is given up; healthy ones (handover, wall clock, pool_ctl preempt) are
     # unlimited, a continuous run has one per segment
     max_attempts: int = 20
-    # a RUNNING host whose supervisor heartbeat is older than this is cancelled
+    # a RUNNING host whose supervisor heartbeat is older than this is cancelled (unless held)
     host_stale_s: float = 900.0
     # supervisor poll period
     poll_s: float = 10.0
@@ -205,6 +205,17 @@ class PoolHostConfig:
     preflight_max_rounds: int = 3
     preflight_check: str = ""
     preflight_check_overrides: list[str] = field(default_factory=list)
+    # where a preflight exclusion goes: "host" (default) -- <host>/exclude_nodes, honoured by that
+    # host's supervisor only; "pool" -- <pool>/exclude_nodes, which every later host avoids AND
+    # which the monitor pushes into queued hosts' ExcNodeList only with refresh_queued_excludes
+    # (scontrol update: an edit of an existing SLURM job, not allowed without the user's go,
+    # AGENTS.md 2026-11-03)
+    preflight_exclude_scope: str = "host"
+    # push exclusions found after a host was submitted into its queued SLURM job (scontrol
+    # update of ExcNodeList). OFF by default: an automatic edit of an existing SLURM job needs
+    # the user's go (AGENTS.md 2026-11-03); a host that starts on a bad node is caught by the
+    # preflight / NODE_CHECK on its own nodes instead.
+    refresh_queued_excludes: bool = False
     # VERIFIED handover (with `handover`): the runs on the old host are stopped (checkpoint) and
     # restart on the new, verified host while the old allocation stays; it is released once every
     # moved run is healthy there (handover_healthy_steps matches of handover_healthy_pattern in
@@ -214,8 +225,10 @@ class PoolHostConfig:
     handover_healthy_steps: int = 3
     handover_healthy_pattern: str = r"iteration\s+\d+/"
     handover_verify_timeout_s: float = 3600.0
-    # HOLD: the monitor never releases a host -- not idle, not for queued work it cannot run, not
-    # after a handover; only its wall clock or `pool_ctl exit-host` ends it (per host:
+    # HOLD: the monitor never releases or cancels a host -- not idle, not for queued work it cannot
+    # run, not after a handover or a failed preflight, not for a stale supervisor heartbeat, not on
+    # `pool_ctl close` or an unnamed `pool_ctl drain`; only its wall clock, `pool_ctl exit-host` or
+    # a drain naming it ends it (per host:
     # `pool_ctl hold <host>`, a <host>/control/hold file). For allocations that are hard to get
     # back (adopted cns144 jobs: 47998967 was released with 15 h left, 2026-10-30).
     hold_hosts: bool = False
@@ -280,6 +293,117 @@ def read_env_file(path: Path) -> dict[str, str]:
 def write_env_file(path: Path, values: dict[str, Any]) -> None:
     lines = [f"{k}={shlex.quote(str(v))}" for k, v in values.items()]
     _atomic_write(path, "\n".join(lines) + "\n")
+
+
+def live_job_nodes(job_id: str | None) -> list[str] | None:
+    """The nodes a running SLURM job holds now (``squeue -o %N``), or None when SLURM gives no
+    answer. A host shrunk with ``scontrol update NodeList=`` holds fewer nodes than its
+    info.env NODELIST, which a supervisor before the live refresh (supervisor.sh refresh_alloc)
+    wrote once at its start."""
+    if not job_id:
+        return None
+    import subprocess
+
+    try:
+        text = subprocess.run(
+            ["squeue", "-h", "-j", str(job_id), "-o", "%N"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.strip()
+        if not text or text == "(null)":
+            return None
+        nodes = subprocess.run(
+            ["scontrol", "show", "hostnames", text.splitlines()[0]],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout.split()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return nodes or None
+
+
+def removed_nodes(info: dict[str, str], live: list[str] | None) -> list[str]:
+    """The nodes of a host's info.env NODELIST its allocation no longer holds ([] when the
+    allocation is unknown)."""
+    if not live:
+        return []
+    held = set(live)
+    return [n for n in (info.get("NODELIST") or "").split(",") if n and n not in held]
+
+
+_REFUSED_CHECKED: dict[str, set[str]] = {}  # pool root -> runs already checked for a refused step
+
+# A run step SLURM refused to create on its node: the node takes no step of this allocation (its
+# GRES held by a step SLURM never released after a job resize, 2026-11-06: p134c host006
+# as01r1b12, "Insufficient GRES available in allocation"). Such a run fails within seconds, and
+# the node, free again at once, took the next run: 18 runs in 20 min.
+STEP_REFUSED = re.compile(r"srun: error: Unable to create step for job \d+: (?P<why>[^\n]+)")
+STEP_REFUSED_WITHIN_S = 180.0
+
+
+def dead_nodes(layout: PoolLayout, hid: str) -> list[str]:
+    """``<host>/dead_nodes``: nodes of the allocation no run step can use."""
+    text = _read(layout.host_dir(hid) / "dead_nodes") or ""
+    return [n for n in (line.split("#")[0].strip() for line in text.splitlines()) if n]
+
+
+def mark_dead(layout: PoolLayout, hid: str, nodes: list[str], why: str) -> list[str]:
+    """Add nodes to the host's dead_nodes and exclude_nodes (plain runs and the usable count of
+    any supervisor); the nodes newly marked."""
+    known = set(dead_nodes(layout, hid))
+    new = [n for n in nodes if n and n not in known]
+    if not new:
+        return []
+    hdir = layout.host_dir(hid)
+    with open(hdir / "dead_nodes", "a") as f:
+        f.writelines(f"{n}  # {time.strftime('%Y-%m-%dT%H:%M:%S')} {why}\n" for n in new)
+    excl = set((_read(hdir / "exclude_nodes") or "").split())
+    with open(hdir / "exclude_nodes", "a") as f:
+        f.writelines(f"{n}\n" for n in new if n not in excl)
+    return new
+
+
+def step_refused(layout: PoolLayout, rid: str) -> tuple[list[str], str] | None:
+    """(nodes, reason) if the run ended within STEP_REFUSED_WITHIN_S because SLURM refused its step."""
+    rd = layout.run_dir(rid)
+    state = read_run_state(layout, rid)
+    if state.code in (None, 0) or not state.started.get("nodes"):
+        return None
+    try:
+        started = float(state.started.get("ts", "0"))
+    except ValueError:
+        return None
+    end = _mtime(rd / "rc")
+    if end is None or end - started > STEP_REFUSED_WITHIN_S:
+        return None
+    try:
+        log = json.loads(_read(rd / "run.json") or "{}").get("log") or ""
+        with open(log, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 65536))
+            tail = f.read().decode(errors="replace")
+    except OSError:
+        return None
+    m = STEP_REFUSED.search(tail)
+    if not m:
+        return None
+    return [n for n in state.started["nodes"].split(",") if n], m.group("why").strip()
+
+
+def add_run_exclude(layout: PoolLayout, rid: str, nodes: list[str]) -> list[str]:
+    """Add ``nodes`` to a run's own EXCLUDE in its meta.env (the supervisor never gives the run a
+    node of it, the pool-excluded ones included); the nodes actually added. Appended as a later
+    ``EXCLUDE=`` line (sourcing and read_env_file both take the last), so no other value of the
+    file is rewritten."""
+    path = layout.run_dir(rid) / "meta.env"
+    current = [n for n in read_env_file(path).get("EXCLUDE", "").split(",") if n]
+    new = [n for n in nodes if n not in current]
+    if new:
+        text = (_read(path) or "").rstrip("\n")
+        _atomic_write(path, f"{text}\nEXCLUDE={shlex.quote(','.join(current + new))}\n")
+    return new
 
 
 def parse_slurm_time(value: str | None) -> float | None:
@@ -542,7 +666,12 @@ def render_step_script(
         srun_flags.append(f"--cpus-per-task={cpus}")
     replacements["srun_opts"] = replacements["srun_opts"] + " ".join(srun_flags) + " "
 
-    text = render_template(Path(slurm.template_path).read_text(), replacements)
+    template = Path(slurm.template_path)
+    if not template.is_absolute() and workdir:
+        # the job's own snapshot's template, not the one of the process rendering it (a pool's
+        # monitor runs from another snapshot)
+        template = Path(workdir) / template
+    text = render_template(template.read_text(), replacements)
     header = (
         f"# [pool] step script of run {run_id} (job {slurm.name}), rendered "
         f"{time.strftime('%Y-%m-%dT%H:%M:%S')} from {slurm.template_path}\n"
@@ -1057,6 +1186,23 @@ class PoolManager:
                         (layout.host_dir(host.hid) / name).unlink(missing_ok=True)
                     host.info = {}
                     gone = True
+                elif (host.alive_age is None or host.alive_age > cfg.host_stale_s) and self._held(
+                    layout, cfg, host.hid
+                ):
+                    # a HELD allocation is never cancelled for a silent supervisor: a hung
+                    # GPFS / slurmctld call stops the heartbeat while the job and its run go on
+                    # (p264 host001, job 48203953, 264 nodes, cancelled 2026-11-03 22:27 for
+                    # a 1827 s old heartbeat while its 256-node run trained). Kept as it is.
+                    warned = self.__dict__.setdefault("_stale_held_warned", set())
+                    if (pool_dir, host.hid) not in warned:
+                        LOGGER.error(
+                            "[pool] HELD host %s (job %s): supervisor heartbeat %s s old -- "
+                            "kept (never cancelled while held); check its supervisor",
+                            host.hid,
+                            host.record.runtime.runtime_job_id,
+                            "?" if host.alive_age is None else f"{host.alive_age:.0f}",
+                        )
+                        warned.add((pool_dir, host.hid))
                 elif host.alive_age is None or host.alive_age > cfg.host_stale_s:
                     LOGGER.warning(
                         "[pool] host %s (job %s) heartbeat is %s s old: cancelling it",
@@ -1078,6 +1224,11 @@ class PoolManager:
                 self._unassign(layout, rid, state.host)
 
     _slurm_cancel = None  # set by the monitor loop: callable(job_id)
+
+    @staticmethod
+    def _held(layout: PoolLayout, cfg: PoolHostConfig, hid: str) -> bool:
+        """hold_hosts, or a <host>/control/hold file (pool_ctl hold)."""
+        return bool(cfg.hold_hosts) or (layout.host_dir(hid) / "control" / "hold").exists()
 
     def _cancel_host_job(self, host: HostView) -> None:
         rid = host.record.runtime.runtime_job_id
@@ -1159,11 +1310,7 @@ class PoolManager:
 
         # 1b. hosts the monitor never releases, and the preflight node check of new hosts:
         #     an unverified host takes no run, and is not released as idle meanwhile
-        held = {
-            h.hid
-            for h in hosts
-            if cfg.hold_hosts or (layout.host_dir(h.hid) / "control" / "hold").exists()
-        }
+        held = {h.hid for h in hosts if self._held(layout, cfg, h.hid)}
         unverified = self._preflight(layout, cfg, state, live, held, now)
         live = [h for h in live if not h.retiring]
 
@@ -1229,6 +1376,40 @@ class PoolManager:
             or any(h.retiring and h.hid in busy and not h.dead for h in hosts)
         )
 
+        # 2b. nodes SLURM refuses steps on: a run that ended within seconds with "Unable to create
+        #     step" marks its node dead on its host (once per run), so no further run is sent there
+        #     (checked again per host right before its assignments: a run may end in between)
+        # (the pool's runs/, not the monitor's records: a failed run's record is final already)
+        checked = _REFUSED_CHECKED.setdefault(str(layout.root), set())
+
+        def check_refused(only_host: str | None = None) -> None:
+            try:
+                run_dirs = list((layout.root / "runs").iterdir())
+            except OSError:
+                return
+            for rd in run_dirs:
+                rid = rd.name
+                if rid in checked:
+                    continue
+                end = _mtime(rd / "rc")
+                if end is None:
+                    continue
+                if now - end > 3600:
+                    checked.add(rid)  # ended long ago: not a node of this host's present
+                    continue
+                rhost = read_run_state(layout, rid).host
+                if only_host is not None and rhost != only_host:
+                    continue
+                checked.add(rid)
+                refused = step_refused(layout, rid)
+                if refused and rhost:
+                    new = mark_dead(layout, rhost, refused[0], f"{rid}: {refused[1]}")
+                    if new:
+                        LOGGER.error("[pool %s] %s refused a step of %s (%s): marked dead on %s",
+                                     cfg.name, ",".join(new), rid, refused[1], rhost)
+
+        check_refused()
+
         # 3. queue
         queued = []
         for record in runs:
@@ -1260,11 +1441,38 @@ class PoolManager:
                 n = 1
             return n, bool(meta.get("USE_EXCLUDED_NODES"))
 
+        # The allocation a host holds now, asked from SLURM only where excluded-node capacity
+        # matters (a queued or active USE_EXCLUDED_NODES run), once per pass. A shrunk host's
+        # removed nodes sit in its exclude list too: counted as excluded-but-usable, they made
+        # room for such a run that did not exist (p134c host006 134 -> 16, 2026-11-05).
+        excl_queued = any(run_meta(item[2])[1] for item in queued)
+        live_alloc: dict[str, list[str] | None] = {}
+
+        def alloc(host: HostView) -> list[str] | None:
+            if host.hid not in live_alloc:
+                active_excl = any(
+                    run_meta(r)[1]
+                    for r in host.assignments()
+                    if not (layout.run_dir(r) / "rc").exists()
+                )
+                live_alloc[host.hid] = (
+                    live_job_nodes(
+                        host.adopted
+                        or host.info.get("SLURM_JOB_ID")
+                        or host.record.runtime.runtime_job_id
+                    )
+                    if excl_queued or active_excl
+                    else None
+                )
+            return live_alloc[host.hid]
+
         def host_total(host: HostView) -> int:
             try:
-                return int(host.info.get("NUM_NODES") or host.nodes)
+                total = int(host.info.get("NUM_NODES") or host.nodes)
             except (TypeError, ValueError):
-                return host.nodes
+                total = host.nodes
+            nodes = alloc(host)
+            return min(total, len(nodes)) if nodes else total
 
         def fits(host: HostView, nodes: int, rid: str | None = None) -> bool:
             cap = host_total(host) if rid is not None and run_meta(rid)[1] else host.usable_nodes
@@ -1277,6 +1485,7 @@ class PoolManager:
             if host.hid in unverified or host.hid in handover_old:
                 continue  # in its preflight / being handed over: no new run
             active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
+            check_refused(host.hid)  # runs of this host that ended since 2b
             # the supervisor puts a USE_EXCLUDED_NODES run on the excluded nodes first: free
             # healthy nodes, and free excluded ones only such runs may take
             excluded = max(0, host_total(host) - host.usable_nodes)
@@ -1313,6 +1522,25 @@ class PoolManager:
                         continue
                     if not claim:
                         continue
+                    if use_excl:
+                        # a supervisor that does not refresh its allocation still lists the
+                        # removed nodes (as excluded ones, which this run takes first): keep
+                        # them off the run through its own EXCLUDE
+                        gone = add_run_exclude(layout, rid, removed_nodes(host.info, alloc(host)))
+                        if gone:
+                            LOGGER.info(
+                                "[pool %s] %s: %d node(s) no longer in %s's allocation kept off it",
+                                cfg.name,
+                                rid,
+                                len(gone),
+                                host.hid,
+                            )
+                    # the host's dead nodes, through the run's own EXCLUDE (honoured by every
+                    # supervisor, also for runs that take excluded nodes first)
+                    dead = add_run_exclude(layout, rid, dead_nodes(layout, host.hid))
+                    if dead:
+                        LOGGER.info("[pool %s] %s: dead node(s) %s of %s kept off it",
+                                    cfg.name, rid, ",".join(dead), host.hid)
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
                     active.append(rid)
@@ -1392,8 +1620,9 @@ class PoolManager:
                 host.retiring = True
                 LOGGER.info("[pool %s] releasing idle host %s", cfg.name, host.hid)
 
-        # 6. keep hosts submitted, and their exclusion lists current while queued
-        self._refresh_queued_host_excludes(loop, layout, hosts)
+        # 6. keep hosts submitted (and, only if enabled, their exclusion lists current while queued)
+        if cfg.refresh_queued_excludes:
+            self._refresh_queued_host_excludes(loop, layout, hosts)
         work = bool(runs)
         running = [h for h in hosts if h.live(cfg.host_stale_s) and not h.retiring]
         successors = cfg.keep_pending
@@ -1407,6 +1636,10 @@ class PoolManager:
             desired = 0
             for host in hosts:
                 if host.dead or host.retiring:
+                    continue
+                if host.hid in held:
+                    # a held host survives a close too (pool_ctl unhold / exit-host end it): a
+                    # close must not cancel queued cns144 allocations that aged for days
                     continue
                 if host.info:
                     # up: finish what it runs, then release
@@ -1956,6 +2189,19 @@ class PoolManager:
                     fh.write(node + "\n")
         return new
 
+    @staticmethod
+    def _add_host_excludes(layout: PoolLayout, hid: str, nodes: list[str]) -> list[str]:
+        """Append nodes to <host>/exclude_nodes (that host's supervisor avoids them; never pushed
+        into SLURM jobs); returns the new ones."""
+        path = layout.host_dir(hid) / "exclude_nodes"
+        existing = set(_split_nodes(_read(path)))
+        new = [n for n in nodes if n and n not in existing]
+        if new:
+            with path.open("a") as fh:
+                for node in new:
+                    fh.write(node + "\n")
+        return new
+
     def _host_free_nodes(self, layout: PoolLayout, host: HostView) -> list[str]:
         """The host's nodes minus the pool's and its own exclusions."""
         nodes = _split_nodes(host.info.get("NODELIST", ""))
@@ -2031,12 +2277,14 @@ class PoolManager:
             if st["status"] == "failed":
                 continue
             hdir = layout.host_dir(host.hid)
-            # the supervisor's GPU probe: its exclusions go into the pool's list
-            probed = _split_nodes(_read(hdir / "exclude_nodes"))
-            for node in self._add_pool_excludes(layout, probed):
-                LOGGER.warning(
-                    "[pool %s] preflight %s: %s excluded (GPU probe)", cfg.name, host.hid, node
-                )
+            # the supervisor's GPU probe writes <host>/exclude_nodes; with scope "pool" its
+            # exclusions also go into the pool's list
+            if cfg.preflight_exclude_scope == "pool":
+                probed = _split_nodes(_read(hdir / "exclude_nodes"))
+                for node in self._add_pool_excludes(layout, probed):
+                    LOGGER.warning(
+                        "[pool %s] preflight %s: %s excluded (GPU probe)", cfg.name, host.hid, node
+                    )
             if cfg.preflight_gpus_per_node > 0 and not (hdir / "probe_done").exists():
                 # a supervisor of older code never probes: do not wait for it forever
                 if not host.start_ts or now - host.start_ts < PREFLIGHT_PROBE_WAIT_S:
@@ -2090,7 +2338,11 @@ class PoolManager:
                 unverified.discard(host.hid)
                 LOGGER.info("[pool %s] preflight %s: passed (%s)", cfg.name, host.hid, verdict.why)
             elif verdict.status == "exclude" and st["round"] < cfg.preflight_max_rounds:
-                new = self._add_pool_excludes(layout, verdict.exclude)
+                new = (
+                    self._add_pool_excludes(layout, verdict.exclude)
+                    if cfg.preflight_exclude_scope == "pool"
+                    else self._add_host_excludes(layout, host.hid, verdict.exclude)
+                )
                 LOGGER.warning(
                     "[pool %s] preflight %s: excluding %s (%s); next round",
                     cfg.name,
@@ -2278,10 +2530,19 @@ class PoolManager:
                 elif op == "adopt":
                     result = self._adopt(loop, layout, state, request)
                 elif op == "drain":
-                    for hid in request.get("hosts") or [
-                        h.hid for h in self._hosts.get(str(layout.root), {}).values()
-                    ]:
+                    named = request.get("hosts") or []
+                    if named:  # hosts named explicitly: drained, held or not
+                        targets = list(named)
+                    else:  # "drain everything" leaves the held hosts alone
+                        cfg = layout.load_config()
+                        targets = [
+                            h.hid
+                            for h in self._hosts.get(str(layout.root), {}).values()
+                            if not self._held(layout, cfg, h.hid)
+                        ]
+                    for hid in targets:
                         self._control(layout, hid, "drain", "pool_ctl drain")
+                    result = f"drained {targets}"
                 else:
                     result = f"unknown op {op!r}"
             except Exception as exc:  # pragma: no cover - never let a request kill the poll

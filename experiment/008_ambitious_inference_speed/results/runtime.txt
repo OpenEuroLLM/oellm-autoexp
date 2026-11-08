@@ -1,0 +1,2 @@
+torch 2.13.0+cu130 vllm 0.32.1.dev0+g5df63a720.d20261101 GPUs 4
+grouped_mm <built-in method _grouped_mm of type object at 0x7f7630df4f20>

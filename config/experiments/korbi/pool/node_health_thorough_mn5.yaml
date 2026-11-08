@@ -1,0 +1,25 @@
+# @package _global_
+# The THOROUGH node-health check of a MareNostrum 5 allocation (bench.py --profile thorough, ~4-5
+# min): a sustained 30 s matmul per GPU (finds GPUs that throttle under load -- o134c 2026-11-04:
+# 19 of 128 nodes with one GPU at 0.58-0.69 x median, passed by the light check), 1 GB
+# collectives and ring; verdict at 0.80 x median compute, 0.85 x / >= 20 GB/s GPU groups, ring
+# outliers in both directions, at most 2 exclusions per round.
+# The light one (node_health_mn5) stays the default preflight. Switch a pool's preflight with
+#   scripts/korbi/pool/set_preflight_profile.sh <pool dir> thorough   (or: light)
+# On its own (one allocation, N nodes):
+#   scripts/korbi/mn5_autoexp_bg.sh nh scripts/run_autoexp.py --yes \
+#       --config-name experiments/korbi/pool/node_health_thorough_mn5 slurm.sbatch.nodes=N
+defaults:
+  - node_health_mn5
+  - _self_
+
+backend:
+  profile: thorough
+
+job:
+  name: node_health_thorough
+  est_step_time_s: 360
+
+slurm:
+  sbatch:
+    time: "00:20:00"

@@ -1,0 +1,15 @@
+{
+  "ranks": 16,
+  "tensors": 64,
+  "baseline": {
+    "max_rank_seconds": 0.18803340196609497,
+    "all_gather_object": 128,
+    "all_reduce": 64
+  },
+  "batched": {
+    "max_rank_seconds": 0.003759465180337429,
+    "all_gather_object": 2,
+    "all_reduce": 2
+  },
+  "speedup": 50.015997740726014
+}

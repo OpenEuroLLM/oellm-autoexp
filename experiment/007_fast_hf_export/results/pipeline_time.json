@@ -1,0 +1,16 @@
+{
+  "command": [
+    "bash",
+    "scripts/korbi/hf_export/export_main_run.sh",
+    "ambitious_v4",
+    "3700",
+    "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports_fast007"
+  ],
+  "started_at": "2026-11-03T10:32:28.368258+00:00",
+  "finished_at": "2026-11-03T11:26:07.566233+00:00",
+  "wall_seconds": 3219.1979823829606,
+  "user_seconds": 1776.010167,
+  "system_seconds": 322.024228,
+  "max_rss_kib": 40596140,
+  "exit_code": 0
+}
