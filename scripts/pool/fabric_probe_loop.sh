@@ -23,10 +23,12 @@ submit() {  # name, extra sbatch args...
     "$@" "$FABRIC_PROBE_REPO/scripts/pool/fabric_probe.sbatch" 2>&1 | sed "s/^/$(date +%T) $name: /"
 }
 
-# one idle, not excluded node in each of 4 random network cells ((rack-1)//5), comma-separated
+# one idle, not excluded node in each of 4 random network cells ((rack-1)//5), comma-separated.
+# State exactly "idle": `sinfo -t idle` also lists drained idle nodes, which never start a job.
 cross_nodes() {
   local excluded=$1
-  sinfo -p booster -h -t idle -N -o %N | sort -u | grep -v -x -F -f <(tr , '\n' <<<"$excluded") |
+  sinfo -p booster -h -t idle -N -o "%N %T" | awk '$2 == "idle" {print $1}' | sort -u |
+    grep -v -x -F -f <(tr , '\n' <<<"$excluded") |
     awk -F- '{c=int(($2-1)/5); if (!(c in pick)) pick[c]=$0} END{for (c in pick) print pick[c]}' |
     shuf -n 4 | paste -sd,
 }
