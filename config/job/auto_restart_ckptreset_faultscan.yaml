@@ -759,9 +759,11 @@ log_events:
 
   # === THROUGHPUT FLOOR (pool runs) =========================================
   # Off unless the job sets job.metadata.min_tokens_per_gpu_s. Below it 5 log points in a row
-  # (after 3 warm-up points of every run), the run is stopped with a checkpoint and its HOST
-  # released; the job keeps its place in the pool and resumes on the next allocation
-  # (JUPITER 2026-11-01: congested fabric, every host at half speed = double GPU hours).
+  # (after 3 warm-up points of every run), the run is stopped with a checkpoint and its host
+  # re-runs the node check (bad nodes excluded) and restarts it; if it fires again on that host
+  # within 2 h, the HOST is released and the job resumes on the next allocation
+  # (JUPITER 2026-11-01: congested fabric, every host at half speed = double GPU hours;
+  # 2026-11-08: ~400 tok/s/GPU for 7 h on four allocations, node checks found nothing).
   - name: slow_throughput_release
     pattern: "Tok/s/GPU\\): ([0-9.]+)"
     pattern_type: threshold
@@ -771,6 +773,8 @@ log_events:
     action:
       class_name: ReleaseHostAction
       reason: "throughput below job.metadata.min_tokens_per_gpu_s 5 log points in a row"
+      node_check_first: true
+      node_check_window_s: 7200
 
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
   #

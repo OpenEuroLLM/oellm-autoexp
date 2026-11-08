@@ -1392,7 +1392,9 @@ class MonitorLoop:
             return "finished"
 
         if result.special == "release_host":
-            self._release_pool_host(job, result.message or "released by the job's policy")
+            self._release_pool_host(
+                job, result.message or "released by the job's policy", **(result.metadata or {})
+            )
             return "continue"
 
         # Handle new job submissions using typed config
@@ -1410,14 +1412,28 @@ class MonitorLoop:
 
         return "continue"
 
-    def _release_pool_host(self, job: JobRecord, reason: str) -> None:
+    def _release_pool_host(
+        self,
+        job: JobRecord,
+        reason: str,
+        node_check_first: bool = False,
+        node_check_window_s: float = 7200.0,
+        **_: object,
+    ) -> None:
         """ReleaseHostAction: the run's host preempts it (checkpoint) and releases its
         allocation, as `pool_ctl exit-host` does; the job is requeued in its pool as for any
-        preemption and waits for the next host."""
+        preemption and waits for the next host.
+
+        node_check_first: stop only the run (as `pool_ctl preempt`); the host re-runs its node
+        check, excludes bad nodes and restarts the run. The host is released only when this
+        fires again within node_check_window_s of that check (JUPITER 2026-11-08: congested
+        fabric, ~400 tok/s/GPU on four allocations; the node check found nothing)."""
         pool_dir = getattr(job.definition, "pool_dir", None)
         rid = job.runtime.runtime_job_id
         if not pool_dir or not rid:
-            LOGGER.warning("ReleaseHostAction on %s: not a pool run, nothing to release", job.job_id)
+            LOGGER.warning(
+                "ReleaseHostAction on %s: not a pool run, nothing to release", job.job_id
+            )
             return
         from oellm_autoexp.monitor.pool import PoolLayout, read_run_state
 
@@ -1426,6 +1442,26 @@ class MonitorLoop:
         if not host:
             LOGGER.warning("ReleaseHostAction on %s: run %s has no host yet", job.job_id, rid)
             return
+        if node_check_first:
+            marker = layout.host_dir(host) / "node_check_requested"
+            try:
+                last = float(marker.read_text().split()[0])
+            except (OSError, ValueError, IndexError):
+                last = 0.0
+            if time.time() - last > node_check_window_s:
+                marker.write_text(f"{time.time()} {rid} {reason}\n")
+                (layout.run_dir(rid) / "preempt").write_text(f"node check: {reason}\n")
+                LOGGER.warning(
+                    "[pool %s] stopping run %s on host %s for a node check (the host is "
+                    "released if it fires again within %.0fs): %s",
+                    layout.root.name,
+                    rid,
+                    host,
+                    node_check_window_s,
+                    reason,
+                )
+                return
+            reason = f"{reason} (still after a node check)"
         self._pool._control(layout, host, "exit", f"released by policy: {reason}")
         LOGGER.warning(
             "[pool %s] releasing host %s of run %s: %s", layout.root.name, host, rid, reason

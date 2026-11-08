@@ -641,6 +641,11 @@ class CancelAction(BaseMonitorAction):
 class ReleaseHostActionConfig(ConfigInterface):
     class_name: str = "ReleaseHostAction"
     reason: str = "released"
+    # First stop only the RUN, so its host re-runs the node check (bad nodes excluded) and
+    # restarts it; the host is released only if it fires again on that host within
+    # node_check_window_s of the check (excluding bad nodes did not heal it).
+    node_check_first: bool = False
+    node_check_window_s: float = 7200.0
 
 
 @register
@@ -648,7 +653,8 @@ class ReleaseHostAction(BaseMonitorAction):
     """For a pool run: stop the run gracefully (checkpoint) and release its HOST, so the job
     waits in the pool for the next allocation -- e.g. when the allocation trains too slowly
     (network congestion) and running on would only burn GPU hours. Not a cancel: the job keeps
-    its queue place in the pool. Outside a pool it does nothing (logged)."""
+    its queue place in the pool. Outside a pool it does nothing (logged). With
+    node_check_first, a node check on the same host comes before the release."""
 
     config: ReleaseHostActionConfig
 
@@ -657,6 +663,10 @@ class ReleaseHostAction(BaseMonitorAction):
             special="release_host",
             status="success",
             message=self.config.reason,
+            metadata={
+                "node_check_first": self.config.node_check_first,
+                "node_check_window_s": self.config.node_check_window_s,
+            },
         )
 
 

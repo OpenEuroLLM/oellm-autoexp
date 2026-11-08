@@ -42,6 +42,10 @@ job:
   checkpoint_hook_command: ""
   est_step_time_s: 4.35
   est_startup_min: 12
+  metadata:
+    # throughput floor (~80% of the ~1930 tok/s/GPU at 512 nodes): below it, stop the run for a
+    # node check on the same host; release the host if the check does not heal it
+    min_tokens_per_gpu_s: 1500
 
 backend:
   aux:

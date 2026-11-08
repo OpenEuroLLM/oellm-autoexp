@@ -399,6 +399,40 @@ def test_slow_throughput_releases_the_host_after_n_in_a_row(env):
     assert env.rec("train").runtime.final_state is None  # the job stays, only the host goes
 
 
+def _running_with_node_check_guard(env, below=2000.0):
+    hid, rid, log = _running_with_guard(env, below)
+    rec = env.rec("train")
+    rec.definition.log_events[0].action.node_check_first = True
+    env.store.upsert(rec)
+    return hid, rid, log
+
+
+def test_slow_throughput_first_stops_the_run_for_a_node_check_then_releases(env):
+    # JUPITER 2026-11-08: below 1500 tok/s/GPU, check the host's nodes first (exclude bad ones,
+    # restart on the same allocation); release the host only if that did not heal it
+    hid, rid, log = _running_with_node_check_guard(env)
+    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    preempt_file = env.layout.run_dir(rid) / "preempt"
+    log.write_text("".join(_throughput_line(v) for v in (300, 900, 1000, 1000, 1000, 1000, 1000)))
+    env.poll()
+    assert preempt_file.exists() and "node check" in preempt_file.read_text()
+    assert not exit_file.exists(), "the host must survive the first time: node check first"
+    with log.open("a") as fh:  # still slow after the check
+        fh.write("".join(_throughput_line(1000) for _ in range(5)))
+    env.poll()
+    assert exit_file.exists() and "still after a node check" in exit_file.read_text()
+
+
+def test_a_node_check_long_ago_does_not_release_the_host(env):
+    hid, rid, log = _running_with_node_check_guard(env)
+    marker = env.layout.host_dir(hid) / "node_check_requested"
+    marker.write_text(f"{time.time() - 3 * 3600} old-run slow\n")  # outside the 2 h window
+    log.write_text("".join(_throughput_line(v) for v in (300, 900, 1000, 1000, 1000, 1000, 1000)))
+    env.poll()
+    assert (env.layout.run_dir(rid) / "preempt").exists()
+    assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
+
+
 def test_a_fast_value_resets_the_count(env):
     hid, rid, log = _running_with_guard(env)
     log.write_text(
