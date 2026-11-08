@@ -133,7 +133,6 @@ def main(argv=None):
         from scripts.korbi.flag_eval.node_ep import distributed_adapter
 
         VLLM = distributed_adapter(VLLM)
-        allow_empty_dp_shards()
     t0 = time.time()
     # The OELLM custom decode graphs are controlled by OELLM_DECODE_GRAPHS; this
     # vLLM engine flag stays opt-in because vLLM's own graph capture is separate.
@@ -216,10 +215,22 @@ def main(argv=None):
                 print(f"[flag_lmeval] {t['name']} part done in {time.time() - t1:.0f} s", flush=True)
                 return True
             tracker = EvaluationTracker(output_path=str(out / "results" / key))
-            res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"], batch_size=a.request_batch_size,
-                                  log_samples=True, evaluation_tracker=tracker, task_manager=tm,
-                                  confirm_run_unsafe_code=True, limit=a.limit, use_cache=cache_prefix)
-            if res is None:
+            # a row with a subtask of fewer documents than DP ranks: every rank evaluates the whole
+            # row as rank 0 of 1 (lm-eval cannot run an empty shard), only the real rank 0 writes;
+            # no response cache (the ranks would share one file)
+            unshard = a.dp > 1 and t["task"] in UNSHARDED_TASKS
+            real_rank = lm._rank if a.dp > 1 else 0
+            if unshard:
+                lm._rank, lm._world_size = 0, 1
+            try:
+                res = simple_evaluate(model=lm, tasks=[t["task"]], num_fewshot=t["n_shot"],
+                                      batch_size=a.request_batch_size, log_samples=True,
+                                      evaluation_tracker=tracker, task_manager=tm, confirm_run_unsafe_code=True,
+                                      limit=a.limit, use_cache=None if unshard else cache_prefix)
+            finally:
+                if unshard:
+                    lm._rank, lm._world_size = real_rank, a.dp
+            if res is None or (unshard and real_rank != 0):
                 lm.barrier()
                 return True
             samples = res.pop("samples")
@@ -259,30 +270,14 @@ def main(argv=None):
     sys.exit(1 if failed else 0)
 
 
-def allow_empty_dp_shards() -> None:
-    """A DP rank whose shard of a (sub)task has no documents contributes no requests instead of
-    raising: lm-eval's build_all_requests raises "did not find any docs!" for an empty shard
-    (include_base_44_estonian_health_oriented_education has 2 test documents for 4 ranks), the
-    rank died and its peers waited in the next collective forever. The evaluator already pads
-    the ranks' request counts and iterates no documents on an empty shard."""
-    from lm_eval.api.task import Task
-
-    if getattr(Task.build_all_requests, "_oellm_empty_ok", False):
-        return
-    original = Task.build_all_requests
-
-    def build_all_requests(self, *args, **kwargs):
-        try:
-            return original(self, *args, **kwargs)
-        except ValueError as exc:
-            if "did not find any docs" not in str(exc) or kwargs.get("world_size", 1) <= 1:
-                raise
-            print(f"[flag_lmeval] {getattr(self, 'config', None) and self.config.task}: no documents on "
-                  f"rank {kwargs.get('rank')} of {kwargs.get('world_size')}", flush=True)
-            self._instances = []
-
-    build_all_requests._oellm_empty_ok = True
-    Task.build_all_requests = build_all_requests
+# lm-eval rows with a subtask of fewer documents than DP ranks: build_all_requests raises "did not
+# find any docs!" on an empty shard, the rank died and its peers hung in the next collective
+# (include_base_44_estonian: health_oriented_education has 2 test documents for 4 ranks). Patching
+# lm-eval for empty shards also needs its filters, metrics loop and cross-rank gather; these rows
+# instead run unsharded on every rank (tested with lm-eval 0.4.13, the image's: 4 gloo ranks give
+# one rank's metrics). Extend with FLAG_UNSHARDED_TASKS (comma-separated task names).
+UNSHARDED_TASKS = {"include_base_44_estonian"} | {
+    t for t in os.environ.get("FLAG_UNSHARDED_TASKS", "").split(",") if t}
 
 
 def _queue_loop(queue, make_row, is_done, run_row, dp: int, rank0: bool) -> int:
