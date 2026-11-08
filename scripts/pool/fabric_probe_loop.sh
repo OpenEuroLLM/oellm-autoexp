@@ -2,7 +2,8 @@
 # Every FABRIC_PROBE_INTERVAL_S (900) submit scripts/pool/fabric_probe.sbatch twice, each only
 # while the previous one of its kind is not queued or running, avoiding the excluded nodes:
 #   fabric_probe        placed by SLURM (often all in one network cell: the same-cell reference)
-#   fabric_probe_cross  pinned to IDLE nodes in 4 different cells (starts at once; cross-cell)
+#   fabric_probe_cross  pinned to one IDLE node in each of 2-4 different cells (starts at once;
+#                       cross-cell; skipped while fewer than 2 cells have an idle node)
 # Run on a login node, e.g.
 #   systemd-run --user --unit=fabric-probe -p WorkingDirectory=$PWD bash scripts/pool/fabric_probe_loop.sh
 # and stop it with `systemctl --user stop fabric-probe`. Results: $FABRIC_PROBE_RESULTS.
@@ -23,7 +24,7 @@ submit() {  # name, extra sbatch args...
     "$@" "$FABRIC_PROBE_REPO/scripts/pool/fabric_probe.sbatch" 2>&1 | sed "s/^/$(date +%T) $name: /"
 }
 
-# one idle, not excluded node in each of 4 random network cells ((rack-1)//5), comma-separated.
+# one idle, not excluded node in each of up to 4 random network cells ((rack-1)//5), comma-separated.
 # State exactly "idle": `sinfo -t idle` also lists drained idle nodes, which never start a job.
 cross_nodes() {
   local excluded=$1
@@ -40,10 +41,11 @@ while true; do
   fi
   if [ -z "$(squeue -u "$USER" -h -n fabric_probe_cross -o %i 2>/dev/null)" ]; then
     nodes=$(cross_nodes "$exclude")
-    if [ "$(tr , '\n' <<<"$nodes" | grep -c .)" -eq 4 ]; then
-      submit fabric_probe_cross --nodelist="$nodes"
+    n=$(tr , '\n' <<<"$nodes" | grep -c .)
+    if [ "$n" -ge 2 ]; then
+      submit fabric_probe_cross --nodes="$n" --nodelist="$nodes"
     else
-      echo "$(date +%T) fabric_probe_cross: fewer than 4 cells with an idle node, skipped"
+      echo "$(date +%T) fabric_probe_cross: fewer than 2 cells with an idle node, skipped"
     fi
   fi
   sleep "$INTERVAL"
