@@ -884,6 +884,30 @@ def test_parse_test_only_start():
     assert parse_test_only_start("sbatch: error: Batch job submission failed") is None
 
 
+def test_hold_runs_assigns_nothing_and_releases_a_starting_host_at_once(env):
+    # JUPITER 2026-11-08: the fabric was congested for hours; stop training, keep the queue
+    meta = env.layout.load_meta()
+    meta["config"].update(hold_runs=True, idle_exit_s=3600, min_hosts=1)
+    env.layout.write_meta(meta)
+    env.add_run("train")
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0])
+    env.poll()
+    assert env.assigned(hid) == []
+    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    assert exit_file.exists() and "on hold" in exit_file.read_text()
+    assert env.rec("train").runtime.final_state is None  # the job stays queued
+    meta["config"].update(hold_runs=False)
+    env.layout.write_meta(meta)
+    second = next(h for h in env.hosts() if h.definition.metadata["pool_host_id"] != hid)
+    env.fake.set_state(env.hosts()[0].runtime.runtime_job_id, "COMPLETED")
+    (env.layout.host_dir(hid) / "alive").unlink()
+    env.poll(2)
+    new = env.host_up(env.rec(second.job_id))
+    env.poll()
+    assert env.assigned(new) == [env.rec("train").runtime.runtime_job_id]
+
+
 def test_successor_delay_holds_back_the_pending_host(env):
     meta = env.layout.load_meta()
     meta["config"].update(handover=True, keep_pending=1, successor_delay_s=1800)

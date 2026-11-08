@@ -156,6 +156,11 @@ class PoolHostConfig:
     successor_test_start: bool = False
     successor_test_interval_s: float = 600.0
     successor_lead_s: float = 900.0
+    # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, and a host
+    # with nothing to run is released at once instead of after idle_exit_s; queued hosts stay
+    # queued (they keep their queue age). For a cluster in a bad state (JUPITER 2026-11-08:
+    # congested fabric, every allocation at ~20-60% speed for 8 h).
+    hold_runs: bool = False
     # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
     # share shrank when another host started). False: never cancel a queued host automatically --
     # its queue age is the point (JUPITER 2026-11-05: the 2+2 account split cancelled e-sta hosts
@@ -1275,7 +1280,7 @@ class PoolManager:
                 return 1
 
         max_runs = max(1, int(cfg.max_runs_per_host))
-        for host in sorted(live, key=lambda h: -h.start_ts):
+        for host in [] if cfg.hold_runs else sorted(live, key=lambda h: -h.start_ts):
             active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
             free = host.usable_nodes - sum(run_nodes(r) for r in active)
             for item in list(queued):
@@ -1311,6 +1316,11 @@ class PoolManager:
         for host in live:
             if host.hid in busy or handover_in_progress:
                 short_since.pop(host.hid, None)
+                continue
+            if cfg.hold_runs:
+                self._control(layout, host.hid, "exit", "runs on hold (hold_runs)")
+                host.retiring = True
+                LOGGER.info("[pool %s] releasing host %s: runs on hold", cfg.name, host.hid)
                 continue
             if any(fits(host, item[3]) for item in queued):
                 short_since.pop(host.hid, None)

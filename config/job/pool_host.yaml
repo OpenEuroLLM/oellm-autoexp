@@ -43,6 +43,7 @@ pool_host:
   successor_test_start: false
   successor_test_interval_s: 600
   successor_lead_s: 900
+  hold_runs: false
   stop_grace_s: 120
   preempt_grace_s: 900
   max_attempts: 20
