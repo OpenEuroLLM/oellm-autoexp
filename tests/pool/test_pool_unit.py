@@ -887,22 +887,31 @@ def test_parse_test_only_start():
 def test_hold_runs_assigns_nothing_and_releases_a_starting_host_at_once(env):
     # JUPITER 2026-11-08: the fabric was congested for hours; stop training, keep the queue
     meta = env.layout.load_meta()
-    meta["config"].update(hold_runs=True, idle_exit_s=3600, min_hosts=1)
+    meta["config"].update(idle_exit_s=3600, min_hosts=1)
     env.layout.write_meta(meta)
     env.add_run("train")
-    env.poll(2)
+    env.poll(2)  # a host is queued
+    meta["config"].update(hold_runs=True)
+    env.layout.write_meta(meta)
     hid = env.host_up(env.hosts()[0])
     env.poll()
     assert env.assigned(hid) == []
     exit_file = env.layout.host_dir(hid) / "control" / "exit"
     assert exit_file.exists() and "on hold" in exit_file.read_text()
     assert env.rec("train").runtime.final_state is None  # the job stays queued
-    meta["config"].update(hold_runs=False)
-    env.layout.write_meta(meta)
-    second = next(h for h in env.hosts() if h.definition.metadata["pool_host_id"] != hid)
     env.fake.set_state(env.hosts()[0].runtime.runtime_job_id, "COMPLETED")
     (env.layout.host_dir(hid) / "alive").unlink()
-    env.poll(2)
+    n_hosts = len(env.hosts())
+    env.poll(3)
+    assert len(env.hosts()) == n_hosts, "no new host while the runs are on hold"
+    meta["config"].update(hold_runs=False)
+    env.layout.write_meta(meta)
+    env.poll(3)
+    second = next(
+        h
+        for h in env.hosts()
+        if h.definition.metadata["pool_host_id"] != hid and h.runtime.runtime_job_id
+    )
     new = env.host_up(env.rec(second.job_id))
     env.poll()
     assert env.assigned(new) == [env.rec("train").runtime.runtime_job_id]

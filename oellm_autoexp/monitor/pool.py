@@ -156,9 +156,9 @@ class PoolHostConfig:
     successor_test_start: bool = False
     successor_test_interval_s: float = 600.0
     successor_lead_s: float = 900.0
-    # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, and a host
-    # with nothing to run is released at once instead of after idle_exit_s; queued hosts stay
-    # queued (they keep their queue age). For a cluster in a bad state (JUPITER 2026-11-08:
+    # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
+    # nothing to run is released at once instead of after idle_exit_s, and no new host is
+    # submitted; hosts already queued stay queued (they keep their queue age). For a cluster in a bad state (JUPITER 2026-11-08:
     # congested fabric, every allocation at ~20-60% speed for 8 h).
     hold_runs: bool = False
     # Cancel queued hosts the pool no longer needs (keep_pending lowered, work gone, an account's
@@ -1387,6 +1387,10 @@ class PoolManager:
             successors = 0
         desired = (cfg.max_hosts_running + successors) if work else 0
         desired = max(desired, cfg.min_hosts)
+        if cfg.hold_runs:
+            # nothing to run: submit no new host (in an empty cluster each would start and be
+            # released at once); hosts already queued stay queued
+            desired = 0
         if state.get("closed"):
             desired = 0
             for host in hosts:
