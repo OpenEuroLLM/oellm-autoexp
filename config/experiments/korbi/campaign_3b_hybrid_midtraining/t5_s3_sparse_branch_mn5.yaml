@@ -28,6 +28,10 @@ backend:
     ckpt_step: 1000
     diag_consumed_train_samples: 16000
     override_opt_param_scheduler: true
+    # the variants' new parameters (NSA's compressors / gates, CSA2's compression weights / indexer) are not in the
+    # dense checkpoint: a partial fsdp_dtensor load keeps their init and starts their optimizer state fresh (the s3
+    # production configs load strictly)
+    strict_fsdp_dtensor_load: false
     train_iters: 1500
     exit_interval: 1500
     eval_interval: 250
