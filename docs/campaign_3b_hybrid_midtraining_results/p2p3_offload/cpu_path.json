@@ -1,0 +1,4 @@
+{"cpu": "AMD Ryzen 7 5700X (8C/16T, AVX2, DDR4 dual channel)", "measured": true,
+ "host_read_gbs": 29.3, "host_copy_gbs_rw": 18.6,
+ "cpu_expert_glu_us": {"fp32_n1": 736.0, "fp32_n4": 865.6, "fp32_n16": 1457.2, "bf16_n1": 459.6, "bf16_n4": 423.0, "bf16_n16": 1545.1},
+ "note": "torch CPU matmuls, 64 distinct experts (weights stream from RAM); an int8/fp8 CPU kernel (llama.cpp-style) would read 4.6 MB/expert at ~RAM bandwidth: ~0.16 ms [est.]"}

@@ -1061,6 +1061,45 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     question tokens: block-wise prefill changes what the later layers compute over the context. Training should
     have to absorb it; step 5 measures retrieval after training with block-wise selection.
 
+- **2026-11-08, P2 / P3: expert offload on the 3090 Ti, and the speculative-decoding gate** (local 3090 Ti: 24 GB,
+  PCIe Gen4 x16; Ryzen 5700X, DDR4; synthetic tensors of v4's shapes + the R0 routing traces of v4 step 8000;
+  `scripts/korbi/campaign_midtraining/{offload_bench,spec_gate}.py`; results in
+  `docs/campaign_3b_hybrid_midtraining_results/p2p3_offload/`):
+  - **Measured:**
+    - device copy 883 GB/s;
+    - pinned host → GPU 18 GB/s for a single 4.9 MB copy, 24 GB/s for 10-50 expert-sized async copies;
+    - copies hide 89-97 % behind compute on another stream;
+    - one expert GLU FFN with bf16-resident weights 46 / 54 / 75 µs at 1 / 16 / 64 tokens. FP8-dequantized in
+      torch it takes 155-183 µs (3.4×), so a fused W8A16 kernel is mandatory;
+    - one layer's 32 KV pages (4 MB at head dim 256) take 0.21 ms from pinned host;
+    - Engram rows take 6 µs per token;
+    - host RAM 29 GB/s read; a CPU expert takes 0.46 ms in torch bf16 (a q8 kernel ≈ 0.16 ms [est.]).
+  - **Routing:**
+    - batch-1 unions of 5 / 8.5 / 15 / 25 experts per layer over 1 / 2 / 4 / 8 tokens;
+    - an exact LRU over all 17,280 experts gives 36-68 misses per token with a 3000-expert cache (13.9 GB),
+      12-26 with 6000 (int4 storage in the same memory);
+    - batch 16 (16 sessions) thrashes: 1266-2394 misses per step at 3000;
+    - pinning the globally most frequent experts is useless (147-192 misses per token): routing is near-uniform,
+      the locality is per session.
+  - **Decode [est.]:**
+    - **batch 1:** ~45-48 tokens / s at 64k-10M. That is 4.3 ms GPU time but 21 ms expert PCIe per token, so
+      PCIe-bound 5×. KV pages add 1.2 ms per token at ≥ 1M.
+    - **batch 16:** ~22 tokens / s in total.
+  - **The levers:**
+    1. int4 expert storage: ~6000 cached experts, near the GPU bound, ~150-200 tokens / s at batch 1 [est.];
+    2. a CPU path for missed experts (≈ PCIe locally, much more on a large-RAM DDR5 host);
+    3. a fused W8A16 / W4A16 expert kernel;
+    4. exact prefetch;
+    5. session-aware caching at batch 16.
+  - **P3 gate:**
+    - Speculative decoding does not reduce expert bytes per accepted token: the accepted tokens route as in plain
+      decoding, and rejected ones only add misses. So while decoding is PCIe-bound it gives ≤ 1.0×: batch 1
+      1.00× optimistic and 0.22-0.95× pessimistic; batch 16 ≥ 1 only at α ≥ 0.8 with k ≥ 4.
+    - **MTP / DFlash for the consumer target only after the miss rate falls below ~10-20 per token** (int4 /
+      CPU path). Then the ~2.6 GB of resident weights read per step amortizes, ~1.5-2× at α 0.7-0.8, k = 4
+      [est.]; re-run spec_gate.py then.
+    - The gate does not apply to GPU-resident serving.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
