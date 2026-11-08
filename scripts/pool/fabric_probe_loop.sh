@@ -1,6 +1,9 @@
 #!/bin/bash
-# Submit scripts/pool/fabric_probe.sbatch every FABRIC_PROBE_INTERVAL_S (900) while none of ours
-# is queued or running, avoiding the nodes the pool excludes. Run on a login node, e.g.
+# Every FABRIC_PROBE_INTERVAL_S (900) submit scripts/pool/fabric_probe.sbatch twice, each only
+# while the previous one of its kind is not queued or running, avoiding the excluded nodes:
+#   fabric_probe        placed by SLURM (often all in one network cell: the same-cell reference)
+#   fabric_probe_cross  pinned to IDLE nodes in 4 different cells (starts at once; cross-cell)
+# Run on a login node, e.g.
 #   systemd-run --user --unit=fabric-probe -p WorkingDirectory=$PWD bash scripts/pool/fabric_probe_loop.sh
 # and stop it with `systemctl --user stop fabric-probe`. Results: $FABRIC_PROBE_RESULTS.
 set -u
@@ -13,11 +16,33 @@ EXCLUDE_FILE=${FABRIC_PROBE_EXCLUDE_FILE:-/e/project1/e-sta-openeurollm/producti
 LOGDIR=$(dirname "$FABRIC_PROBE_RESULTS")
 mkdir -p "$LOGDIR"
 
+submit() {  # name, extra sbatch args...
+  local name=$1
+  shift
+  sbatch --account="$ACCOUNT" --job-name="$name" --output="$LOGDIR/$name-%j.log" --export=ALL \
+    "$@" "$FABRIC_PROBE_REPO/scripts/pool/fabric_probe.sbatch" 2>&1 | sed "s/^/$(date +%T) $name: /"
+}
+
+# one idle, not excluded node in each of 4 random network cells ((rack-1)//5), comma-separated
+cross_nodes() {
+  local excluded=$1
+  sinfo -p booster -h -t idle -N -o %N | sort -u | grep -v -x -F -f <(tr , '\n' <<<"$excluded") |
+    awk -F- '{c=int(($2-1)/5); if (!(c in pick)) pick[c]=$0} END{for (c in pick) print pick[c]}' |
+    shuf -n 4 | paste -sd,
+}
+
 while true; do
+  exclude=$(grep -v '^#' "$EXCLUDE_FILE" 2>/dev/null | tr ', ' '\n\n' | grep . | paste -sd,)
   if [ -z "$(squeue -u "$USER" -h -n fabric_probe -o %i 2>/dev/null)" ]; then
-    exclude=$(grep -v '^#' "$EXCLUDE_FILE" 2>/dev/null | tr ', ' '\n\n' | grep . | paste -sd,)
-    sbatch --account="$ACCOUNT" ${exclude:+--exclude="$exclude"} --output="$LOGDIR/fabric_probe-%j.log" \
-      --export=ALL "$FABRIC_PROBE_REPO/scripts/pool/fabric_probe.sbatch" 2>&1 | sed "s/^/$(date +%T) /"
+    submit fabric_probe ${exclude:+--exclude="$exclude"}
+  fi
+  if [ -z "$(squeue -u "$USER" -h -n fabric_probe_cross -o %i 2>/dev/null)" ]; then
+    nodes=$(cross_nodes "$exclude")
+    if [ "$(tr , '\n' <<<"$nodes" | grep -c .)" -eq 4 ]; then
+      submit fabric_probe_cross --nodelist="$nodes"
+    else
+      echo "$(date +%T) fabric_probe_cross: fewer than 4 cells with an idle node, skipped"
+    fi
   fi
   sleep "$INTERVAL"
 done
