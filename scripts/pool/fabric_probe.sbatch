@@ -22,6 +22,7 @@ RESULTS=${FABRIC_PROBE_RESULTS:?}
 
 export NCCL_SOCKET_IFNAME=ib0 NCCL_SOCKET_FAMILY=AF_INET GLOO_SOCKET_IFNAME=ib0 GLOO_SOCKET_FAMILY=AF_INET
 export POOL_PROBE_MODE=all POOL_PROBE_GPUS=4 POOL_PROBE_MB=${FABRIC_PROBE_MB:-1024}
+export POOL_PROBE_ITERS=${FABRIC_PROBE_ITERS:-100}
 
 # a node's network cell: the 5 racks under one L2 switch, (rack-1)//5
 cells=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | awk -F- '{print int(($2-1)/5)*5+1}' | sort -un | paste -sd,)

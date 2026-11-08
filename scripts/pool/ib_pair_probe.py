@@ -15,8 +15,8 @@ scripts/nodecheck.sh's format (scripts/pool/precheck_verdict.py drops the slow o
 
 POOL_PROBE_MODE=all instead measures the fabric under a training-like load: one all-reduce over
 ALL GPUs of the step (the gradient reduction's pattern, crossing every cell the job spans), and
-rank 0 prints `[probe] allreduce gpus=<n> mb=<size> busbw_gbps=<x> min/median/max ...` over
-POOL_PROBE_ITERS repetitions -- a fabric health figure without a training run.
+rank 0 prints `[probe] allreduce gpus=<n> mb=<size> busbw_gbps=<median> min=.. max=.. stalls=<n below
+half the median>/<reps> total_s=..` over POOL_PROBE_ITERS repetitions -- a fabric health figure without a training run.
 
 Rendezvous: MASTER_ADDR = first node of the step, its own port (POOL_PROBE_PORT, else 29500 +
 the step id mod 500 -- never the job's MASTER_PORT), POOL_PROBE_TIMEOUT_S (120) to rendezvous.
@@ -133,10 +133,15 @@ def main():
                 times.append(time.perf_counter() - t0)
             nbytes = buf.numel() * buf.element_size()
             bus = sorted(nbytes * 2 * (world - 1) / world / t / 1e9 for t in times)
+            median = bus[len(bus) // 2]
+            # stalls: repetitions below half the median (JUPITER 2026-11-08: a cross-cell
+            # probe had a median of 78.9 GB/s but one repetition at 1.8)
+            stalls = sum(b < median / 2 for b in bus)
             if rank == 0:
                 print(
                     f"[probe] allreduce gpus={world} mb={nbytes // 2**20} "
-                    f"busbw_gbps={bus[len(bus) // 2]:.1f} min={bus[0]:.1f} max={bus[-1]:.1f}",
+                    f"busbw_gbps={median:.1f} min={bus[0]:.1f} max={bus[-1]:.1f} "
+                    f"stalls={stalls}/{len(bus)} total_s={sum(times):.2f}",
                     flush=True,
                 )
             dist.destroy_process_group()
