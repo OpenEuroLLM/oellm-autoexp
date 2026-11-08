@@ -1914,6 +1914,32 @@ def arms5qbg(size: str):
     ]
 
 
+def arms5fp16(size: str = "s3"):
+    """FP16 vs BF16 training of LDM (user 2026-11-08: v4_ldm, stopped for a growing grad norm,
+    never ran FP16; every stabilization so far targeted experts, balancing and the front stream,
+    none the precision). The v4_ldm recipe at s3: screen5qbg's ldm_pab setting and data (4 nodes,
+    4000 steps; its index is cached) with v4_ldm's deltas -- the embedding RMSNorm, QB EMA 0 +
+    global_aux_loss 1e-4, no weight decay on the embedding and routers. Two arms in one launch,
+    paired (same seed, data and order); only the precision differs:
+      bf16: the reference;
+      fp16: FP16 params / activations / CuTe LDM tapes and state (cute_kernels storage_dtype
+            float16: M, residuals, reads, DY / DV in FP16, 8x below BF16's error against FP64,
+            NUMERICS.md), FP32 grad reduce as under BF16, one dynamic loss scaler for the whole
+            Muown + Adam chain (Megatron), initial scale 2^16 (2^32 skips ~30 opening steps)."""
+    base = dict((n, kv) for n, _, kv in arms5qbg(size))["ldm_pab_qbgaux"]
+    v4 = {B + "embedding_norm": True,
+          B + "moe_router_quantile_balancing_ema": 0.0,
+          B + "embedding_wd_mult": 0.0, B + "moe_router_wd_mult": 0.0}
+    fp16 = {B + "bf16": False, B + "fp16": True,
+            B + "accumulate_allreduce_grads_in_fp32": True,
+            B + "initial_loss_scale": 65536.0}
+    return [
+        ("v4ldm_bf16", "v4_ldm recipe at s3, BF16 (reference)", {**base, **v4}),
+        ("v4ldm_fp16", "v4_ldm recipe at s3, FP16 (CuTe LDM in FP16, shared loss scaler)",
+         {**base, **v4, **fp16}),
+    ]
+
+
 def arms5fsdpeq(size: str = "s1"):
     """muown_classical under Megatron-FSDP vs our distributed-optimizer path (EP agent's FSDP Muown,
     Megatron ac8c00d91; requested 2026-10-24): loss equivalence on the final recipe (screen5embhead's
@@ -2275,6 +2301,7 @@ def write5():
             *[(z, "screen5qb", arms5qb(z)) for z in ("s1", "s3")],
             *[(z, "screen5v2", arms5v2(z)) for z in ("s2", "s3")],
             ("s3", "screen5qbg", arms5qbg("s3")),
+            ("s3", "screen5fp16", arms5fp16("s3")),
             ("s1", "screen5fsdpeq4", arms5fsdpeq4("s1")),
             # the fsdp 2-step arm again on Megatron >= cc802f3c0 (tags fixed; a +0.03 offset over the
             # noise floor remained, +0.1 at step 10): diff against screen5fsdpeq4's distopt step 1 / 2
