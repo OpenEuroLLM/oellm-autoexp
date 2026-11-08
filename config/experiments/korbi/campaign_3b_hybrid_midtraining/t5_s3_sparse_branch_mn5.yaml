@@ -5,7 +5,8 @@
 # 1000 x 16), switching all 3 attention layers to one variant at a matched ~2.7k-key budget per query (page 64,
 # window 512, 1 sink page, 32 pages / buckets / 512 entries of 4 tokens), block-wise selection (64 queries) and the
 # flex paths. Arms: dense / window-only control / page_mean / quest / page_mean per KV group / page_mean with one
-# selection shared by the 3 attention layers (layer 1 selects) / NSA / CSA2 (+ indexer KL) / LSA.
+# selection shared by the 3 attention layers (layer 1 selects) / NSA / CSA2 (+ indexer KL) / LSA (32 buckets per
+# block, best 32) / LSA fine (128 buckets per block, best 128).
 # 4 nodes per arm as ctxlen4n_s3 (~10 s / step dense: ~1.4 h, ~23 GPU-h per arm before the sparse overhead; flex
 # paths 0.4-1.7x dense attention per layer, T4e). Smoke-tested by t5_s3_sparse_smoke_mn5. Evaluation: position-binned
 # NLL at 64k / 128k from Megatron; retrieval needs the variants in the HF export (open).
@@ -110,3 +111,9 @@ sweep:
           backend.megatron.page_sparse_lsa_pool: 4
           backend.megatron.page_sparse_lsa_block: 512
           backend.megatron.page_sparse_lsa_buckets: 32
+        - aux.arm: lsa_fine  # buckets closer to the paper's: 128 per block (~16 tokens each), the best 128
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 128
+          backend.megatron.page_sparse_topk: 128
