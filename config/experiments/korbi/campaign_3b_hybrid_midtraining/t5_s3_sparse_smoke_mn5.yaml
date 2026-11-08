@@ -1,0 +1,80 @@
+# @package _global_
+# Smoke test of the step-5 arms (t5_s3_sparse_branch_mn5) on the MN5 dev queue before the allocation: each sparse
+# arm loads the dense ctxlen4n_s3 s64k checkpoint (step 1000; partial fsdp_dtensor load: the variants' new
+# parameters keep their init, their optimizer state starts fresh) and trains 20 steps on the production stack
+# (FSDP, full recompute, packed documents, flex compile) -- no validation, no checkpoint. csa2_2n: the heaviest arm
+# on 2 nodes (expert DP 2, two micro-batches per GPU), to see whether 2-node arms fit memory.
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t5_s3_sparse_smoke_mn5 --yes
+defaults:
+  - t5_s3_sparse_branch_mn5
+  - _self_
+
+aux:
+  suite: t5_s3_sparse_smoke
+  dev_queue: true
+
+backend:
+  megatron:
+    train_iters: 1020
+    exit_interval: 1020
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    log_interval: 1
+
+job:
+  concurrency_group: acc_debug
+  max_active: 1
+  concurrency_qos: true
+  est_step_time_s: 15.0
+  # a smoke: one segment, never a restart (a timeout or failure is the result)
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "smoke timed out"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "smoke failed"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: FinishAction, reason: "smoke lost its node"}
+
+slurm:
+  sbatch:
+    qos: acc_debug
+    time: "00:40:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: csa2_2n
+          aux.nodes: 2
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+        - aux.arm: nsa
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
+        - aux.arm: csa2
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+        - aux.arm: lsa
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 32
