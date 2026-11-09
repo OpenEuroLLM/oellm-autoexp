@@ -52,6 +52,12 @@ backend:
     # step they cost +6 % at 2 nodes.
     diag_weight_stats: true
     diag_norm_gains: true
+    # the Engram tables clipped with their own norm (Megatron d2081946c / 238343442 on oellm/v4main-diag):
+    # out of the global norm, so an Engram-only spike no longer scales down every dense parameter (end of
+    # phase 1, 23000-23500: Engram 60 % of spike norm^2, led 116 of 152 spikes, 8 % of steps clipped all
+    # parameters, coefficient down to 0.03). Dense parameters: clip_grad 1.0 against the norm of the rest.
+    # Live from the 25000 restart (user 2026-11-09: 23692-25000 = the 64k extension alone, then this).
+    engram_clip_grad: 1.0
 
 job:
   name: ambitious_v4_2ph_hd256_256n_p${aux.phase}

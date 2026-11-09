@@ -1,0 +1,31 @@
+# @package _global_
+# The v4_2ph hd256 phase-2 restart at 25000 (user 2026-11-09): the opt81 curriculum's phase-2 entry, with a start
+# condition that waits for checkpoint 25000 (the phase-2 entry waits for 23691, which never comes back). New
+# in this restart: --engram-clip-grad 1.0 (in the main config) and the dataset empty-split fix (Megatron
+# 1ef719a7e, no effect on the data). Snapshot autoexp_v4hd256p2eclip. Enqueue:
+#   cd $R/autoexp_v4hd256p2eclip && PYTHONPATH=. HYBRID_OUTPUT_DIR=/gpfs/scratch/ehpc533/hybrid_nucleus \
+#       scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool $P/mn5_pool_p264 --yes ++job.metadata.pool_priority=1000 aux.node_check=off \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_mn5
+  - _self_
+
+# literals in the entry: interpolations inside a sweep entry resolve against the base config
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          backend.megatron.micro_batch_size: 1
+          aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          # checkpoint >= 25000 (the current run is stopped after its 25000 checkpoint + validation; its
+          # graceful stop saves the step it is on, 25000 + a few)
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*(2[5-9][0-9]{3}|[3-9][0-9]{4}|[1-9][0-9]{5,})\\s*$"
+            mode: regex
+            persistent_pass: true
