@@ -76,6 +76,12 @@ sweep:
           backend.megatron.page_sparse_lsa_pool: 4
           backend.megatron.page_sparse_lsa_block: 512
           backend.megatron.page_sparse_lsa_buckets: 32
+        - aux.ckpt_arm: lsa_fine
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 128
+          backend.megatron.page_sparse_topk: 128
     - type: list
       configs:
         - {aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1, aux.len: at64k}
