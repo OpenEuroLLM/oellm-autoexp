@@ -122,16 +122,26 @@ def harness_env(job: JobSpec) -> dict[str, str]:
     return env
 
 
+ACCELERATE_BATCH_SIZE = 32  # oellm-eval's lighteval default off a local run (main.py)
+
+
 def lighteval_steps(job: JobSpec, py: str, rows: list) -> list[Step]:
     g = job.engine
+    tasks = ",".join(f"{r.task}|{r.n_shot}" for r in rows)
+    out = results_root(job) / "lighteval" / f"lighteval_{group_key(job)}"
+    if job.backend == "accelerate":  # HF transformers, the command of oellm-eval's template.sbatch
+        argv = [py, str(REPO / "scripts/korbi/flag_eval/lighteval_accelerate_cli.py"), "accelerate",
+                f"model_name={job.export_dir},trust_remote_code=True,batch_size={ACCELERATE_BATCH_SIZE}", tasks,
+                "--load-tasks-multilingual", "--output-dir", str(out), "--save-details"]
+        if job.limit:
+            argv += ["--max-samples", str(job.limit)]
+        return [Step(argv, harness_env(job))]
     model_args = (f"model_name={job.export_dir},trust_remote_code=True,dtype=bfloat16,"
                   f"gpu_memory_utilization={g.gpu_memory_utilization},max_num_seqs={g.max_num_seqs},"
                   f"max_num_batched_tokens={g.max_num_batched_tokens},")
     if g.max_model_length is not None:
         model_args += f"max_model_length={g.max_model_length},"
     model_args += f"tensor_parallel_size={g.tp}"
-    tasks = ",".join(f"{r.task}|{r.n_shot}" for r in rows)
-    out = results_root(job) / "lighteval" / f"lighteval_{group_key(job)}"
     # --save-details: per-sample parquet under <out>/details (lm-eval writes samples_*.jsonl, evalchemy
     # keeps its examples in the results json); without it a bad score cannot be inspected afterwards
     argv = [py, str(REPO / "scripts/korbi/flag_eval/lighteval_vllm_cli.py"), "vllm", model_args, tasks,

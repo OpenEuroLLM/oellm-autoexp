@@ -254,6 +254,21 @@ def test_a_view_is_used_where_there_is_one(tmp_path):
     assert f"pretrained={job.view_dir}," in call.argv[call.argv.index("--model_args") + 1]
 
 
+def test_lighteval_accelerate_backend_runs_the_oellm_eval_command(tmp_path):
+    spec = _spec(tmp_path, {"lighteval": {"backend": "accelerate"}})
+    job = next(j for j, _ in launch.plan(spec)[0] if j.harness == "lighteval")
+    assert job.backend == "accelerate"
+    call = run_job.steps_of(job, "PY")[0]
+    assert call.argv[1].endswith("lighteval_accelerate_cli.py") and call.argv[2] == "accelerate"
+    assert call.argv[3] == f"model_name={job.export_dir},trust_remote_code=True,batch_size=32"
+    assert "--save-details" in call.argv and "--load-tasks-multilingual" in call.argv
+
+
+def test_accelerate_backend_is_lighteval_only(tmp_path):
+    with pytest.raises(SpecError):
+        _spec(tmp_path, {"evalchemy": {"backend": "accelerate"}})
+
+
 def test_lighteval_never_gets_the_chat_template_view(tmp_path):
     job = _job(tmp_path, lambda j: j.harness == "lighteval")
     Path(job.view_dir).mkdir(parents=True)

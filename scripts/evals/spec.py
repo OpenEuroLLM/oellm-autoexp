@@ -283,8 +283,13 @@ class GroupedSpec:
     engine: Engine = field(default_factory=lambda: _grouped_engine(None))
     model_code: ModelCode = field(default_factory=lambda: ModelCode(graph_max_rows=64))
     job: JobLimits = field(default_factory=JobLimits)
+    # lighteval only: "accelerate" = HF transformers, batch_size 32, as oellm-eval runs lighteval on
+    # JUPITER (the backend check; the 84B export does not fit it)
+    backend: Literal["vllm", "accelerate"] = "vllm"
 
     def check(self, name: str) -> None:
+        if self.backend != "vllm" and name != "lighteval":
+            raise SpecError(f"{name}.backend: only lighteval has an accelerate backend")
         if self.groups < 1:
             raise SpecError(f"{name}.groups must be positive")
         if self.max_rows is not None and self.max_rows < 1:
@@ -443,3 +448,4 @@ class JobSpec:
     shard: int = 0             # lm_eval_worker: its summary_shard<i>.tsv
     export: ExportSpec | None = None  # export
     est_s: float = 0.0
+    backend: Literal["vllm", "accelerate"] = "vllm"  # harness_group lighteval

@@ -188,7 +188,8 @@ def plan(spec: EvalSpec) -> tuple[list[tuple[JobSpec, dict]], list[tuple[str, fl
             continue
         for g, (members, est) in enumerate(group_jobs(spec, harness, h_rows, row_times), start=1):
             jobs.append((JobSpec(kind="harness_group", name=f"ev_{export_name}_{short}_g{g}{tag}", harness=harness,
-                                 rows=members, engine=cfg.engine, model_code=cfg.model_code, est_s=est, **common),
+                                 rows=members, engine=cfg.engine, model_code=cfg.model_code, est_s=est,
+                                 backend=cfg.backend, **common),
                          dict(priority=cfg.job.priority, time_h=wall_hours(cfg.job.time_h, est),
                               use_excluded_nodes=cfg.job.use_excluded_nodes, gate=gate, runtime="vllm")))
     for job, _ in jobs:
@@ -321,7 +322,7 @@ def manifest(spec: EvalSpec, jobs, items, done, launch_dir: Path) -> dict:
                       "stage_dists": _dists(str(stage)),
                       "pylibs_oellm": _dists(p.pylibs_oellm),
                       "pylibs_lighteval": _dists(p.pylibs_lighteval)},
-        "jobs": [{"name": job.name, "kind": job.kind, "harness": job.harness,
+        "jobs": [{"name": job.name, "kind": job.kind, "harness": job.harness, "backend": job.backend,
                   "model": (job.export_dir if job.harness == "lighteval" else job.view_dir) if job.harness else None,
                   "rows": [r.name for r in job.rows], "priority": pool["priority"], "time_h": pool["time_h"]}
                  for job, pool in jobs],
