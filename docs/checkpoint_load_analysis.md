@@ -148,3 +148,26 @@ first-of-snapshot slowdown; unpickle time under 4-rank contention on a compute n
   most likely reflects the GPFS cache, since reseedc ran after reseedf on the same hard-linked files. The flat layout
   reads ~1.3 GB of rewritten tensors per rank whatever the rank count (1024 ranks ≈ 1.3 TB from one file); the
   chunked layout reads ~1/N of it, as the selftest asserts. The gain only shows at scale.
+
+## 6. Phase-2 start, 256 nodes (11-09, p264.0284, snapshot autoexp_v4hd256diag2lf)
+
+About 30 min from the last phase-1 step (~20:54) to steady 64k steps (~21:24):
+
+| part | p264.0133 (11-09 14:30) | p264.0284 |
+|---|---|---|
+| exit save → run start | ~4 min | 2:20 |
+| library setup | 1:49 | 0:39 (precompiled snapshot) |
+| megatron init | 3:43 | 3:37 |
+| model build + load | 6:17 | 3:31 |
+| datasets | 1:29 | 15:36 |
+| first two steps | +2.4 min | 158 s + 88 s |
+
+Load timing (min / max over 1024 ranks, 170 s in total): args load (the one metadata read) 13.6 / 17.8 s,
+rerun check 0.0 / 4.2 s, metadata for the state load 0.0 s (fix 3); dummy optimizer step 46.2 s; preprocess
+39.9 / 42.8 s; plan + read + barrier 50.3 / 53.2 s; optimizer load_state_dict 1.5 / 3.0 s.
+
+**Datasets, 15.6 min:** the empty-split check (Megatron 0ff8768ae) opened all 429 s3 stage datasets again per
+blended split on every rank. One rank (py-spy: `_empty_split_datasets` → `build_low_level_dataset`) took ~14 min
+while all others waited at the next barrier. Fixed in Megatron 1ef719a7e (oellm/v4main-diag; e99ac1e01 on
+oellm/v0.19-hybrid): the mid-level build records each dataset's count and the check reuses it; same result, test
+in `tests/unit_tests/data/test_blend_empty_split.py` (2 passed on MN5). Goes in at the next approved restart.
