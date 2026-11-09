@@ -297,6 +297,10 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
         add(hp + "mixer.k_norm.weight", g("self_attention.k_layernorm.weight").to(cast))
         add(hp + "input_layernorm.weight", g("self_attention.linear_qkv.layer_norm_weight").to(cast))
+        # trained sparse-attention parameters (page_sparse_selector nsa / csa2 / indexer): not part of the HF
+        # model; campaign_midtraining/extract_variant_params.py takes them for the long-context probe
+        for k in [k for k in t if k.startswith(p + "self_attention.core_attention.")]:
+            t.pop(k)
     elif kind == "ckda":
         add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
         pre = p + "self_attention.layer."

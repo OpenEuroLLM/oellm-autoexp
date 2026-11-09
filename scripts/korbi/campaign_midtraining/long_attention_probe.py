@@ -100,15 +100,16 @@ def parse_policy(text):
         return {"name": text, "kind": "dense"}
     decode = kw.pop("decode", None)
     tail = kw.pop("tail", 128)
+    share = bool(kw.pop("share", 0))
     if name in VARIANTS:
         branch = kw.pop("branch", 1)
         if name == "nsa":  # one branch alone (gates saturated): a converted model without trained gates
-            kw["gate_init"] = tuple(30.0 if i == branch else -30.0 for i in range(3))
-        return {"name": text, "kind": name, "cfg": VARIANTS[name](**kw)}
-    cfg = ps.PageSparseConfig(selector=name, **kw)
-    out = {"name": text, "kind": "sparse", "cfg": cfg}
+            kw["gate_init"] = tuple(30.0 if i == branch else -30.0 for i in range(3))  # --variant-params overrides
+        out = {"name": text, "kind": name, "cfg": VARIANTS[name](**kw)}
+    else:
+        out = {"name": text, "kind": "sparse", "cfg": ps.PageSparseConfig(selector=name, **kw), "share": share}
     if decode == "token":
-        out["decode_cfg"] = dataclasses.replace(cfg, select_block=1)
+        out["decode_cfg"] = dataclasses.replace(out["cfg"], select_block=1)
         out["tail"] = tail
     return out
 
@@ -129,10 +130,14 @@ class AttentionPolicy:
         self.train_csa2 = False
         self.decode_mode = False  # the continuation tokens of a choice (decode)
         self.tail_end = None  # absolute end of a prompt whose final selection block selects per token
+        self.variant_state = None  # trained NSA / CSA2 parameters {attention ordinal: state} (--variant-params)
+        self.shared = {}  # share=1: the first attention layer's selections, by (mode, offset, queries)
+        self.attn_layers = []
         self.losses = defaultdict(list)
         for i, layer in enumerate(model.model.layers):
             if layer.kind == "attention":
                 layer.mixer.forward = types.MethodType(self._forward(i), layer.mixer)
+                self.attn_layers.append(i)
                 self.n += 1
 
     def add_indexers(self, model, heads=4, dim=64, page=64, lr=1e-3):
@@ -143,26 +148,38 @@ class AttentionPolicy:
                 self.indexers[i] = idx
                 self.opts[i] = torch.optim.Adam(idx.parameters(), lr=lr)
 
-    def sparse(self, p, q, k, v, past, idx_scores):
-        """page_sparse with the policy's config; with decode=token the decode queries and the prompt's last
-        ``tail`` tokens select per token (inference re-selects them cheaply)."""
-        scale = q.shape[-1] ** -0.5
+    def _split(self, p, past, s):
+        """[(row start, row end, config)] of a chunk of s queries at past..: the policy's config, per token in
+        decode and on the prompt's last ``tail`` tokens with decode=token."""
         cfg, dcfg = p["cfg"], p.get("decode_cfg")
         if dcfg is None:
-            return ps.page_sparse_attention(q, k, v, cfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
+            return [(0, s, cfg)]
         if self.decode_mode:
-            return ps.page_sparse_attention(q, k, v, dcfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
-        s = q.shape[2]
+            return [(0, s, dcfg)]
         end = past + s
         if self.tail_end != end:
-            return ps.page_sparse_attention(q, k, v, cfg, q_offset=past, scale=scale, indexer_scores=idx_scores)
+            return [(0, s, cfg)]
         t0 = max(end - p["tail"] - past, 0)  # the prompt's last `tail` tokens select per token
+        return ([(0, t0, cfg)] if t0 > 0 else []) + [(t0, s, dcfg)]
+
+    def sparse(self, li, p, q, k, v, past, idx_scores):
+        """page_sparse with the policy's config (see _split); share=1: the first attention layer selects, the
+        others reuse its selection (one index shared across layers)."""
+        scale = q.shape[-1] ** -0.5
         parts = []
-        if t0 > 0:
-            parts.append(ps.page_sparse_attention(q[:, :, :t0], k, v, cfg, q_offset=past, scale=scale,
-                                                  indexer_scores=None if idx_scores is None else idx_scores[:, :t0]))
-        parts.append(ps.page_sparse_attention(q[:, :, t0:], k, v, dcfg, q_offset=past + t0, scale=scale,
-                                              indexer_scores=None if idx_scores is None else idx_scores[:, t0:]))
+        for r0, r1, cfg in self._split(p, past, q.shape[2]):
+            kw = dict(q_offset=past + r0, scale=scale,
+                      indexer_scores=None if idx_scores is None else idx_scores[:, r0:r1])
+            if p.get("share"):
+                key = (cfg.select_block, past + r0, r1 - r0)
+                if li == self.attn_layers[0]:
+                    o, self.shared[key] = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, return_selection=True,
+                                                                   **kw)
+                else:
+                    o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, selection=self.shared[key], **kw)
+            else:
+                o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, **kw)
+            parts.append(o)
         return torch.cat(parts, 2)
 
     def module(self, li, p, att_x, d, nh, nkv):
@@ -176,13 +193,27 @@ class AttentionPolicy:
                 m = sv.CSA2(h, nkv, d, p["cfg"])
                 if self.csa2_state is not None and li in self.csa2_state:
                     m.load_state_dict(self.csa2_state[li])
+            if self.variant_state is not None:  # the trained parameters of the s3 arm (k-th attention layer)
+                m.load_state_dict(self.variant_state[self.attn_layers.index(li)])
             self.modules[key] = m.to(att_x.device).float()
         return self.modules[key]
 
-    def variant(self, li, p, q, k, v, x, past, fresh):
+    def variant(self, li, p, q, k, v, x, past, fresh, key_name=None):
+        if key_name is not None:  # a decode / tail part: the policy's state, this part's config
+            return self._variant(li, p, q, k, v, x, past, fresh, key_name)
         """One chunk of queries (q [1, nh, s, d] at past..) over the cached k / v with an LSA / NSA / CSA2 policy.
         LSA's bucket index grows by complete cluster blocks (kept in index_keys, restored per choice like the
         indexer keys); CSA2 keeps its key-side compression features the same way."""
+        splits = self._split(p, past, q.shape[2])
+        if len(splits) > 1 or splits[0][2] is not p["cfg"]:  # decode / prompt tail: the per-token config
+            outs = []
+            for r0, r1, cfg in splits:
+                outs.append(self.variant(li, {**p, "cfg": cfg, "decode_cfg": None}, q[:, :, r0:r1], k, v,
+                                         x[:, r0:r1], past + r0, fresh and r0 == 0, key_name=p["name"]))
+            return torch.cat(outs, 2)
+        return self._variant(li, p, q, k, v, x, past, fresh, p["name"])
+
+    def _variant(self, li, p, q, k, v, x, past, fresh, key_name):
         scale = q.shape[-1] ** -0.5
         cfg = p["cfg"]
         if p["kind"] == "lsa":
@@ -201,6 +232,13 @@ class AttentionPolicy:
                 self.index_keys[ikey] = idx
             return mod(q, k, v, past, scale, None if idx is None else idx[:4])
         mod = self.module(li, p, x, q.shape[-1], q.shape[1], k.shape[1])
+        built_cfg, mod.cfg = mod.cfg, cfg  # this part's config (decode / tail: per token)
+        try:
+            return self._variant_module(li, p, mod, q, k, v, x, past, fresh, scale)
+        finally:
+            mod.cfg = built_cfg
+
+    def _variant_module(self, li, p, mod, q, k, v, x, past, fresh, scale):
         if p["kind"] == "nsa":
             return mod(q.float(), k.float(), v.float(), x.float(), past, scale).to(q.dtype)
         zkey = ("csa2z", p["name"], li)
@@ -282,7 +320,7 @@ class AttentionPolicy:
                 if p["kind"] in VARIANTS:
                     o = pol.variant(li, p, q, k, v, x, past, state is None)
                 elif p["kind"] == "sparse":
-                    o = pol.sparse(p, q, k, v, past, idx_scores)
+                    o = pol.sparse(li, p, q, k, v, past, idx_scores)
                 else:
                     o = ps.dense_attention(q, k, v, q_offset=past, scale=d**-0.5)
             o = o.transpose(1, 2)  # [b, s, nh, d]
@@ -503,6 +541,8 @@ def main():
     p.add_argument("--indexers", default="", help="indexers.pt of an earlier run (instead of --train-indexer)")
     p.add_argument("--train-csa2", type=int, default=0, help="documents for the CSA2 indexer warm-up (0: off)")
     p.add_argument("--csa2", default="", help="csa2.pt of an earlier run (instead of --train-csa2)")
+    p.add_argument("--variant-params", default="",
+                   help="variants.pt of a trained s3 arm (extract_variant_params.py): NSA / CSA2 parameters")
     args = p.parse_args()
     args.lengths = [int(x) for x in args.lengths.split(",")]
     args.out.mkdir(parents=True, exist_ok=True)
@@ -530,6 +570,8 @@ def main():
         state = torch.load(args.indexers)
         for li, sd in state.items():
             pol.indexers[int(li)].load_state_dict(sd)
+    if args.variant_params:
+        pol.variant_state = {int(k): v for k, v in torch.load(args.variant_params)["state"].items()}
     csa2 = [x for x in policies if x["kind"] == "csa2"]
     if csa2 and args.train_csa2 and (args.docs or args.tiny):
         train_csa2(model, pol, csa2[0], args, args.out)
