@@ -37,9 +37,10 @@ job:
   base_output_dir: ${aux.out_root}/logs/${aux.name}
   est_step_time_s: 5400
   metadata:
-    # one node; no interconnect needed (excluded slow-GPU nodes are fine)
     pool_priority: 60
-    pool_use_excluded_nodes: true
+    # not on excluded nodes: p264 host003 lists its 136 shrink-removed nodes there (2026-11-09: such
+    # runs got nodes outside the allocation and failed at srun)
+    pool_use_excluded_nodes: false
 
 slurm:
   sbatch:
