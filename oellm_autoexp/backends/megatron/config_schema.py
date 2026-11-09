@@ -233,6 +233,16 @@ class MegatronConfig(ConfigInterface):
     # gradients from flowing back to the main model, only training the MTP heads themselves.
     mtp_detach_heads: bool = False
 
+    # MTP in latent space: depth k's input is the normalised hidden state of depth k - 1 (no
+    # embedding of the next token concatenated, no eh_proj) -- the drafts need no token in
+    # between.
+    mtp_latent: bool = False
+
+    # MTP losses on every k-th position only (with liger_fused_linear_cross_entropy: the
+    # vocabulary head runs on those positions only), normalised like the full loss -- the knob
+    # for the MTP head cost.
+    mtp_loss_stride: int = 1
+
     # DEPRECATED: Use unified hybrid_layer_pattern instead. Legacy argument for loading old
     # checkpoints. Force a specific hybrid layer pattern for MTP layers.
     mtp_hybrid_override_pattern: str | None = None

@@ -703,7 +703,9 @@ mscale: 1.0  # Mscale for YaRN RoPE in multi-latent attention.
 mscale_all_dim: 0.0  # Mscale all dimensions for YaRN RoPE in multi-latent attention.
 mtp_detach_heads: false  # If True, detach MTP head inputs from the main model graph. This prevents MTP loss gradients from flowing back to the main model, only training the MTP heads themselves.
 mtp_hybrid_override_pattern: null  # DEPRECATED: Use unified hybrid_layer_pattern instead. Legacy argument for loading old checkpoints. Force a specific hybrid layer pattern for MTP layers.
+mtp_latent: false  # MTP in latent space: depth k's input is the normalised hidden state of depth k - 1 (no embedding of the next token concatenated, no eh_proj) -- the drafts need no token in between.
 mtp_loss_scaling_factor: 0.1  # Weighting factor of Multi-Token Prediction (MTP) loss. We compute the average of the MTP losses across all depths, and multiply it the scaling factor to obtain the overall MTP loss, which serves as an additional training objective.
+mtp_loss_stride: 1  # MTP losses on every k-th position only (with liger_fused_linear_cross_entropy: the vocabulary head runs on those positions only), normalised like the full loss -- the knob for the MTP head cost.
 mtp_num_layers: null  # Number of Multi-Token Prediction (MTP) Layers. MTP extends the prediction scope to multiple future tokens at each position. This MTP implementation sequentially predict additional tokens by using D sequential modules to predict D additional tokens.
 mtp_standalone: false  # This will be set automatically according to the pipeline layout, and will be set to True if MTP is in a separate vpp stage.
 mtp_use_repeated_layer: false  # Use a single MTP layer repeatedly instead of multiple separate layers.

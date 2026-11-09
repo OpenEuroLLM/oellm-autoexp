@@ -1,0 +1,73 @@
+# @package _global_
+# MTP speed / memory at s3 (64k): latent-space MTP with one CKDA layer per depth ("/L" x depths, shared LM head
+# through the Liger fused cross entropy on every stride-th position), 3 / 8 tokens ahead, attached (the MTP loss
+# trains the trunk) or detached (mtp_detach_heads: the cost of the heads only), against no MTP. Every arm continues
+# the dense ctxlen4n_s3 s64k checkpoint (step 1000) for 60 steps on the step-5 schedule (train_iters 1500: the data
+# index the step-5 runs built); no save, no validation. Step time / memory past warm-up, MTP losses per depth.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t6_s3_mtp_speed_mn5 --yes
+defaults:
+  - t5_s3_sparse_branch_mn5
+  - _self_
+
+aux:
+  suite: t6_s3_mtp_speed
+  arm: base
+
+backend:
+  megatron:
+    page_sparse_selector: null
+    exit_interval: 1060
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    log_interval: 1
+
+slurm:
+  sbatch:
+    time: "00:50:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: k3_s1
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 1
+          backend.megatron.mtp_detach_heads: false
+        - aux.arm: k3_s4
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+          backend.megatron.mtp_detach_heads: false
+        - aux.arm: k8_s1
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 1
+          backend.megatron.mtp_detach_heads: false
+        - aux.arm: k8_s4
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+          backend.megatron.mtp_detach_heads: false
+        - aux.arm: k8_s8
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 8
+          backend.megatron.mtp_detach_heads: false
+        - aux.arm: k8_s4_det
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+          backend.megatron.mtp_detach_heads: true
