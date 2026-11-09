@@ -31,6 +31,15 @@ backend:
     finetune: false
     no_load_optim: false
     no_load_rng: false
+    # per-layer grad norms every step + clip events (user 2026-11-09: monitoring before the phase-2
+    # extension, e.g. another stabilization; grad-norm p99 0.375 -> 1.894 over 14k -> 22k). Needs Megatron
+    # with fb06ef75b (FSDP shard counting; run branch oellm/v4main-diag = 3d8071635 + that fix, b05851989);
+    # validated by session -2f: total_check / grad-norm = 0.9997-0.9998 at 2n EP4 (hybrid_v4_diaggrad_test_mn5).
+    # Logged as diag/grad_norm/layer_NN | embedding | output_layer | total_check | layer_max ...,
+    # diag/clip/streak | fired_frac | coeff_min. diag_activations stays off (expensive).
+    diagnostics_interval: 1
+    diag_layer_grad_norms: true
+    diag_clip_events: true
 
 job:
   name: ambitious_v4_2ph_hd256_256n_p${aux.phase}
