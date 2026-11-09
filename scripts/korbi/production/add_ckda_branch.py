@@ -496,6 +496,8 @@ def derive(a, md=None) -> dict:
             new = kronlstm_branch(src, b_bias=a.b_bias)
         if g0:
             new["branch_mix.gamma"] = torch.full((1,), g0)
+        if getattr(a, "calibrate", False):  # ckda_branch_calibrate: measured on the first training forward
+            new["branch_mix.calib"] = torch.zeros(1)
         for rel, t in new.items():
             key = _key(layer, rel)
             if key in smd:
@@ -618,6 +620,8 @@ def main(argv=None) -> int:
     p.add_argument("--eps", type=float, default=1e-3, help="relative norm of the new (noise) rows")
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--b-bias", action="store_true", help="kronlstm: an erase-gate bias at 0 (neg_eigval_init_bias on)")
+    p.add_argument("--calibrate", action="store_true",
+                   help="write branch_mix.calib = 0 (Megatron ckda_branch_calibrate: measured on the first step)")
     p.add_argument("--gamma-init", default=None,
                    help="branch_mix.gamma at insertion: a value, or layer:value,... (crossfade: ratio - 1 matches "
                         "the complex_kda output RMS, -1 = weight 0)")

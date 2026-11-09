@@ -770,6 +770,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "ckda_branch_calibrate": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Scale the branch to the complex_kda mixer's output RMS: a persistent per-layer buffer ``branch_mix.calib`` (0 in the surgery checkpoint = not yet measured) is set on the first training forward to RMS(ckda) / RMS(branch), the sums of squares all-reduced over every rank, and multiplies the branch's weight: ``(1 - alpha) * calib * (1 + scale * gamma)`` (crossfade). Needs pipeline parallel size 1 (every rank runs every layer).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "ckda_branch_crossfade": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -5814,6 +5822,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mtp_parallel": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Parallel latent MTP (needs mtp_latent): ONE MTP layer on the decoder's hidden state predicts all mtp_num_layers offsets at once -- output k = final_norm(t + P_k t) with a zero-initialised h x h P_k per offset, through the shared head -- instead of mtp_num_layers sequential depths. The hybrid pattern still lists mtp_num_layers depths (the depth count); only the first is built.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "mtp_standalone": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9663,6 +9679,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=175,
+    ),
+    "ckda_branch_calibrate": MegatronActionSpec(
+        option_strings=("--ckda-branch-calibrate",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "ckda_branch_crossfade": MegatronActionSpec(
         option_strings=("--ckda-branch-crossfade",),
@@ -13928,6 +13951,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "mtp_parallel": MegatronActionSpec(
+        option_strings=("--mtp-parallel",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "mtp_standalone": MegatronActionSpec(
         option_strings=("--mtp-standalone",),

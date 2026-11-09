@@ -334,6 +334,8 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
             add(hp + f"mixer.{n}.weight", w.to(cast))
         gamma = float(g("self_attention.branch_mix.gamma").float().reshape(-1)[0])
         weight = 1.0 + scale * gamma if m.get("ckda_branch_crossfade") else scale * gamma
+        if p + "self_attention.branch_mix.calib" in t:  # ckda_branch_calibrate's measured scale
+            weight *= float(g("self_attention.branch_mix.calib").float().reshape(-1)[0])
         add(hp + "mixer.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
         add(hp + "mixer.k_norm.weight", g(b + "k_layernorm.weight").to(cast))

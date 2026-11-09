@@ -43,6 +43,11 @@ for arm in "${ARMS[@]}"; do
     d_mm) args=(--branch kronlstm --layers 9,25,41 --gamma-init "${GAMMA_INIT_D:?layer:value,...}") ;;
     # the drop control: an attention branch at weight 0 (crossfade 1 + gamma = 0): complex_kda just fades out
     drop) args=(--branch attention --groups 2 --layers 9,25,41 --gamma-init -1) ;;
+    # calibrated (ckda_branch_calibrate: the branch scaled to complex_kda's output RMS on the first step)
+    bgqa_cal) args=(--branch attention --groups 2 --layers 9,25,41 --calibrate) ;;
+    b8_cal)   args=(--branch attention --groups 8 --layers 9,25,41 --calibrate) ;;
+    cgqa_cal) args=(--branch attention --groups 2 --layers 9,25,41,58,74,90 --calibrate) ;;
+    d_cal)    args=(--branch kronlstm --layers 9,25,41 --calibrate) ;;
     *) echo "unknown arm $arm" >&2; exit 2 ;;
   esac
   dst=$ROOT/${arm}_src/ckpt

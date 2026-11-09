@@ -62,3 +62,10 @@ def test_folded_layer_is_an_attention_layer():
     convert_layer(1, dict(src), cfg, _m(ckda_branch_crossfade=True, _ckpt_iteration=300), out.__setitem__,
                   torch.float32, torch.float32, "bf16")
     assert torch.allclose(out[hp + "mixer.o_proj.weight"], src[p + "self_attention.branch.linear_proj.weight"] * 1.7)
+    # calibrated: times the measured scale
+    out, cal = {}, dict(src)
+    cal[p + "self_attention.branch_mix.calib"] = torch.tensor([2.5])
+    convert_layer(1, cal, cfg, _m(ckda_branch_crossfade=True, _ckpt_iteration=300), out.__setitem__,
+                  torch.float32, torch.float32, "bf16")
+    assert torch.allclose(out[hp + "mixer.o_proj.weight"],
+                          src[p + "self_attention.branch.linear_proj.weight"] * 1.7 * 2.5)

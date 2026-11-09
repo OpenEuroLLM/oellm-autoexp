@@ -8,6 +8,8 @@
 #   b8    the same with 8 KV groups (complex_kda's 16 K / V heads merged in pairs: no GQA pooling)
 #   cgqa  16q / 2kv at all six positions, layers 9, 25, 41, 58, 74, 90 (3:1 everywhere)
 #   d     KronLSTM (normalized v; complex_kda's projections, convolution, gates) at layers 9, 25, 41
+#   drop  the control: complex_kda faded out at 9, 25, 41, nothing in its place
+# Budget (user 2026-11-10): 6k GPU-h for this experiment (~1k per arm).
 # Per layer a linear crossfade (user 2026-11-09), the weights adding up to 1:
 #   out = alpha(t) ckda + (1 - alpha(t)) (1 + gamma) branch,  alpha 1 -> 0 over 23300 -> 23450,
 # gamma (0 at insertion, Adam) a learnt correction of the branch's scale; the model is unchanged at 23300,
@@ -16,8 +18,8 @@
 # arms are standard attention layers (the HF export folds them).
 #
 # Before a launch (none without the user's go):
-#   1. the checkpoints: scripts/korbi/production/ckda_branch_surgery.sh prod  (in a job: the 84B .metadata)
-#      -> /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/<arm>_src/ckpt/iter_0023300 (hard links)
+#   1. the checkpoints: ckda_branch_surgery_mn5 aux.mode=prod aux.arms="bgqa_cal b8_cal cgqa_cal d_cal drop"
+#      (1 node on host003) -> /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/<arm>_src/ckpt/iter_0023300
 #   2. hybrid_v4_ckda_branch_test_mn5 passed (exact start, strict resume, crossfade arms bgqa_xf / d_xf)
 # Disk: full saves (1.1 TB, with optimizer: an arm can be continued) at 23400 and 23500, ~8.8 TB for the
 # four (user 2026-11-09: checkpoints move to /gpfs/projects, scratch is freed); model only for less:
@@ -50,7 +52,7 @@ aux:
 backend:
   megatron:
     micro_batch_size: 8
-    load: ${aux.branch_root}/${aux.arm}_src/ckpt
+    load: ${aux.branch_root}/${aux.arm}_cal_src/ckpt
     save: ${job.base_output_dir}/ckpt
     save_interval: 100
     no_save_optim: false
@@ -59,6 +61,9 @@ backend:
     exit_interval: 23500
     ckda_branch_start_iteration: ${aux.start}
     ckda_branch_crossfade: true
+    # the branch scaled to complex_kda's output RMS on the first step (user 2026-11-10; small-model test: the
+    # attention branch starts at ~1/3 of complex_kda's RMS and faded out unscaled)
+    ckda_branch_calibrate: true
     ckda_branch_alpha_hold: 0
     ckda_branch_alpha_ramp: 150
     ckda_branch_alpha_end: 0.0
@@ -94,18 +99,46 @@ sweep:
     - type: list
       configs:
         - aux.arm: bgqa
+          job.start_condition:  # its surgery checkpoint (ckda_branch_surgery_mn5 aux.mode=prod)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41]
           backend.megatron.ckda_branch_num_query_groups: 2
         - aux.arm: b8
+          job.start_condition:  # its surgery checkpoint (ckda_branch_surgery_mn5 aux.mode=prod)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/b8_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41]
           backend.megatron.ckda_branch_num_query_groups: 8
         - aux.arm: cgqa
+          job.start_condition:  # its surgery checkpoint (ckda_branch_surgery_mn5 aux.mode=prod)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
           backend.megatron.ckda_branch_num_query_groups: 2
+        # the control (user 2026-11-10): complex_kda faded out on 9 / 25 / 41, nothing in its place (an attention
+        # branch held at weight 0: 1 + gamma = 0); B-gqa vs drop = what attention contributes
+        - aux.arm: drop
+          job.start_condition:  # its surgery checkpoint (ckda_branch_surgery_mn5 aux.mode=prod)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_calibrate: false
         - aux.arm: d
+          job.start_condition:  # its surgery checkpoint (ckda_branch_surgery_mn5 aux.mode=prod)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
           backend.megatron.ckda_branch: kronlstm
           backend.megatron.ckda_branch_layers: [9, 25, 41]
           # complex_kda's gates: beta = 2 sigmoid(b) (as linear_beta_max 2), no erase bias, write in [0, 2]

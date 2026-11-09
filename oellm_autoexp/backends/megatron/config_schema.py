@@ -229,6 +229,13 @@ class MegatronConfig(ConfigInterface):
     # Use a single MTP layer repeatedly instead of multiple separate layers.
     mtp_use_repeated_layer: bool = False
 
+    # Parallel latent MTP (needs mtp_latent): ONE MTP layer on the decoder's hidden state
+    # predicts all mtp_num_layers offsets at once -- output k = final_norm(t + P_k t) with a
+    # zero-initialised h x h P_k per offset, through the shared head -- instead of
+    # mtp_num_layers sequential depths. The hybrid pattern still lists mtp_num_layers depths
+    # (the depth count); only the first is built.
+    mtp_parallel: bool = False
+
     # If True, detach MTP head inputs from the main model graph. This prevents MTP loss
     # gradients from flowing back to the main model, only training the MTP heads themselves.
     mtp_detach_heads: bool = False
@@ -1008,6 +1015,13 @@ class MegatronConfig(ConfigInterface):
     # learnt correction of the branch's scale; m unused). The hand-over completes on the alpha
     # schedule whatever gamma learns.
     ckda_branch_crossfade: bool = False
+
+    # Scale the branch to the complex_kda mixer's output RMS: a persistent per-layer buffer
+    # ``branch_mix.calib`` (0 in the surgery checkpoint = not yet measured) is set on the
+    # first training forward to RMS(ckda) / RMS(branch), the sums of squares all-reduced over
+    # every rank, and multiplies the branch's weight: ``(1 - alpha) * calib * (1 + scale *
+    # gamma)`` (crossfade). Needs pipeline parallel size 1 (every rank runs every layer).
+    ckda_branch_calibrate: bool = False
 
     # The layer uses ``ckda_branch_gamma_scale * gamma`` (gamma the parameter): Adam moves
     # gamma by about lr per step whatever its gradient's size, so this sets how fast the
