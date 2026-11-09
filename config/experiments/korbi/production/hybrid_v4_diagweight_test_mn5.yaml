@@ -1,0 +1,38 @@
+# @package _global_
+# 2-node check of the FSDP-correct weight stats / norm gains (Megatron 706c88c9e on oellm/v4main-diag)
+# on the v4 hd256 production stack (hybrid_v4_diaggrad_test_mn5: 8 experts, Engram 1/16, gbs 64, fresh
+# init, 20 steps), same batches in both arms:
+#   diaggrad  per-layer grad norms + clip events only (the main run's current diagnostics: cost baseline)
+#   diagw     + diag_weight_stats + diag_norm_gains at every step, persistent save at step 20: the logged
+#             diag/weight/* and diag/gain/* at step 20 must equal the same statistics of the checkpoint's
+#             FULL tensors (read offline with dcp), MIN / MAX exactly.
+#   PYTHONPATH=. scripts/korbi/mn5_autoexp_bg.sh v4dw scripts/run_autoexp.py --yes \
+#       --config-name experiments/korbi/production/hybrid_v4_diagweight_test_mn5
+defaults:
+  - hybrid_v4_diaggrad_test_mn5
+  - _self_
+
+aux:
+  suite: v4_diagweight_test
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight
+
+backend:
+  env:
+    MEGATRON_DIAG_WEIGHT_EVERY: "1"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: diaggrad
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+        - aux.arm: diagw
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+          backend.megatron.diag_weight_stats: true
+          backend.megatron.diag_norm_gains: true
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight/diagw/ckpt
+          backend.megatron.save_interval: 20
