@@ -1,0 +1,281 @@
+{
+ "args": {
+  "traces": "/tmp/claude-1000/-home-korbip-Work-Research-Projects-oellm-autoexp-hybrid/b62de962-c2d9-4953-86f3-0dbf51544364/scratchpad/traces",
+  "out": "/tmp/claude-1000/-home-korbip-Work-Research-Projects-oellm-autoexp-hybrid/b62de962-c2d9-4953-86f3-0dbf51544364/scratchpad/cache_sched",
+  "caps": "3000,6000",
+  "pcie_gbs": 23.7,
+  "dev_gbs": 883.0,
+  "resident_gb": 2.6,
+  "prefetch_factor": 2.0,
+  "workers": 12,
+  "suite": "sched",
+  "max_wait": 4
+ },
+ "sims": {
+  "code": {
+   "fixed@3000": {
+    "misses_per_token": 69.94120279947917,
+    "tokens": 49152,
+    "misses_per_step": 1119.0592447916667,
+    "union": 2606.9293619791665,
+    "steps": 3072,
+    "tok_s_fp8": 37.38597704012713
+   },
+   "proxy@3000": {
+    "misses_per_token": 75.21891276041667,
+    "tokens": 49152,
+    "misses_per_step": 1203.5026041666667,
+    "union": 2611.0572916666665,
+    "steps": 3072,
+    "tok_s_fp8": 34.76280241312165
+   },
+   "oracle@3000": {
+    "misses_per_token": 76.03887939453125,
+    "tokens": 49152,
+    "misses_per_step": 1003.8847703464947,
+    "union": 2180.887724952995,
+    "steps": 3723,
+    "tok_s_fp8": 34.387928155467776
+   },
+   "fixed@6000": {
+    "misses_per_token": 32.437601725260414,
+    "tokens": 49152,
+    "misses_per_step": 519.0016276041666,
+    "union": 2606.9293619791665,
+    "steps": 3072,
+    "tok_s_fp8": 80.61077462406652,
+    "tok_s_int4": 161.22154924813304
+   },
+   "proxy@6000": {
+    "misses_per_token": 34.96807861328125,
+    "tokens": 49152,
+    "misses_per_step": 559.4892578125,
+    "union": 2611.1712239583335,
+    "steps": 3072,
+    "tok_s_fp8": 74.77734853372989,
+    "tok_s_int4": 149.55469706745978
+   },
+   "oracle@6000": {
+    "misses_per_token": 39.79925537109375,
+    "tokens": 49152,
+    "misses_per_step": 516.2874109263659,
+    "union": 2168.5149115861705,
+    "steps": 3789,
+    "tok_s_fp8": 65.68282122996206,
+    "tok_s_int4": 131.26110855097406
+   }
+  },
+  "math": {
+   "fixed@3000": {
+    "misses_per_token": 105.17515055338542,
+    "tokens": 49152,
+    "misses_per_step": 1682.8024088541667,
+    "union": 3063.8528645833335,
+    "steps": 3072,
+    "tok_s_fp8": 24.861577932260268
+   },
+   "proxy@3000": {
+    "misses_per_token": 114.00368245442708,
+    "tokens": 49152,
+    "misses_per_step": 1824.0589192708333,
+    "union": 3065.9560546875,
+    "steps": 3072,
+    "tok_s_fp8": 22.936278422984028
+   },
+   "oracle@3000": {
+    "misses_per_token": 103.72796630859375,
+    "tokens": 49152,
+    "misses_per_step": 1420.1774373259052,
+    "union": 2535.9857938718665,
+    "steps": 3590,
+    "tok_s_fp8": 25.208439874749306
+   },
+   "fixed@6000": {
+    "misses_per_token": 61.496236165364586,
+    "tokens": 49152,
+    "misses_per_step": 983.9397786458334,
+    "union": 3063.8528645833335,
+    "steps": 3072,
+    "tok_s_fp8": 42.52000390705052,
+    "tok_s_int4": 85.04000781410105
+   },
+   "proxy@6000": {
+    "misses_per_token": 67.30210367838542,
+    "tokens": 49152,
+    "misses_per_step": 1076.8336588541667,
+    "union": 3064.1116536458335,
+    "steps": 3072,
+    "tok_s_fp8": 38.851983208661224,
+    "tok_s_int4": 77.70396641732245
+   },
+   "oracle@6000": {
+    "misses_per_token": 62.815409342447914,
+    "tokens": 49152,
+    "misses_per_step": 845.6595453300465,
+    "union": 2456.6746096959737,
+    "steps": 3651,
+    "tok_s_fp8": 41.6265832050143,
+    "tok_s_int4": 83.24747605744284
+   }
+  },
+  "multilingual": {
+   "fixed@3000": {
+    "misses_per_token": 91.23014322916667,
+    "tokens": 49152,
+    "misses_per_step": 1459.6822916666667,
+    "union": 2969.7301432291665,
+    "steps": 3072,
+    "tok_s_fp8": 28.661800907753335
+   },
+   "proxy@3000": {
+    "misses_per_token": 97.50608317057292,
+    "tokens": 49152,
+    "misses_per_step": 1560.0973307291667,
+    "union": 2949.0631510416665,
+    "steps": 3072,
+    "tok_s_fp8": 26.816995586274825
+   },
+   "oracle@3000": {
+    "misses_per_token": 92.61637369791667,
+    "tokens": 49152,
+    "misses_per_step": 1235.0189907759088,
+    "union": 2444.1608790016276,
+    "steps": 3686,
+    "tok_s_fp8": 28.232782515977394
+   },
+   "fixed@6000": {
+    "misses_per_token": 46.2230224609375,
+    "tokens": 49152,
+    "misses_per_step": 739.568359375,
+    "union": 2969.7301432291665,
+    "steps": 3072,
+    "tok_s_fp8": 56.56964998837869,
+    "tok_s_int4": 113.13929997675739
+   },
+   "proxy@6000": {
+    "misses_per_token": 50.286865234375,
+    "tokens": 49152,
+    "misses_per_step": 804.58984375,
+    "union": 2963.7607421875,
+    "steps": 3072,
+    "tok_s_fp8": 51.998075239591,
+    "tok_s_int4": 103.996150479182
+   },
+   "oracle@6000": {
+    "misses_per_token": 51.397216796875,
+    "tokens": 49152,
+    "misses_per_step": 676.9228295819936,
+    "union": 2433.0525187566986,
+    "steps": 3732,
+    "tok_s_fp8": 50.87102815522236,
+    "tok_s_int4": 101.71148600767884
+   }
+  },
+  "reasoning": {
+   "fixed@3000": {
+    "misses_per_token": 96.81807454427083,
+    "tokens": 49152,
+    "misses_per_step": 1549.0891927083333,
+    "union": 3006.0524088541665,
+    "steps": 3072,
+    "tok_s_fp8": 27.007562527227872
+   },
+   "proxy@3000": {
+    "misses_per_token": 107.66300455729167,
+    "tokens": 49152,
+    "misses_per_step": 1722.6080729166667,
+    "union": 3010.5784505208335,
+    "steps": 3072,
+    "tok_s_fp8": 24.287081832541293
+   },
+   "oracle@3000": {
+    "misses_per_token": 100.22108968098958,
+    "tokens": 49152,
+    "misses_per_step": 1335.701464208243,
+    "union": 2481.344088937093,
+    "steps": 3688,
+    "tok_s_fp8": 26.09051857591398
+   },
+   "fixed@6000": {
+    "misses_per_token": 52.055928548177086,
+    "tokens": 49152,
+    "misses_per_step": 832.8948567708334,
+    "union": 3006.0524088541665,
+    "steps": 3072,
+    "tok_s_fp8": 50.23097800666879,
+    "tok_s_int4": 100.46195601333758
+   },
+   "proxy@6000": {
+    "misses_per_token": 59.3275146484375,
+    "tokens": 49152,
+    "misses_per_step": 949.240234375,
+    "union": 3010.2119140625,
+    "steps": 3072,
+    "tok_s_fp8": 44.074325673595006,
+    "tok_s_int4": 88.14865134719001
+   },
+   "oracle@6000": {
+    "misses_per_token": 59.61822509765625,
+    "tokens": 49152,
+    "misses_per_step": 791.9878378378378,
+    "union": 2499.376216216216,
+    "steps": 3700,
+    "tok_s_fp8": 43.859291488009674,
+    "tok_s_int4": 87.71718372308783
+   }
+  },
+  "web_en": {
+   "fixed@3000": {
+    "misses_per_token": 96.67486572265625,
+    "tokens": 49152,
+    "misses_per_step": 1546.7978515625,
+    "union": 2999.6106770833335,
+    "steps": 3072,
+    "tok_s_fp8": 27.047570042886584
+   },
+   "proxy@3000": {
+    "misses_per_token": 99.33607991536458,
+    "tokens": 49152,
+    "misses_per_step": 1589.3772786458333,
+    "union": 2916.9459635416665,
+    "steps": 3072,
+    "tok_s_fp8": 26.322965474861217
+   },
+   "oracle@3000": {
+    "misses_per_token": 95.07456461588542,
+    "tokens": 49152,
+    "misses_per_step": 1302.426142697882,
+    "union": 2479.5886287625417,
+    "steps": 3588,
+    "tok_s_fp8": 27.5020992962048
+   },
+   "fixed@6000": {
+    "misses_per_token": 49.15301513671875,
+    "tokens": 49152,
+    "misses_per_step": 786.4482421875,
+    "union": 2999.6106770833335,
+    "steps": 3072,
+    "tok_s_fp8": 53.19755450905915,
+    "tok_s_int4": 106.3951090181183
+   },
+   "proxy@6000": {
+    "misses_per_token": 51.923116048177086,
+    "tokens": 49152,
+    "misses_per_step": 830.7698567708334,
+    "union": 2967.4641927083335,
+    "steps": 3072,
+    "tok_s_fp8": 50.35946224017127,
+    "tok_s_int4": 100.71892448034254
+   },
+   "oracle@6000": {
+    "misses_per_token": 50.563456217447914,
+    "tokens": 49152,
+    "misses_per_step": 682.2110897611858,
+    "union": 2479.083722206972,
+    "steps": 3643,
+    "tok_s_fp8": 51.70912438967004,
+    "tok_s_int4": 103.3976126414049
+   }
+  }
+ }
+}

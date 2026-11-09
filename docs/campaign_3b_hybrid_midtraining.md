@@ -1161,6 +1161,35 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - The 9 sparse arms (+ lsa_fine) and the 7 MTP speed arms (t6_s3_mtp_speed: latent CKDA depths 3 / 8, loss
     stride 1 / 4 / 8, attached / detached) wait in the p264 pool for host003.
 
+- **2026-11-09, expert cache: reuse-aware eviction and batch-16 session scheduling** (CPU simulation on the R0
+  routing traces, same cost model as before: measured PCIe / device bandwidth, estimated resident read and prefetch
+  over-fetch; `scripts/korbi/campaign_midtraining/cache_policy_sim.py --suite reuse|sched`,
+  `docs/campaign_3b_hybrid_midtraining_results/p2p3_offload/cache_reuse.*`, `cache_sched.*`):
+  - **Eviction from past reuse only** (no prediction): LFU with aging (half-life 64 steps) is the best single
+    policy; a frequency-weighted LRU (last use + 16 log2 accesses) is close; ARC / LRU-2 are in between. The LRU
+    baseline reproduces the earlier run.
+
+    | decode tok/s (mean over domains) | LRU | ARC | LRU-2 | fw-LRU 16 | LFU h64 | OPT (bound) |
+    |---|---:|---:|---:|---:|---:|---:|
+    | batch 1, FP8, 3,000 experts | 52.7 | 54.9 | 55.8 | 56.5 | 59.4 | 112.1 |
+    | batch 1, FP8, 6,000 experts | 156.0 | 159.8 | 159.1 | 164.6 | 167.8 | 237.9 |
+    | batch 1, int4, 6,000 experts | 260.0 | 261.3 | 260.8 | 263.9 | 264.5 | 279.3 |
+    | batch 16 total, FP8, 6,000 experts | 62.7 | 65.7 | 69.5 | 79.1 | 79.8 | 132.6 |
+    | batch 16 total, int4, 6,000 experts | 125.5 | 131.3 | 139.0 | 158.1 | 159.7 | 265.2 |
+
+    Batch 1: +6-13 % over LRU (more than the realistic next-token predictor's +1 %), still far from OPT; with int4
+    the GPU bounds it anyway (+2 %). Batch 16: +27 % with LFU / frequency-weighted LRU at the 6,000-expert caches,
+    the largest win so far -- the 16 sessions' shared popular experts stay cached where LRU churns them.
+  - **Expert-aware session scheduling at batch 16 does not help** (16 of 32 queued sessions per step, picked by
+    fewest new experts; LRU cache; everything else equal): per-step unions drop with the oracle choice (2,600-3,060
+    -> 2,170-2,540 experts) but misses per token rise (e.g. code 6,000 experts: 32.4 plain batch, 35.0 with the
+    previous-token proxy, 39.8 with the true next-token routing), so tok/s drops by 0-18 %. Interleaving 32
+    sessions makes the cache hold 32 working sets instead of 16 -- locality is per session, and the plain batch
+    keeps it.
+  - **Verdict for the offload engine:** LFU-style eviction (aged frequency, or LRU + frequency bonus) instead of LRU
+    -- free, +6-13 % at batch 1 and +27 % at batch 16 -- and keep sessions resident (no expert-aware interleaving).
+    No sequence predictor (previous entry); int4 storage remains the largest lever.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

@@ -18,7 +18,14 @@ when the cache is full, a resident expert not needed by this step is evicted by 
 Misses per step after a 25 % warm-up, and the decode rate of spec_gate's cost model (a step takes the larger of
 the GPU time and the PCIe time of its misses times the one-layer-ahead prefetch's over-fetch).
 
-    python cache_policy_sim.py --traces <dir with *.npz> --out <dir> [--caps 3000,6000]
+--suite reuse: eviction that uses past reuse only (no prediction): fwlru<w> (score = last use + w log2 accesses),
+lfu_h<h> (exponentially aged counts, half-life h steps), lru2 (LRU-K, K = 2), arc (ARC) -- against lru / opt.
+--suite sched: batch 16 out of a queue of 32 sessions (a domain's 32 trace rows): per step the scheduler picks the
+16 sessions to advance -- fixed (16 at a time, the plain batch), greedy on the next token's true routing (oracle
+bound) or on the previous token's routing (realistic proxy), fewest new experts given the cache first; a session
+waiting >= --max-wait steps is forced in (no starvation). LRU cache, step-level eviction.
+
+    python cache_policy_sim.py --traces <dir with *.npz> --out <dir> [--caps 3000,6000] [--suite base|reuse|sched]
 """
 
 from __future__ import annotations
@@ -126,18 +133,140 @@ int64_t simulate(const int32_t *keys, const int64_t *starts, int32_t nsteps, con
   free(cached); free(known); free(last); free(nxt); free(instep); free(A.a); free(B.a); free(hold);
   return miss;
 }
+
+/* Reuse-aware eviction without prediction: a static score per cached key (lowest goes first), history kept for
+   every key (also after eviction). mode 0: LRU (score = last use; must equal simulate(la = 0)); 1: frequency-
+   weighted LRU, score = last use + w * log2(accesses); 2: LFU with exponential aging (half-life w steps),
+   score = log2(decayed count) + last use / w; 3: LRU-2, score = the second-last use (keys used once: -inf, LRU among
+   them). */
+#include <math.h>
+int64_t simulate_scored(const int32_t *keys, const int64_t *starts, int32_t nsteps, int32_t nkeys, int32_t cap,
+                        int32_t mode, double w, int32_t warm) {
+  char *cached = calloc(nkeys, 1);
+  int32_t *instep = malloc(nkeys * sizeof(int32_t)), *last = malloc(nkeys * sizeof(int32_t)),
+          *prev = malloc(nkeys * sizeof(int32_t));
+  double *cnt = calloc(nkeys, sizeof(double));
+  int64_t *score = malloc(nkeys * sizeof(int64_t));
+  for (int32_t k = 0; k < nkeys; k++) { instep[k] = -1; last[k] = -1; prev[k] = -1; }
+  H A = {0};
+  E *hold = malloc(sizeof(E) * 65536);
+  int32_t size = 0; int64_t miss = 0;
+  for (int32_t t = 0; t < nsteps; t++) {
+    for (int64_t i = starts[t]; i < starts[t + 1]; i++) instep[keys[i]] = t;
+    for (int64_t i = starts[t]; i < starts[t + 1]; i++) {
+      int32_t k = keys[i];
+      if (cached[k]) continue;
+      if (t >= warm) miss++;
+      if (size < cap) { cached[k] = 1; size++; continue; }
+      int32_t victim = -1, nh = 0;
+      while (A.n) {
+        E e = pop(&A);
+        if (!cached[e.k] || score[e.k] != e.p) continue;
+        if (instep[e.k] == t) { hold[nh++] = e; if (nh == 65536) break; continue; }
+        victim = e.k; break;
+      }
+      for (int32_t j = 0; j < nh; j++) push(&A, hold[j].p, hold[j].k);
+      if (victim < 0) continue;
+      cached[victim] = 0; cached[k] = 1;
+    }
+    for (int64_t i = starts[t]; i < starts[t + 1]; i++) {  /* this step's keys: history and score */
+      int32_t k = keys[i];
+      double sc;
+      if (mode == 2) {
+        cnt[k] = (last[k] >= 0 ? cnt[k] * exp2(-(double)(t - last[k]) / w) : 0.0) + 1.0;
+      } else {
+        cnt[k] += 1.0;
+      }
+      prev[k] = last[k]; last[k] = t;
+      if (mode == 0) sc = t;
+      else if (mode == 1) sc = t + w * log2(cnt[k]);
+      else if (mode == 2) sc = log2(cnt[k]) + t / w;
+      else sc = prev[k] >= 0 ? (double)prev[k] : -1e9 + t;
+      score[k] = (int64_t)llround(sc * 1e6);
+      if (cached[k]) push(&A, score[k], k);
+    }
+  }
+  free(cached); free(instep); free(last); free(prev); free(cnt); free(score); free(A.a); free(hold);
+  return miss;
+}
+
+/* ARC (Megiddo & Modha 2003) over the step stream: T1 (seen once recently) / T2 (seen at least twice), ghosts B1 /
+   B2, the target size p of T1 adapted on ghost hits; a key needed by the current step is never evicted (the
+   eviction walks from the LRU end past such keys). Lists: per key prev / next links and a list id. */
+#define NL 4
+typedef struct { int32_t head, tail, n; } L;  /* head = MRU, tail = LRU */
+static int32_t *lp, *ln; static char *lid;
+static void l_rm(L *l, int32_t k) {
+  if (lp[k] >= 0) ln[lp[k]] = ln[k]; else l->head = ln[k];
+  if (ln[k] >= 0) lp[ln[k]] = lp[k]; else l->tail = lp[k];
+  l->n--; lid[k] = 0;
+}
+static void l_mru(L *l, int32_t k, char id) {
+  lp[k] = -1; ln[k] = l->head; if (l->head >= 0) lp[l->head] = k; l->head = k; if (l->tail < 0) l->tail = k;
+  l->n++; lid[k] = id;
+}
+int64_t simulate_arc(const int32_t *keys, const int64_t *starts, int32_t nsteps, int32_t nkeys, int32_t c,
+                     int32_t warm) {
+  lp = malloc(nkeys * sizeof(int32_t)); ln = malloc(nkeys * sizeof(int32_t)); lid = calloc(nkeys, 1);
+  int32_t *instep = malloc(nkeys * sizeof(int32_t));
+  for (int32_t k = 0; k < nkeys; k++) instep[k] = -1;
+  L T1 = {-1, -1, 0}, T2 = {-1, -1, 0}, B1 = {-1, -1, 0}, B2 = {-1, -1, 0};  /* ids 1, 2, 3, 4 */
+  L *LS[5] = {0, &T1, &T2, &B1, &B2};
+  double p = 0; int64_t miss = 0;
+  for (int32_t t = 0; t < nsteps; t++) {
+    for (int64_t i = starts[t]; i < starts[t + 1]; i++) instep[keys[i]] = t;
+    for (int64_t i = starts[t]; i < starts[t + 1]; i++) {
+      int32_t x = keys[i]; char id = lid[x];
+      if (id == 1 || id == 2) { l_rm(LS[id], x); l_mru(&T2, x, 2); continue; }  /* hit */
+      if (t >= warm) miss++;
+      if (id == 3) p = fmin(c, p + fmax((double)B2.n / fmax(B1.n, 1), 1.0));
+      else if (id == 4) p = fmax(0, p - fmax((double)B1.n / fmax(B2.n, 1), 1.0));
+      else {  /* a cold miss: trim the ghosts as ARC does */
+        if (T1.n + B1.n >= c) { if (B1.n > 0 && T1.n < c) l_rm(&B1, B1.tail); }
+        else if (T1.n + T2.n + B1.n + B2.n >= 2 * c && B2.n > 0) l_rm(&B2, B2.tail);
+      }
+      if (id == 3 || id == 4) l_rm(LS[id], x);
+      if (T1.n + T2.n >= c) {  /* REPLACE: from T1 if it exceeds p (or a B2 hit at p), else from T2 */
+        int from1 = T1.n > 0 && (T1.n > p || (id == 4 && T1.n == (int32_t)p));
+        int done = 0;
+        for (int pass = 0; pass < 2 && !done; pass++) {
+          L *src = (from1 ^ pass) ? &T1 : &T2;
+          L *dst = (src == &T1) ? &B1 : &B2;
+          char did = (src == &T1) ? 3 : 4;
+          for (int32_t v = src->tail; v >= 0; v = lp[v]) {
+            if (instep[v] == t) continue;
+            l_rm(src, v); l_mru(dst, v, did); done = 1; break;
+          }
+        }
+        if (!done) continue;  /* the step alone fills the cache: streamed, not kept */
+        while (B1.n + B2.n > c) l_rm(B1.n > B2.n ? &B1 : &B2, B1.n > B2.n ? B1.tail : B2.tail);
+      }
+      if (id == 3 || id == 4) l_mru(&T2, x, 2); else l_mru(&T1, x, 1);
+    }
+  }
+  free(lp); free(ln); free(lid); free(instep);
+  return miss;
+}
 """
 
 
 def _lib():
     d = Path(tempfile.gettempdir()) / "cache_policy_sim_c"
     d.mkdir(exist_ok=True)
-    so = d / "sim.so"
+    import hashlib
+
+    so = d / f"sim_{hashlib.sha1(_C.encode()).hexdigest()[:12]}.so"
     if not so.exists():
         src = d / "sim.c"
         src.write_text(_C)
-        subprocess.check_call([os.environ.get("CC", "gcc"), "-O2", "-shared", "-fPIC", str(src), "-o", str(so)])
+        subprocess.check_call([os.environ.get("CC", "gcc"), "-O2", "-shared", "-fPIC", str(src), "-o", str(so), "-lm"])
     lib = ctypes.CDLL(str(so))
+    lib.simulate_scored.restype = ctypes.c_int64
+    lib.simulate_scored.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32,
+                                    ctypes.c_int32, ctypes.c_double, ctypes.c_int32]
+    lib.simulate_arc.restype = ctypes.c_int64
+    lib.simulate_arc.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32,
+                                 ctypes.c_int32]
     lib.simulate.restype = ctypes.c_int64
     lib.simulate.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int32, ctypes.c_void_p, ctypes.c_int32,
                              ctypes.c_int32, ctypes.c_int32, ctypes.c_double, ctypes.c_int32]
@@ -192,6 +321,107 @@ def run_scenario(job):
     return name, bs, out
 
 
+REUSE = {"lru": ("s", 0, 0.0), "arc": ("arc", 0, 0.0), "lru2": ("s", 3, 0.0),
+         **{f"fwlru{w}": ("s", 1, float(w)) for w in (2, 4, 8, 16, 32)},
+         **{f"lfu_h{h}": ("s", 2, float(h)) for h in (16, 64, 256)}}
+
+
+def run_reuse(job):
+    name, path_rows, bs, caps = job
+    idx = np.concatenate([np.load(p)["idx"] for p in path_rows["files"]], 0)
+    if bs == 1 and path_rows["session"]:
+        idx = idx.reshape(1, -1, LAYERS, 5)
+    elif bs == 16:
+        idx = idx[:16]
+    keys, starts = step_stream(idx)
+    nxt = next_steps(keys, starts)
+    nsteps = len(starts) - 1
+    warm = int(nsteps * 0.25)
+    lib = _lib()
+    out = {"steps": nsteps - warm, "union": float(np.diff(starts)[warm:].mean())}
+    for c in caps:
+        out[f"opt@{c}"] = lib.simulate(keys.ctypes.data, starts.ctypes.data, nsteps, nxt.ctypes.data, NKEYS, c, -1,
+                                       1.0, warm) / (nsteps - warm)
+        for pol, (kind, mode, w) in REUSE.items():
+            if kind == "arc":
+                m = lib.simulate_arc(keys.ctypes.data, starts.ctypes.data, nsteps, NKEYS, c, warm)
+            else:
+                m = lib.simulate_scored(keys.ctypes.data, starts.ctypes.data, nsteps, NKEYS, c, mode, w, warm)
+            out[f"{pol}@{c}"] = m / (nsteps - warm)
+    print(f"[reuse] {name}: " + ", ".join(f"{k} {v:.1f}" for k, v in out.items() if "@" in k), flush=True)
+    return name, bs, out
+
+
+def run_sched(job):
+    """batch 16 from 32 sessions with a step-level LRU cache: misses per token and the mean union per step. Every
+    mode processes every token of every session (the tail runs with fewer than 16), so the token sets are equal."""
+    name, files, cap, mode, max_wait = job
+    idx = np.concatenate([np.load(p)["idx"] for p in files], 0)  # [S, T, L, 5]
+    S, T = idx.shape[0], idx.shape[1]
+    tok_keys = (np.arange(LAYERS)[None, None, :, None] * EXPERTS + idx.astype(np.int64)).reshape(S, T, -1)
+    cached = np.zeros(NKEYS, dtype=bool)
+    last = np.full(NKEYS, -1, dtype=np.int64)
+    ptr = np.zeros(S, dtype=np.int64)
+    waited = np.zeros(S, dtype=np.int64)
+    misses = tokens = 0
+    unions, step_miss, step_bs = [], [], []
+    step = 0
+    warm_tokens = int(S * T * 0.25)
+    seen = 0
+    while True:
+        live = np.flatnonzero(ptr < T)
+        if len(live) == 0:
+            break
+        if mode == "fixed" or len(live) <= 16:  # the plain batch (the first 16 unfinished sessions), or the tail
+            pick = live[:16]
+        else:
+            forced = live[waited[live] >= max_wait]
+            rest = np.setdiff1d(live, forced)
+            pick = list(forced[:16])
+            have = cached.copy()
+            for s_ in pick:
+                have[tok_keys[s_, ptr[s_]]] = True
+            while len(pick) < 16:
+                if mode == "oracle":
+                    cand = [tok_keys[s_, ptr[s_]] for s_ in rest]
+                else:  # proxy: the previous token's routing (the first token: no information, cost 0)
+                    cand = [tok_keys[s_, ptr[s_] - 1] if ptr[s_] > 0 else np.empty(0, np.int64) for s_ in rest]
+                cost = np.array([np.count_nonzero(~have[np.unique(c)]) for c in cand])
+                j = int(np.argmin(cost))
+                pick.append(rest[j])
+                have[tok_keys[rest[j], ptr[rest[j]]] if mode == "oracle" else cand[j]] = True
+                rest = np.delete(rest, j)
+            pick = np.array(pick)
+        need = np.unique(np.concatenate([tok_keys[s_, ptr[s_]] for s_ in pick]))
+        new = need[~cached[need]]
+        overflow = int(cached.sum()) + len(new) - cap
+        if overflow > 0:  # evict the least recently used cached keys this step does not need
+            cand = np.flatnonzero(cached)
+            cand = cand[~np.isin(cand, need)]
+            if len(cand):
+                ev = cand[np.argpartition(last[cand], min(overflow, len(cand)) - 1)[:min(overflow, len(cand))]]
+                cached[ev] = False
+        cached[new] = True
+        last[need] = step
+        if seen >= warm_tokens:
+            misses += len(new)
+            tokens += len(pick)
+            unions.append(len(need))
+            step_miss.append(len(new))
+            step_bs.append(len(pick))
+        seen += len(pick)
+        waited[live] += 1
+        waited[pick] = 0
+        ptr[pick] += 1
+        step += 1
+    out = {"misses_per_token": misses / max(tokens, 1), "tokens": tokens,
+           "misses_per_step": misses / max(len(unions), 1),
+           "union": float(np.mean(unions)) if unions else 0.0, "steps": len(unions),
+           "per_step": {"union": unions, "misses": step_miss, "bs": step_bs}}
+    print(f"[sched] {name} cap {cap} {mode}: " + str({k: v for k, v in out.items() if k != "per_step"}), flush=True)
+    return name, cap, mode, out
+
+
 def step_ms(union, misses, bs, expert_mb, a):
     gpu = (a.resident_gb * 1024 + union * expert_mb) / (a.dev_gbs * 1024) * 1e3 + 0.02 * bs
     pcie = misses * a.prefetch_factor * expert_mb / (a.pcie_gbs * 1024) * 1e3
@@ -208,6 +438,8 @@ def main():
     p.add_argument("--resident-gb", type=float, default=2.6)  # [est.] as spec_gate
     p.add_argument("--prefetch-factor", type=float, default=2.0)  # [est.] as spec_gate
     p.add_argument("--workers", type=int, default=12)
+    p.add_argument("--suite", default="base", choices=["base", "reuse", "sched"])
+    p.add_argument("--max-wait", type=int, default=4)
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     caps = [int(c) for c in a.caps.split(",")]
@@ -222,6 +454,10 @@ def main():
         else:
             jobs.append((dom, {"files": fs, "session": True}, 1, caps))
             jobs.append((f"{dom}_b16", {"files": fs, "session": False}, 16, caps))
+    if a.suite == "reuse":
+        return main_reuse(a, jobs, caps)
+    if a.suite == "sched":
+        return main_sched(a, doms, caps)
     with ProcessPoolExecutor(a.workers) as ex:
         results = list(ex.map(run_scenario, jobs))
     res = {"args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}, "expert_mb": EXPERT_MB,
@@ -243,6 +479,79 @@ def main():
     res["tok_s"] = rates
     (a.out / "cache_policy.json").write_text(json.dumps(res, indent=1))
     write_md(res, a.out, caps)
+
+
+def main_reuse(a, jobs, caps):
+    with ProcessPoolExecutor(a.workers) as ex:
+        results = list(ex.map(run_reuse, jobs))
+    res = {"args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}, "expert_mb": EXPERT_MB,
+           "policies": {k: {"kind": v[0], "mode": v[1], "w": v[2]} for k, v in REUSE.items()}, "sims": {}}
+    pols = ["opt"] + list(REUSE)
+    rates = {}
+    for name, bs, out in results:
+        res["sims"][name] = out | {"bs": bs}
+        for c in caps:
+            for pol in pols:
+                rates[f"{name}|fp8@{c}|{pol}"] = bs * 1e3 / step_ms(out["union"], out[f"{pol}@{c}"], bs, EXPERT_MB, a)[0]
+            if c == caps[-1]:
+                for pol in pols:
+                    rates[f"{name}|int4@{c}|{pol}"] = bs * 1e3 / step_ms(out["union"], out[f"{pol}@{c}"], bs,
+                                                                         EXPERT_MB / 2, a)[0]
+    res["tok_s"] = rates
+    (a.out / "cache_reuse.json").write_text(json.dumps(res, indent=1))
+    L = ["# Expert-cache eviction from past reuse only (v4 R0 traces)", "",
+         "Misses per decode step (after a 25 % warm-up). lru baseline, opt = Belady bound; fwlru<w>: score = last use "
+         "+ w log2 accesses; lfu_h<h>: aged counts (half-life h steps); lru2: LRU-K, K = 2; arc: ARC. Simulated; "
+         "tok/s from spec_gate's cost model (measured PCIe / device bandwidth, estimated resident read and 2x "
+         "prefetch over-fetch).", ""]
+    for c in caps:
+        L += [f"## Cache {c} experts", "", "| scenario | " + " | ".join(pols) + " |", "|---|" + "---:|" * len(pols)]
+        for name, r in res["sims"].items():
+            L.append(f"| {name} | " + " | ".join(f"{r[f'{p}@{c}']:.1f}" for p in pols) + " |")
+        L.append("")
+    b1 = [n for n, r in res["sims"].items() if r["bs"] == 1]
+    b16 = [n for n, r in res["sims"].items() if r["bs"] == 16]
+    L += ["## Decode tok/s (mean over scenarios)", "", "| setting | " + " | ".join(pols) + " |",
+          "|---|" + "---:|" * len(pols)]
+    for label, names in (("batch 1", b1), ("batch 16 (total)", b16)):
+        for fmt in [f"fp8@{c}" for c in caps] + [f"int4@{caps[-1]}"]:
+            vals = [f"{np.mean([rates[f'{n}|{fmt}|{p}'] for n in names]):.1f}" for p in pols]
+            L.append(f"| {label} {fmt} | " + " | ".join(vals) + " |")
+    (a.out / "cache_reuse.md").write_text("\n".join(L) + "\n")
+    print("\n".join(L), flush=True)
+
+
+def main_sched(a, doms, caps):
+    jobs = [(dom, fs, c, mode, a.max_wait) for dom, fs in doms.items() if not dom.startswith("long")
+            for c in caps for mode in ("fixed", "proxy", "oracle")]
+    with ProcessPoolExecutor(a.workers) as ex:
+        results = list(ex.map(run_sched, jobs))
+    res = {"args": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(a).items()}, "sims": {}}
+    for name, c, mode, out in results:
+        r = res["sims"].setdefault(name, {})
+        r[f"{mode}@{c}"] = out
+        ps = out.pop("per_step")
+        for fmt, mb, cap_ok in (("fp8", EXPERT_MB, True), ("int4", EXPERT_MB / 2, c == caps[-1])):
+            if cap_ok:  # total tokens over the summed step times (steps of every batch size)
+                ms = sum(step_ms(u, m, b, mb, a)[0] for u, m, b in zip(ps["union"], ps["misses"], ps["bs"]))
+                out[f"tok_s_{fmt}"] = out["tokens"] * 1e3 / max(ms, 1e-9)
+    (a.out / "cache_sched.json").write_text(json.dumps(res, indent=1))
+    L = ["# Expert-aware session scheduling at batch 16 (16 of 32 sessions per step, v4 R0 traces)", "",
+         f"LRU cache, step-level eviction; a session waiting >= {a.max_wait} steps is forced in. fixed = the plain "
+         "batch (16 sessions to their end, then the next 16); proxy = fewest new experts by the previous token's "
+         "routing; oracle = by the next token's true routing (bound). Misses per token, mean union per step, total "
+         "tok/s (cost model as cache_policy; int4 at the larger cache).", "",
+         "| domain | cache | fixed miss/tok | proxy | oracle | fixed union | proxy | oracle | fixed tok/s | proxy | "
+         "oracle |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for name, r in res["sims"].items():
+        for c in caps:
+            m = [r[f"{mo}@{c}"] for mo in ("fixed", "proxy", "oracle")]
+            for fmt in (("fp8", "int4") if c == caps[-1] else ("fp8",)):
+                L.append(f"| {name} | {c} {fmt} | " + " | ".join(f"{x['misses_per_token']:.1f}" for x in m) + " | "
+                         + " | ".join(f"{x['union']:.0f}" for x in m) + " | "
+                         + " | ".join(f"{x[f'tok_s_{fmt}']:.1f}" for x in m) + " |")
+    (a.out / "cache_sched.md").write_text("\n".join(L) + "\n")
+    print("\n".join(L), flush=True)
 
 
 def write_md(res, out, caps):
