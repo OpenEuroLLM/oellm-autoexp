@@ -1139,6 +1139,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       sessions), not prediction.
     - int4 storage remains the dominant lever.
 
+- **2026-11-09, T3f: CSA2's selector distilled onto frozen v4** (dev job 48805408; mean compression of 4 tokens, the best
+  512 entries + 512-token window + 1 sink page; the lightning indexer trained on 64 held-out 64k documents by KL to
+  the dense mass per entry, the model frozen; same documents / questions as T3 / T3d;
+  `docs/campaign_3b_hybrid_midtraining_results/t3f_csa2_warmup_v4_2ph_8000/`):
+  - NLL 2.0148 at 64k vs dense 1.9190 / page_mean 1.9070 (+0.035 already in the 0-4k bin). Passkey 0.07 (dense
+    and every page selector 1.0), kvret64 0.13, vt 0.19 (16 questions per task).
+  - The indexer barely learns: KL 1.25-1.9 nats in the deep layers after 64 documents (1.4-1.85 after 8).
+  - **CSA2 cannot be retrofitted onto frozen v4 by selector distillation alone.** The mean-compressed entries are
+    out of distribution for the frozen model (as compress_mean in T2: +0.076), and averaging destroys exact tokens
+    such as passkey digits. CSA2's compression has to be trained with the model: step 5's CSA2 arm at s3 tests
+    that. For a v4 retrofit, the page selectors and NSA's selection branch remain the candidates.
+- **2026-11-09, step 5 so far:**
+  - All 6 smoke arms passed after three fixes (Megatron 1ef3e9071 / 5154668d6: flex compiled with dynamic shapes
+    behind one wrapper with contiguous inputs and a per-call recompile limit; strict_fsdp_dtensor_load off for the
+    new parameters).
+  - Real s3 step times: dense 4.2 s; the sparse arms 6-12 s in the smokes, so 1.5-2.5× dense. The per-document
+    flex loop is the first target: one call per layer over the packed batch.
+  - The dense arm trained on the dev queue (job 48801588): validation 2.3038 at step 1250, 2.4299 at 1500 (different
+    validation batches per step: compare arms at equal steps only).
+  - The 9 sparse arms (+ lsa_fine) and the 7 MTP speed arms (t6_s3_mtp_speed: latent CKDA depths 3 / 8, loss
+    stride 1 / 4 / 8, attached / detached) wait in the p264 pool for host003.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

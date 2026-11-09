@@ -1,0 +1,7 @@
+{
+ "65536|csa2:compress=4,topk_entries=512,window=512": {
+  "passkey": 0.06666666666666667,
+  "kvret64": 0.125,
+  "vt": 0.1875
+ }
+}
