@@ -1373,6 +1373,25 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - **No main-loss gain from latent MTP in 2000 steps; 8 depths cost +0.004.** MTP would have to earn its
     7-20 % step time through drafting (speculative decoding), not through data efficiency at this scale.
 
+- **2026-11-09, T13: parallel vs depth latent MTP, speed / memory** (mtp_parallel, Megatron 5d22d5598: one CKDA
+  layer, output k = final_norm(t + P_k t), zero-init P_k; v4 64k mHC-4 test shape, 2 nodes, all arms in one launch,
+  median of steps 8-30):
+
+  | arm | ms/step | vs base | max reserved |
+  |---|---:|---:|---:|
+  | base | 9577 | | 41.0 GiB |
+  | depth k3 stride 4 | 10356 | +8.1 % | 40.5 GiB |
+  | depth k8 stride 4 | 11590 | +21.0 % | 40.6 GiB |
+  | parallel k3 stride 4 | 10110 | +5.6 % | 40.0 GiB |
+  | parallel k8 stride 4 | 10730 | +12.0 % | 41.2 GiB |
+  | parallel k8 stride 8 | 10353 | +8.1 % | 41.2 GiB |
+
+  - Parallel: ~+4.5 % for the trunk layer, then ~1.3 % per extra offset at stride 4 (the vocabulary head on a
+    quarter of the positions); depth: ~2.5 % per depth. At 8 offsets parallel costs about half of depth.
+  - No memory overhead in either form. Quality: T14 (parallel k3 / k8 on the t8 schedule) running.
+- **2026-11-09, long-context retrieval probes (128k / 256k, s3 step-5 arms, 8 items per task):** dense: passkey
+  1.00 / 1.00, kvret64 0.25 / 0.25, vt 0.25 / 0.62. Sparse arms queued on host002's buffer nodes.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
