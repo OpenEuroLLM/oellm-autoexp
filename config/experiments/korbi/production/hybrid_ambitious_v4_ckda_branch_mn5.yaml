@@ -19,15 +19,22 @@
 # Disk: saves are model only (no_save_optim, ~0.34 TB each; the eval / HF export load without optimizer),
 # 23400 and 23500 per arm: ~2.7 TB for the four (scratch had 6.9 TB free on 2026-11-09). Full saves
 # (1.1 TB) only for an arm to be continued: backend.megatron.no_save_optim=false.
-# Cost per arm at 128 nodes: ~29 s/step x 200 + load / node check ~0.5 h: ~2.2 h, ~1.1k GPU-h (4.5k for four).
-#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp_bg.sh ckdab_<arm> scripts/run_autoexp.py \
-#       --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_mn5 --yes aux.only=[bgqa]
+# Cost per arm at 64 nodes: ~62 s/step x 200 + load / node check ~0.6 h: ~4 h, ~1.0k GPU-h (4k for four;
+# at 128 nodes about the same GPU-h in half the time per arm). Memory at 64 nodes: main run 0.84 at 128n,
+# the size64 sweep fit 89B-A2.9B-E80B at cap 0.80 with ~1.4 GiB free: check the first arm's mem usages.
+# Two arms per launch (aux.only lists both; one launch per pair, see aux-only relaunch race), into p264:
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_mn5 --yes "aux.only=[bgqa,d]"
 defaults:
   - hybrid_ambitious_v4_2ph_hd256_128_mn5
   - _self_
 
 aux:
   suite: ckda_branch
+  # 2 x 64 nodes side by side on the 128-node p264 host003 (user 2026-11-09); the reference-layout sampler
+  # (dp 512 x mbs 8) keeps the main run's batches at dp 256 (4 micro-batches per rank). 128 also works.
+  nodes: 64
   arm: bgqa
   only: []
   phase: 1
@@ -61,20 +68,25 @@ backend:
 
 job:
   name: ckda_branch_${aux.arm}
-  # 200 steps (23300 -> 23500) at the main run's 128-node phase-1 step time (~29 s), the 1.1 TB load +
-  # thorough node check before the first step
+  # 200 steps (23300 -> 23500): ~62 s/step at 64 nodes (size64 sweep: 33 s + 0.081 s x 360 experts at the
+  # same 64M tokens per step; the main run: 27.6 s at 128n, 15.1 s at 256n), the 1.1 TB load + thorough
+  # node check before the first step
   est_steps: 200
-  est_step_time_s: 29.0
+  est_step_time_s: 62.0
   est_startup_min: 35.0
   metadata:
     # never the main run's singleton: these run next to it, never instead of it
     pool_singleton: null
     pool_priority: 50
+    # not on excluded nodes: p264 host003 lists its shrink-removed nodes there
+    pool_use_excluded_nodes: false
   start_condition: null
 
 slurm:
   sbatch:
-    time: "04:00:00"
+    time: "06:00:00"
+    # the account of the pool's hosts (p264: cns144)
+    account: cns144
 
 sweep:
   type: product
