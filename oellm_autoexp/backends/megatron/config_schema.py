@@ -3404,6 +3404,11 @@ class MegatronConfig(ConfigInterface):
     # weights. experts: only expert-parallel buckets; all: every bf16 bucket.
     fsdp_fp8_param_gather: Literal["none", "experts", "all"] = "none"
 
+    # Wire format of --fsdp-fp8-param-gather: fp8 (E4M3) or int4 (symmetric, one fp32 scale
+    # per 128 elements, ~0.53 bytes per element; the forward runs on the INT4 weights:
+    # quantization-aware training for W4A16 deployment).
+    fsdp_param_gather_format: Literal["fp8", "int4"] = "fp8"
+
     # Specifies the number of elements to communicate at once during FSDP (Fully Sharded Data
     # Parallel) operations. This flag also affects FSDP all-gather prefetch behavior. Setting
     # a larger value increases the communication buffer size, while a smaller value disables

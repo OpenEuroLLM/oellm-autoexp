@@ -2804,6 +2804,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "fsdp_param_gather_format": MegatronArgMetadata(
+        arg_type=str,
+        default="fp8",
+        help="Wire format of --fsdp-fp8-param-gather: fp8 (E4M3) or int4 (symmetric, one fp32 scale per 128 elements, ~0.53 bytes per element; the forward runs on the INT4 weights: quantization-aware training for W4A16 deployment).",
+        choices=("fp8", "int4"),
+        nargs=None,
+        element_type=None,
+    ),
     "ft_num_warmup_iters": MegatronArgMetadata(
         arg_type=int,
         default=5,
@@ -11237,6 +11245,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "fsdp_param_gather_format": MegatronActionSpec(
+        option_strings=("--fsdp-param-gather-format",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="fp8",
     ),
     "ft_num_warmup_iters": MegatronActionSpec(
         option_strings=("--ft-num-warmup-iters",),

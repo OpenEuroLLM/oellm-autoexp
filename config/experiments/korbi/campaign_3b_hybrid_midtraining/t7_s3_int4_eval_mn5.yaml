@@ -1,0 +1,41 @@
+# @package _global_
+# Scoring of INT4 QAT at s3 (same validation samples at 64k, 50 batches; eval only): the step-5 dense arm's step-1500
+# weights with the FP8 expert gather it trained with (dense_fp8), the same weights rounded to INT4 without training
+# (dense_int4: post-training quantization), and the INT4 QAT arm (t7_s3_int4 int4_qat) with INT4 (qat_int4).
+# 2 nodes per job: the expert data-parallel group must span ranks for the quantized gather to apply (EP 4 on one
+# node leaves expert DP 1: no quantization at all).
+#   ... --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t7_s3_int4_eval_mn5 ["aux.only=[...]"] --yes
+defaults:
+  - t5_s3_sparse_eval_mn5
+  - _self_
+
+aux:
+  suite: t7_s3_int4_eval
+  ckpt_arm: dense
+  len: at64k
+  arm: ${aux.ckpt_arm}
+  nodes: 2
+
+backend:
+  megatron:
+    page_sparse_selector: null
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.ckpt_arm: dense_fp8
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t5_s3_sparse/dense/ckpt
+          backend.megatron.fsdp_param_gather_format: fp8
+        - aux.ckpt_arm: dense_int4
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t5_s3_sparse/dense/ckpt
+          backend.megatron.fsdp_param_gather_format: int4
+        - aux.ckpt_arm: qat_int4
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t7_s3_int4/int4_qat/ckpt
+          backend.megatron.fsdp_param_gather_format: int4
+    - type: list
+      configs:
+        - {aux.seq: 65536, aux.gbs: 16, backend.megatron.micro_batch_size: 1}
