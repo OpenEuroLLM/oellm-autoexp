@@ -20,6 +20,9 @@ aux:
   arm: c8k_d256
   only: []
   test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4ctxspeed
+  # data: capspeed (the first launch, 00:11, short documents: 64k = 8k + 1.8 % at hd256); the main run's
+  # phase-2 mix (s3, 49 % of tokens in documents > 8k) with aux.data=s3 (second launch, own test_root)
+  data: capspeed
 
 backend:
   env:
@@ -77,3 +80,8 @@ sweep:
           aux.gbs: 8
           backend.megatron.micro_batch_size: 1
           backend.megatron.kv_channels: 128
+# Results 2026-11-10 00:50, capspeed data (median of steps 10-29): c8k_d256 9.62 s, c64k_d256 9.79 s, c8k_d128 9.44 s,
+# c64k_d128 9.46 s. The main run's 64k phase: +2.2 s over 8k. Second launch on the phase-2 data (s3 opt81 stage 2):
+#   ... --config-name experiments/korbi/production/hybrid_v4_ctxspeed_mn5 aux.data=s3 \
+#       aux.stage_datamix=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt \
+#       aux.test_root=/gpfs/scratch/ehpc533/users/korbip/tmp/v4ctxspeed_s3 job.name=v4_ctxspeed_s3_\${aux.arm}
