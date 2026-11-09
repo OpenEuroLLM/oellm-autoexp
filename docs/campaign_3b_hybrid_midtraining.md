@@ -1241,6 +1241,25 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       zeroes the whole call's gradient (fixed f5ff176ca). Our runs use eod_mask_loss false, so it should not have
       triggered.
 
+- **2026-11-09, R3: routing locality on frozen v4** (`ambitious_v4_2ph_hd256_fp8_21000`, p264.0176, 1 node, ~40 min;
+  `router_probe.py --stages r3`; 2 batches x 16 x 2k per domain, long_64k 1 x 64k; beta in selection-score units
+  = sigmoid + expert bias; miss16 = share of assignments outside the last 16 tokens' experts, batch 1):
+
+  | policy | ΔNLL (6 domains) | stay rate | miss16 |
+  |---|---|---|---|
+  | none | 0 | 0.27-0.34 | 0.26-0.38 |
+  | parallel (training rule) beta 0.1 | +0.001-0.011 | 0.34-0.42 | 0.23-0.35 |
+  | parallel beta 0.3 | +0.009-0.030 | 0.43-0.49 | 0.22-0.32 |
+  | hysteresis (previous FINAL selection) beta 0.1 | +0.001-0.007 | 0.36-0.45 | 0.23-0.34 |
+  | hysteresis beta 0.3 | +0.010-0.032 | 0.54-0.63 | 0.17-0.28 |
+  | beta 1 | +0.6 to +3.8 | parallel 0.28-0.34 (shift), hysteresis 1.0 (frozen) | |
+
+  - **Hysteresis dominates the parallel rule** at equal ΔNLL, and it is free at decode (sequential anyway).
+  - **A post-hoc inference knob without training:** hysteresis beta 0.1 is within ~0.007 NLL (code / reasoning /
+    long_64k ≤ 0.002); beta 0.3 cuts the 16-token-window misses by 25-35 % relative for +0.01-0.03.
+  - Whether training with the bonus (T10b: parallel rule, QB logits, s3) lowers that cost is the open question;
+    a training-side hysteresis would need a sequential router scan (chunked, cheap).
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
