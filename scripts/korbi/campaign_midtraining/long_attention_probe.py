@@ -176,7 +176,9 @@ class AttentionPolicy:
                     o, self.shared[key] = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, return_selection=True,
                                                                    **kw)
                 else:
-                    o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, selection=self.shared[key], **kw)
+                    # the HF device map spreads the layers over GPUs: the source layer's selection to this one's
+                    sel = tuple(t.to(k.device) if torch.is_tensor(t) else t for t in self.shared[key])
+                    o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, selection=sel, **kw)
             else:
                 o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, **kw)
             parts.append(o)
