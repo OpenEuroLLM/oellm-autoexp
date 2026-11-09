@@ -107,4 +107,5 @@ and ablations run; in-situ check 36 steps, 0 disagreements, max error 1e-15.
 - Limits: per-step spectra only (multi-step products can rotate even with alpha >= 0). The
   complex-steps beta -> 1 ablation also changes the write strength.
 
-Report: scripts/collect.py + build_report.py (report_template.html) -> published artifact.
+Report: scripts/collect.py + build_report.py (report_template.html) -> https://claude.ai/artifact/1hrEy5kMmWy8XRz2H6XWK9 (data: results/report_data.json). Full outputs: /gpfs/scratch/ehpc533/hybrid_nucleus/analysis/ckda_spectra/<export>.
+Also: 9814 17.1 % / beta>1 35 % / mean beta 0.79, abl beta<=1 +0.011; 14000 21.4 % / 45 % / 0.92, +0.020; 18000 24.6 % / 52 % / 1.02, +0.026.
