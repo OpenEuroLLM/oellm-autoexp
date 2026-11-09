@@ -1,0 +1,9 @@
+# Recall-intensive extraction (the "Based" recall suite, lm-eval tasks swde / fda / squad_completion):
+# copy a value out of the context (HTML pages, FDA documents, a Wikipedia paragraph). Used to test
+# whether a hybrid's attention ratio limits in-context retrieval (2026-11-09). Rows in the suite-file
+# format of scripts/evals (rows.suite_file); datasets hazyresearch/based-{swde-v2,fda,squad}.
+count: 3
+tasks:
+  - {name: "vllm/swde/0", half: "vllm", row: 0, task: "swde", n_shot: 0, suite: "lm-eval-harness"}
+  - {name: "vllm/fda/0", half: "vllm", row: 1, task: "fda", n_shot: 0, suite: "lm-eval-harness"}
+  - {name: "vllm/squad_completion/0", half: "vllm", row: 2, task: "squad_completion", n_shot: 0, suite: "lm-eval-harness"}
