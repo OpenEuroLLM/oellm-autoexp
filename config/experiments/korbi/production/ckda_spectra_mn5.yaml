@@ -44,3 +44,5 @@ job:
 slurm:
   sbatch:
     time: "04:00:00"
+    # the account of the pool's hosts (p264: cns144)
+    account: cns144
