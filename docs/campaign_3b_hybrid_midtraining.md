@@ -1351,6 +1351,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     same samples): 2.3131 vs dense FP8 gather 2.3117 and dense INT4 PTQ 2.3140: QAT recovers ~40 % of the PTQ
     gap (+0.0023 -> +0.0014), at +0.4 % step time.
 
+- **2026-11-09, T12: latent MTP on the production residual (mHC-4 inside every depth, Megatron a276a2cd0)**
+  (v4 64k shape of hybrid_v4_hd256_test: Megatron-FSDP, EP 4, MoonEP, hd256, mHC-4, 2 nodes, 8 routed experts,
+  fresh init; median of steps 8-30; memory = max of the logged "mem usages", and the allocator's max reserved at
+  step 2):
+
+  | arm | ms/step | vs base | per depth | mem | max reserved |
+  |---|---:|---:|---:|---:|---:|
+  | base | 9605 | | | 0.791 | 41.4 GiB |
+  | k3 stride 1 | 11197 | +16.6 % | +5.5 % | 0.771 | 40.3 GiB |
+  | k3 stride 4 | 10324 | +7.5 % | +2.5 % | 0.768 | 39.9 GiB |
+  | k8 stride 4 | 11561 | +20.4 % | +2.5 % | 0.775 | 40.8 GiB |
+  | k8 stride 8 | 11205 | +16.7 % | +2.1 % | 0.770 | 40.9 GiB |
+
+  - **No memory overhead** (the MTP arms peak no higher than the base; the depths' streams are recomputed).
+  - **~2.5 % per depth at stride >= 4** on the production shape (vs ~4 % on s3, whose base step is cheaper); with
+    360 instead of 8 experts the relative cost would be lower still.
+- **2026-11-09, T8b final (MTP quality, s3, 2000 steps, plain-residual depths):** validation at 3000: base 2.0338,
+  k3 stride 4 2.0331 (-0.0007, noise), k8 stride 4 2.0376 (+0.004). Paired by eval step (base / k3 / k8):
+  1500: 2.2381 / +0.005 / +0.009; 2000: 2.3157 / -0.003 / +0.002; 2500: 2.1243 / +0.0005 / +0.007.
+  - **No main-loss gain from latent MTP in 2000 steps; 8 depths cost +0.004.** MTP would have to earn its
+    7-20 % step time through drafting (speculative decoding), not through data efficiency at this scale.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
