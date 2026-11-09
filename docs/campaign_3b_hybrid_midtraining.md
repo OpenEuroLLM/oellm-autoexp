@@ -1336,7 +1336,7 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   |---|---:|---:|---:|---:|---:|---:|---:|
   | page_mean_pg (one selection per KV group) | **2.3362** | **+0.021** | **2.3204** | **+0.025** | 1.00 | 0.38 | 8940 |
   | nsa | 2.3586 | +0.043 | 2.3463 | +0.051 | 1.00 | 0.00 | 10546 |
-  | csa2 | 2.3830 | +0.068 | OOM (1 node) | | probe rerun (tail-split fix) | | 9181 |
+  | csa2 | 2.3830 | +0.068 | OOM (1 node) | | 1.00 | 0.19 | 9181 |
   | lsa (retrieval) | | | | | 1.00 | 0.25 | |
   | lsa_fine (retrieval) | | | | | 1.00 | 0.38 | |
 
