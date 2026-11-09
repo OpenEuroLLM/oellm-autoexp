@@ -1100,6 +1100,45 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       [est.]; re-run spec_gate.py then.
     - The gate does not apply to GPU-resident serving.
 
+- **2026-11-09, expert-cache eviction with future routing knowledge** (is in-sequence expert prediction worth building?
+  R0 routing traces; `scripts/korbi/campaign_midtraining/cache_policy_sim.py`;
+  `docs/campaign_3b_hybrid_midtraining_results/p2p3_offload/cache_policy.{md,json}`):
+  - **Policies,** one cache over all (layer, expert) pairs:
+    - **LRU:** the baseline. It reproduces the P2 misses (e.g. code 35.4 vs 35.8 at 3,000 experts).
+    - **OPT / Belady:** evicts the expert used farthest in the future. This is the bound for any predictor of
+      future routing.
+    - **lookahead n:** the next n tokens' routing is known exactly; experts needed within it are kept, the rest
+      are evicted by LRU.
+    - **lookahead 1 with recall r:** a predictor at R0 quality (next-token recall@5 ≤ 0.42).
+  - **Decode tok/s** (mean over domains; misses simulated, the cost model as P3, with measured PCIe and device
+    bandwidth and an estimated resident read and over-fetch):
+
+    | setting | LRU | la1 | la4 | la8 | la16 | la64 | la256 | OPT | la1, recall 0.4 / 0.6 |
+    |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+    | batch 1, FP8, 3,000 experts (13.6 GB) | 52.7 | 53.7 | 56.6 | 60.3 | 67.0 | 98.9 | 112.1 | 112.1 | 53.1 / 53.3 |
+    | batch 1, FP8, 6,000 experts | 156.0 | 157.3 | 160.7 | 164.9 | 172.4 | 204.6 | 236.6 | 237.9 | 156.5 / 156.8 |
+    | batch 1, int4, 6,000 experts (13.6 GB) | 260.0 | 260.6 | 262.3 | 264.4 | 268.3 | 279.3 | 279.3 | 279.3 | 260.3 / 260.4 |
+    | batch 16 total, FP8, 3,000 | 30.3 | 33.7 | 33.9 | 33.9 | 33.9 | 33.9 | 33.9 | 33.9 | 31.9 / 32.6 |
+    | batch 16 total, FP8, 6,000 | 62.7 | 73.2 | 100.7 | 126.7 | 132.6 | 132.6 | 132.6 | 132.6 | 66.4 / 68.5 |
+    | batch 16 total, int4, 6,000 | 125.5 | 146.4 | 201.3 | 253.5 | 265.2 | 265.2 | 265.2 | 265.2 | 132.8 / 136.9 |
+
+  - **Batch 1: OPT would halve the misses** (35 → 17 per token for code, 67 → 32 for web text at 3,000 experts),
+    but nearly all of that gain lives at long reuse distances. Knowing the next 1-8 tokens exactly recovers 2-13 %
+    of the gap, 16 tokens ~25 %, 64 tokens ~80 %, 256 tokens all of it. A next-token predictor at R0 quality gains
+    ~1 %.
+  - **With int4 storage (6,000 experts in 13.6 GB), batch 1 is already GPU-bound** at ~260 tok/s under LRU, 279
+    with OPT. Eviction then hardly matters.
+  - **Batch 16:** sessions thrash the shared cache over short horizons. Exact lookahead of 4-8 tokens recovers
+    60-95 % of the gap (FP8 6,000: 63 → 101-127 tok/s; int4: 126 → 201-254). A realistic recall-0.4-0.6 next-token
+    predictor gets only +6-9 %.
+  - **Verdict:** don't build a short-horizon in-sequence expert predictor for eviction; its realistic gain is
+    1-9 %.
+    - At batch 1, the gap OPT shows comes from reuse tens to hundreds of tokens ahead. A frequency / reuse-aware
+      policy (LFU-like, ARC) may capture part of it without any predictor. That is a cheap next simulation.
+    - At batch 16 the lever is the batch itself (expert-aware session scheduling, or sharing expert loads across
+      sessions), not prediction.
+    - int4 storage remains the dominant lever.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
