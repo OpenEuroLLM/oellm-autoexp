@@ -316,5 +316,27 @@
    "final"
   ],
   "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Final comparison: same-size original map, every fixed set at step 1100 (train vs ctrl -0.0041; held-out within +-0.003)."
+ },
+ "x_screen5fp16_s3__v4ldm_bf16": {
+  "name": "screen5fp16_s3_v4ldm_bf16",
+  "tags": [
+   "screen5fp16",
+   "s3",
+   "ldm",
+   "precision",
+   "bf16"
+  ],
+  "notes": "screen5fp16 (user 2026-11-08): FP16 vs BF16 of the v4_ldm recipe at s3 (screen5qbg ldm_pab setting + embedding norm, QB EMA 0 + global aux 1e-4, no wd on embedding / routers), 4 nodes per arm, 4000 steps, paired arms. This arm: BF16 (reference)."
+ },
+ "x_screen5fp16_s3__v4ldm_fp16": {
+  "name": "screen5fp16_s3_v4ldm_fp16",
+  "tags": [
+   "screen5fp16",
+   "s3",
+   "ldm",
+   "precision",
+   "fp16"
+  ],
+  "notes": "screen5fp16 (user 2026-11-08): FP16 vs BF16 of the v4_ldm recipe at s3 (screen5qbg ldm_pab setting + embedding norm, QB EMA 0 + global aux 1e-4, no wd on embedding / routers), 4 nodes per arm, 4000 steps, paired arms. This arm: FP16 (CuTe LDM FP16 storage cute_kernels a4e4da1, shared loss scaler, fp32 router counts; Megatron f4bd89ceb), initial loss scale 2^16."
  }
 }

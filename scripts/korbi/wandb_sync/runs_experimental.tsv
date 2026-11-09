@@ -125,3 +125,5 @@ x_engaux__eauxbase	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/eauxbase
 x_engaux__fctrl	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fctrl
 x_engaux__faux	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/faux
 x_engaux__fauxbase	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fauxbase
+x_screen5fp16_s3__v4ldm_bf16	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fp16_s3/v4ldm_bf16
+x_screen5fp16_s3__v4ldm_fp16	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fp16_s3/v4ldm_fp16
