@@ -148,6 +148,9 @@ def test_done_rows_are_left_out_and_a_ready_export_runs_no_export_job(tmp_path):
     assert not any(i.startswith("vllm/mmlu/5") for i, _ in plan.lm_items)
     assert not any(r.task == "flores200:eng_Latn-mkd_Cyrl" for u in plan.units for r in u.rows)
     assert export_job is None and all(pool["gate"] is None for pool in pools.values())
+    assert plan.view_dir == str(exp), "a ready export without a view: the plain model"
+    (tmp_path / "views/ambitious_v4_2ph_hd256_fp8_13000").mkdir(parents=True)
+    assert launch.build(spec)[1].view_dir == f"{tmp_path}/views/ambitious_v4_2ph_hd256_fp8_13000"
 
 
 def test_explicit_rows_and_unknown_names(tmp_path):

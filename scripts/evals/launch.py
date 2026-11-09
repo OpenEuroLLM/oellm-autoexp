@@ -153,7 +153,9 @@ def build(spec: EvalSpec) -> tuple[JobSpec | None, oplan.Plan, dict[str, dict]]:
     session = (oplan.SessionSettings(workers=lm.workers, split_s=lm.split_s, max_parts=lm.max_parts,
                                      engine=_engine(lm.engine), env=lm.model_code.env()) if lm.enabled else None)
     try:
-        plan = oplan.build_plan(model_name=name, model_dir=export_dir, view_dir=view_dir, out=p.out,
+        # the identity view: made by the export job, else there or not (then the plain model)
+        view = view_dir if (not ready or Path(view_dir).is_dir()) else export_dir
+        plan = oplan.build_plan(model_name=name, model_dir=export_dir, view_dir=view, out=p.out,
                                 rows=select_rows(spec), lm_eval=session, lighteval=_group(spec.lighteval),
                                 evalchemy=_group(spec.evalchemy), limit=spec.rows.limit,
                                 task_groups=[] if spec.rows.suite_file else list(spec.rows.groups.values()),
