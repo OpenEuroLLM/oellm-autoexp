@@ -6,7 +6,9 @@
 #   test (hybrid_v4_ckda_branch_test_mn5; small model, a login node is fine):
 #     scripts/korbi/production/ckda_branch_surgery.sh test
 #   production (hybrid_ambitious_v4_ckda_branch_mn5; the 84B checkpoint's .metadata: run in a job):
-#     scripts/korbi/production/ckda_branch_surgery.sh prod [arm ...]
+#     scripts/korbi/mn5_autoexp_bg.sh ckdab_surgery scripts/run_autoexp.py \
+#         --config-name experiments/korbi/hybrid_speed/kernel_tests_mn5 --yes aux.name=ckda_branch_surgery \
+#         'aux.bench="bash scripts/korbi/production/ckda_branch_surgery.sh prod"' slurm.sbatch.time=02:00:00
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SIF=${SIF:-/gpfs/projects/ehpc533/users/bsc088649/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif}
@@ -25,6 +27,8 @@ case $MODE in
     ;;
   *) echo "mode: test or prod" >&2; exit 2 ;;
 esac
+# inside a container (a job's, e.g. kernel_tests_mn5 aux.bench) python directly, else through the image
+if [ -n "${SINGULARITY_CONTAINER:-}${APPTAINER_CONTAINER:-}" ]; then PY=(python3); else PY=(singularity exec "$SIF" python3); fi
 ARMS=("$@")
 [ ${#ARMS[@]} -gt 0 ] || ARMS=(bgqa b8 cgqa d)
 ITER=iter_$(printf %07d "$IT")
@@ -46,7 +50,7 @@ for arm in "${ARMS[@]}"; do
   mkdir -p "$dst"
   rm -rf "${dst:?}/$ITER"  # a partial earlier attempt (no latest file yet)
   echo "$arm: ${args[*]} -> $dst/$ITER"
-  CUDA_VISIBLE_DEVICES= singularity exec "$SIF" python3 "$HERE/add_ckda_branch.py" apply \
+  CUDA_VISIBLE_DEVICES= "${PY[@]}" "$HERE/add_ckda_branch.py" apply \
     --src "$SRC/$ITER" --dst "$dst/$ITER" "${args[@]}"
   echo "$IT" > "$dst/latest_checkpointed_iteration.txt"
 done
