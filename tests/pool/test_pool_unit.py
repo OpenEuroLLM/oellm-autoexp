@@ -865,6 +865,29 @@ def test_successor_is_submitted_when_the_dry_run_fails(env, monkeypatch):
     assert len(env.hosts()) == 2
 
 
+def test_successor_is_held_during_a_handover(env, monkeypatch):
+    # JUPITER 2026-11-09 03:05: the handover retired the old host (still busy) before the new
+    # one had the run, so no host "trained" and the gate let a successor through at once; it
+    # started inside the new host's block and was released
+    # the old host: 2500 s old, inside its 1 h allocation, past a 2000 s block
+    calls = _gated_env(env, monkeypatch, [time.time() + 60], host_age_s=2500)
+    meta = env.layout.load_meta()
+    meta["config"].update(fallback_hosts=0, handover_min_age_s=2000)
+    env.layout.write_meta(meta)
+    env.poll(2)
+    assert len(env.hosts()) == 2, "the old host's block is over: its successor is submitted"
+    newer = env.host_up(env.hosts()[1])
+    meta["config"].update(max_own_hosts=3)
+    env.layout.write_meta(meta)
+    env.poll(2)  # handover: the old host retires, the newer one takes the run
+    assert (
+        env.layout.host_dir(env.hosts()[0].definition.metadata["pool_host_id"]) / "control" / "exit"
+    ).exists()
+    assert len(env.hosts()) == 2, "a successor inside the newer host's block must be held"
+    assert calls
+    assert newer
+
+
 def test_successor_is_submitted_once_the_block_end_is_near_whatever_the_estimate(env, monkeypatch):
     calls = _gated_env(
         env, monkeypatch, [time.time() + 60], host_age_s=3000

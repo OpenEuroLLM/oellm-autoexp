@@ -1935,6 +1935,11 @@ class PoolManager:
         if not cfg.successor_test_start or cfg.handover_min_age_s <= 0:
             return False
         run_hosts = [h for h in running if h.hid in busy]
+        if not run_hosts and busy and running:
+            # a handover: the run is leaving a retiring host (still busy) for the newest live
+            # one, whose block counts (JUPITER 2026-11-09 03:05: a successor went through
+            # here, started inside the new block and was released)
+            run_hosts = [max(running, key=lambda h: h.start_ts)]
         if not run_hosts:
             return False  # nothing trains: the run waits, submit at once
         block_end = max(h.start_ts for h in run_hosts) + cfg.handover_min_age_s
