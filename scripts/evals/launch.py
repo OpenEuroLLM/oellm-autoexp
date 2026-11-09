@@ -10,7 +10,9 @@ login node from a synced snapshot, with the autoexp environment:
 Each job's settings go into a JSON spec (<out>/<export>/launches/<id>/jobs/<job>.json, a JobSpec);
 the job runs ``bash scripts/evals/job.sh <runtime> <that file>`` -- no task name, list or setting
 passes through a shell or Hydra interpolation. The pool sweep for run_autoexp is rendered next to it
-(launch.yaml, composed against this repo's config/ via hydra.searchpath).
+(launch.yaml, composed against this repo's config/ via hydra.searchpath). manifest.json freezes what
+the launch runs: rows per job, code snapshot (SYNC_STAMP), suite hash, harness versions, the hashes of
+the stage files that score the rows and of the launch files.
 
 Rows with a done marker are left out; lm-eval rows already queued, running or failed are not
 queued again, so a relaunch adds only what is missing. --dry-run prints the plan and writes nothing.
@@ -259,6 +261,83 @@ def write_launch(spec: EvalSpec, jobs, launch_dir: Path) -> Path:
     return path
 
 
+# files of the oellm-eval stage that decide how rows are run and scored (patched or bug-prone)
+STAGE_FILES = (
+    "evalchemy/eval/task.py",
+    "evalchemy/eval/chat_benchmarks/HumanEval/human_eval/execution.py",
+    "evalchemy/eval/chat_benchmarks/HumanEval/eval_instruct.py",
+    "evalchemy/eval/chat_benchmarks/LiveCodeBench/eval_instruct.py",
+    "lighteval/metrics/metrics_corpus.py",
+    "lighteval/models/vllm/vllm_model.py",
+    "lighteval/main_vllm.py",
+)
+
+
+def _sha256(path: Path) -> str | None:
+    import hashlib
+
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _dists(d: str | None) -> list[str]:
+    """Installed distributions (name-version) of a pylibs/stage dir, or a wheel dir's wheels."""
+    if not d or not Path(d).is_dir():
+        return []
+    return sorted(p.name.removesuffix(".dist-info") for p in Path(d).glob("*.dist-info")) + \
+        sorted(p.name for p in Path(d).glob("*.whl"))
+
+
+def manifest(spec: EvalSpec, jobs, items, done, launch_dir: Path) -> dict:
+    """What this launch runs, frozen at launch time (the counterpart of oellm-eval's
+    protocol/manifest.json): the resolved rows per job, the code snapshot (SYNC_STAMP), the suite,
+    the harness versions and the stage files that score them, and the hashes of the launch files."""
+    p = spec.paths.resolved()
+    export_dir = Path(jobs[0][0].export_dir) if jobs else None
+    suite_path = REPO / spec.rows.suite_file
+    suite = yaml.safe_load(suite_path.read_text()) if suite_path.is_file() else {}
+    stamp = REPO / "SYNC_STAMP"
+    if stamp.is_file():
+        code = {"snapshot": str(REPO), "sync_stamp": stamp.read_text().splitlines()}
+    else:  # a local checkout: its commit and whether it has uncommitted changes
+        def git(*args):
+            r = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True)
+            return r.stdout.strip()
+        code = {"snapshot": str(REPO), "commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+    src = export_dir / "megatron_source.json" if export_dir else None
+    stage = Path(p.oellm_stage)
+    return {
+        "launch_id": launch_dir.name,
+        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "export": {"name": spec.export.export_name, "dir": str(export_dir) if export_dir else None,
+                   "megatron_source": json.loads(src.read_text()) if src and src.is_file() else None},
+        "suite": {"file": str(suite_path), "sha256": _sha256(suite_path),
+                  "oellm_eval_rev": suite.get("oellm_eval_rev"), "count": suite.get("count")},
+        "code": code,
+        "harnesses": {"stage": str(stage),
+                      "stage_files": {f: _sha256(stage / f) for f in STAGE_FILES},
+                      "stage_dists": _dists(str(stage)),
+                      "pylibs_oellm": _dists(p.pylibs_oellm),
+                      "pylibs_lighteval": _dists(p.pylibs_lighteval)},
+        "jobs": [{"name": job.name, "kind": job.kind, "harness": job.harness,
+                  "model": (job.export_dir if job.harness == "lighteval" else job.view_dir) if job.harness else None,
+                  "rows": [r.name for r in job.rows], "priority": pool["priority"], "time_h": pool["time_h"]}
+                 for job, pool in jobs],
+        "lm_eval_items": [name for name, _ in items],
+        "rows_done_before": [r.name for r in done],
+        "files": {str(f.relative_to(launch_dir)): _sha256(f)
+                  for f in sorted(launch_dir.rglob("*")) if f.is_file() and f.name != "manifest.json"},
+    }
+
+
+def write_manifest(spec: EvalSpec, jobs, items, done, launch_dir: Path) -> Path:
+    path = launch_dir / "manifest.json"
+    path.write_text(json.dumps(manifest(spec, jobs, items, done, launch_dir), indent=1) + "\n")
+    return path
+
+
 def print_plan(spec: EvalSpec, jobs, items, done) -> None:
     print(f"[launch] export {spec.export.export_name}: {len(done)} row(s) done already, {len(jobs)} job(s)")
     if items:
@@ -305,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     cfg = write_launch(spec, jobs, launch_dir)
     print(f"[launch] {cfg}")
+    print(f"[launch] {write_manifest(spec, jobs, items, done, launch_dir)}")
     if a.render_only:
         return 0
     if items:

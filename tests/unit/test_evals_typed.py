@@ -177,6 +177,23 @@ def test_rendered_sweep_has_only_literals_and_no_task_names(tmp_path):
     assert "flores200" not in text and "mmlu" not in text
 
 
+def test_manifest_freezes_rows_code_and_launch_files(tmp_path):
+    spec = _spec(tmp_path)
+    jobs, items, done = launch.plan(spec)
+    d = tmp_path / "launch"
+    launch.write_launch(spec, jobs, d)
+    m = json.loads(launch.write_manifest(spec, jobs, items, done, d).read_text())
+    assert m["launch_id"] == "launch" and m["suite"]["count"] == 438 and len(m["suite"]["sha256"]) == 64
+    assert [j["name"] for j in m["jobs"]] == [j.name for j, _ in jobs]
+    assert {r for j in m["jobs"] for r in j["rows"]} == {r.name for j, _ in jobs for r in j.rows}
+    assert all(j["model"] == next(x for x, _ in jobs if x.name == j["name"]).export_dir
+               for j in m["jobs"] if j["harness"] == "lighteval")
+    assert m["lm_eval_items"] == [i for i, _ in items]
+    assert "spec.json" in m["files"] and "launch.yaml" in m["files"] and "manifest.json" not in m["files"]
+    assert "sync_stamp" in m["code"] or "commit" in m["code"]
+    assert set(m["harnesses"]["stage_files"]) == set(launch.STAGE_FILES)
+
+
 def test_job_spec_roundtrip(tmp_path):
     jobs, _, _ = launch.plan(_spec(tmp_path))
     for job, _ in jobs:
