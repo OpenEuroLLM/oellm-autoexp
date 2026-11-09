@@ -354,6 +354,7 @@ def main() -> None:
     p.add_argument("--gpu-mem-gib", type=float, default=None)
     p.add_argument("--engram-tables-cpu", action="store_true")
     p.add_argument("--self-check", action="store_true", help="only the solver check (no model)")
+    p.add_argument("--no-stats", action="store_true", help="baseline loss + ablations only (no statistics pass)")
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -399,13 +400,13 @@ def main() -> None:
     State.rng = torch.Generator().manual_seed(a.seed)
     nll = {}
     for s, items in docs.items():
-        State.stats = Stats(len(ckda), H, a.seq_len, cfg.vocab_size)
+        State.stats = None if a.no_stats else Stats(len(ckda), H, a.seq_len, cfg.vocab_size)
         nll[s] = []
         for n, (j, d) in enumerate(items):
             ids = ids_of(d)
             State.ids = ids[0].cpu()  # host copy: the CKDA layers run on other GPUs than the embedding
-            State.dump = {} if n < a.dump_docs else None
-            State.verify = n == 0
+            State.dump = {} if n < a.dump_docs and not a.no_stats else None
+            State.verify = n == 0 and not a.no_stats
             t1 = time.time()
             with torch.no_grad():
                 nll[s].append(token_nll(model, ids))
@@ -415,7 +416,8 @@ def main() -> None:
                                        for m in State.dump[0]})
             print(f"[stats] {s} doc {n} ({ids.shape[1]} tok) nll {nll[s][-1].mean():.4f} "
                   f"{time.time() - t1:.1f}s solver {State.solver_s:.0f}s", flush=True)
-        State.stats.save(a.out / f"stats_{s}.npz")
+        if State.stats is not None:
+            State.stats.save(a.out / f"stats_{s}.npz")
     State.stats, State.dump, State.verify = None, None, False
     errs = [v["err"] for v in State.verify_log if v["err"] is not None]
     flips = sum((v["pairs_eigvals"] > 0) != (v["ours"][1] > 1e-9) for v in State.verify_log)
