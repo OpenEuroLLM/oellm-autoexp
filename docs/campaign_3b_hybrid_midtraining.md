@@ -1330,6 +1330,23 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   both. T9 used the production mHC-4 shape. Quality deltas (sparse attention, MTP, stay bonus, QAT) should carry
   over; production speed numbers should come from the v4 hd256 test shape.
 
+- **2026-11-09, step-5 scores, remaining arms + INT4 QAT** (same evals / probes as above; s3 = LDM residual):
+
+  | arm | val 64k | Δ | val 128k | Δ | passkey | kvret64 | train ms/step |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | page_mean_pg (one selection per KV group) | **2.3362** | **+0.021** | **2.3204** | **+0.025** | 1.00 | 0.38 | 8940 |
+  | nsa | 2.3586 | +0.043 | 2.3463 | +0.051 | 1.00 | 0.00 | 10546 |
+  | csa2 | 2.3830 | +0.068 | OOM (1 node) | | probe rerun (tail-split fix) | | 9181 |
+  | lsa (retrieval) | | | | | 1.00 | 0.25 | |
+  | lsa_fine (retrieval) | | | | | 1.00 | 0.38 | |
+
+  - **Ranking at 64k (Δ vs dense):** page_mean_pg +0.021 < page_mean / quest +0.023 < nsa +0.043 < lsa /
+    page_mean_shared +0.063 < lsa_fine +0.065 < csa2 +0.068 < window +0.118. Page selection (per KV group or per
+    head) is the family to take forward; the learned selectors (NSA, CSA2) and LSA do not pay off in 500 steps.
+  - **INT4 QAT** (expert all-gather through INT4, straight-through, 500 steps; eval with the INT4 gather, 2 nodes,
+    same samples): 2.3131 vs dense FP8 gather 2.3117 and dense INT4 PTQ 2.3140: QAT recovers ~40 % of the PTQ
+    gap (+0.0023 -> +0.0014), at +0.4 % step time.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
