@@ -1,0 +1,16 @@
+# @package _global_
+# Step-5 seed replicates: the decisive arms (dense, page_mean, NSA, CSA2) again with seed 1235 instead of 1234 (a
+# different data order from the branch point on, and different initialisations of the variants' new parameters).
+# Pairs within a seed; the spread between the seeds is the noise floor of the step-5 ranking.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t5r_s3_sparse_seed2_mn5 --yes
+defaults:
+  - t5_s3_sparse_branch_mn5
+  - _self_
+
+aux:
+  suite: t5r_s3_sparse_seed2
+  only: [dense, page_mean, nsa, csa2]
+
+backend:
+  megatron:
+    seed: 1235

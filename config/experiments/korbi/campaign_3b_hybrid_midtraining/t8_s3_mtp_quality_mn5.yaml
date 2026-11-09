@@ -1,0 +1,26 @@
+# @package _global_
+# MTP quality screen at s3 (plan item M1): does latent MTP (one CKDA layer per depth, shared LM head through the fused
+# cross entropy on every 4th position, attached: the MTP loss trains the trunk, mtp_loss_scaling_factor 0.1) make
+# more use of the data? Every arm continues the dense ctxlen4n_s3 s64k checkpoint for 2000 steps (step 1000 ->
+# 3000, ~2.1B tokens) at 64k on the same data; validation every 500 steps on the same samples (the next-token loss
+# only); save at 3000. Arms: no MTP / 3 ahead / 8 ahead.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t8_s3_mtp_quality_mn5 --yes
+defaults:
+  - t6_s3_mtp_speed_mn5
+  - _self_
+
+aux:
+  suite: t8_s3_mtp_quality
+  only: [base, k3_s4, k8_s4]
+
+backend:
+  megatron:
+    train_iters: 3000
+    exit_interval: 3000
+    eval_interval: 500
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 3000
+
+slurm:
+  sbatch:
+    time: "05:30:00"
