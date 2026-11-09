@@ -1,0 +1,57 @@
+per-step aggregates, mean over steps (spike vs calm):
+label               calm   spike
+n_docs_mean        7.424   7.417
+max_doc_len_mean    4943    4945
+max_run_mean       7.571   7.564
+uniq_frac_mean    0.1805  0.1804
+top1_frac_mean   0.07494 0.07514
+rep4_mean         0.2697    0.27
+rep16_mean       0.07604 0.07618
+n_docs_max         134.7   135.4
+max_doc_len_max     8193    8193
+max_run_max         7219    7203
+uniq_frac_max     0.4414  0.4361
+top1_frac_max     0.9704  0.9725
+rep4_max          0.9998  0.9998
+rep16_max         0.9998  0.9998
+n_run512             8.6   8.784
+n_rep16_90          39.2   41.03
+n_uniq02           992.5   984.5
+
+Spearman correlation of per-step aggregates with grad_norm (all steps):
+n_uniq02           -0.189
+uniq_frac_max      -0.166
+uniq_frac_mean     -0.070
+rep16_max          -0.058
+rep4_max           -0.058
+n_docs_mean        -0.047
+max_run_max        -0.028
+top1_frac_max      -0.026
+max_doc_len_mean   -0.008
+max_run_mean       +0.005
+n_docs_max         +0.060
+top1_frac_mean     +0.073
+rep16_mean         +0.123
+rep4_mean          +0.129
+n_run512           +0.133
+n_rep16_90         +0.192
+max_doc_len_max       NaN
+
+source share (% of samples), spike vs calm, largest differences:
+label                                                        calm  spike  diff
+source                                                                        
+flag-decon-v2-agenttok/nemotron-cc-tower+-0.1                2.76   2.91  0.15
+flag-decon-v2-agenttok/hplt-4.0                             16.98  16.85 -0.12
+v8-decon-agenttok/vtok                                       6.74   6.80  0.06
+flag-decon-v2-agenttok/finephrase-0.0.0                      3.25   3.29  0.04
+flag-decon-v2-agenttok/finepdfs-1.0.0                        0.97   0.94 -0.03
+flag-decon-v2-agenttok/nemotron-pretraining-specialized-1.0  4.25   4.23 -0.03
+v8-decon-agenttok/mv1sub                                     5.33   5.31 -0.02
+flag-decon-v2-agenttok/finemath-0.0.0                        1.06   1.03 -0.02
+flag-decon-v2-agenttok/openwebmath-0.0.0                     0.39   0.36 -0.02
+flag-decon-v2-agenttok/nemotron-cc-opus-1.1                  0.89   0.91  0.02
+v8-decon-agenttok/hftok                                     24.32  24.30 -0.02
+flag-decon-v2-agenttok/megamath-0.0.0                        8.46   8.48  0.02
+flag-decon-v2-agenttok/dochplt-3.1                           0.15   0.14 -0.01
+flag-decon-v2-agenttok/finewiki-0.0.0                        0.18   0.20  0.01
+flag-decon-v2-agenttok/common-pile-stackv2-edu-0.1           0.51   0.53  0.01
