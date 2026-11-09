@@ -237,6 +237,13 @@ def test_a_view_is_used_where_there_is_one(tmp_path):
     assert f"pretrained={job.view_dir}," in call.argv[call.argv.index("--model_args") + 1]
 
 
+def test_lighteval_never_gets_the_chat_template_view(tmp_path):
+    job = _job(tmp_path, lambda j: j.harness == "lighteval")
+    Path(job.view_dir).mkdir(parents=True)
+    call = run_job.steps_of(job, "PY")[0]
+    assert call.argv[3].startswith(f"model_name={job.export_dir},")
+
+
 def test_evalchemy_runs_one_call_per_task_and_skips_done_rows(tmp_path):
     job = _job(tmp_path, lambda j: j.harness == "evalchemy")
     done_dir = Path(job.out) / job.export_name / "evalchemy/done"

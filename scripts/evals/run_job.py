@@ -51,7 +51,9 @@ def _flag(x: bool) -> str:
 
 
 def model_dir(job: JobSpec) -> str:
-    """The identity chat-template view where there is one (evalchemy / lighteval need it)."""
+    """The identity chat-template view where there is one (evalchemy needs it). Not for lighteval,
+    as on JUPITER (oellm-eval scripts/jupiter_flag_evals.sh): lighteval applies any template it
+    finds and then drops the task's stop sequences, so FLORES ran on past the translation."""
     return job.view_dir if Path(job.view_dir).is_dir() else job.export_dir
 
 
@@ -122,7 +124,7 @@ def harness_env(job: JobSpec) -> dict[str, str]:
 
 def lighteval_steps(job: JobSpec, py: str, rows: list) -> list[Step]:
     g = job.engine
-    model_args = (f"model_name={model_dir(job)},trust_remote_code=True,dtype=bfloat16,"
+    model_args = (f"model_name={job.export_dir},trust_remote_code=True,dtype=bfloat16,"
                   f"gpu_memory_utilization={g.gpu_memory_utilization},max_num_seqs={g.max_num_seqs},"
                   f"max_num_batched_tokens={g.max_num_batched_tokens},")
     if g.max_model_length is not None:
