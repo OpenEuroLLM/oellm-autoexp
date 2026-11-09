@@ -1280,6 +1280,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     0.88-0.90. The k8 arms still OOM in the depths' forward (inside the checkpoint): ~3.7 GiB per depth is not
     the fused head; allocator traces queued (t6m).
 
+- **2026-11-09, step-5 scores (first 8 arms)** (s3 ctxlen4n s64k step 1000 + 500 steps per arm; eval on the SAME
+  validation samples, 50 batches, `t5_s3_sparse_eval_mn5`; retrieval `t5_arm_probe_mn5`, HF export, 16 items, 10-way,
+  so ±0.1 is noise; training ms/step from the arms' logs, dense 4165):
+
+  | arm | val 64k | Δ | val 128k (2x) | Δ | passkey | kvret64 | train ms/step |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | pre-branch (step 1000) | 2.4523 | | 2.4283 | | | | |
+  | dense | **2.3153** | 0 | **2.2955** | 0 | 1.00 | 0.31 | 4165 |
+  | page_mean | 2.3382 | +0.023 | 2.3246 | +0.029 | 1.00 | 0.25 | 6689 |
+  | quest | 2.3385 | +0.023 | 2.3268 | +0.031 | 1.00 | 0.06 | 6744 |
+  | lsa | 2.3781 | +0.063 | 2.3633 | +0.068 | | | 9010 |
+  | lsa_fine | 2.3803 | +0.065 | 2.3682 | +0.073 | | | 9064 |
+  | page_mean_shared | 2.3784 | +0.063 | 2.3680 | +0.073 | | | 6123 |
+  | window | 2.4335 | +0.118 | 2.4151 | +0.120 | 0.40 | 0.00 | 6031 |
+
+  - Page selection (page_mean / quest) is the best sparse family so far: +0.023 at 64k, +0.03 at 128k, retrieval
+    intact (passkey 1.0). Sharing one selection across layers (page_mean_shared) costs 3x more; LSA is at the
+    shared level, the finer buckets do not help.
+  - No arm extrapolates better than dense to 128k (every Δ grows by 0.005-0.01).
+  - At s3 every sparse arm trained slower than dense (6.0-9.1 vs 4.2 s); on the v4 production shape (T9) page
+    selection is +2-3 %. Pending: nsa, csa2, page_mean_pg, and the probes of lsa / lsa_fine / page_mean_shared.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
