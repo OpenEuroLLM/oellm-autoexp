@@ -715,6 +715,12 @@ class MegatronConfig(ConfigInterface):
     # parallelism).
     page_sparse_share_source: int = 0
 
+    # Page selectors under flex: one FlexAttention call for every document of a packed batch
+    # (spans laid out on page boundaries) instead of one call per document. 3090 Ti, 26
+    # documents in 32k: 1.8-2.2x faster at head dim 64, slower for page_mean at 128 -- off
+    # until measured on H100.
+    page_sparse_packed_flex: bool = False
+
     # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
     page_sparse_hier_group: int = 0
 

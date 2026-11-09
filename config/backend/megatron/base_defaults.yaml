@@ -842,6 +842,7 @@ page_sparse_lsa_pool: 4  # lsa: tokens per pooled key.
 page_sparse_nsa_block: 32  # nsa: compression block (tokens); page_sparse_page is the selection block.
 page_sparse_nsa_select_window: 64  # nsa: local tokens (whole pages) of the selection branch; page_sparse_window is the window branch.
 page_sparse_nsa_stride: 16  # nsa: compression stride.
+page_sparse_packed_flex: false  # Page selectors under flex: one FlexAttention call for every document of a packed batch (spans laid out on page boundaries) instead of one call per document. 3090 Ti, 26 documents in 32k: 1.8-2.2x faster at head dim 64, slower for page_mean at 128 -- off until measured on H100.
 page_sparse_page: 64  # Page size (tokens) of page_sparse_selector.
 page_sparse_per_group: false  # One page selection per KV group (from that group's query heads and keys) instead of one for all heads.
 page_sparse_select_block: 1  # Selection granularity: 1 = per query; B = one selection per block of B queries (the block's first query selects, the rest reuse it; V4.1's Reuse). Flex then attends just the budget per block (page_sparse_flex_q_block = B or a divisor).

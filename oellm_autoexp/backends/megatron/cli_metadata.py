@@ -6778,6 +6778,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_packed_flex": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Page selectors under flex: one FlexAttention call for every document of a packed batch (spans laid out on page boundaries) instead of one call per document. 3090 Ti, 26 documents in 32k: 1.8-2.2x faster at head dim 64, slower for page_mean at 128 -- off until measured on H100.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "page_sparse_page": MegatronArgMetadata(
         arg_type=int,
         default=64,
@@ -14597,6 +14605,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=16,
+    ),
+    "page_sparse_packed_flex": MegatronActionSpec(
+        option_strings=("--page-sparse-packed-flex",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "page_sparse_page": MegatronActionSpec(
         option_strings=("--page-sparse-page",),
