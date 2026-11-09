@@ -46,3 +46,11 @@ sweep:
           backend.megatron.diag_norm_gains: true
           backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight/diagw19/ckpt
           backend.megatron.save_interval: 19
+        - aux.arm: diagw19b   # rerun after 166f570c2 (every hybrid sublayer + hidden Engram tables mapped)
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+          backend.megatron.diag_weight_stats: true
+          backend.megatron.diag_norm_gains: true
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight/diagw19b/ckpt
+          backend.megatron.save_interval: 19
