@@ -1,0 +1,44 @@
+# @package _global_
+# Routing locality at s3 (64k): moe_router_stay_bonus (a selection-only bonus, in logit units under quantile
+# balancing, on the experts the previous token selects without it) at 0.1 / 0.3 / 1.0 against none -- step time
+# (the training speed cost: a second QB top-k, the balance under stickier routing), moe/stay_rate (the expert reuse
+# an offload cache sees; logged by every arm) and the loss over 100 steps. Every arm continues the dense
+# ctxlen4n_s3 s64k checkpoint (step 1000) on the step-5 schedule (train_iters 1500); no save, no validation.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t10_s3_router_stay_mn5 --yes
+defaults:
+  - t5_s3_sparse_branch_mn5
+  - _self_
+
+aux:
+  suite: t10_s3_router_stay
+  arm: base
+
+backend:
+  megatron:
+    page_sparse_selector: null
+    moe_router_log_stay_rate: true
+    exit_interval: 1100
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    log_interval: 1
+
+slurm:
+  sbatch:
+    time: "00:50:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: stay01
+          backend.megatron.moe_router_stay_bonus: 0.1
+        - aux.arm: stay03
+          backend.megatron.moe_router_stay_bonus: 0.3
+        - aux.arm: stay10
+          backend.megatron.moe_router_stay_bonus: 1.0
