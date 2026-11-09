@@ -223,9 +223,11 @@ def test_lighteval_group_command_matches_the_shell_runner(tmp_path):
                               "gpu_memory_utilization=0.9,max_num_seqs=64,max_num_batched_tokens=32768,"
                               "max_model_length=32768,tensor_parallel_size=4",
                               ",".join(f"{r.task}|{r.n_shot}" for r in rows)]
-    assert call.argv[-1].endswith(f"/lighteval/lighteval_{key}")
+    out = call.argv[call.argv.index("--output-dir") + 1]
+    assert out.endswith(f"/lighteval/lighteval_{key}")
+    assert "--save-details" in call.argv  # per-sample details for later inspection
     assert call.env["OELLM_GRAPH_MAX_ROWS"] == "64" and call.env["OELLM_VLLM_ENFORCE_EAGER"] == "0"
-    assert done.check and done.argv[done.argv.index("--results") + 1] == call.argv[-1]
+    assert done.check and done.argv[done.argv.index("--results") + 1] == out
 
 
 def test_a_view_is_used_where_there_is_one(tmp_path):

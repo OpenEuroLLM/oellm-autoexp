@@ -130,8 +130,10 @@ def lighteval_steps(job: JobSpec, py: str, rows: list) -> list[Step]:
     model_args += f"tensor_parallel_size={g.tp}"
     tasks = ",".join(f"{r.task}|{r.n_shot}" for r in rows)
     out = results_root(job) / "lighteval" / f"lighteval_{group_key(job)}"
+    # --save-details: per-sample parquet under <out>/details (lm-eval writes samples_*.jsonl, evalchemy
+    # keeps its examples in the results json); without it a bad score cannot be inspected afterwards
     argv = [py, str(REPO / "scripts/korbi/flag_eval/lighteval_vllm_cli.py"), "vllm", model_args, tasks,
-            "--load-tasks-multilingual", "--output-dir", str(out)]
+            "--load-tasks-multilingual", "--output-dir", str(out), "--save-details"]
     if job.limit:
         argv += ["--max-samples", str(job.limit)]
     return [Step(argv, harness_env(job))]
