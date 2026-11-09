@@ -24,6 +24,7 @@ def main() -> int:
     ap.add_argument("tb")
     ap.add_argument("--megatron", default=None, help="Megatron-LM checkout to import diagnostics.py from")
     ap.add_argument("--rtol", type=float, default=1e-4)
+    ap.add_argument("--layers", default=None, help="comma-separated layers to check (default: all; a subset keeps the load small)")
     a = ap.parse_args()
     if a.megatron:
         sys.path.insert(0, a.megatron)
@@ -42,6 +43,14 @@ def main() -> int:
         for k, v in md.state_dict_metadata.items()
         if k.startswith("model.") and hasattr(v, "size") and "_extra_state" not in k
     ]
+    if a.layers:
+        want = {int(x) for x in a.layers.split(",")}
+
+        def keep(k):
+            m = re.search(r"decoder\.layers\.(\d+)\.", k)
+            return (int(m.group(1)) in want) if m else ("final_norm" in k or "final_layernorm" in k)
+
+        keys = [k for k in keys if keep(k)]
     sd = {k: torch.empty(md.state_dict_metadata[k].size, dtype=md.state_dict_metadata[k].properties.dtype) for k in keys}
     dcp.load(sd, storage_reader=reader, no_dist=True)
 
