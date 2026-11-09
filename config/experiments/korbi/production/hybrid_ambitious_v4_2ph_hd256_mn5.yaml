@@ -23,6 +23,8 @@ aux:
   arm: ambitious_e360_eng80_v4_2ph_hd256
 
 backend:
+  env:
+    MEGATRON_DIAG_WEIGHT_EVERY: "10"
   megatron:
     kv_channels: 256
     # a missing / unwidened checkpoint must be fatal, never a silent fresh start or a partial load
@@ -40,6 +42,13 @@ backend:
     diagnostics_interval: 1
     diag_layer_grad_norms: true
     diag_clip_events: true
+    # per-layer weight stats (router / experts / shared / attention / CKDA / Engram families + "all":
+    # min / max / mean / std / rms / norm, row-norm max / mean / ratio) and norm gains, correct under
+    # Megatron-FSDP since Megatron 706c88c9e / 166f570c2 (offline full-tensor check of the 2-node test,
+    # hybrid_v4_diagweight_test_mn5); every 10th step (MEGATRON_DIAG_WEIGHT_EVERY below): at every
+    # step they cost +6 % at 2 nodes.
+    diag_weight_stats: true
+    diag_norm_gains: true
 
 job:
   name: ambitious_v4_2ph_hd256_256n_p${aux.phase}
