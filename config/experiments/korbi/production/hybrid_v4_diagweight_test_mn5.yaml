@@ -3,9 +3,11 @@
 # on the v4 hd256 production stack (hybrid_v4_diaggrad_test_mn5: 8 experts, Engram 1/16, gbs 64, fresh
 # init, 20 steps), same batches in both arms:
 #   diaggrad  per-layer grad norms + clip events only (the main run's current diagnostics: cost baseline)
-#   diagw     + diag_weight_stats + diag_norm_gains at every step, persistent save at step 20: the logged
-#             diag/weight/* and diag/gain/* at step 20 must equal the same statistics of the checkpoint's
-#             FULL tensors (read offline with dcp), MIN / MAX exactly.
+#   diagw     + diag_weight_stats + diag_norm_gains at every step (cost / no-crash), save at 20
+#   diagw19   the same, save at 19: the diag/weight/* and diag/gain/* LOGGED AT ITERATION 20 are collected
+#             before step 20's optimizer update, i.e. on the weights after 19 updates = checkpoint
+#             iter_0000019; they must equal the same statistics of its FULL tensors (dcp, offline),
+#             MIN / MAX exactly.
 #   PYTHONPATH=. scripts/korbi/mn5_autoexp_bg.sh v4dw scripts/run_autoexp.py --yes \
 #       --config-name experiments/korbi/production/hybrid_v4_diagweight_test_mn5
 defaults:
@@ -36,3 +38,11 @@ sweep:
           backend.megatron.diag_norm_gains: true
           backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight/diagw/ckpt
           backend.megatron.save_interval: 20
+        - aux.arm: diagw19
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+          backend.megatron.diag_weight_stats: true
+          backend.megatron.diag_norm_gains: true
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight/diagw19/ckpt
+          backend.megatron.save_interval: 19
