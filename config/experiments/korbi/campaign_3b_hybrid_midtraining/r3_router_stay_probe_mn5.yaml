@@ -1,0 +1,20 @@
+# @package _global_
+# R3 (routing locality, moe_router_stay_bonus) on the frozen v4_2ph hd256 export (step 21000), one MN5 node:
+# the NLL cost, stay rate and batch-1 window-cache misses of a selection-only stay bonus, parallel (Megatron's
+# training rule) vs sequential (hysteresis), beta 0.01-1.0 in selection-score units
+# (router_probe.py --stages r3). Into pool p264:
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/r3_router_stay_probe_mn5 --yes
+defaults:
+  - r0_r2_router_probe_mn5
+  - _self_
+
+aux:
+  name: r3_v4_2ph_hd256_21000
+  export: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_hd256_fp8_21000
+  args: "--stages r3 --seq-len 2048 --rows 16 --r3-batches 2"
+
+job:
+  metadata:
+    pool_priority: 80

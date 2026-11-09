@@ -29,6 +29,12 @@ R2  skip policy. The forward runs with an available-expert set per token and lay
     available set (sub). Reported: the NLL change vs the unmodified routing, the miss rate (assignments, gate
     weight) and the available-set size. Effects propagate through the layers, as they would at inference.
 
+R3  routing locality (moe_router_stay_bonus). The selection gets a bonus beta (selection-score units) on the
+    experts of the previous token: "par" = the previous token's plain top-k (Megatron's training rule, parallel),
+    "hyst" = the previous token's FINAL selection (sequential, what decode can do directly). The gate weights
+    stay the router's. Reported: the NLL change, the stay rate (share of a token's experts the previous token
+    used too) and the miss rate of a batch-1 window cache holding the experts of the last w tokens (w = 1, 4, 16).
+
     python router_probe.py --model <export> --stages r0,r2 --out <dir> \\
         --data web_en=<prefix>,code=<prefix>,...,long_64k=<prefix> [--long long_64k]
     python router_probe.py --tiny --stages r0,r2 --out /tmp/x        # local check: reduced random model
@@ -868,6 +874,99 @@ def run_r2(model, probe, args, out: Path, preds):
     (out / "r2_summary.md").write_text("\n".join(lines))
 
 
+# --------------------------------------------------------------------------- R3
+R3_BETAS = (0.01, 0.03, 0.1, 0.3, 1.0)
+
+
+def stay_policy(mode, beta):
+    """The routing with a stay bonus: mode "par" (bonus on the previous token's plain top-k) or "hyst" (on its final
+    selection, sequential over positions). Records stay / window-cache statistics of the final selection."""
+
+    def policy(probe, m, moe, x, logits, idx):
+        b, s, e = logits.shape
+        k = moe.top_k
+        sel = selection_score(moe, logits)
+        if mode == "par":
+            nidx = (sel + beta * shift(onehot(idx, e))).topk(k, dim=-1).indices
+        else:
+            nidx = torch.empty_like(idx)
+            nidx[:, 0] = idx[:, 0]
+            prev = onehot(idx[:, 0], e)
+            for t in range(1, s):
+                cur = (sel[:, t] + beta * prev).topk(k, dim=-1).indices
+                nidx[:, t] = cur
+                prev = onehot(cur, e)
+        window_stats(probe.stats, nidx, e)
+        return nidx, gate_weights(moe, logits.reshape(-1, e), nidx.reshape(-1, k)).view(b, s, k)
+
+    return policy
+
+
+def window_stats(st, idx, e):
+    """stay = share of a token's experts in the previous token's; miss<w> = share outside the last w tokens'."""
+    oh = onehot(idx, e, torch.int32)
+    cum = torch.cumsum(oh, dim=1)
+    s = idx.shape[1]
+    n = float(idx[:, 1:].numel())
+    for w in (1, 4, 16):
+        prev = torch.zeros_like(cum)
+        prev[:, 1:] = cum[:, :-1]
+        old = torch.zeros_like(cum)
+        if w + 1 <= s:
+            old[:, w + 1 :] = cum[:, : -w - 1]
+        hit = ((prev - old) > 0).gather(-1, idx)[:, 1:]
+        st[f"miss{w}"] += float((~hit).sum())
+    st["assign"] += n
+
+
+def run_r3(model, probe, args, out: Path):
+    first_dev = next(model.parameters()).device
+    data = {dom: list(it)[: args.r3_batches] for dom, it in domain_iters(args.data, args, "tail").items()}
+    results = {}
+    t0 = time.time()
+    specs = [("full", None)] + [(f"{mode}_b{beta:g}", (mode, beta)) for mode in ("par", "hyst") for beta in R3_BETAS]
+    for dom, bl in data.items():
+        if not bl:
+            continue
+        for name, spec in specs:
+            probe.policy = stay_policy(*spec) if spec else stay_policy("par", 0.0)
+            probe.record = False
+            probe.stats = defaultdict(float)
+            tot = n = 0.0
+            for ids in bl:
+                probe.clear()
+                a, c = nll(model, ids, first_dev)
+                tot += a
+                n += c
+            st = probe.stats
+            r = {"nll": tot / n, "tokens": n, "spec": spec}
+            for w in (1, 4, 16):
+                r[f"miss{w}"] = st[f"miss{w}"] / max(st["assign"], 1)
+            r["stay"] = 1 - r["miss1"]
+            results[f"{dom}|{name}"] = r
+            print(f"[r3] {dom} {name}: nll {r['nll']:.5f} stay {r['stay']:.3f} miss4 {r['miss4']:.3f} "
+                  f"miss16 {r['miss16']:.3f} {time.time() - t0:.0f}s", flush=True)
+            (out / "r3_results.json").write_text(json.dumps(results, indent=1))
+    probe.policy = None
+    probe.record = True
+    lines = ["# R3 routing locality (stay bonus beta in selection-score units; par = bonus on the previous token's "
+             "plain top-k as in training, hyst = on its final selection; miss<w> = share of assignments outside "
+             "the last w tokens' experts, batch 1)", ""]
+    for dom in data:
+        base = results.get(f"{dom}|full")
+        if base is None:
+            continue
+        lines += [f"## {dom} (full NLL {base['nll']:.4f}, stay {base['stay']:.3f})", "",
+                  "| policy | ΔNLL | stay | miss1 | miss4 | miss16 |", "|---|---:|---:|---:|---:|---:|"]
+        for key, r in results.items():
+            d, name = key.split("|")
+            if d == dom:
+                lines.append(f"| {name} | {r['nll'] - base['nll']:+.4f} | {r['stay']:.3f} | {r['miss1']:.3f} | "
+                             f"{r['miss4']:.3f} | {r['miss16']:.3f} |")
+        lines.append("")
+    (out / "r3_summary.md").write_text("\n".join(lines))
+
+
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -900,6 +999,7 @@ def main():
     p.add_argument(
         "--r2-batches", type=int, default=3, help="R2 batches per domain (disjoint documents)"
     )
+    p.add_argument("--r3-batches", type=int, default=2, help="R3 batches per domain")
     p.add_argument("--predictors", type=Path, help="R2 without R0: predictors.pt of an R0 run")
     p.add_argument("--bos", type=int, default=1)
     args = p.parse_args()
@@ -923,6 +1023,8 @@ def main():
             preds[(kind, int(m))] = mod
     if "r2" in stages:
         run_r2(model, probe, args, args.out, preds)
+    if "r3" in stages:
+        run_r3(model, probe, args, args.out)
     print(f"[probe] done in {time.time() - t0:.0f}s", flush=True)
 
 
