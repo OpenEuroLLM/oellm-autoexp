@@ -249,6 +249,9 @@ class AttentionPolicy:
         prev = None if fresh else self.index_keys.get(zkey)
         z = z if prev is None else torch.cat([prev, z], 1)
         self.index_keys[zkey] = z
+        # a tail split: the first part sees the whole chunk's keys but only its own features -- the keys past it
+        # are causally masked for its queries anyway
+        k, v = k[:, :, : z.shape[1]], v[:, :, : z.shape[1]]
         if self.train_csa2:  # the warm-up: dense output, the indexer learns the dense mass per entry
             with torch.enable_grad():
                 loss = mod.indexer_loss(q.float(), k.float(), x.float(), z, past, scale)
