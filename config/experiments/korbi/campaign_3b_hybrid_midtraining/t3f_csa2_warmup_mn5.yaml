@@ -1,0 +1,17 @@
+# @package _global_
+# T3f: can CSA2's selector be retrofitted onto v4 by distillation (as DeepSeek's DSA / the LSA paper's D-LSA)? Frozen
+# v4; CSA2 with mean compression (4 tokens per entry, the best 512 entries + 512-token window + 1 sink page); its
+# lightning indexer trained on 64 held-out 64k documents by KL to the dense attention mass per entry (the model
+# frozen), then NLL and 16-question retrieval at 64k on the T3d questions (dense 0.69 / page_mean 0.13 / oracle 0.75
+# kvret64 there). One MN5 node on the dev queue:
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t3f_csa2_warmup_mn5 aux.dev_queue=true --yes
+defaults:
+  - t3_sparse_variants_mn5
+  - _self_
+
+aux:
+  name: t3f_csa2_warmup_v4_2ph_8000
+  policies: "csa2:compress=4,topk_entries=512,window=512"
+  lengths: "65536"
+  args: "--tasks nll,retrieval --n 16 --nll-docs 4 --chunk 16384 --parity 0 --train-csa2 64 --indexer-len 65536"
