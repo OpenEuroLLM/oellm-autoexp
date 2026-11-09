@@ -14,6 +14,9 @@
 #   b8      attention 16q / 8kv (the B arm), gamma_scale 10, 1100 -> 1150
 #   cgqa    attention 16q / 2kv on all six positions (C-gqa), gamma_scale 10, 1100 -> 1150
 #   d       KronLSTM (normalized v; b_proj = c_proj = complex_kda's b_proj), gamma_scale 10, 1100 -> 1300
+#   bgqa_xf / d_xf  the production schedule (user 2026-11-09): linear crossfade, weights adding up to 1,
+#           alpha 1 -> 0 over 150 steps, branch weight (1 - alpha)(1 + gamma), 1100 -> 1300 (from the same
+#           surgery checkpoints: gamma 0 = weight 1)
 # Checks: step 1101 loss = ref's (gamma = 0: the model is unchanged), the [ckda_branch] lines (gamma moves,
 # rms of both mixers), no NaN through the hand-over, bgqa_r loads strictly and continues bgqa's losses.
 #
@@ -99,6 +102,28 @@ sweep:
           backend.megatron.ckda_branch_gamma_scale: 10.0
           # complex_kda's gates: beta = 2 sigmoid(b) (linear_fla_allow_neg_eigval, as linear_beta_max 2), no
           # erase bias, write in [0, 2] (no unit_write) so c = beta is the delta rule; low-rank output gate
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
+        - aux.arm: bgqa_xf
+          backend.megatron.load: ${aux.test_root}/bgqa_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+        - aux.arm: d_xf
+          backend.megatron.load: ${aux.test_root}/d_src/ckpt
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
           backend.megatron.linear_kronlstm_output_gate: lowrank
           backend.megatron.linear_kronlstm_normalize_v: true
           backend.megatron.linear_kronlstm_target_gate: true

@@ -57,3 +57,8 @@ def test_folded_layer_is_an_attention_layer():
     assert out[hp + "mixer.q_proj.weight"].shape == (HEADS * D, HID)
     assert out[hp + "mixer.k_proj.weight"].shape == (GROUPS * D, HID)
     assert not any("layer." in k for k in out if k.startswith(hp + "mixer."))
+    # crossfade: the weight is 1 + scale * gamma (scale 10 here: 1.7)
+    out = {}
+    convert_layer(1, dict(src), cfg, _m(ckda_branch_crossfade=True, _ckpt_iteration=300), out.__setitem__,
+                  torch.float32, torch.float32, "bf16")
+    assert torch.allclose(out[hp + "mixer.o_proj.weight"], src[p + "self_attention.branch.linear_proj.weight"] * 1.7)

@@ -1003,6 +1003,12 @@ class MegatronConfig(ConfigInterface):
     # m falls linearly from ``ckda_branch_m_start`` to 1 over this many steps.
     ckda_branch_m_ramp: int = 200
 
+    # Crossfade instead of the additive gamma: ``out = alpha(t) * ckda + (1 - alpha(t)) * (1 +
+    # scale * gamma) * branch`` -- the two weights add up to 1 (gamma, 0 at insertion, a
+    # learnt correction of the branch's scale; m unused). The hand-over completes on the alpha
+    # schedule whatever gamma learns.
+    ckda_branch_crossfade: bool = False
+
     # The layer uses ``ckda_branch_gamma_scale * gamma`` (gamma the parameter): Adam moves
     # gamma by about lr per step whatever its gradient's size, so this sets how fast the
     # branch's share of the layer can grow (1: lr per step, 8.5e-4 in the main run, ~0.2 over

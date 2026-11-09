@@ -8,17 +8,20 @@
 #   b8    the same with 8 KV groups (complex_kda's 16 K / V heads merged in pairs: no GQA pooling)
 #   cgqa  16q / 2kv at all six positions, layers 9, 25, 41, 58, 74, 90 (3:1 everywhere)
 #   d     KronLSTM (normalized v; complex_kda's projections, convolution, gates) at layers 9, 25, 41
-# Per layer out = alpha(t) ckda + m(t) gamma_scale gamma branch, gamma = 0 at 23300 (the model is unchanged),
-# alpha 1 for 25 steps then -> 0 at 23500, m 4 -> 1 over 200 steps, main lr, no warmup
-# (megatron/core/ssm/ckda_branch.py). At alpha = 0 the attention arms are standard attention layers.
+# Per layer a linear crossfade (user 2026-11-09), the weights adding up to 1:
+#   out = alpha(t) ckda + (1 - alpha(t)) (1 + gamma) branch,  alpha 1 -> 0 over 23300 -> 23450,
+# gamma (0 at insertion, Adam) a learnt correction of the branch's scale; the model is unchanged at 23300,
+# the branch alone from 23450 (50 steps), main lr, no warmup (megatron/core/ssm/ckda_branch.py,
+# ckda_branch_crossfade). Readouts: 23400 (2/3 branch), 23500 (branch only). At alpha = 0 the attention
+# arms are standard attention layers (the HF export folds them).
 #
 # Before a launch (none without the user's go):
 #   1. the checkpoints: scripts/korbi/production/ckda_branch_surgery.sh prod  (in a job: the 84B .metadata)
 #      -> /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/<arm>_src/ckpt/iter_0023300 (hard links)
-#   2. hybrid_v4_ckda_branch_test_mn5 passed (exact start, strict resume, the gamma speed: aux.gamma_scale)
-# Disk: saves are model only (no_save_optim, ~0.34 TB each; the eval / HF export load without optimizer),
-# 23400 and 23500 per arm: ~2.7 TB for the four (scratch had 6.9 TB free on 2026-11-09). Full saves
-# (1.1 TB) only for an arm to be continued: backend.megatron.no_save_optim=false.
+#   2. hybrid_v4_ckda_branch_test_mn5 passed (exact start, strict resume, crossfade arms bgqa_xf / d_xf)
+# Disk: full saves (1.1 TB, with optimizer: an arm can be continued) at 23400 and 23500, ~8.8 TB for the
+# four (user 2026-11-09: checkpoints move to /gpfs/projects, scratch is freed); model only for less:
+# backend.megatron.no_save_optim=true (~0.34 TB, enough for the eval / HF export).
 # Cost per arm at 64 nodes: ~62 s/step x 200 + load / node check ~0.6 h: ~4 h, ~1.0k GPU-h (4k for four;
 # at 128 nodes about the same GPU-h in half the time per arm). Memory at 64 nodes: main run 0.84 at 128n,
 # the size64 sweep fit 89B-A2.9B-E80B at cap 0.80 with ~1.4 GiB free: check the first arm's mem usages.
@@ -43,9 +46,6 @@ aux:
   stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
   branch_root: ${aux.main_root}/production/ckda_branch
   start: 23300
-  # the scaled gamma the layer uses moves ~gamma_scale x lr per step (Adam); 10 lets the branch carry
-  # the layer by the end of the hand-over (at 1 its share reaches only ~0.2-0.4 by 23500); see the test
-  gamma_scale: 10.0
 
 backend:
   megatron:
@@ -53,17 +53,16 @@ backend:
     load: ${aux.branch_root}/${aux.arm}_src/ckpt
     save: ${job.base_output_dir}/ckpt
     save_interval: 100
-    no_save_optim: true
+    no_save_optim: false
     save_retain_interval: null
     non_persistent_save_interval: null
     exit_interval: 23500
     ckda_branch_start_iteration: ${aux.start}
-    ckda_branch_alpha_hold: 25
-    ckda_branch_alpha_ramp: 175
+    ckda_branch_crossfade: true
+    ckda_branch_alpha_hold: 0
+    ckda_branch_alpha_ramp: 150
     ckda_branch_alpha_end: 0.0
-    ckda_branch_m_start: 4.0
-    ckda_branch_m_ramp: 200
-    ckda_branch_gamma_scale: ${aux.gamma_scale}
+    ckda_branch_gamma_scale: 1.0
     ckda_branch_log_interval: 5
 
 job:

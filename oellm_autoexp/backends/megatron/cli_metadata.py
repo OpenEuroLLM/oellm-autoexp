@@ -770,6 +770,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "ckda_branch_crossfade": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Crossfade instead of the additive gamma: ``out = alpha(t) * ckda + (1 - alpha(t)) * (1 + scale * gamma) * branch`` -- the two weights add up to 1 (gamma, 0 at insertion, a learnt correction of the branch's scale; m unused). The hand-over completes on the alpha schedule whatever gamma learns.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "ckda_branch_gamma_scale": MegatronArgMetadata(
         arg_type=float,
         default=1.0,
@@ -9655,6 +9663,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=175,
+    ),
+    "ckda_branch_crossfade": MegatronActionSpec(
+        option_strings=("--ckda-branch-crossfade",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "ckda_branch_gamma_scale": MegatronActionSpec(
         option_strings=("--ckda-branch-gamma-scale",),

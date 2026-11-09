@@ -112,8 +112,9 @@ def _balancing(m: dict) -> str:
 def branch_fold(m: dict) -> tuple[set[int], float]:
     """A ckda_branch run (megatron/core/ssm/ckda_branch.py) past its hand-over: the decoder layers whose
     complex_kda mixer is weighted 0 (alpha_end 0) and whose attention branch is the mixer, and the
-    factor m * gamma_scale on the branch's output (times the layer's gamma). Those layers export as
-    standard attention layers. ``m["_ckpt_iteration"]``: the checkpoint's iteration."""
+    factor on gamma: the branch's output is scaled by factor * gamma (additive) or 1 + factor * gamma
+    (ckda_branch_crossfade). Those layers export as standard attention layers.
+    ``m["_ckpt_iteration"]``: the checkpoint's iteration."""
     if not m.get("ckda_branch"):
         return set(), 1.0
     if m["ckda_branch"] != "attention":
@@ -134,6 +135,8 @@ def branch_fold(m: dict) -> tuple[set[int], float]:
     t = it - start
     m0, mramp = float(m.get("ckda_branch_m_start", 4.0)), int(m.get("ckda_branch_m_ramp", 200))
     mult = 1.0 if mramp <= 0 or t >= mramp else m0 + (1.0 - m0) * t / mramp
+    if m.get("ckda_branch_crossfade"):
+        mult = 1.0  # the branch's weight 1 - alpha_end = 1, times (1 + scale * gamma)
     return set(int(i) for i in m.get("ckda_branch_layers") or []), mult * float(m.get("ckda_branch_gamma_scale", 1.0))
 
 
@@ -324,13 +327,14 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     folded, scale = branch_fold(m)
     if kind == "attention" and i in folded:
         # a ckda_branch layer past its hand-over: the branch is the mixer (complex_kda weighted 0), its
-        # input norm the layer's, m * gamma_scale * gamma folded into the output projection
+        # input norm the layer's, the branch's output weight folded into the output projection
         b = "self_attention.branch."
         q, z, kk, v = _split_attention(g(b + "linear_qkv.weight"), cfg)
         for n, w in (("q_proj", q), ("gate_proj", z), ("k_proj", kk), ("v_proj", v)):
             add(hp + f"mixer.{n}.weight", w.to(cast))
         gamma = float(g("self_attention.branch_mix.gamma").float().reshape(-1)[0])
-        add(hp + "mixer.o_proj.weight", (g(b + "linear_proj.weight").float() * (scale * gamma)).to(cast))
+        weight = 1.0 + scale * gamma if m.get("ckda_branch_crossfade") else scale * gamma
+        add(hp + "mixer.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
         add(hp + "mixer.k_norm.weight", g(b + "k_layernorm.weight").to(cast))
         add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
