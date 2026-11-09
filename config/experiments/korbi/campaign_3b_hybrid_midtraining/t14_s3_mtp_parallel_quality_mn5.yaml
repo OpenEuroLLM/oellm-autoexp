@@ -1,0 +1,40 @@
+# @package _global_
+# Parallel latent MTP quality (mtp_parallel: one CKDA layer, output k = final_norm(t + P_k t)) on t8's schedule
+# (ctxlen4n_s3 s64k step 1000 -> 3000, validation every 500 steps on the same samples): 3 / 8 offsets at loss stride 4
+# against t8_s3_mtp_quality/base (no MTP) and t8b_s3_mtp_quality/k3_s4, k8_s4 (depth latent MTP, plain-residual
+# depths on this LDM model). s3 = LDM residual (the main run is mHC-4).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t14_s3_mtp_parallel_quality_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t8_s3_mtp_quality_mn5
+  - _self_
+
+aux:
+  suite: t14_s3_mtp_parallel_quality
+  only: []
+
+job:
+  metadata:
+    pool_priority: 80
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: par_k3_s4
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_parallel: true
+          backend.megatron.mtp_loss_stride: 4
+          backend.megatron.mtp_detach_heads: false
+        - aux.arm: par_k8_s4
+          backend.megatron.hybrid_layer_pattern: "*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_parallel: true
+          backend.megatron.mtp_loss_stride: 4
+          backend.megatron.mtp_detach_heads: false

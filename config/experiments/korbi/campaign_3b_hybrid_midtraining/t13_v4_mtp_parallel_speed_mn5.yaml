@@ -1,0 +1,54 @@
+# @package _global_
+# Parallel latent MTP (mtp_parallel, Megatron 5d22d5598: ONE CKDA layer on the decoder's hidden state, output k =
+# final_norm(t + P_k t) per offset, shared head) against depth latent MTP (one CKDA layer per depth, sequential) on
+# the production shape and residual (t12's v4 64k mHC-4 test shape, 2 nodes, 8 routed experts, fresh init),
+# 3 / 8 offsets at loss stride 4 (+ 8 at stride 8), all arms in one launch, 30 steps; step time and memory.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t13_v4_mtp_parallel_speed_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t12_v4_mtp_speed_mn5
+  - _self_
+
+aux:
+  suite: t13_v4_mtp_parallel_speed
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/t13_v4_mtp_parallel_speed
+
+job:
+  name: t13_v4_mtp_par_${aux.arm}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: dep_k3_s4
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+        - aux.arm: dep_k8_s4
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+        - aux.arm: par_k3_s4
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_parallel: true
+          backend.megatron.mtp_loss_stride: 4
+        - aux.arm: par_k8_s4
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_parallel: true
+          backend.megatron.mtp_loss_stride: 4
+        - aux.arm: par_k8_s8
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_parallel: true
+          backend.megatron.mtp_loss_stride: 8
