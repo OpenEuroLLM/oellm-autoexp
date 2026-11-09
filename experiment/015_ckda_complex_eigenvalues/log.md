@@ -59,7 +59,8 @@ and ablations run; in-situ check 36 steps, 0 disagreements, max error 1e-15.
 
 | export | pool run | status |
 |---|---|---|
-| ambitious_v4_2ph_hd256_fp8_21000 | p264.0155 (enqueued 2026-11-09 17:50) | pending |
+| ambitious_v4_2ph_hd256_fp8_21000 | p264.0155 (17:50, snapshot autoexp_ckdaspec) | FAILED 18:03: index_add_ across cuda:0 / cuda:1 (position bins on the embedding's GPU; fixed 9aeda1ae; the model loaded in 60 s, self-check passed on H100) |
+| ambitious_v4_2ph_hd256_fp8_21000 | job _249bad (18:10, snapshot autoexp_ckdaspec2) | pending |
 
 ## Results
 
