@@ -476,7 +476,9 @@ def apply(a) -> int:
                 raise SystemExit(f"{key} already exists: the source has a branch already")
             replace[key] = t.to(_like_dtype(smd, layer, rel, t)).contiguous()
         print(f"layer {layer}: {len(new)} new tensors", flush=True)
-    write_surgery(a.src, a.dst, md, replace, tag="ckda_branch")
+    # every key is new: 64 MB chunks (the fallback, the source's median chunk, is tiny for small models and
+    # split one test run's tensors into 86k chunks)
+    write_surgery(a.src, a.dst, md, replace, tag="ckda_branch", chunk_bytes=64 << 20)
     # read back
     back = {k: torch.empty_like(v) for k, v in replace.items()}
     dcp.load(back, storage_reader=FileSystemReader(a.dst), no_dist=True)
