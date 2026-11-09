@@ -3817,3 +3817,52 @@ v3 is ahead on every set except long_64k, where it is still in its 4k phase whil
 - The pool monitor renders a run's step script, and it resolved the relative `templates/marenostrum.sbatch` against its OWN snapshot (`autoexp_capture2`), so runs got another snapshot's template.
 - `template_path` is now absolute at render time (`${oc.env:PWD}`).
 - `render_step_script` resolves a relative path against the job's workdir.
+
+### The v4_2ph main run, 11-05 – 11-09: z-loss + spectral cap, head dim 256, 256 nodes, diagnostics
+
+Run `ambitious_v4_2ph` (84B-A2.9B-E80B, mHC-4, 8k → 64k at step 23,691). Since 11-05 it is owned by the
+"Current edits review (2)" session. All steps resume the same data order (cyclic sampler, reference
+layout `data_sampler_reference_dp_size 512`, so node-count changes keep the order).
+
+**Lineage** (run dir `production/main_mhc4/ambitious_e360_eng80_v4_2ph` up to 9814, then `…_v4_2ph_hd256`):
+
+| from step | change | run (pool) | snapshot = autoexp + Megatron |
+|---|---|---|---|
+| 9790 | output z-loss 1e-5 (Liger kernel) + routed-expert spectral cap ramp 80 → 15 from step 9200, measured in the experts' forward every 20 steps | p134c.0009, 128n | `autoexp_v4fc`: 52047856 + 3d8071635 |
+| 9815 | attention head dim 128 → 256: checkpoint 9814 widened function-preserving (eps 1e-3), `widen_attention_head_dim.py` | p134c.0015, 128n | `autoexp_v4hd256`: c4b0a89f + 3d8071635 |
+| 12360 | key re-seed of the new channels (q_new·k_new had no first-order gradient: new k shrank to 1e-4) | p134c.0074, 128n | `autoexp_v4hd256` |
+| 18579 | 128 → 256 nodes (p264 host002); restarted at 18601 after excluding a flapping-IB node | p264.0019 → p264.0022 | `autoexp_v4hd256` |
+| 22305 | per-layer grad norms every step + clip events | p264.0133, 256n | `autoexp_v4hd256diag`: c4b0a89f + `diagnostics.py` of Megatron b05851989 (3d8071635 + fb06ef75b) + config c1ffa876 |
+| 23691 | phase 2 (64k): + Engram-table remainder, fixed layer map, per-layer weight stats + norm gains every 10th step | p264 `…_256n_p2` | planned: `diagnostics.py` of 2f2f16d4b + config 14239794 |
+
+- The run's Megatron line is branch `oellm/v4main-diag` = 3d8071635 + diagnostics commits only, not the 20+ unrelated commits on `oellm/v0.19-hybrid` since then. A snapshot made from another snapshot plus single committed files records them in its `SYNC_STAMP`.
+- Effects, all within noise at the switch: 9815 loss 1.220 vs 1.221 (head dim), 12360 1.18–1.20 vs 1.18–1.20 (re-seed). Step time at 8k: +1 % (head dim 256), diagnostics +0.6 %. At 256n: 14.9 s/step (14.6 s on 11-04 at head dim 128).
+- Every 1k checkpoint is kept from 15000 to 30000 via `scripts/korbi/eval_marks/marks.tsv` (1.1 TB each; the user moves older ones to /gpfs/projects).
+
+**256-node slowdown (11-08):** 15.75 s base steps with 24–32 s spikes (average ~20 s vs 14.6 s).
+- The cause: as07r2b24's IB port `mlx5_1:1` flapped every 2–4 min. The log showed 360 NCCL `NET/IB … async event: client reregistration / port active` warnings, all from that node. It was already suspect on 11-03 but never in `mn5_exclude_nodes.txt`; it is there now.
+- A thorough node check on all 263 nodes did not flag it (intermittent). The FSDP groups ran at 24.3–24.4 GB/s and the ring median at 12.46 GB/s, lowest 0.83×. So for a slow multi-node run, grep the log for NCCL IB async events per node first.
+- 37 of 263 nodes had one GPU below 0.80× matmul (worst 0.60×, rack-correlated). The 6 worst were excluded, keeping 1 spare. The slow GPUs cost little: the run uses ~83 TFLOP/s per GPU.
+- After the restart: 14.91 s/step, no IB events.
+
+**Diagnostics under Megatron-FSDP** (all in `megatron/training/diagnostics.py`):
+- fb06ef75b (session -2f): grad norms count the local DTensor shards; before, FSDP parameters were divided by the DP world size.
+- 66dedc96f + 18facc5e5 (-2f): Engram tables are reported as the remainder `diag/grad_norm/engram_tables` = sqrt(grad-norm² − total_check²). Their row gradients arrive only inside `optimizer.step()`; at 256n `total_check` read 0.64–0.93 × grad-norm without this.
+- 706c88c9e: weight stats and norm gains read the local shards and reduce over the world / HSDP factor. Before, they described one shard. Weight stats now cover every family, from router and experts to CKDA and Engram, plus "all" per layer: norm / mean / std / min / max and the row-norm max / ratio. `MEGATRON_DIAG_WEIGHT_EVERY=N` thins them.
+- 166f570c2: the per-layer map covers every hybrid sublayer and the hidden Engram tables. Before, only TransformerLayers were mapped, so Engram parameters landed in "other".
+- Validation:
+  - `tests/unit_tests/test_diagnostics_weight_stats.py` (2 gloo ranks, DTensor shards);
+  - the 2-node harness `hybrid_v4_diagweight_test_mn5` with the offline full-tensor check `scripts/korbi/production/check_diag_weight_stats.py`: 76 values exact before the layer-map fix.
+- Cost at 2n with weight stats on every step: +6 %, hence every 10th step in production.
+- First findings (-2f, 22305–22319):
+  - between spikes, the last sublayers dominate (L97 ~0.15);
+  - the spikes come from the FRONT: layer 0 (first attention) 0.88 and layer 1 (first MoE, the max_vio layer) 0.20 at the 1.03 spike;
+  - the Engram tables spike on their own (0.09–0.39).
+
+**Operations lessons:**
+- A new arm dir needs the phase gate marker `<base>/v3speed_p1_ok`, or the p1 job never starts.
+- NODE_CHECK exclusion rounds are counted per run dir, so a new dir on the same host excludes again; p134c host001 ended at exactly 128 usable nodes.
+- A restart in a pool: re-enqueue at high priority (1000) right after the stop, or small queued runs backfill the freed nodes (a 4-node t5 run took the batch node at 22304; preempted).
+- Held hosts: the monitor no longer scancels a held host for a stale heartbeat, on `pool_ctl close` or on an unnamed drain. Queued SLURM jobs are not edited automatically (`refresh_queued_excludes`, default off; autoexp 49b9f66f).
+- `git worktree` of the Megatron submodule inherits the shared `core.worktree`: git then treats the git dir as the work tree, and a cherry-pick writes files into `.git/modules/…`. Commit Megatron work from an independent clone (`pushurl` = git@github.com:…).
+- Restart cost and checkpoint load: see `docs/checkpoint_load_analysis.md`.
