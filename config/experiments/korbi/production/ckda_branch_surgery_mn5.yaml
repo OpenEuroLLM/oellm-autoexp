@@ -21,8 +21,14 @@ aux:
   tests: ""
   bench: ""
 
+  # bgqa_mm's per-layer gamma (crossfade: rms_ckda / rms_branch - 1, from the [ckda_branch] lines at insertion);
+  # test mode: bgqa_xf's iter 1100 (layer 9 2.928, 25 2.038, 41 1.846)
+  gamma_init_bgqa: "9:1.928,25:1.038,41:0.846"
+
 backend:
   command: bash scripts/korbi/production/ckda_branch_surgery.sh ${aux.mode} ${aux.arms}
+  env:
+    GAMMA_INIT_BGQA: ${aux.gamma_init_bgqa}
 
 job:
   name: ckda_branch_surgery_${aux.mode}

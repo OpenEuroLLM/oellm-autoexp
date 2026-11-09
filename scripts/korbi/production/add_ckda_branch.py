@@ -201,9 +201,21 @@ def kronlstm_branch(src: dict, *, b_bias: bool = False) -> dict:
     return out
 
 
-def _gamma():
-    return {"branch_mix.gamma": torch.zeros(1), "branch_mix.gamma.exp_avg": torch.zeros(1),
+def _gamma(value: float = 0.0):
+    return {"branch_mix.gamma": torch.full((1,), float(value)), "branch_mix.gamma.exp_avg": torch.zeros(1),
             "branch_mix.gamma.exp_avg_sq": torch.zeros(1)}
+
+
+def gamma_init(spec: str | None, layer: int) -> float:
+    """``--gamma-init``: one value for every layer, or ``layer:value,...`` (layers not listed: 0). Under
+    ckda_branch_crossfade the branch's weight is (1 - alpha)(1 + gamma): ratio - 1 starts the branch at the
+    complex_kda mixer's output RMS (the measured rms_ckda / rms_branch), -1 at weight 0 (the drop control)."""
+    if not spec:
+        return 0.0
+    if ":" not in spec:
+        return float(spec)
+    table = {int(k): float(v) for k, v in (x.split(":") for x in spec.split(","))}
+    return table.get(layer, 0.0)
 
 
 def _key(layer: int, rel: str) -> str:
@@ -325,6 +337,8 @@ def selftest() -> int:
     assert torch.equal(kr["branch.layer.o_proj.weight.m_u"], src["layer.o_proj.weight.m_u"])
     assert torch.equal(kr["branch.layer.c_proj.weight"], src["layer.b_proj.weight"])
     assert "branch.layer.b_proj.bias" not in kr and kronlstm_branch(src, b_bias=True)["branch.layer.b_proj.bias"].abs().sum() == 0
+    assert gamma_init(None, 9) == 0.0 and gamma_init("-1", 25) == -1.0
+    assert gamma_init("9:1.5,25:0.5", 25) == 0.5 and gamma_init("9:1.5", 41) == 0.0
     # keys
     assert _key(9, "branch.linear_qkv.weight.m_u") == OPT.format(l=9, n="branch.linear_qkv.weight", s="m_u")
     assert _key(9, "branch_mix.gamma") == MODEL.format(l=9, n="branch_mix.gamma")
@@ -468,6 +482,7 @@ def derive(a, md=None) -> dict:
     replace = {}
     for layer in layers:
         src = {rel: want[_key(layer, rel)].float() for rel in _src_names(a.branch)}
+        g0 = gamma_init(getattr(a, "gamma_init", None), layer)
         if a.branch == "attention":
             d = smd[_key(ATTN_LAYERS[0], "q_layernorm.weight")].size[0]
             heads = smd[_key(ATTN_LAYERS[0], "linear_proj.weight")].size[1] // d
@@ -479,6 +494,8 @@ def derive(a, md=None) -> dict:
             new = attention_branch(src, gains, heads=heads, d=d, groups=a.groups, eps=a.eps, gen=gen)
         else:
             new = kronlstm_branch(src, b_bias=a.b_bias)
+        if g0:
+            new["branch_mix.gamma"] = torch.full((1,), g0)
         for rel, t in new.items():
             key = _key(layer, rel)
             if key in smd:
@@ -601,6 +618,9 @@ def main(argv=None) -> int:
     p.add_argument("--eps", type=float, default=1e-3, help="relative norm of the new (noise) rows")
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--b-bias", action="store_true", help="kronlstm: an erase-gate bias at 0 (neg_eigval_init_bias on)")
+    p.add_argument("--gamma-init", default=None,
+                   help="branch_mix.gamma at insertion: a value, or layer:value,... (crossfade: ratio - 1 matches "
+                        "the complex_kda output RMS, -1 = weight 0)")
     a = ap.parse_args(argv)
     return {"selftest": selftest, "gpucheck": gpucheck, "verify": lambda: verify(a)}.get(a.cmd, lambda: apply(a))()
 

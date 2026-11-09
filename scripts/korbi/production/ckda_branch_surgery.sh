@@ -37,6 +37,10 @@ for arm in "${ARMS[@]}"; do
     b8)   args=(--branch attention --groups 8 --layers 9,25,41) ;;
     cgqa) args=(--branch attention --groups 2 --layers 9,25,41,58,74,90) ;;
     d)    args=(--branch kronlstm --layers 9,25,41) ;;
+    # attention, magnitude-matched start: GAMMA_INIT_BGQA = layer:(rms_ckda / rms_branch - 1),... (measured)
+    bgqa_mm) args=(--branch attention --groups 2 --layers 9,25,41 --gamma-init "${GAMMA_INIT_BGQA:?layer:value,...}") ;;
+    # the drop control: an attention branch at weight 0 (crossfade 1 + gamma = 0): complex_kda just fades out
+    drop) args=(--branch attention --groups 2 --layers 9,25,41 --gamma-init -1) ;;
     *) echo "unknown arm $arm" >&2; exit 2 ;;
   esac
   dst=$ROOT/${arm}_src/ckpt
