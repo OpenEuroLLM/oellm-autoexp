@@ -17,17 +17,15 @@
 #   bgqa_xf / d_xf  the production schedule (user 2026-11-09): linear crossfade, weights adding up to 1,
 #           alpha 1 -> 0 over 150 steps, branch weight (1 - alpha)(1 + gamma), 1100 -> 1300 (from the same
 #           surgery checkpoints: gamma 0 = weight 1); bgqa_xf saves at 1200 for bgqa_r
-#   On p264 host003 (user 2026-11-09: experiments there, not acc_debug), side by side:
-#     ... --no-monitor --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
-#         "aux.only=[bgqa_xf,d_xf]" slurm.sbatch.account=cns144 +job.metadata.pool_use_excluded_nodes=false \
-#         job.concurrency_group=null job.max_active=null
+#   On p264 host003 (user 2026-11-09: experiments there, not acc_debug), side by side.
 # Checks: step 1101 loss = ref's (gamma = 0: the model is unchanged), the [ckda_branch] lines (gamma moves,
 # rms of both mixers), no NaN through the hand-over, bgqa_r loads strictly and continues bgqa's losses.
 #
-# Surgery first (login node, see scripts/korbi/production/ckda_branch_test_prep.sh): fctrl/ckpt/iter_0001100
-#   -> $test_root/{bgqa,b8,cgqa,d}_src/ckpt/iter_0001100 (hard links + the new tensors).
+# Surgery first (ckda_branch_surgery_mn5 aux.mode=test, 1 node on host003): fctrl/ckpt/iter_0001100
+#   -> $test_root/{bgqa,b8,cgqa,d}_src/ckpt/iter_0001100 (hard links + the new tensors + manifest).
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
-#       --config-name experiments/korbi/production/hybrid_v4_ckda_branch_test_mn5 --yes aux.only=[ref,bgqa,...]
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/hybrid_v4_ckda_branch_test_mn5 --yes "aux.only=[bgqa_xf,d_xf]"
 defaults:
   - hybrid_v4_hd256_test_mn5
   - _self_
@@ -56,13 +54,19 @@ backend:
 job:
   name: ckda_branch_${aux.arm}
   est_step_time_s: 3.5
-  concurrency_group: acc_debug
-  max_active: 1
+  concurrency_group: null
+  max_active: null
+  metadata:
+    pool_priority: 60
+    # not on excluded nodes: p264 host003 lists its shrink-removed nodes there
+    pool_use_excluded_nodes: false
 
+# into the p264 pool (host003; user 2026-11-09: experiments there, not acc_debug)
 slurm:
   sbatch:
     time: "01:00:00"
-    qos: acc_debug
+    account: cns144
+    qos: acc_xehpc
 
 sweep:
   groups:
