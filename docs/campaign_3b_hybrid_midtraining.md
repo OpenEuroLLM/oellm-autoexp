@@ -1339,10 +1339,14 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   | csa2 | 2.3830 | +0.068 | OOM (1 node) | | 1.00 | 0.19 | 9181 |
   | lsa (retrieval) | | | | | 1.00 | 0.25 | |
   | lsa_fine (retrieval) | | | | | 1.00 | 0.38 | |
+  | page_mean_shared (retrieval) | | | | | **0.07** | **0.00** | |
 
   - **Ranking at 64k (Δ vs dense):** page_mean_pg +0.021 < page_mean / quest +0.023 < nsa +0.043 < lsa /
     page_mean_shared +0.063 < lsa_fine +0.065 < csa2 +0.068 < window +0.118. Page selection (per KV group or per
     head) is the family to take forward; the learned selectors (NSA, CSA2) and LSA do not pay off in 500 steps.
+  - **One selection shared across layers (page_mean_shared) loses retrieval** (passkey 0.07 vs 1.00 for every
+    per-layer selector): ruled out, beyond its +0.063 loss.
+  - Cluster tests of the MTP / stay-bonus / Liger changes: 13 passed (mtp_router_tests_mn5, midt10g).
   - **INT4 QAT** (expert all-gather through INT4, straight-through, 500 steps; eval with the INT4 gather, 2 nodes,
     same samples): 2.3131 vs dense FP8 gather 2.3117 and dense INT4 PTQ 2.3140: QAT recovers ~40 % of the PTQ
     gap (+0.0023 -> +0.0014), at +0.4 % step time.
