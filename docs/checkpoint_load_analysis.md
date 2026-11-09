@@ -127,3 +127,24 @@ first-of-snapshot slowdown; unpickle time under 4-rank contention on a compute n
   2 and 3 ranks, each rank reading only the chunks overlapping its rows.
 - **Test** (`hybrid_v4_loadfix_test_mn5`, p264 host003): fix 3 on the diagw19b checkpoint (iterations 21 / 22 must
   equal p264.0141), and chunked vs flat reseed-k surgeries resumed on 2 and 4 nodes (equal losses; read time).
+
+**Results** (11-09 18:40, p264 host003, all rc 0):
+
+| arm | runs | args load | rerun-check metadata | plan + read + barrier | load total | it 21 lm loss / grad norm | it 22 lm loss / grad norm |
+|---|---|---|---|---|---|---|---|
+| old code, diagw19b (p264.0141) | 2n | 0.6 s | 0.5–0.6 s | 24.4 s | 29.5 s | 7.579112 / 15.084 | 7.572591 / 14.143 |
+| fix3_2n, diagw19b | 2n | 0.3 s | 0.0–0.1 s | 22.1 s | 26.2 s | 7.579112 / 15.084 | 7.572466 / 14.181 |
+| reseedf_2n (flat surgery) | 2n | 0.2 s | 0.0–0.1 s | 22.4 s | 26.3 s | 7.578366 / 16.123 | 7.567427 / 15.028 |
+| reseedc_2n (chunked surgery) | 2n | 0.7 s | 0.0 s | 7.8 s | 11.4 s | 7.578312 / 16.138 | 7.568077 / 15.038 |
+| reseedf_4n | 4n | 0.3 s | 0.0–0.1 s | 7.1 s | 12.4 s | 7.595811 / 16.165 | 7.556228 / 14.244 |
+| reseedc_4n | 4n | 0.3 s | 0.0 s | 6.9 s | 11.8 s | 7.596046 / 16.203 | 7.553594 / 14.197 |
+
+- Fix 3 loads the same state: iteration 21 is bitwise equal to the old code. Iteration 22 differs at ~1e-5 relative,
+  which is run-to-run noise after one update. The second and third metadata reads are gone (0.6 s → ≤0.1 s here; at
+  256 nodes each read is an ~11 s unpickle).
+- The chunked and flat surgeries wrote bitwise-identical tensors (108 rewritten keys, offline compare). Their losses
+  differ by the same ~1e-4 run-to-run noise.
+- Read time at 2–4 nodes shows no clean chunked-vs-flat difference: 4n 6.9 vs 7.1 s; the 2n gap of 7.8 vs 22.4 s
+  most likely reflects the GPFS cache, since reseedc ran after reseedf on the same hard-linked files. The flat layout
+  reads ~1.3 GB of rewritten tensors per rank whatever the rank count (1024 ranks ≈ 1.3 TB from one file); the
+  chunked layout reads ~1/N of it, as the selftest asserts. The gain only shows at scale.
