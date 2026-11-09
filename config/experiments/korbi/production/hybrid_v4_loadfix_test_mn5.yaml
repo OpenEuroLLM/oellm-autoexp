@@ -1,0 +1,41 @@
+# @package _global_
+# Checkpoint-load fixes 3 + 4 (docs/checkpoint_load_analysis.md), pool runs on p264 host003 (user 2026-11-09),
+# every arm resumes read-only with MEGATRON_DEBUG_LOAD_TIMING, trains 2 steps, exits without saving:
+#   fix3_2n      the diagw19b test checkpoint with the per-process .metadata cache (Megatron oellm/v4main-diag
+#                after 802955429): args_rank0_dcp_load / rerun_check_read_metadata ~0 s, and iterations 21 / 22
+#                equal the old-code resume p264.0141 (lm loss, grad norm)
+#   reseedc_2n   a reseed-k surgery of diagw19b written in row chunks (dcp_surgery.py)
+#   reseedf_2n   the same surgery written the old way (one chunk per rewritten tensor): losses == reseedc_2n
+#   reseedc_4n / reseedf_4n   the two on 4 nodes (16 ranks, mbs 4): read_data of the flat one reads every
+#                rewritten tensor whole on every rank, the chunked one ~its own rows
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state --pool <p264> --yes \
+#       --config-name experiments/korbi/production/hybrid_v4_loadfix_test_mn5
+defaults:
+  - hybrid_v4_loadtiming_test_mn5
+  - _self_
+
+aux:
+  suite: v4_loadfix_test
+  arm: fix3_2n
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4loadfix
+
+job:
+  name: v4_loadfix_${aux.arm}
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: fix3_2n
+        - aux.arm: reseedc_2n
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4loadfix/ckpt_reseedc
+        - aux.arm: reseedf_2n
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4loadfix/ckpt_reseedf
+        - aux.arm: reseedc_4n
+          aux.nodes: 4
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4loadfix/ckpt_reseedc
+        - aux.arm: reseedf_4n
+          aux.nodes: 4
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4loadfix/ckpt_reseedf

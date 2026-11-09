@@ -22,8 +22,9 @@ Per attention layer (fused linear_qkv rows per query group: [q heads | gate head
   coefficient) change only at O(eps^2).
 
 The checkpoint is not copied tensor by tensor: the new tree hard-links every .distcp file of the source
-(written once, never modified), adds one file with the rewritten tensors (and the args with kv_channels
-256) and a merged .metadata whose entries for those keys point to it.
+(written once, never modified), adds a few files with the rewritten tensors (and the args with kv_channels
+256), stored in row chunks of the source's chunk size (dcp_surgery.py), and a merged .metadata whose
+entries for those keys point to them.
 
     # test the transform against a reference attention forward (CPU, any torch)
     python widen_attention_head_dim.py selftest
@@ -37,11 +38,9 @@ The checkpoint is not copied tensor by tensor: the new tree hard-links every .di
 from __future__ import annotations
 
 import argparse
-import copy
 import io
 import math
 import os
-import pickle
 import sys
 import time
 
@@ -296,7 +295,7 @@ def read_bytes_item(src, md, fqn):
 
 def apply(a):
     import torch.distributed.checkpoint as dcp
-    from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
+    from torch.distributed.checkpoint import FileSystemReader
 
     t0 = time.time()
     log = lambda *x: print(f"[{time.time() - t0:7.1f}s]", *x, flush=True)  # noqa: E731
@@ -337,44 +336,13 @@ def apply(a):
     args.kv_channels = a.d_new
     new_sd["args"] = args
 
-    os.makedirs(a.dst, exist_ok=False)
-    tmp = os.path.join(a.dst, ".widen_tmp")
-    dcp.save(new_sd, storage_writer=FileSystemWriter(tmp), no_dist=True)
-    small = FileSystemReader(tmp).read_metadata()
-    log("wrote the widened tensors")
+    # the rewritten items in row chunks like the source's (dcp_surgery): a resuming rank reads only
+    # the chunks of its own shard, not every full tensor (the 11-05 widening's 23 min load)
+    from dcp_surgery import write_surgery
 
-    # merged metadata: the replaced keys point to the new file
+    tag = "widen" if a.cmd == "apply" else "reseedk"
+    out = write_surgery(a.src, a.dst, md, new_sd, tag=f"{tag}{a.d_new}", log=log)
     replaced = set(new_sd)
-    out = copy.copy(md)
-    out.state_dict_metadata = dict(smd)
-    for k in replaced:
-        out.state_dict_metadata[k] = small.state_dict_metadata[k]
-    files = {}
-    storage = {k: v for k, v in md.storage_data.items() if k.fqn not in replaced}
-    for k, v in small.storage_data.items():
-        # a name no source file has (a re-seed links the widened checkpoint's widen256_* file)
-        tag = "widen" if a.cmd == "apply" else "reseedk"
-        if v.relative_path not in files:
-            i = len(files)
-            while os.path.exists(os.path.join(a.src, f"{tag}{a.d_new}_{i}{v.relative_path}")):
-                i += 1
-            files[v.relative_path] = f"{tag}{a.d_new}_{i}{v.relative_path}"
-        name = files[v.relative_path]
-        storage[k] = copy.copy(v)
-        storage[k].relative_path = name
-    out.storage_data = storage
-    for old, name in files.items():
-        os.rename(os.path.join(tmp, old), os.path.join(a.dst, name))
-    os.remove(os.path.join(tmp, ".metadata"))
-    os.rmdir(tmp)
-    n_link = 0
-    for f in os.listdir(a.src):
-        if f.endswith(".distcp"):
-            os.link(os.path.join(a.src, f), os.path.join(a.dst, f))
-            n_link += 1
-    with open(os.path.join(a.dst, ".metadata"), "wb") as f:
-        pickle.dump(out, f)
-    log(f"done: {n_link} hard links, {len(files)} new file(s), {len(replaced)} keys replaced")
 
     # check: the merged metadata reads back the new shapes / values
     chk = {k: torch.empty(out.state_dict_metadata[k].size) for k in list(replaced - {"args"})[:4]}

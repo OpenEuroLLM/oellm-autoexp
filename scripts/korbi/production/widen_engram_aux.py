@@ -26,11 +26,9 @@ else in a job (the production tables add ~160 GB):
 from __future__ import annotations
 
 import argparse
-import copy
 import io
 import math
 import os
-import pickle
 import re
 import sys
 import time
@@ -99,8 +97,7 @@ def main():
     a = ap.parse_args()
 
     import torch.distributed.checkpoint as dcp
-    from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
-    from torch.distributed.checkpoint.metadata import ChunkStorageMetadata, MetadataIndex
+    from torch.distributed.checkpoint import FileSystemReader
 
     t0 = time.time()
     log = lambda *x: print(f"[{time.time() - t0:7.1f}s]", *x, flush=True)  # noqa: E731
@@ -158,57 +155,11 @@ def main():
     # the stored args stay as they are (not read: unpickling them imports Megatron, which initializes
     # CUDA, and that hangs on a login node whose driver check times out); loading never uses them
 
-    os.makedirs(a.dst, exist_ok=False)
-    tmp = os.path.join(a.dst, ".engaux_tmp")
-    dcp.save({**full, **{f"__rows__.{k}": v for k, v in rows.items()}}, storage_writer=FileSystemWriter(tmp), no_dist=True)
-    small = FileSystemReader(tmp).read_metadata()
-    log(f"wrote {len(full)} rewritten keys + {len(rows)} appended row chunks")
+    # rewritten keys and appended rows in row chunks like the source's (dcp_surgery): a resuming rank
+    # reads only the chunks of its own rows
+    from dcp_surgery import write_surgery
 
-    out = copy.copy(md)
-    out.state_dict_metadata = dict(smd)
-    storage = {k: v for k, v in md.storage_data.items() if k.fqn not in full}
-    files = {}
-
-    def target_name(rel):
-        if rel not in files:
-            i = len(files)
-            while os.path.exists(os.path.join(a.src, f"engaux_{i}{rel}")):
-                i += 1
-            files[rel] = f"engaux_{i}{rel}"
-        return files[rel]
-
-    for k in full:  # replaced whole
-        out.state_dict_metadata[k] = small.state_dict_metadata[k]
-    for k, v in small.storage_data.items():
-        if k.fqn in full:
-            storage[k] = copy.copy(v)
-            storage[k].relative_path = target_name(v.relative_path)
-    for k in rows:  # old chunks + one appended chunk at row r_main
-        old = smd[k]
-        new_size = torch.Size((r_main + r_aux,) + tuple(old.size[1:]))
-        chunk_off = torch.Size((r_main,) + (0,) * (len(old.size) - 1))
-        chunk = ChunkStorageMetadata(offsets=chunk_off, sizes=torch.Size((r_aux,) + tuple(old.size[1:])))
-        meta = copy.copy(old)
-        meta.size = new_size
-        meta.chunks = list(old.chunks) + [chunk]
-        out.state_dict_metadata[k] = meta
-        (src_idx, src_info), = [(i, v) for i, v in small.storage_data.items() if i.fqn == f"__rows__.{k}"]
-        info = copy.copy(src_info)
-        info.relative_path = target_name(src_info.relative_path)
-        storage[MetadataIndex(fqn=k, offset=chunk_off, index=len(old.chunks))] = info
-    out.storage_data = storage
-    for old, name in files.items():
-        os.rename(os.path.join(tmp, old), os.path.join(a.dst, name))
-    os.remove(os.path.join(tmp, ".metadata"))
-    os.rmdir(tmp)
-    n_link = 0
-    for f in os.listdir(a.src):
-        if f.endswith(".distcp"):
-            os.link(os.path.join(a.src, f), os.path.join(a.dst, f))
-            n_link += 1
-    with open(os.path.join(a.dst, ".metadata"), "wb") as f:
-        pickle.dump(out, f)
-    log(f"done: {n_link} hard links, {len(files)} new file(s), {len(full)} keys rewritten, {len(rows)} keys extended")
+    out = write_surgery(a.src, a.dst, md, full, rows, tag="engaux", log=log)
 
     # read-back: a rewritten projection, and the boundary rows of one table + its moments
     chk = FileSystemReader(a.dst)
