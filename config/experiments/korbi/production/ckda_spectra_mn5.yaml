@@ -1,0 +1,46 @@
+# @package _global_
+# CKDA transition spectra (complex / negative eigenvalues per layer, head, position, token, domain) of a
+# v4_2ph HF export on the v8ml fixed validation sets, plus loss ablations of the signed / complex part
+# (experiment/015_ckda_complex_eigenvalues/scripts/ckda_spectra.py). One node, read-only on the export.
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/ckda_spectra_mn5 aux.export=ambitious_v4_2ph_hd256_fp8_21000 --yes
+defaults:
+  - hf_export_mn5
+  - _self_
+
+aux:
+  export: ambitious_v4_2ph_hd256_fp8_21000
+  exports_root: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  valid_dir: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid
+  out_root: ${aux.main_root_analysis}/ckda_spectra
+  main_root_analysis: /gpfs/scratch/ehpc533/hybrid_nucleus/analysis
+  docs_per_set: 16
+  seq_len: 8192
+  extra: ""
+  name: ckda_spectra_${aux.export}
+  bench: >-
+    python experiment/015_ckda_complex_eigenvalues/scripts/ckda_spectra.py
+    --model-dir ${aux.exports_root}/${aux.export} --valid-dir ${aux.valid_dir}
+    --docs-per-set ${aux.docs_per_set} --seq-len ${aux.seq_len} --gpu-mem-gib 54 --engram-tables-cpu
+    --out ${aux.out_root}/${aux.export} ${aux.extra}
+
+backend:
+  env:
+    # batch 1 per document: no micro-batch pipelining; the export's code as shipped (no refresh)
+    OELLM_HF_PIPELINE: "0"
+    OELLM_HF_REFRESH_CODE: "0"
+
+job:
+  name: ${aux.name}
+  base_output_dir: ${aux.out_root}/logs/${aux.name}
+  est_step_time_s: 5400
+  metadata:
+    # one node; no interconnect needed (excluded slow-GPU nodes are fine)
+    pool_priority: 60
+    pool_use_excluded_nodes: true
+
+slurm:
+  sbatch:
+    time: "04:00:00"
