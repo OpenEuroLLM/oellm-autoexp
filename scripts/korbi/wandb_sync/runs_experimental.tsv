@@ -115,3 +115,13 @@ x_ambresid__mhc4_pab_seed2	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambr
 x_ambresid__ldm_pab_seed2	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/ambresid/ldm_pab_seed2
 x_screen5qbg_s3__ldm_pab_bgaux	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5qbg_s3/ldm_pab_bgaux
 x_screen5qbg_s3__ldm_pab_qbgaux	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5qbg_s3/ldm_pab_qbgaux
+# head-dim-256 key re-seed test (2026-11-06; hybrid_v4_hd256_test_mn5, 1/16-scale production stack, 8 nodes)
+x_hd256rk__c500	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/c500
+x_hd256rk__w256rk	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/w256rk
+# Engram auxiliary lookups A/B (2026-11-07; from w256rk step 800 on a multilingual mix)
+x_engaux__ectrl	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/ectrl
+x_engaux__eaux	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/eaux
+x_engaux__eauxbase	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/eauxbase
+x_engaux__fctrl	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fctrl
+x_engaux__faux	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/faux
+x_engaux__fauxbase	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fauxbase

@@ -245,5 +245,76 @@
    "opt81"
   ],
   "notes": "Ambitious v4 LDM (last LDM try, next to v4): LDM (address width 128), embedding RMSNorm (front stream at rms ~1), QB EMA 0 + global_aux_loss 1e-4, pab, no weight decay on the embedding / routers, arch metrics every 50 steps, 8k -> 64k curriculum; option8_1 data mix (opt81) from step 0 on, resumed in place (user 2026-11-02)."
+ },
+ "x_hd256rk__c500": {
+  "name": "hd256rk_c500_base128",
+  "tags": [
+   "hd256_test",
+   "base"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Head dim 128, continued from step 30 to 500 (the base of the key re-seed test)."
+ },
+ "x_hd256rk__w256rk": {
+  "name": "hd256rk_w256rk",
+  "tags": [
+   "hd256_test",
+   "hd256",
+   "reseed_k"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. c500 step 500 widened to head dim 256 and the new key channels re-seeded (k_new = orthogonal mix of k_old), 500 -> 800: q_new grew 1e-3 -> ~0.01."
+ },
+ "x_engaux__ectrl": {
+  "name": "engaux_ectrl",
+  "tags": [
+   "engram_aux",
+   "control",
+   "eval_every_100"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Control (no extension); evaluations every 100 steps (timed out ~1190)."
+ },
+ "x_engaux__eaux": {
+  "name": "engaux_eaux_accent",
+  "tags": [
+   "engram_aux",
+   "accent_map",
+   "eval_every_100"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Extension over the accent-preserving map (engram_token_map_256k_keepaccents); evaluations every 100 steps."
+ },
+ "x_engaux__eauxbase": {
+  "name": "engaux_eauxbase_basemap",
+  "tags": [
+   "engram_aux",
+   "base_map",
+   "eval_every_100"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Same-size ablation: extension over the ORIGINAL (accent-stripping) map; evaluations every 100 steps."
+ },
+ "x_engaux__fctrl": {
+  "name": "engaux_final_ctrl",
+  "tags": [
+   "engram_aux",
+   "control",
+   "final"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Final comparison: control, every fixed set at step 1100."
+ },
+ "x_engaux__faux": {
+  "name": "engaux_final_accent",
+  "tags": [
+   "engram_aux",
+   "accent_map",
+   "final"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Final comparison: accent-preserving map, every fixed set at step 1100 (train vs ctrl -0.0049; held-out within +-0.003)."
+ },
+ "x_engaux__fauxbase": {
+  "name": "engaux_final_basemap",
+  "tags": [
+   "engram_aux",
+   "base_map",
+   "final"
+  ],
+  "notes": "1/16-scale v4 production stack (8 experts, Engram 1/16), 8 nodes, gbs 64 x 8k; hybrid_v4_hd256_test_mn5. Engram auxiliary lookups A/B from w256rk step 800 on a multilingual mix (10 hplt-4.0 languages x 0.08 + English 0.2), same batches in every arm. Extension = second lookup set, orders [2,3] x 8 heads x half the main rows (widen_engram_aux.py: zero key / value columns, exact at step 801). Final comparison: same-size original map, every fixed set at step 1100 (train vs ctrl -0.0041; held-out within +-0.003)."
  }
 }
