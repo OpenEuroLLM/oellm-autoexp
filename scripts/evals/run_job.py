@@ -142,13 +142,14 @@ def lighteval_steps(job: JobSpec, py: str, rows: list) -> list[Step]:
     if g.max_model_length is not None:
         model_args += f"max_model_length={g.max_model_length},"
     model_args += f"tensor_parallel_size={g.tp}"
+    env = {**harness_env(job), "OELLM_EP": "1" if g.expert_parallel else "0"}  # the stage's lighteval reads it
     # --save-details: per-sample parquet under <out>/details (lm-eval writes samples_*.jsonl, evalchemy
     # keeps its examples in the results json); without it a bad score cannot be inspected afterwards
     argv = [py, str(REPO / "scripts/korbi/flag_eval/lighteval_vllm_cli.py"), "vllm", model_args, tasks,
             "--load-tasks-multilingual", "--output-dir", str(out), "--save-details"]
     if job.limit:
         argv += ["--max-samples", str(job.limit)]
-    return [Step(argv, harness_env(job))]
+    return [Step(argv, env)]
 
 
 def evalchemy_steps(job: JobSpec, py: str, rows: list) -> list[Step]:
@@ -240,7 +241,11 @@ def run(job: JobSpec) -> int:
     finally:
         _uva_cleanup(job)
     if rc and job.kind == "harness_group":
-        print(f"[run_job] a harness call exited {rc}, but every row has its result")
+        # rc 0 either way (a retry would fail the same way): rows without a result keep no done
+        # marker, run again on a relaunch and show in flag_missing_rows.py
+        left = pending_rows(job)
+        print(f"[run_job] a harness call exited {rc}; " + (f"{len(left)} row(s) without a result: "
+              + " ".join(r.name for r in left) if left else "every row has its result"), flush=True)
         rc = 0
     return rc
 

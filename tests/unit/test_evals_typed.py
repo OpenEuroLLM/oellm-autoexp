@@ -264,6 +264,13 @@ def test_lighteval_accelerate_backend_runs_the_oellm_eval_command(tmp_path):
     assert "--save-details" in call.argv and "--load-tasks-multilingual" in call.argv
 
 
+def test_lighteval_expert_parallel_follows_the_engine(tmp_path):
+    for ep, want in ((True, "1"), (False, "0")):
+        spec = _spec(tmp_path, {"lighteval": {"engine": {"expert_parallel": ep}}})
+        job = next(j for j, _ in launch.plan(spec)[0] if j.harness == "lighteval")
+        assert run_job.steps_of(job, "PY")[0].env["OELLM_EP"] == want
+
+
 def test_accelerate_backend_is_lighteval_only(tmp_path):
     with pytest.raises(SpecError):
         _spec(tmp_path, {"evalchemy": {"backend": "accelerate"}})
