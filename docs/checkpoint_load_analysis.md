@@ -110,3 +110,20 @@ instrumentation.
 
 **Not verified:** the split inside the load window; GPFS throughput with 1024 readers; which cache causes the
 first-of-snapshot slowdown; unpickle time under 4-rank contention on a compute node.
+
+## 5. Implemented (11-09)
+
+- **Fix 1, load timing** (Megatron 802955429): `MEGATRON_DEBUG_LOAD_TIMING=1` prints every load phase as min / max over all
+  ranks. First run, p264.0141 (2 nodes, the diagw19b test checkpoint, old load code): load 29.5 s, of which the DCP
+  plan + read + barrier is 24.4 s (`read_data` 12.7–23.7 s per rank); args load 0.6 s, rerun-check metadata read 0.6 s,
+  dummy optimizer step 2.6 s. The test checkpoint's metadata is small (13.8k keys, 3 s unpickle), so the 3× read
+  only shows at 256 nodes.
+- **Fix 3, metadata once** (Megatron 669510a48): `_MetadataOnceReader` shares one unpickled `.metadata` per process
+  through a cache keyed by path + mtime + size, dropped at the end of `load_checkpoint`. The args load reads locally
+  (`no_dist`) through it; the rerun-state check uses it too. Unit test `tests/unit_tests/test_checkpoint_metadata_cache.py`.
+- **Fix 4, sharded surgery writes** (autoexp 03f4b7d8): `scripts/korbi/production/dcp_surgery.py` `write_surgery`
+  stores rewritten / appended tensors in row chunks of the source's chunk size (the source chunks are row ranges,
+  one per saving rank). Both surgery scripts use it. Selftest: 2 gloo ranks, rewrite + append, sharded read-back on
+  2 and 3 ranks, each rank reading only the chunks overlapping its rows.
+- **Test** (`hybrid_v4_loadfix_test_mn5`, p264 host003): fix 3 on the diagw19b checkpoint (iterations 21 / 22 must
+  equal p264.0141), and chunked vs flat reseed-k surgeries resumed on 2 and 4 nodes (equal losses; read time).
