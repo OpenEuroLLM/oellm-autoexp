@@ -92,6 +92,17 @@ check_for_nan_in_loss_and_grad: true  # Check for NaNs in loss and grad
 check_for_spiky_loss: false  # Check for spiky loss.
 check_weight_hash_across_dp_replicas_interval: null  # Interval to check weight hashes are same across DP replicas. If not specified, weight hashes not checked.
 checkpoint_activations: false  # Checkpoint activation to allow for training with larger models, sequences, and batch sizes.
+ckda_branch: null  # choices: ['attention', 'kronlstm'] | A second mixer in parallel to the complex_kda mixer of the layers ``ckda_branch_layers`` (megatron/core/ssm/ckda_branch.py): ``out = alpha(t) * ckda(x) + m(t) * gamma * branch(x)``. ``"attention"`` is Megatron's own softmax attention as the hybrid's ``*`` layers build it (kv_channels, output gate, qk norm, XSA, NoPE) with ``ckda_branch_num_query_groups`` KV groups; ``"kronlstm"`` is the KronLSTM layer (the ``linear_kronlstm_*`` / ``linear_fla_*`` settings). ``gamma`` (one per layer, 0 at insertion) makes the branch start as a no-op; the branch's weights come from checkpoint surgery (scripts/korbi/production/add_ckda_branch.py).
+ckda_branch_alpha_end: 0.0  # alpha after the ramp (0: the layer is the branch alone).
+ckda_branch_alpha_hold: 25  # Steps after insertion with alpha = 1 (the complex_kda mixer at full weight).
+ckda_branch_alpha_ramp: 175  # Then alpha falls linearly to ``ckda_branch_alpha_end`` over this many steps.
+ckda_branch_gamma_scale: 1.0  # The layer uses ``ckda_branch_gamma_scale * gamma`` (gamma the parameter): Adam moves gamma by about lr per step whatever its gradient's size, so this sets how fast the branch's share of the layer can grow (1: lr per step, 8.5e-4 in the main run, ~0.2 over a 200-step hand-over).
+ckda_branch_layers: null  # 0-based indices (in the decoder's layer list, as the checkpoint keys ``decoder.layers.<i>``) of the complex_kda layers that get the branch.
+ckda_branch_log_interval: 10  # Every this many iterations, rank 0 prints per branch layer alpha, m, gamma and the RMS of both mixers' outputs (``[ckda_branch]`` lines; 0: never).
+ckda_branch_m_ramp: 200  # m falls linearly from ``ckda_branch_m_start`` to 1 over this many steps.
+ckda_branch_m_start: 4.0  # External multiplier m of the branch's output at insertion: the branch's contribution grows m times faster than its weights alone would move it.
+ckda_branch_num_query_groups: 2  # KV groups of the attention branch (its query heads: num_attention_heads).
+ckda_branch_start_iteration: 0  # The iteration the branch was inserted at; the schedules below count from it.
 ckpt_assume_constant_structure: false  # Assume the checkpoint structure is constant across saves to enable optimizations.
 ckpt_convert_format: null  # choices: ['torch', 'torch_dist'] | Checkpoint format for conversion.
 ckpt_convert_save: null  # Save directory for converted checkpoint.
@@ -244,6 +255,7 @@ engram_aux_ngram_orders: []  # A second set of Engram lookups (empty = off) over
 engram_aux_num_heads: 0  # Hash heads per order of the auxiliary lookups (0 = engram_num_heads).
 engram_aux_table_size: 0  # Rows per auxiliary table (0 = engram_table_size; distinct primes, after the main ones).
 engram_aux_token_map: null  # Token map of the auxiliary lookups (.npy, as engram_token_map); None = raw token ids.
+engram_clip_grad: null  # Clip the Engram tables separately: take them out of the global norm (the dense parameters are then clipped with the norm of everything else, --clip-grad) and clip them with their own norm against this threshold. Default: off (tables in the global norm). The logged grad norm stays the total.
 engram_conv_kernel_size: 4  # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
 engram_conv_prenorm: false  # RMS-normalize the gated value before Engram's causal conv (the reference code's ShortConv): Y = SiLU(conv(RMSNorm(v~))) + v~.
 engram_embed_dim: 64  # Width of one Engram table row; the memory vector concatenates len(engram_ngram_orders) * engram_num_heads rows.
@@ -671,6 +683,7 @@ moe_router_force_load_balancing: false  # [Experimental] Force load balancing wi
 moe_router_fusion: false  # Enable fusion for MoE TopK routing and aux-loss computation. This is only supported in TransformerEngine 2.7.0 and above.
 moe_router_group_topk: null  # Number of selected groups for group-limited routing.
 moe_router_load_balancing_type: aux_loss  # choices: ['aux_loss', 'seq_aux_loss', 'global_aux_loss', 'sinkhorn', 'quantile_balancing', 'none'] | Determines the load balancing strategy for the router. "aux_loss" corresponds to the load balancing loss used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss used in DeepSeekV2, which computes the loss for each individual sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE; "quantile_balancing" (QB) uses dual coordinate descent on a per-expert bias to handle load balance internally; "none" implies no load balancing. The default is "aux_loss".
+moe_router_log_stay_rate: false  # Log moe/stay_rate: the share of a token's selected experts the previous token selected too (per MoE layer, averaged) -- the expert reuse an offload cache sees.
 moe_router_lr_warmup_iters: 0  # Linear lr warmup of the MoE router weights over this many steps, on top of the schedule (0: off).
 moe_router_num_groups: null  # Number of groups to divide experts into for group-limited routing. When using group-limited routing: 1. Experts are divided into 'moe_router_num_groups' equal-sized groups 2. For each token, 'moe_router_group_topk' groups are selected based on sum of top-('moe_router_topk'/'moe_router_group_topk') routing scores within each group 3. From these selected groups, 'moe_router_topk' individual experts are chosen Two common use cases: - Device-limited routing: Set 'moe_router_num_groups' equal to expert parallel size (EP) to limit each token to experts on a subset of devices (See DeepSeek-V2: https://arxiv.org/pdf/2405.04434) - Node-limited routing: Set 'moe_router_num_groups' equal to number of nodes in EP group to limit each token to experts on a subset of nodes (See DeepSeek-V3: https://arxiv.org/pdf/2412.19437)
 moe_router_padding_for_fp8: false  # [Compatibility alias for moe_router_padding_for_quantization] Enabling this will also enable moe_router_padding_for_quantization.
@@ -678,6 +691,7 @@ moe_router_padding_for_quantization: false  # Whether to pad the routing_map to 
 moe_router_pre_softmax: false  # Enable pre-softmax(pre-sigmoid) routing for MoE, which means softmax is before the top-k selection. By default, softmax is done after top-k.
 moe_router_quantile_balancing_ema: 0.0  # EMA coefficient for the quantile-balancing per-expert bias (`qb_beta`), used only when `moe_router_load_balancing_type` is "quantile_balancing". At each global batch the bias is updated as `qb_beta = ema * qb_beta + (1 - ema) * local_quantile`. The default 0.0 means no memory: the bias is replaced by the latest global-batch quantile estimate each step.
 moe_router_score_function: softmax  # choices: ['softmax', 'sigmoid', 'sqrtsoftplus'] | Score function for MoE routing. Can be "softmax", "sigmoid" or "sqrtsoftplus".
+moe_router_stay_bonus: 0.0  # Routing locality for expert offloading: a token's expert SELECTION gets this bonus on the experts the previous token selects without it (its plain top-k: parallel in training, the same rule at inference); the gate weights stay the router's. Logit units with quantile balancing, score units on the plain top-k path (expert bias). Useful around the score gaps: a huge bonus only copies the predecessor's plain selection. The first token of a micro-batch row gets none; document and CP-chunk boundaries inside a row are not reset.
 moe_router_topk: 2  # Number of experts to route to for each token.
 moe_router_topk_scaling_factor: null  # Scaling factor for routing score in top-k selection, only works when moe_router_pre_softmax enabled. Defaults to None, which means no scaling.
 moe_router_wd_mult: 1.0  # Multiplier on --weight-decay for the MoE router weights (*router.weight). 0.0 excludes them from weight decay: under muown_classical the matrices get none, so a decayed router shrinks against the hidden states it scores (Laguna M.1, arXiv:2605.27605).
@@ -843,7 +857,7 @@ page_sparse_lsa_pool: 4  # lsa: tokens per pooled key.
 page_sparse_nsa_block: 32  # nsa: compression block (tokens); page_sparse_page is the selection block.
 page_sparse_nsa_select_window: 64  # nsa: local tokens (whole pages) of the selection branch; page_sparse_window is the window branch.
 page_sparse_nsa_stride: 16  # nsa: compression stride.
-page_sparse_packed_flex: false  # Page selectors under flex: one FlexAttention call for every document of a packed batch (spans laid out on page boundaries) instead of one call per document. 3090 Ti, 26 documents in 32k: 1.8-2.2x faster at head dim 64, slower for page_mean at 128 -- off until measured on H100.
+page_sparse_packed_flex: true  # Page selectors under flex: one FlexAttention call for every document of a packed batch (spans laid out on page boundaries) instead of one call per document. H100, 49 documents in 64k, fwd + bwd: 10 x 128 heads page_mean 164 -> 108 ms, window 133 -> 78 ms; 16 x 256 page_mean 293 -> 264 ms, window 258 -> 218 ms.
 page_sparse_page: 64  # Page size (tokens) of page_sparse_selector.
 page_sparse_per_group: false  # One page selection per KV group (from that group's query heads and keys) instead of one for all heads.
 page_sparse_select_block: 1  # Selection granularity: 1 = per query; B = one selection per block of B queries (the block's first query selects, the rest reuse it; V4.1's Reuse). Flex then attends just the budget per block (page_sparse_flex_q_block = B or a divisor).

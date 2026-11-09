@@ -651,6 +651,19 @@ class MegatronConfig(ConfigInterface):
     # The length where the scaling is 1 (the training sequence length).
     attention_length_scaling_base: int = 8192
 
+    # Routing locality for expert offloading: a token's expert SELECTION gets this bonus on
+    # the experts the previous token selects without it (its plain top-k: parallel in
+    # training, the same rule at inference); the gate weights stay the router's. Logit units
+    # with quantile balancing, score units on the plain top-k path (expert bias). Useful
+    # around the score gaps: a huge bonus only copies the predecessor's plain selection. The
+    # first token of a micro-batch row gets none; document and CP-chunk boundaries inside a
+    # row are not reset.
+    moe_router_stay_bonus: float = 0.0
+
+    # Log moe/stay_rate: the share of a token's selected experts the previous token selected
+    # too (per MoE layer, averaged) -- the expert reuse an offload cache sees.
+    moe_router_log_stay_rate: bool = False
+
     # Page-sparse attention for the self-attention layers
     # (experimental_attention_variant/page_sparse.py): every query attends to the sink pages,
     # a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense,
@@ -716,10 +729,10 @@ class MegatronConfig(ConfigInterface):
     page_sparse_share_source: int = 0
 
     # Page selectors under flex: one FlexAttention call for every document of a packed batch
-    # (spans laid out on page boundaries) instead of one call per document. 3090 Ti, 26
-    # documents in 32k: 1.8-2.2x faster at head dim 64, slower for page_mean at 128 -- off
-    # until measured on H100.
-    page_sparse_packed_flex: bool = False
+    # (spans laid out on page boundaries) instead of one call per document. H100, 49 documents
+    # in 64k, fwd + bwd: 10 x 128 heads page_mean 164 -> 108 ms, window 133 -> 78 ms; 16 x 256
+    # page_mean 293 -> 264 ms, window 258 -> 218 ms.
+    page_sparse_packed_flex: bool = True
 
     # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
     page_sparse_hier_group: int = 0
@@ -953,6 +966,52 @@ class MegatronConfig(ConfigInterface):
     # directions are reachable -- which interacts with the signed gate and is therefore a term
     # a signed-vs-unsigned comparison must set deliberately rather than inherit.
     linear_drop_qkv_silu: bool = False
+
+    # A second mixer in parallel to the complex_kda mixer of the layers ``ckda_branch_layers``
+    # (megatron/core/ssm/ckda_branch.py): ``out = alpha(t) * ckda(x) + m(t) * gamma *
+    # branch(x)``. ``"attention"`` is Megatron's own softmax attention as the hybrid's ``*``
+    # layers build it (kv_channels, output gate, qk norm, XSA, NoPE) with
+    # ``ckda_branch_num_query_groups`` KV groups; ``"kronlstm"`` is the KronLSTM layer (the
+    # ``linear_kronlstm_*`` / ``linear_fla_*`` settings). ``gamma`` (one per layer, 0 at
+    # insertion) makes the branch start as a no-op; the branch's weights come from checkpoint
+    # surgery (scripts/korbi/production/add_ckda_branch.py).
+    ckda_branch: Literal["attention", "kronlstm"] | None = None
+
+    # 0-based indices (in the decoder's layer list, as the checkpoint keys
+    # ``decoder.layers.<i>``) of the complex_kda layers that get the branch.
+    ckda_branch_layers: list[int] | None = None
+
+    # KV groups of the attention branch (its query heads: num_attention_heads).
+    ckda_branch_num_query_groups: int = 2
+
+    # The iteration the branch was inserted at; the schedules below count from it.
+    ckda_branch_start_iteration: int = 0
+
+    # Steps after insertion with alpha = 1 (the complex_kda mixer at full weight).
+    ckda_branch_alpha_hold: int = 25
+
+    # Then alpha falls linearly to ``ckda_branch_alpha_end`` over this many steps.
+    ckda_branch_alpha_ramp: int = 175
+
+    # alpha after the ramp (0: the layer is the branch alone).
+    ckda_branch_alpha_end: float = 0.0
+
+    # External multiplier m of the branch's output at insertion: the branch's contribution
+    # grows m times faster than its weights alone would move it.
+    ckda_branch_m_start: float = 4.0
+
+    # m falls linearly from ``ckda_branch_m_start`` to 1 over this many steps.
+    ckda_branch_m_ramp: int = 200
+
+    # The layer uses ``ckda_branch_gamma_scale * gamma`` (gamma the parameter): Adam moves
+    # gamma by about lr per step whatever its gradient's size, so this sets how fast the
+    # branch's share of the layer can grow (1: lr per step, 8.5e-4 in the main run, ~0.2 over
+    # a 200-step hand-over).
+    ckda_branch_gamma_scale: float = 1.0
+
+    # Every this many iterations, rank 0 prints per branch layer alpha, m, gamma and the RMS
+    # of both mixers' outputs (``[ckda_branch]`` lines; 0: never).
+    ckda_branch_log_interval: int = 10
 
     # complex_kda under a Muon-family optimizer: train the beta projection (``b_proj``, hidden
     # -> one scalar per value head) with the scalar optimizer (Adam) instead of the matrix
@@ -2193,6 +2252,12 @@ class MegatronConfig(ConfigInterface):
 
     # Gradient clipping based on global L2 norm.
     clip_grad: float = 1.0
+
+    # Clip the Engram tables separately: take them out of the global norm (the dense
+    # parameters are then clipped with the norm of everything else, --clip-grad) and clip them
+    # with their own norm against this threshold. Default: off (tables in the global norm).
+    # The logged grad norm stays the total.
+    engram_clip_grad: float | None = None
 
     # First coefficient for computing running averages of gradient and its square
     adam_beta1: float = 0.9

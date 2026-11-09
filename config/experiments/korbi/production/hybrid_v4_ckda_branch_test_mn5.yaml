@@ -1,0 +1,108 @@
+# @package _global_
+# End-to-end test of the ckda_branch "post-fit" (user 2026-11-09: re-introduce attention / CKLSTM next
+# to complex_kda layers of the 23.3k main checkpoint, faded in by a learnt gamma while complex_kda fades
+# out; Megatron megatron/core/ssm/ckda_branch.py, surgery scripts/korbi/production/add_ckda_branch.py).
+#
+# The production stack on 8 nodes, the hd256 test model (8 experts, Engram 1/16, gbs 64), from the trained
+# test checkpoint fctrl/ckpt/iter_0001100 (head dim 256, 1100 steps), same batches in every arm:
+#   ref     no branch, 1100 -> 1300 (the reference losses)
+#   bgqa    attention 16q / 2kv on layers 9, 25, 41 (the B-gqa arm), the production schedule (alpha 1 for 25
+#           steps, -> 0 over 175; m 4 -> 1 over 200), gamma_scale 1, save at 1200
+#   bgqa_r  resume bgqa's 1200 save (strict load of a checkpoint with a branch), 1200 -> 1210
+#   bgqa_gs as bgqa, gamma_scale 10 (Adam moves gamma ~lr per step: at scale 1 the branch's share can
+#           reach only ~0.2-0.4 by step 200, when alpha is 0)
+#   b8      attention 16q / 8kv (the B arm), gamma_scale 10, 1100 -> 1150
+#   cgqa    attention 16q / 2kv on all six positions (C-gqa), gamma_scale 10, 1100 -> 1150
+#   d       KronLSTM (normalized v; b_proj = c_proj = complex_kda's b_proj), gamma_scale 10, 1100 -> 1300
+# Checks: step 1101 loss = ref's (gamma = 0: the model is unchanged), the [ckda_branch] lines (gamma moves,
+# rms of both mixers), no NaN through the hand-over, bgqa_r loads strictly and continues bgqa's losses.
+#
+# Surgery first (login node, see scripts/korbi/production/ckda_branch_test_prep.sh): fctrl/ckpt/iter_0001100
+#   -> $test_root/{bgqa,b8,cgqa,d}_src/ckpt/iter_0001100 (hard links + the new tensors).
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --config-name experiments/korbi/production/hybrid_v4_ckda_branch_test_mn5 --yes aux.only=[ref,bgqa,...]
+defaults:
+  - hybrid_v4_hd256_test_mn5
+  - _self_
+
+aux:
+  suite: v4_ckda_branch_test
+  nodes: 8
+  stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/engaux_ml_datamix.txt
+  source_ckpt: /gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fctrl/ckpt
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch
+
+backend:
+  megatron:
+    kv_channels: 256
+    micro_batch_size: 2
+    load: ${aux.test_root}/${aux.arm}_src/ckpt
+    exit_on_missing_checkpoint: true
+    strict_fsdp_dtensor_load: true
+    exit_interval: 1300
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    ckda_branch_start_iteration: 1100
+    ckda_branch_log_interval: 5
+
+job:
+  name: ckda_branch_${aux.arm}
+  est_step_time_s: 3.5
+  concurrency_group: acc_debug
+  max_active: 1
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+    qos: acc_debug
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ref
+          backend.megatron.load: ${aux.source_ckpt}
+        - aux.arm: bgqa
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.save: ${aux.test_root}/bgqa/ckpt
+          backend.megatron.save_interval: 1200
+        - aux.arm: bgqa_r
+          backend.megatron.load: ${aux.test_root}/bgqa/ckpt
+          backend.megatron.exit_interval: 1210
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        - aux.arm: bgqa_gs
+          backend.megatron.load: ${aux.test_root}/bgqa_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_gamma_scale: 10.0
+        - aux.arm: b8
+          backend.megatron.exit_interval: 1150
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 8
+          backend.megatron.ckda_branch_gamma_scale: 10.0
+        - aux.arm: cgqa
+          backend.megatron.exit_interval: 1150
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_gamma_scale: 10.0
+        - aux.arm: d
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_gamma_scale: 10.0
+          # complex_kda's gates: beta = 2 sigmoid(b) (linear_fla_allow_neg_eigval, as linear_beta_max 2), no
+          # erase bias, write in [0, 2] (no unit_write) so c = beta is the delta rule; low-rank output gate
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
