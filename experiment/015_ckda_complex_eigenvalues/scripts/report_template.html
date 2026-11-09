@@ -1,0 +1,456 @@
+<title>v4 CKDA Eigenvalues</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap">
+<style>
+:root {
+  --ground: #f4f6f9;
+  --surface: #fcfcfb;
+  --ink: #131a23;
+  --ink-2: #48525f;
+  --ink-3: #737e8c;
+  --rule: #d9dfe7;
+  --rule-2: #e8ecf1;
+  --accent: #2a78d6;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --s4: #4a3aa7;
+  --seq-lo: #eef4fc;
+  --seq-mid: #5598e7;
+  --seq-hi: #0d366b;
+  --code-bg: #eceff4;
+  --serif: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1318;
+    --surface: #161b22;
+    --ink: #e7ebf0;
+    --ink-2: #aab4c1;
+    --ink-3: #7f8a98;
+    --rule: #2b333e;
+    --rule-2: #212831;
+    --accent: #3987e5;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --s4: #9085e9;
+    --seq-lo: #1b2330;
+    --seq-mid: #2a78d6;
+    --seq-hi: #cde2fb;
+    --code-bg: #1d232c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1318;
+  --surface: #161b22;
+  --ink: #e7ebf0;
+  --ink-2: #aab4c1;
+  --ink-3: #7f8a98;
+  --rule: #2b333e;
+  --rule-2: #212831;
+  --accent: #3987e5;
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --s4: #9085e9;
+  --seq-lo: #1b2330;
+  --seq-mid: #2a78d6;
+  --seq-hi: #cde2fb;
+  --code-bg: #1d232c;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.6 var(--sans);
+  padding-inline: 20px;
+  padding-block: 0 72px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; }
+.prose { max-width: 68ch; }
+header { padding-block: 48px 8px; }
+.eyebrow { font: 500 12px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+h1 { font: 600 clamp(30px, 5vw, 44px)/1.12 var(--serif); margin: 10px 0 14px; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 600 25px/1.25 var(--serif); margin: 56px 0 10px; text-wrap: balance; }
+h3 { font: 600 16px/1.35 var(--sans); margin: 28px 0 6px; }
+p { margin: 0 0 12px; }
+.lede { font-size: 17px; color: var(--ink-2); }
+.meta { font: 13px/1.5 var(--mono); color: var(--ink-3); margin-top: 10px; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+.math { font-family: var(--serif); font-style: italic; white-space: nowrap; }
+.answer {
+  margin: 28px 0 8px; padding: 20px 22px; background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 6px;
+}
+.answer p:last-child { margin-bottom: 0; }
+.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; margin: 18px 0 4px; }
+.fig { background: var(--surface); padding: 14px 16px; }
+.fig .v { font: 500 26px/1.1 var(--mono); font-variant-numeric: tabular-nums; }
+.fig .k { font-size: 13px; color: var(--ink-2); margin-top: 6px; line-height: 1.4; }
+figure { margin: 18px 0 8px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 16px 10px; }
+figcaption { font-size: 13px; color: var(--ink-2); margin-top: 8px; max-width: 80ch; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--ink-3); font: 11px var(--mono); }
+.chart .lbl { fill: var(--ink-2); font: 500 11px var(--sans); }
+.chart .axis line, .chart .axis path { stroke: var(--rule); }
+.chart .grid line { stroke: var(--rule-2); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); margin: 0 0 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 5px; padding: 7px 9px; font: 12px/1.45 var(--mono);
+  box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; z-index: 5;
+}
+.tip b { font-weight: 500; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.two figure { margin: 0; }
+.planes { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.planes canvas { width: 100%; aspect-ratio: 2 / 1; display: block; border: 1px solid var(--rule-2); border-radius: 3px; }
+.planes .cap { font: 12px var(--mono); color: var(--ink-2); margin-top: 4px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--rule-2); white-space: nowrap; }
+th { font: 500 11.5px var(--mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; border-bottom-color: var(--rule); }
+td:first-child, th:first-child { text-align: left; }
+td.mono { font-family: var(--mono); }
+.bar { display: inline-block; height: 8px; border-radius: 0 4px 4px 0; background: var(--s1); vertical-align: middle; margin-left: 8px; }
+.neg { color: var(--ink-3); }
+details { margin-top: 10px; }
+summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a { color: var(--accent); }
+.toks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.tok { font-family: var(--mono); background: var(--code-bg); padding: 0 4px; border-radius: 3px; white-space: pre; }
+.note { font-size: 13.5px; color: var(--ink-2); border-left: 2px solid var(--rule); padding-left: 12px; margin: 14px 0; }
+ul { padding-left: 20px; margin: 0 0 12px; }
+li { margin-bottom: 4px; }
+@media (max-width: 520px) { body { font-size: 14.5px; padding-inline: 16px; } h2 { font-size: 22px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Experiment 015 · ambitious v4_2ph · 2026-11-09</div>
+  <h1>Do the CKDA layers of v4 use complex eigenvalues?</h1>
+  <p class="lede prose">Per-step transition spectra of all 42 CKDA layers, measured exactly on the fixed validation holdouts, over eight checkpoints of the running main run, with loss ablations of the signed and complex parts.</p>
+  <div class="meta" id="meta"></div>
+</header>
+
+<section class="answer prose">
+  <p><strong>Yes, often, but weakly.</strong> At step <span id="a-step"></span>, <span id="a-cplx"></span> of all (token, head) steps carry a complex eigenvalue pair. The pair is small: mean modulus <span id="a-rad"></span>, and only <span id="a-r50"></span> of steps have |λ| &gt; 0.5. A rotation therefore fades within about one token. Removing exactly those complex pairs costs <span id="a-cabs"></span> nats of loss, about twice a random control.</p>
+  <p>What the model does rely on is <strong>β &gt; 1</strong>, the reflection half of the extended range. Capping β at 1 costs <span id="a-ble1"></span> nats, about 10× more than removing every negative α. Both uses grow steadily over training: the complex fraction went from 1 % at step 1000 to <span id="a-cplx2"></span> at <span id="a-step2"></span>.</p>
+</section>
+<div class="figs" id="figs"></div>
+
+<section class="prose">
+  <h2>What can and cannot happen</h2>
+  <p>Per head, each CKDA step applies <span class="math">M = (I − β k̂k̂ᵀ) · Diag(α)</span> to the state. Here k̂ is the unit key, α ∈ [−1, 1]<sup>128</sup> per channel (<code>signed_sigmoid2</code>, |α| ≥ e<sup>−5</sup>), and β ∈ [0, 2] per head (<code>linear_beta_max 2</code>). The characteristic polynomial factors as <span class="math">∏(αᵢ − λ) · f(λ)</span>, with <span class="math">f(λ) = 1 − β Σ αᵢ k̂ᵢ² / (αᵢ − λ)</span>. Between two consecutive same-sign α's, f always crosses zero. This gives two hard constraints:</p>
+  <ul>
+    <li><strong>At most one complex-conjugate pair per head per step.</strong> The other 126 eigenvalues are real and sit near the α's; negative α's give reflections.</li>
+    <li><strong>A pair needs β &gt; 1 and α of both signs.</strong> For β ≤ 1, M is similar to the symmetric P<sup>½</sup>DP<sup>½</sup>. For α of one sign it is similar to a symmetric matrix too.</li>
+  </ul>
+  <p>The pair is computed exactly: bisection for the 126 bracketed roots, then trace and determinant for the remaining two. On the cluster, <span id="verify"></span></p>
+</section>
+
+<section>
+  <h2 class="prose">How it develops over training</h2>
+  <p class="prose">One 1-node run per HF export of the main run, all with the same 96 documents. Early in training the model pushes β well below 1, though it starts near 1 (2σ(0) = 1). It then learns reflections, and with them sign-mixed decays and complex pairs, at a rate that hasn't flattened yet.</p>
+  <figure>
+    <div class="legend" id="lg-traj"></div>
+    <div class="chart" id="ch-traj"></div>
+    <figcaption>Fraction of (token, head) steps with each property, by training step. Steps 1000–9814 have attention head dim 128, steps 14000 and later 256 (the widened restart); CKDA is unchanged.</figcaption>
+    <details><summary>Table view</summary><div class="scroll" id="tb-traj"></div></details>
+  </figure>
+  <figure>
+    <div class="legend" id="lg-abl"></div>
+    <div class="chart" id="ch-abl"></div>
+    <figcaption>Loss increase in nats per token, the mean over six domains, when one feature is removed in all CKDA layers. Removing negative α's or the complex pairs stays below 0.004 throughout. Removing β &gt; 1 grows about 40× over training. At 18000 only the first three ablations ran (the run was stopped early to free a node before the phase-2 start).</figcaption>
+    <details><summary>Table view</summary><div class="scroll" id="tb-abl"></div></details>
+  </figure>
+</section>
+
+<section>
+  <h2 class="prose">Where, at step <span class="step-main"></span></h2>
+  <h3 class="prose">By layer</h3>
+  <p class="prose">The first CKDA layers use complex pairs most, the last ones least. Use falls together with β &gt; 1, the necessary condition. Only 1 % of α channels are negative, yet 16 % of the key mass lands on them: the writes aim at the few sign-flipping channels.</p>
+  <figure>
+    <div class="legend" id="lg-layer"></div>
+    <div class="chart" id="ch-layer"></div>
+    <figcaption>Per CKDA layer (0 = Megatron block 1; one CKDA layer per block except the attention blocks 0, 8, 16, 24, 32, 40).</figcaption>
+    <details><summary>Table view</summary><div class="scroll" id="tb-layer"></div></details>
+  </figure>
+  <h3 class="prose">By head</h3>
+  <p class="prose">The heads are strongly specialized. In most layers a few heads have a complex pair on more than half of the steps, while others have one almost never.</p>
+  <figure>
+    <div class="chart" id="ch-heat"></div>
+    <figcaption>Complex fraction per layer and head. Darker means more.</figcaption>
+  </figure>
+  <div class="two">
+    <figure>
+      <h3 style="margin-top:0">By position in the document</h3>
+      <div class="legend" id="lg-pos"></div>
+      <div class="chart" id="ch-pos"></div>
+      <figcaption>Complex fraction by log₂ position bin (0 = BOS). It is highest at document starts and falls to about a quarter beyond 1k tokens.</figcaption>
+    </figure>
+    <figure>
+      <h3 style="margin-top:0">By domain</h3>
+      <div class="scroll" id="tb-dom"></div>
+      <figcaption>Validation holdouts: v8ml-valid, 16 documents each, up to 8192 tokens. The order follows how often β &gt; 1 occurs.</figcaption>
+    </figure>
+  </div>
+  <h3 class="prose">By token</h3>
+  <p class="prose">Complex pairs cluster on clause-initial words and document boundaries, where the state gets rewritten. They are rarest on predictable continuations in code and markup. The figure is the fraction over all 42 layers × 16 heads, for tokens seen at least 20 times.</p>
+  <div class="toks">
+    <figure><h3 style="margin-top:0">Most often complex</h3><div class="scroll" id="tb-top"></div></figure>
+    <figure><h3 style="margin-top:0">Least often complex</h3><div class="scroll" id="tb-bot"></div></figure>
+    <figure><h3 style="margin-top:0">Most frequent tokens</h3><div class="scroll" id="tb-freq"></div></figure>
+  </div>
+</section>
+
+<section>
+  <h2 class="prose">What the pair looks like</h2>
+  <p class="prose">Density of the upper eigenvalue of the pair in the complex plane (real part −1…1, imaginary part 0…1, log scale). In every layer the mass sits inside |λ| &lt; 0.5, spread over angles near 90°–135°. That is the strongly damped key direction (the delta rule's erase), coupled across the sign boundary. A few layers have thin tails toward |λ| ≈ 0.8–0.9.</p>
+  <figure>
+    <div class="planes" id="planes"></div>
+  </figure>
+</section>
+
+<section>
+  <h2 class="prose">Does the model need the complex part?</h2>
+  <p class="prose">Ablations on the same documents. The first three act on all steps. The rest act only on the complex steps, where both changes remove the pair, or on a matched random set of real sign-mixed steps as a control.</p>
+  <figure>
+    <div class="scroll" id="tb-ab21"></div>
+    <figcaption>Loss change in nats per token at step <span class="step-main"></span>. The differences between a ±0.0005 control and +0.002 are small next to the effect of capping β; at step 1000, where nothing is used, runs scatter within ±0.0007.</figcaption>
+  </figure>
+  <div class="note prose">β → 1 at the complex steps costs about eight times more than α → |α| at the same steps. Both remove the pair, so the model needs those steps' large β (an overshooting erase along k̂), not their rotation. Caveat: β also scales that step's write (β k̂ vᵀ), so this ablation does not isolate the transition.</div>
+</section>
+
+<section class="prose">
+  <h2>Method and limits</h2>
+  <ul>
+    <li><strong>Hook.</strong> FLA's <code>chunk_kda</code> inside <code>fla.layers.complex_kda_layer</code> is wrapped, so the analysis sees exactly the k, g, β and sign the kernel gets. The model runs from the HF exports with FP8 experts and the Engram tables in host memory, on one 4×H100 node.</li>
+    <li><strong>Data.</strong> 16 documents of ≥ 256 tokens from each of six v8ml-valid holdouts, BOS plus up to 8191 tokens (the phase-1 context): <span id="ntok"></span> tokens.</li>
+    <li><strong>Per-step spectrum only.</strong> Products over several steps can rotate even with α ≥ 0, because two reflections compose to a rotation. That multi-step effect is not measured here.</li>
+    <li><strong>Exactness.</strong> Solver vs <code>torch.linalg.eigvals</code>: 512 random transitions and about 1500 real steps per run, no existence disagreement, max error ~1e-12.</li>
+    <li><strong>Runs.</strong> p264 pool runs (host003, and host002 for 18000) and one acc_debug job for 21000. Code: <code>experiment/015_ckda_complex_eigenvalues</code>, config <code>ckda_spectra_mn5</code>.</li>
+  </ul>
+</section>
+</div>
+
+<script>
+const D = /*DATA*/null;
+const pct = (x, d = 1) => x == null ? "–" : (100 * x).toFixed(d) + " %";
+const fx = (x, d = 4) => x == null ? "–" : (x >= 0 ? "+" : "") + x.toFixed(d);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function legend(id, series) {
+  document.getElementById(id).innerHTML = series.map(s => `<span><i style="background:var(${s.color})"></i>${s.name}</span>`).join("");
+}
+function table(id, head, rows) {
+  document.getElementById(id).innerHTML = "<table><thead><tr>" + head.map(h => `<th>${h}</th>`).join("") +
+    "</tr></thead><tbody>" + rows.map(r => "<tr>" + r.map(c => `<td>${c}</td>`).join("") + "</tr>").join("") + "</tbody></table>";
+}
+function ticks(lo, hi, n) {
+  const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || 10 * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-12; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+// line chart with one y scale, crosshair tooltip, direct end labels
+function lineChart(id, o) {
+  const box = document.getElementById(id);
+  const W = 960, H = o.h || 300, m = { l: 52, r: o.labelRoom ?? 130, t: 10, b: 36 };
+  const xs = o.x, x0 = o.xMin ?? Math.min(...xs), x1 = o.xMax ?? Math.max(...xs);
+  const allY = o.series.flatMap(s => s.values.filter(v => v != null));
+  const y0 = o.yMin ?? Math.min(0, ...allY), y1 = o.yMax ?? Math.max(...allY) * 1.08;
+  const tx = v => o.xLog ? Math.log2(v) : v;
+  const X = v => m.l + (tx(v) - tx(x0)) / (tx(x1) - tx(x0)) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v - y0) / (y1 - y0) * (H - m.t - m.b);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria || "" }, box);
+  const g = el("g", { class: "grid" }, svg), ax = el("g", { class: "axis" }, svg);
+  for (const t of ticks(y0, y1, 5)) {
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t) }, g);
+    el("text", { x: m.l - 8, y: Y(t) + 4, "text-anchor": "end" }, svg).textContent = o.yFmt(t);
+  }
+  el("line", { x1: m.l, x2: W - m.r, y1: Y(y0), y2: Y(y0) }, ax);
+  for (const t of (o.xTicks || xs)) el("text", { x: X(t), y: H - m.b + 18, "text-anchor": "middle" }, svg).textContent = o.xFmt(t);
+  if (o.xLabel) el("text", { x: (m.l + W - m.r) / 2, y: H - 2, "text-anchor": "middle" }, svg).textContent = o.xLabel;
+  const ends = [];
+  for (const s of o.series) {
+    const pts = xs.map((x, i) => [x, s.values[i]]).filter(p => p[1] != null);
+    el("path", { d: pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1)).join(""),
+      fill: "none", stroke: `var(${s.color})`, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    if (o.dots) for (const p of pts) el("circle", { cx: X(p[0]), cy: Y(p[1]), r: 4, fill: `var(${s.color})`, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    const last = pts[pts.length - 1];
+    if (last && o.labelRoom !== 0) ends.push({ y: Y(last[1]), x: X(last[0]), name: s.name });
+  }
+  ends.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 14) ends[i].y = ends[i - 1].y + 14;
+  for (const e of ends) el("text", { x: e.x + 8, y: e.y + 4, class: "lbl" }, svg).textContent = e.name;
+  // hover
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+  const cross = el("line", { y1: m.t, y2: H - m.b, stroke: "var(--ink-3)", "stroke-dasharray": "3 3", visibility: "hidden" }, svg);
+  const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }, svg);
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) / r.width * W;
+    let bi = 0; xs.forEach((x, i) => { if (Math.abs(X(x) - px) < Math.abs(X(xs[bi]) - px)) bi = i; });
+    cross.setAttribute("x1", X(xs[bi])); cross.setAttribute("x2", X(xs[bi])); cross.setAttribute("visibility", "visible");
+    tip.innerHTML = `<b>${o.xName}: ${o.xFmt(xs[bi])}</b><br>` + o.series.map(s => `<span style="color:var(${s.color})">■</span> ${s.name}: ${s.values[bi] == null ? "–" : o.tipFmt(s.values[bi])}`).join("<br>");
+    tip.hidden = false;
+    const bx = box.getBoundingClientRect(), tx = ev.clientX - bx.left + 14;
+    tip.style.left = Math.min(tx, bx.width - tip.offsetWidth - 4) + "px"; tip.style.top = (ev.clientY - bx.top + 12) + "px";
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+}
+function lerpHex(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const A = p(a), B = p(b);
+  return "rgb(" + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(",") + ")";
+}
+function seq(t) {
+  t = Math.max(0, Math.min(1, t));
+  const lo = css("--seq-lo"), mid = css("--seq-mid"), hi = css("--seq-hi");
+  return t < .5 ? lerpHex(lo, mid, t * 2) : lerpHex(mid, hi, (t - .5) * 2);
+}
+function heatmap(id, M) {
+  const box = document.getElementById(id); box.innerHTML = "";
+  const L = M.length, Hh = M[0].length, W = 960, cw = (W - 70) / L, ch = 15, H = Hh * ch + 50;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "complex fraction per layer and head" }, box);
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+  for (let l = 0; l < L; l++) for (let h = 0; h < Hh; h++) {
+    const v = M[l][h] ?? 0;
+    const r = el("rect", { x: 50 + l * cw, y: 6 + (Hh - 1 - h) * ch, width: cw - 1, height: ch - 1, fill: seq(v) }, svg);
+    r.addEventListener("pointermove", ev => {
+      tip.innerHTML = `<b>layer ${l}, head ${h}</b><br>complex ${pct(v)}<br>β&gt;1 ${pct(D.layer_head_beta_gt1[l][h])}`; tip.hidden = false;
+      const bx = box.getBoundingClientRect(); tip.style.left = Math.min(ev.clientX - bx.left + 12, bx.width - tip.offsetWidth - 4) + "px"; tip.style.top = (ev.clientY - bx.top + 12) + "px";
+    });
+    r.addEventListener("pointerleave", () => tip.hidden = true);
+  }
+  for (let h = 0; h < Hh; h += 3) el("text", { x: 44, y: 6 + (Hh - 1 - h) * ch + 11, "text-anchor": "end" }, svg).textContent = "h" + h;
+  for (let l = 0; l < L; l += 5) el("text", { x: 50 + l * cw + cw / 2, y: Hh * ch + 22, "text-anchor": "middle" }, svg).textContent = l;
+  el("text", { x: 50 + L * cw / 2, y: Hh * ch + 42, "text-anchor": "middle" }, svg).textContent = "CKDA layer";
+  // scale
+  for (let i = 0; i <= 10; i++) el("rect", { x: W - 14, y: 6 + (10 - i) * (Hh * ch / 11), width: 10, height: Hh * ch / 11, fill: seq(i / 10) }, svg);
+}
+function planes() {
+  const box = document.getElementById("planes"); box.innerHTML = "";
+  for (const [layer, p] of Object.entries(D.planes)) {
+    const wrap = document.createElement("div");
+    const c = document.createElement("canvas"); c.width = 320; c.height = 160;
+    c.setAttribute("role", "img"); c.setAttribute("aria-label", `eigenvalue density, layer ${layer}`);
+    wrap.appendChild(c);
+    const cap = document.createElement("div"); cap.className = "cap"; cap.textContent = `layer ${layer} · complex ${pct(p.cplx)}`; wrap.appendChild(cap);
+    box.appendChild(wrap);
+    const ctx = c.getContext("2d"), dens = p.density, nI = dens.length, nR = dens[0].length;
+    ctx.fillStyle = css("--surface"); ctx.fillRect(0, 0, 320, 160);
+    for (let i = 0; i < nI; i++) for (let r = 0; r < nR; r++) {
+      const v = dens[i][r]; if (!v) continue;
+      ctx.fillStyle = seq(v); ctx.fillRect(r * 320 / nR, 160 - (i + 1) * 160 / nI, 320 / nR + .5, 160 / nI + .5);
+    }
+    ctx.strokeStyle = css("--ink-3"); ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+    for (const rad of [0.5, 1]) { ctx.beginPath(); ctx.arc(160, 160, rad * 160, Math.PI, 2 * Math.PI); ctx.stroke(); }
+    ctx.setLineDash([]); ctx.fillStyle = css("--ink-3"); ctx.font = "11px " + css("--mono");
+    ctx.fillText("|λ|=0.5", 168, 70); ctx.fillText("−1", 2, 155); ctx.fillText("+1", 302, 155);
+  }
+}
+function render() {
+  document.querySelectorAll(".chart").forEach(c => c.innerHTML = "");
+  const T = D.traj, steps = T.map(t => t.step);
+  const stepTicks = steps;
+  const kf = v => (v >= 10000 || v % 1000 == 0 ? Math.round(v / 1000) : (v / 1000).toFixed(1)) + "k";
+  const trajS = [
+    { name: "β > 1", color: "--s2", values: T.map(t => t.overall.beta_gt1) },
+    { name: "α of both signs", color: "--s3", values: T.map(t => t.overall.mixed) },
+    { name: "complex pair", color: "--s1", values: T.map(t => t.overall.cplx) },
+  ];
+  legend("lg-traj", trajS);
+  lineChart("ch-traj", { x: steps, series: trajS, xFmt: kf, xLog: true, xTicks: stepTicks, xName: "step", yMin: 0, yMax: .7, yFmt: v => Math.round(v * 100) + "%", tipFmt: v => pct(v), dots: true, xLabel: "training step (log scale)", aria: "fractions over training" });
+  const ab = k => T.map(t => t.ablations_mean[k] ?? null);
+  const ablS = [
+    { name: "β ≤ 1", color: "--s2", values: ab("beta_le1") },
+    { name: "all α ≥ 0", color: "--s3", values: ab("abs_alpha") },
+    { name: "complex steps α→|α|", color: "--s1", values: ab("cplx_abs") },
+    { name: "random-step control", color: "--s4", values: ab("ctrl_abs") },
+  ];
+  legend("lg-abl", ablS);
+  lineChart("ch-abl", { x: steps, series: ablS, xFmt: kf, xLog: true, xTicks: stepTicks, xName: "step", yMin: -0.002, yFmt: v => v.toFixed(3), tipFmt: v => fx(v), dots: true, labelRoom: 160, xLabel: "training step (log scale)", aria: "ablation loss over training" });
+  const L = D.layer, li = L.cplx.map((_, i) => i);
+  const layS = [
+    { name: "β > 1", color: "--s2", values: L.beta_gt1 },
+    { name: "complex pair", color: "--s1", values: L.cplx },
+    { name: "key mass on α<0", color: "--s3", values: L.k2_neg },
+  ];
+  legend("lg-layer", layS);
+  lineChart("ch-layer", { x: li, series: layS, xFmt: v => v, xTicks: li.filter(i => i % 5 == 0), xName: "layer", yMin: 0, yMax: 1, yFmt: v => Math.round(v * 100) + "%", tipFmt: v => pct(v), xLabel: "CKDA layer", aria: "per-layer fractions" });
+  heatmap("ch-heat", D.layer_head_cplx);
+  const bins = D.pos.bins.map((_, i) => i).filter(i => D.pos.bins[i] > 0);
+  const posS = Object.entries(D.pos.groups).map(([k, v], j) => ({ name: "layers " + k, color: ["--s1", "--s2", "--s3"][j], values: bins.map(i => v[i]) }));
+  legend("lg-pos", posS);
+  lineChart("ch-pos", { x: bins, series: posS, h: 360, xFmt: v => v == 0 ? "BOS" : (v == 1 ? "1" : (2 ** (v - 1) >= 1024 ? (2 ** (v - 1) / 1024) + "k" : 2 ** (v - 1))), xTicks: bins.filter(i => i % 2 == 0), xName: "position ≥", yMin: 0, yMax: 1, yFmt: v => Math.round(v * 100) + "%", tipFmt: v => pct(v), labelRoom: 0, xLabel: "position in document (log₂ bins)", aria: "complex fraction by position" });
+  planes();
+}
+function fill() {
+  const T = D.traj, last = T[T.length - 1], o = D.overall, A = D.ablations || {};
+  const mean = k => { const v = A[k]; return v ? Object.values(v).reduce((a, b) => a + b, 0) / Object.values(v).length : null; };
+  document.querySelectorAll(".step-main").forEach(e => e.textContent = D.main_step.toLocaleString("en"));
+  const ntok = Object.values(D.tokens).reduce((a, b) => a + b, 0);
+  document.getElementById("meta").textContent = `${D.traj.length} checkpoints · ${ntok.toLocaleString("en")} tokens × 42 layers × 16 heads per checkpoint · main readout at step ${D.main_step.toLocaleString("en")}`;
+  document.getElementById("ntok").textContent = ntok.toLocaleString("en");
+  const set = (id, v) => document.getElementById(id).textContent = v;
+  set("a-step", D.main_step.toLocaleString("en")); set("a-step2", D.main_step.toLocaleString("en"));
+  set("a-cplx", pct(o.cplx)); set("a-cplx2", pct(o.cplx, 0)); set("a-rad", o.radius_c.toFixed(2)); set("a-r50", pct(o.cplx_r50, 2));
+  set("a-cabs", fx(mean("cplx_abs"), 4)); set("a-ble1", fx(mean("beta_le1"), 3));
+  const v = D.verify || {};
+  set("verify", `${v.steps ?? "–"} real steps checked against torch.linalg.eigvals at step ${D.main_step.toLocaleString("en")}: ${v.disagree ?? "–"} disagreements on whether the pair exists, max error ${v.max_err != null ? v.max_err.toExponential(1) : "–"}.`);
+  document.getElementById("figs").innerHTML = [
+    [pct(o.cplx), "of (token, head) steps have a complex pair"],
+    [o.radius_c.toFixed(2), "mean |λ| of the pair; " + pct(o.cplx_r50, 2) + " exceed 0.5"],
+    [fx(mean("cplx_abs"), 4), "nats when exactly the complex pairs are removed"],
+    [fx(mean("beta_le1"), 3), "nats when β is capped at 1"],
+  ].map(([v, k]) => `<div class="fig"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
+  table("tb-traj", ["step", "complex", "|λ|>0.5", "β>1", "mean β", "both signs", "α<0", "key mass α<0", "mean |λ| (pair)"],
+    T.map(t => [t.step.toLocaleString("en"), pct(t.overall.cplx), pct(t.overall.cplx_r50, 2), pct(t.overall.beta_gt1), t.overall.beta.toFixed(2), pct(t.overall.mixed), pct(t.overall.neg_frac, 2), pct(t.overall.k2_neg), t.overall.radius_c.toFixed(3)]));
+  const ks = ["abs_alpha", "beta_le1", "cplx_abs", "cplx_beta1", "ctrl_abs"];
+  table("tb-abl", ["step", "all α ≥ 0", "β ≤ 1", "complex α→|α|", "complex β→1", "control", "base loss (web_en)"],
+    T.map(t => [t.step.toLocaleString("en"), ...ks.map(k => fx(t.ablations_mean[k] ?? null)), t.base_nll ? t.base_nll.web_en.toFixed(3) : "–"]));
+  table("tb-layer", ["layer", "block", "complex", "|λ|>0.5", "β>1", "mean β", "α<0", "key mass α<0", "mean |λ|", "arg/π"],
+    L_rows());
+  const sets = Object.entries(D.by_set).sort((a, b) => b[1].cplx - a[1].cplx);
+  const mx = Math.max(...sets.map(s => s[1].cplx));
+  table("tb-dom", ["domain", "complex", "β>1", "both signs"], sets.map(([s, v]) => [s, pct(v.cplx) + `<span class="bar" style="width:${Math.round(60 * v.cplx / mx)}px"></span>`, pct(v.beta_gt1), pct(v.mixed)]));
+  const tk = r => `<span class="tok">${(r.tok || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "\\n")}</span>`;
+  table("tb-top", ["token", "complex", "n"], D.tokens_top.slice(0, 15).map(r => [tk(r), pct(r.cplx), r.n]));
+  table("tb-bot", ["token", "complex", "n"], D.tokens_bottom.slice(0, 15).map(r => [tk(r), pct(r.cplx), r.n]));
+  table("tb-freq", ["token", "complex", "n"], D.tokens_frequent.slice(0, 15).map(r => [tk(r), pct(r.cplx), r.n]));
+  const names = { abs_alpha: "all α → |α| (no negative α anywhere)", beta_le1: "all β → min(β, 1) (no reflections)", cplx_abs: "complex steps: α → |α|", cplx_beta1: "complex steps: β → 1", ctrl_abs: "control: α → |α| at as many random real sign-mixed steps" };
+  const sk = D.sets;
+  const rows = Object.keys(A).map(k => [names[k] || ("complex steps α→|α|, layers " + k.replace("cplx_abs_L", "")), ...sk.map(s => `<span class="${A[k][s] < 0 ? "neg" : ""}">${fx(A[k][s])}</span>`), `<b>${fx(mean(k))}</b>`]);
+  table("tb-ab21", ["ablation", ...sk, "mean"], rows);
+}
+function L_rows() {
+  const L = D.layer;
+  return L.cplx.map((_, i) => [i, D.ckda_block[i], pct(L.cplx[i]), pct(L.cplx_r50[i], 2), pct(L.beta_gt1[i]), L.beta[i].toFixed(2), pct(L.neg_frac[i], 2), pct(L.k2_neg[i]), (L.radius_c[i] ?? 0).toFixed(3), ((L.theta_c[i] ?? 0) / Math.PI).toFixed(2)]);
+}
+fill();
+render();
+const rerender = () => render();
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rerender); } catch (e) {}
+new MutationObserver(rerender).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>

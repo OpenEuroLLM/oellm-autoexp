@@ -62,8 +62,49 @@ and ablations run; in-situ check 36 steps, 0 disagreements, max error 1e-15.
 | ambitious_v4_2ph_hd256_fp8_21000 | p264.0155 (17:50, snapshot autoexp_ckdaspec) | FAILED 18:03: index_add_ across cuda:0 / cuda:1 (position bins on the embedding's GPU; fixed 9aeda1ae; the model loaded in 60 s, self-check passed on H100) |
 | ambitious_v4_2ph_hd256_fp8_21000 | p264.0157 (job _249bad, snapshot autoexp_ckdaspec2) | FAILED 18:10 at srun: placed on p264 host003 (Slurm 48488261), an allocation at 128 of 264 nodes (NumTasks 264) whose every step fails with 'Requested node configuration is not available'; reported to the main-run session |
 | ambitious_v4_2ph_hd256_fp8_21000 | acc_debug Slurm 48830030 (autoexp session 1794244334, monitor ckda_spectra_dbg, snapshot autoexp_ckdaspec2; account ehpc533, 2 h) | running since 18:16 |
-| checkpoint sweep 1000 / 2000 / 3700 / 6000 / 9814 / hd256 14000 / 18000 | p264 (user 2026-11-09: experiments on host003), snapshot autoexp_ckdaspec3, pool_use_excluded_nodes false | enqueued 18:5x |
+| checkpoint sweep 1000 / 2000 / 3700 / 6000 / 9814 / hd256 14000 / 18000 | p264.0208-0214 (user 2026-11-09: experiments on host003), snapshot autoexp_ckdaspec3, pool_use_excluded_nodes false | all on host003 except 18000 (host002). 18000 was cancelled by me at 20:08 after stats + 3 ablations: it held host002's only free regular node into the phase-2 start (~20:50) |
+| 21000 layer groups | p264.0247 (--no-stats, snapshot autoexp_ckdaspec4) | done; redundant with the debug job (which finished in 1:55); identical baselines |
+| acc_debug 48830030 | | COMPLETED 1:55 (all ablations) |
 
-## Results
+## Results (step 21000 unless stated; 96 docs, 277k tokens x 42 layers x 16 heads)
 
-(pending)
+- Complex pairs are common but small:
+  - 25.5 % of (token, head) steps have one;
+  - mean |lam| 0.16; only 0.16 % of steps have |lam| > 0.5;
+  - mean arg 0.59 pi.
+
+  The pair is the damped key direction (the delta-rule erase), coupled across the sign boundary.
+- Conditions: beta > 1 on 54 % of steps (mean beta 1.07); alpha with both signs on 59 %. Only 1.1 % of
+  channels have alpha < 0, yet 16 % of the key mass falls on them.
+- Layers: the first CKDA layers are at ~45 %, the last at 8-16 %, falling together with beta > 1.
+- Heads: strongly specialized; within a layer, from 0-10 % to 40-96 %.
+- Positions: BOS 62 %, the first tokens ~50 %, ~25 % beyond 1k.
+- Domains: web_en 31 > multilingual 29 > long 26 > math 25 > reasoning 23 > code 20 %.
+- Tokens: highest on clause-initial words and BOS / EOS; lowest on predictable code / format continuations.
+- Ablations at 21000, mean over the 6 domains, nats:
+
+  | ablation | delta |
+  |---|---|
+  | all alpha -> abs(alpha) | +0.0031 |
+  | beta <= 1 | +0.031 |
+  | complex steps: alpha -> abs(alpha) | +0.0018 |
+  | complex steps: beta -> 1 | +0.016 |
+  | random control | +0.0008 |
+  | per group of 7 layers | <= +0.001 each, spread across depth |
+- Over training, complex fraction / beta > 1 / mean beta:
+
+  | step | complex | beta > 1 | mean beta |
+  |---|---|---|---|
+  | 1000 | 1.1 % | 4 % | 0.30 |
+  | 2000 | 2.2 % | 6 % | 0.34 |
+  | 3700 | 4.8 % | 10 % | 0.44 |
+  | 6000 | 9.7 % | 20 % | 0.58 |
+  | 21000 | 25.5 % | 54 % | 1.07 |
+
+  The beta <= 1 ablation grows from +0.0008 to +0.031. The sign / complex ablations stay below +0.004.
+- Interpretation: the extended beta range (reflection, an overshooting erase) is what the model uses.
+  The complex rotations exist, but they are heavily damped and contribute little.
+- Limits: per-step spectra only (multi-step products can rotate even with alpha >= 0). The
+  complex-steps beta -> 1 ablation also changes the write strength.
+
+Report: scripts/collect.py + build_report.py (report_template.html) -> published artifact.
