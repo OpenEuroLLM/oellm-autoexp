@@ -41,7 +41,7 @@ Band = forms within 9 mnat out of sample; line = best of those by BIC.
 v4's raw slope has stayed at ~0.105 per e-fold of tokens since ~400B (q35's tail: ~0.045). Earlier forecasts held:
 11-04 (from 403B) at 1T: train 1.18 predicted / 1.176 observed, every fixed set within 0.01; 11-07 (from 1.01T) at
 1.48T: raw 1.1425 / 1.1432, recalibrated 1.262 / 1.263. Fixed set 'all' at 1.48T: 1.246 (11-07 range at 1.59T:
-1.226-1.238, so it ends near the top of that range).
+1.226-1.238; at its current -0.002 per 1k steps it ends near 1.242, slightly above that range).
 
 ## Caveats
 
