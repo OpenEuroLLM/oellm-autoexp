@@ -68,7 +68,9 @@ def main() -> None:
 
     def clean(x):
         if isinstance(x, float):
-            return None if not np.isfinite(x) else round(x, 5)
+            if not np.isfinite(x):
+                return None
+            return round(x, 5) if abs(x) >= 1e-3 or x == 0 else float(f"{x:.3g}")
         if isinstance(x, dict):
             return {str(k): clean(v) for k, v in x.items()}
         if isinstance(x, list):
