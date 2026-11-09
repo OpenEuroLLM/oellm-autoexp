@@ -1,0 +1,79 @@
+# @package _global_
+# Why is the v4 main run's 64k phase 13 % slower than 8k (256 nodes: 15.0 -> 17.2 s / step at the same 67M tokens,
+# user 2026-11-10: "highly suspicious")? Context length vs head dim 256, measured on the main run's own code
+# (snapshot autoexp_v4hd256p2eclip) and production stack (hybrid_v4_diaggrad_test_mn5: Megatron-FSDP, EP 4, MoonEP,
+# gated GQA + qk norm + XSA, document masking, mHC-4, 2 nodes, 8 routed experts, Engram 1/16), the main run's
+# diagnostics (per-layer grad norms every step, weight stats every 10th), 30 steps, all arms in one launch:
+#   c8k_d256 / c64k_d256 / c8k_d128 / c64k_d128
+# Per GPU the main run's work per step: one 64k sequence (mbs 1) or eight 8k sequences (mbs 8). Attention runs
+# locally per GPU (no context parallelism), so the 64k - 8k step difference carries over to 256 nodes; the MoE /
+# FSDP share does not (8 of 360 experts, 8 instead of 1024 ranks). Same documents in all arms (capspeed mix).
+#   cd $R/autoexp_v4hd256p2eclip && PYTHONPATH=. $R/autoexp_env/bin/python scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool $P/mn5_pool_p264 --yes \
+#       --config-name experiments/korbi/production/hybrid_v4_ctxspeed_mn5
+defaults:
+  - hybrid_v4_diaggrad_test_mn5
+  - _self_
+
+aux:
+  suite: v4_ctxspeed
+  arm: c8k_d256
+  only: []
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4ctxspeed
+
+backend:
+  env:
+    MEGATRON_DIAG_WEIGHT_EVERY: "10"
+  megatron:
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    exit_interval: 30
+    save: null
+    save_interval: null
+    diagnostics_interval: 1
+    diag_layer_grad_norms: true
+    diag_clip_events: true
+    diag_weight_stats: true
+    diag_norm_gains: true
+
+job:
+  name: v4_ctxspeed_${aux.arm}
+  concurrency_group: null
+  max_active: null
+  est_step_time_s: 15.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 500
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: c8k_d256
+          aux.seq: 8192
+          aux.gbs: 64
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.kv_channels: 256
+        - aux.arm: c64k_d256
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.kv_channels: 256
+        - aux.arm: c8k_d128
+          aux.seq: 8192
+          aux.gbs: 64
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.kv_channels: 128
+        - aux.arm: c64k_d128
+          aux.seq: 65536
+          aux.gbs: 8
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.kv_channels: 128
