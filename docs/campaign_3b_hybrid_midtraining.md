@@ -1322,6 +1322,14 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - The earlier T6b numbers (+29 / +14 % for k3) included the per-depth LDM.
   - Quality (500 steps): t8b (k3_s4, k8_s4 on the fixed code) queued; the old t8 k3_s4 ran with per-depth LDM.
 
+- **2026-11-09, caveat: the s3 testbed runs LDM, the main run mHC-4.** ctxlen4n_s3 (hybrid_ctxlen_s3 ->
+  hybrid_fp8ag_s3 -> hybrid_main_mn5) has `depth_memory: true` (CuTe LDM); v4_2ph_hd256 has `mhc: true,
+  depth_memory: false`. So the T5-T8 / T10 step times are relative to an LDM base step, and the MTP 8-depth OOM
+  (an LDM workspace per MTP depth) was an s3-only effect: under mHC-4 the depths' streams live in autograd and
+  recompute frees them. The fix (dc5c7ef2f: plain residual inside MTP depths for LDM / mHC / AttnRes) applies to
+  both. T9 used the production mHC-4 shape. Quality deltas (sparse attention, MTP, stay bonus, QAT) should carry
+  over; production speed numbers should come from the v4 hd256 test shape.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
