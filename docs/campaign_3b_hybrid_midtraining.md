@@ -1302,6 +1302,26 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - At s3 every sparse arm trained slower than dense (6.0-9.1 vs 4.2 s); on the v4 production shape (T9) page
     selection is +2-3 %. Pending: nsa, csa2, page_mean_pg, and the probes of lsa / lsa_fine / page_mean_shared.
 
+- **2026-11-09, T6c: latent MTP speed with the plain-residual depths** (Megatron dc5c7ef2f; the depths had built
+  their own LDM depth memory, ~5 GiB each outside autograd -- allocator snapshot of the k8 OOM: 34 GiB in the MTP
+  depths' LDM vs 6.3 GiB for the whole decoder; all arms in one launch, 60 steps, median past warm-up):
+
+  | arm | ms/step | vs base | per depth |
+  |---|---:|---:|---:|
+  | base | 4171 | | |
+  | k3 stride 1 | 5274 | +26.5 % | +8.8 % |
+  | k3 stride 4 | 4660 | +11.7 % | +3.9 % |
+  | k8 stride 1 | 7083 | +69.8 % | +8.7 % |
+  | k8 stride 4 | 5497 | +31.8 % | +4.0 % |
+  | k8 stride 8 | 5222 | +25.2 % | +3.2 % |
+  | k8 stride 4, detached heads | 5354 | +28.4 % | +3.5 % |
+
+  - Memory no longer grows with the depths (0.65-0.68 vs 0.70 reported). k8 fits at 64k.
+  - The remaining cost is the depth itself (CKDA layer fwd + bwd + recompute, ~4 % per depth at stride >= 4); the
+    vocabulary head adds ~5 % per depth at stride 1. Detaching the heads saves only ~3 %.
+  - The earlier T6b numbers (+29 / +14 % for k3) included the per-depth LDM.
+  - Quality (500 steps): t8b (k3_s4, k8_s4 on the fixed code) queued; the old t8 k3_s4 ran with per-depth LDM.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
