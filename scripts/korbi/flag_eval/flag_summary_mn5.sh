@@ -9,7 +9,9 @@
 # summarize-evals is pinned to 3cb8568 (2026-10-09): its own task/weight definitions. Its later
 # revisions read quickdash's configs and need a set (configs/sets/comprehensive.yaml) neither
 # quickdash repo has. Needs python >= 3.12 with pandas + pyyaml ($PY). CSVs and summaries go to
-# $FLAG_SUMMARY_DIR (default dump/flag_summaries).
+# $FLAG_SUMMARY_DIR (default dump/flag_summaries); <export>.missing.csv lists the suite rows
+# ($SUITE, default config/eval_tasks/flag_evals.yaml) without a result. The local copy is synced
+# with --delete: results moved out of the export's tree on MN5 (superseded runs) drop out here too.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
@@ -19,6 +21,7 @@ OUT_ROOT=${OUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm}
 DATASETS_REMOTE=${DATASETS_REMOTE:-jupiter:/e/project1/e-sta-openeurollm/vanosch1/v1-vs-v2/anneal/evals-438.datasets.csv}
 SUM=${FLAG_SUMMARY_DIR:-$REPO/dump/flag_summaries}
 CACHE=${FLAG_SUMMARY_CACHE:-$SUM/.cache}
+SUITE=${SUITE:-$REPO/config/eval_tasks/flag_evals.yaml}
 SE_REV=3cb8568
 mkdir -p "$SUM" "$CACHE"
 if [ ! -d "$CACHE/summarize-evals" ]; then
@@ -29,7 +32,7 @@ git -C "$CACHE/summarize-evals" checkout -q "$SE_REV"
 for exp in "$@"; do
   res=$CACHE/$exp
   mkdir -p "$res/stage/results"
-  rsync -a --prune-empty-dirs --include='*/' --exclude='response_cache/***' --exclude='queue_lm/***' \
+  rsync -a --delete --prune-empty-dirs --include='*/' --exclude='response_cache/***' --exclude='queue_lm/***' \
     --exclude='launches/***' --exclude='done/***' --include='results_*.json' --exclude='*' \
     "$REMOTE:$OUT_ROOT/$exp/" "$res/raw/"
   for d in results evalchemy lighteval; do
@@ -38,5 +41,6 @@ for exp in "$@"; do
   csv=$SUM/$exp.flag-evals-438.tasks.csv
   "$PY" "$HERE/collect_raw_mn5.py" --checkpoints "$exp" --runs "$res/stage" --chrf-patched --lmeval-object \
     --datasets "$CACHE/evals-438.datasets.csv" -o "$csv"
+  "$PY" "$HERE/flag_missing_rows.py" --suite "$SUITE" --csv "$csv" -o "$SUM/$exp.missing.csv"
   (cd "$CACHE/summarize-evals" && "$PY" summarize_evals.py "$csv" ${DEPTH:+-d "$DEPTH"}) | tee "$SUM/$exp.summary.txt"
 done
