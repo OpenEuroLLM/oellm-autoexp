@@ -89,3 +89,12 @@ sweep:
           backend.megatron.diag_layer_grad_norms: true
           backend.megatron.diag_clip_events: true
         - aux.arm: ctrl
+        # --engram-clip-grad (Megatron d2081946c): the Engram tables clipped with their own norm. Pass: step-1 loss
+        # and grad-norm equal to diag's (the logged norm stays the total), sqrt(grad-norm^2 - engram_tables^2) ==
+        # total_check (the dense norm the optimizer clipped with == the per-layer accounting), diag/clip/engram_coeff
+        # logged. Run with diag on the same snapshot into a fresh aux.test_root.
+        - aux.arm: eclon
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+          backend.megatron.engram_clip_grad: 1.0
