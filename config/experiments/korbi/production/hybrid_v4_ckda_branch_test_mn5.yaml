@@ -176,3 +176,22 @@ sweep:
           backend.megatron.ckda_branch_crossfade: true
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
+        # KronLSTM with the matched start (user 2026-11-09: the gamma matching test at small scale); launched as
+        # its own suite (aux.suite=v4_ckda_branch_test_dmm) next to bgqa_mm / drop
+        - aux.arm: d_mm
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_mm_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false

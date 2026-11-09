@@ -39,6 +39,8 @@ for arm in "${ARMS[@]}"; do
     d)    args=(--branch kronlstm --layers 9,25,41) ;;
     # attention, magnitude-matched start: GAMMA_INIT_BGQA = layer:(rms_ckda / rms_branch - 1),... (measured)
     bgqa_mm) args=(--branch attention --groups 2 --layers 9,25,41 --gamma-init "${GAMMA_INIT_BGQA:?layer:value,...}") ;;
+    # KronLSTM, magnitude-matched start: GAMMA_INIT_D = layer:(rms_ckda / rms_branch - 1),... (measured)
+    d_mm) args=(--branch kronlstm --layers 9,25,41 --gamma-init "${GAMMA_INIT_D:?layer:value,...}") ;;
     # the drop control: an attention branch at weight 0 (crossfade 1 + gamma = 0): complex_kda just fades out
     drop) args=(--branch attention --groups 2 --layers 9,25,41 --gamma-init -1) ;;
     *) echo "unknown arm $arm" >&2; exit 2 ;;
