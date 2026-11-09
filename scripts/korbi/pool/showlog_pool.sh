@@ -110,14 +110,44 @@ for rd in sorted(glob.glob(f"{pool}/runs/*/")):
                      state=state, host=started.get("host") or read(rd + "assigned"), link=link,
                      end=os.path.getmtime(rd + "rc") if rc else 0))
 print(f"--- pool {os.path.basename(pool)}")
-for hd in sorted(glob.glob(f"{pool}/hosts/*/")):
-    hid, info = os.path.basename(hd.rstrip("/")), env(hd + "info.env")
-    if os.path.exists(hd + "exited") or not info:
-        continue
+hosts = [(os.path.basename(hd.rstrip("/")), hd, env(hd + "info.env")) for hd in sorted(glob.glob(f"{pool}/hosts/*/"))]
+hosts = [(hid, hd, info) for hid, hd, info in hosts if info and not os.path.exists(hd + "exited")]
+# nodes SLURM holds for each host NOW (info.env keeps the count of the host's start: a shrunk
+# allocation (scontrol update NodeList) still shows the old one there)
+alloc = {}
+ids = ",".join(info["SLURM_JOB_ID"] for _, _, info in hosts if info.get("SLURM_JOB_ID"))
+if ids:
+    try:
+        import subprocess
+        out = subprocess.run(["squeue", "-h", "-j", ids, "-o", "%i %D"], capture_output=True, text=True, timeout=30).stdout
+        alloc = dict(line.split()[:2] for line in out.splitlines() if len(line.split()) >= 2)
+    except Exception:
+        pass
+for hid, hd, info in hosts:
+    # state: "busy <rid,rid,...> <ts> <usable>" | "idle <ts> <usable>"; usable = nodes minus exclusions
     st = read(hd + "state").split()
-    what = (f"running {st[1]}" if st and st[0] == "busy" else (st[0] if st else "?"))
+    rids = st[1].split(",") if st and st[0] == "busy" and len(st) > 1 else []
+    what = (f"running {rids[0]}" if len(rids) == 1 else f"running {len(rids)} runs") if rids else (st[0] if st else "?")
+    usable = st[-1] if st and st[-1].isdigit() else "?"
+    # nodes held by runs: <host>/inuse/<rid> (other files there, e.g. a shrink's removed-nodes
+    # placeholder, are not runs)
+    used, nrun = set(), 0
+    for f in glob.glob(hd + "inuse/*"):
+        name = os.path.basename(f)
+        if not name.rsplit(".", 1)[-1].isdigit():  # run ids end in .<number>
+            continue
+        nrun += 1
+        used.update(x for x in read(f).replace("\n", ",").split(",") if x)
+    # runs with USE_EXCLUDED_NODES (evals) may sit on excluded nodes: those are used, not usable
+    excluded = set(" ".join((read(f"{pool}/exclude_nodes"), read(hd + "exclude_nodes"))).replace(",", " ").split())
+    on_excl = len(used & excluded)
+    start, now = info.get("NUM_NODES", "?"), alloc.get(info.get("SLURM_JOB_ID", ""), "?")
+    size = f"{now} nodes allocated" if now == start else f"{now} nodes allocated (started with {start})"
+    free = f", {int(usable) - (len(used) - on_excl)} free" if usable != "?" else ""
+    excl = f" ({on_excl} of them excluded nodes)" if on_excl else ""
     adopted = f" (adopted {info['ADOPTED']})" if info.get("ADOPTED") else ""
-    print(f"  host {hid}  job {info.get('SLURM_JOB_ID', '?')}{adopted}  {info.get('NUM_NODES', '?')} nodes  {what}")
+    print(f"  host {hid}  job {info.get('SLURM_JOB_ID', '?')}{adopted}  {size}, {usable} usable, "
+          f"{len(used)} used by {nrun} run(s){excl}{free}  {what}")
 live = [r for r in runs if r["state"] in ("RUNNING", "assigned")]
 queued = sorted((r for r in runs if r["state"] == "queued"), key=lambda r: (-r["prio"], r["enq"]))
 done = sorted((r for r in runs if r["state"].startswith("done")), key=lambda r: r["end"])[-5:]
