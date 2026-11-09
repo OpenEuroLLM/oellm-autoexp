@@ -3617,7 +3617,8 @@ the row magnitudes g Adam-updated), base lr, no weight decay. Exceptions, on Ada
 | parameters | optimizer | lr | weight decay |
 |---|---|---|---|
 | attention QKV (split per head) and output; CKDA q / k / v / α (`f_proj`) / output gate (`g_proj`) / output projections; every routed expert, the shared expert; Engram key / value projections; **LDM address networks** (`w1`, `address`, `gate`) | Muown | ×1 (LDM: the mixer lr, ×1) | 0 |
-| word embedding, output layer (untied), MoE router weight | Adam | ×1 | 0.1 |
+| output layer (untied) | Adam | ×1 | 0.1 |
+| word embedding, MoE router weight | Adam | ×1 | 0 since 2026-11-02 (`embedding_wd_mult` / `moe_router_wd_mult` 0, user; was 0.1) |
 | **CKDA β projection** (`b_proj`, with `linear_beta_adam`) | Adam | ×1 | 0.1 |
 | Engram tables | Adam | ×5 | 0 |
 | mHC `phi` (tagged) and other mHC parameters | Adam | the mixer lr | 0.1 on `phi`, 0 on 1-D |
