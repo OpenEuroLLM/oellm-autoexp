@@ -1190,6 +1190,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     -- free, +6-13 % at batch 1 and +27 % at batch 16 -- and keep sessions resident (no expert-aware interleaving).
     No sequence predictor (previous entry); int4 storage remains the largest lever.
 
+- **2026-11-09, fused low-bit expert kernel and int4 error on real experts** (local RTX 3090 Ti; kernel
+  `submodules/cute_kernels/lowbit_experts`, Triton; `docs/campaign_3b_hybrid_midtraining_results/p2p3_offload/expert_kernel.md`):
+  - **The kernel:** one v4 expert as two launches (gate | up GEMM, then down with SwiGLU in its prologue).
+    - Weights are dequantized in registers: FP8 with 1 x 128 block scales (the export layout, software E4M3 on
+      sm_86), int8 per row, or int4 symmetric g64 / g128.
+    - It matches the fp32 reference to 3-7e-3 (bf16 level), and grouped launches equal single ones bitwise.
+  - **One expert per launch is latency-bound** (CUDA graph): 15-19 us at 1-16 tokens for every format.
+    - That is 7-12x faster than plain-torch dequantization (122-196 us) and 1.4x faster than the export's grouped
+      FP8 GEMM (24 us).
+    - But it is far from the bandwidth bounds (5.4 / 5.2 / 2.8 us for fp8 / int8 / int4).
+  - **A layer's experts in one launch** approach the bound: 48 experts reach 5.8 (fp8), 5.2 (int8) and 3.8
+    (int4 g128) us per expert, i.e. 93 / 100 / 73 % of it.
+    - At 5 experts (batch-1 top-5) it is 7.6 / 6.5 / 5.9 us per expert, so ~38 us (fp8) / ~29 us (int4) per
+      resident MoE layer.
+    - int4 g64 is ~1.6x slower than g128. A Marlin-style int4 layout would close the remaining int4 gap.
+  - **int4 is not free on real v4 experts** (9 experts of layers 1 / 51 / 97, incl. each layer's largest-scale one;
+    expert-output error on Gaussian inputs vs the FP8 weights):
+    - int8 per channel: 1.6 % (3.0 % on the deep runaway expert, kurtosis 1130).
+    - int4: 21 % (sym RTN g128), 17 % (clip search g128 or asym g128), down to 15 % (asym g64).
+    - So int4 storage needs calibration with real activations and probably QAT: the s3 int4-QAT test is
+      warranted. g128 is the format to aim for on speed.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)

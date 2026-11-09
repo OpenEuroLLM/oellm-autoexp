@@ -1,0 +1,246 @@
+{
+ "device": "NVIDIA GeForce RTX 3090 Ti",
+ "mem_bandwidth_gbs": 903.3218537416166,
+ "rows": [
+  {
+   "impl": "fused_bf16_g128",
+   "experts": 1,
+   "m": 1,
+   "graph_us": 16.353280544281006,
+   "us_per_expert": 16.353280544281006,
+   "bound_us_per_expert": 10.447199922055006
+  },
+  {
+   "impl": "fused_bf16_g128",
+   "experts": 1,
+   "m": 16,
+   "graph_us": 17.530879974365234,
+   "us_per_expert": 17.530879974365234,
+   "bound_us_per_expert": 10.447199922055006
+  },
+  {
+   "impl": "fused_bf16_g128",
+   "experts": 5,
+   "m": 1,
+   "graph_us": 54.22080039978027,
+   "us_per_expert": 10.844160079956055,
+   "bound_us_per_expert": 10.447199922055006
+  },
+  {
+   "impl": "fused_bf16_g128",
+   "experts": 5,
+   "m": 16,
+   "graph_us": 55.71584224700928,
+   "us_per_expert": 11.143168449401855,
+   "bound_us_per_expert": 10.447199922055006
+  },
+  {
+   "impl": "fused_bf16_g128",
+   "experts": 48,
+   "m": 1,
+   "graph_us": 481.0444641113281,
+   "us_per_expert": 10.021759668986002,
+   "bound_us_per_expert": 10.447199922055006
+  },
+  {
+   "impl": "fused_bf16_g128",
+   "experts": 48,
+   "m": 16,
+   "graph_us": 494.2438507080078,
+   "us_per_expert": 10.296746889750162,
+   "bound_us_per_expert": 10.447199922055006
+  },
+  {
+   "impl": "fused_fp8_g128",
+   "experts": 1,
+   "m": 1,
+   "graph_us": 16.49664044380188,
+   "us_per_expert": 16.49664044380188,
+   "bound_us_per_expert": 5.3868374598096125
+  },
+  {
+   "impl": "fused_fp8_g128",
+   "experts": 1,
+   "m": 16,
+   "graph_us": 16.679999828338623,
+   "us_per_expert": 16.679999828338623,
+   "bound_us_per_expert": 5.3868374598096125
+  },
+  {
+   "impl": "fused_fp8_g128",
+   "experts": 5,
+   "m": 1,
+   "graph_us": 37.64224052429199,
+   "us_per_expert": 7.528448104858398,
+   "bound_us_per_expert": 5.3868374598096125
+  },
+  {
+   "impl": "fused_fp8_g128",
+   "experts": 5,
+   "m": 16,
+   "graph_us": 50.421438217163086,
+   "us_per_expert": 10.084287643432617,
+   "bound_us_per_expert": 5.3868374598096125
+  },
+  {
+   "impl": "fused_fp8_g128",
+   "experts": 48,
+   "m": 1,
+   "graph_us": 277.4323272705078,
+   "us_per_expert": 5.779840151468913,
+   "bound_us_per_expert": 5.3868374598096125
+  },
+  {
+   "impl": "fused_fp8_g128",
+   "experts": 48,
+   "m": 16,
+   "graph_us": 411.0335922241211,
+   "us_per_expert": 8.563199838002523,
+   "bound_us_per_expert": 5.3868374598096125
+  },
+  {
+   "impl": "fused_int8_g128",
+   "experts": 1,
+   "m": 1,
+   "graph_us": 15.206400156021118,
+   "us_per_expert": 15.206400156021118,
+   "bound_us_per_expert": 5.239470273409097
+  },
+  {
+   "impl": "fused_int8_g128",
+   "experts": 1,
+   "m": 16,
+   "graph_us": 18.575359582901,
+   "us_per_expert": 18.575359582901,
+   "bound_us_per_expert": 5.239470273409097
+  },
+  {
+   "impl": "fused_int8_g128",
+   "experts": 5,
+   "m": 1,
+   "graph_us": 32.50175952911377,
+   "us_per_expert": 6.500351905822754,
+   "bound_us_per_expert": 5.239470273409097
+  },
+  {
+   "impl": "fused_int8_g128",
+   "experts": 5,
+   "m": 16,
+   "graph_us": 49.940481185913086,
+   "us_per_expert": 9.988096237182617,
+   "bound_us_per_expert": 5.239470273409097
+  },
+  {
+   "impl": "fused_int8_g128",
+   "experts": 48,
+   "m": 1,
+   "graph_us": 249.84319686889648,
+   "us_per_expert": 5.205066601435344,
+   "bound_us_per_expert": 5.239470273409097
+  },
+  {
+   "impl": "fused_int8_g128",
+   "experts": 48,
+   "m": 16,
+   "graph_us": 383.80542755126953,
+   "us_per_expert": 7.995946407318115,
+   "bound_us_per_expert": 5.239470273409097
+  },
+  {
+   "impl": "fused_int4_g128",
+   "experts": 1,
+   "m": 1,
+   "graph_us": 15.572799444198608,
+   "us_per_expert": 15.572799444198608,
+   "bound_us_per_expert": 2.775037479295861
+  },
+  {
+   "impl": "fused_int4_g128",
+   "experts": 1,
+   "m": 16,
+   "graph_us": 16.882879734039307,
+   "us_per_expert": 16.882879734039307,
+   "bound_us_per_expert": 2.775037479295861
+  },
+  {
+   "impl": "fused_int4_g128",
+   "experts": 5,
+   "m": 1,
+   "graph_us": 29.00736093521118,
+   "us_per_expert": 5.801472187042236,
+   "bound_us_per_expert": 2.775037479295861
+  },
+  {
+   "impl": "fused_int4_g128",
+   "experts": 5,
+   "m": 16,
+   "graph_us": 29.58336114883423,
+   "us_per_expert": 5.916672229766846,
+   "bound_us_per_expert": 2.775037479295861
+  },
+  {
+   "impl": "fused_int4_g128",
+   "experts": 48,
+   "m": 1,
+   "graph_us": 183.78751754760742,
+   "us_per_expert": 3.8289066155751548,
+   "bound_us_per_expert": 2.775037479295861
+  },
+  {
+   "impl": "fused_int4_g128",
+   "experts": 48,
+   "m": 16,
+   "graph_us": 247.41888046264648,
+   "us_per_expert": 5.154560009638469,
+   "bound_us_per_expert": 2.775037479295861
+  },
+  {
+   "impl": "fused_int4_g64",
+   "experts": 1,
+   "m": 1,
+   "graph_us": 17.12064027786255,
+   "us_per_expert": 17.12064027786255,
+   "bound_us_per_expert": 2.93827497807797
+  },
+  {
+   "impl": "fused_int4_g64",
+   "experts": 1,
+   "m": 16,
+   "graph_us": 17.73408055305481,
+   "us_per_expert": 17.73408055305481,
+   "bound_us_per_expert": 2.93827497807797
+  },
+  {
+   "impl": "fused_int4_g64",
+   "experts": 5,
+   "m": 1,
+   "graph_us": 33.19808006286621,
+   "us_per_expert": 6.639616012573242,
+   "bound_us_per_expert": 2.93827497807797
+  },
+  {
+   "impl": "fused_int4_g64",
+   "experts": 5,
+   "m": 16,
+   "graph_us": 38.17471981048584,
+   "us_per_expert": 7.634943962097168,
+   "bound_us_per_expert": 2.93827497807797
+  },
+  {
+   "impl": "fused_int4_g64",
+   "experts": 48,
+   "m": 1,
+   "graph_us": 289.5871925354004,
+   "us_per_expert": 6.033066511154175,
+   "bound_us_per_expert": 2.93827497807797
+  },
+  {
+   "impl": "fused_int4_g64",
+   "experts": 48,
+   "m": 16,
+   "graph_us": 315.9654426574707,
+   "us_per_expert": 6.582613388697307,
+   "bound_us_per_expert": 2.93827497807797
+  }
+ ]
+}
