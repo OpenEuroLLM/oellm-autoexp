@@ -1,0 +1,62 @@
+# @package _global_
+# Learned selectors over raw pages / raw keys, on t11's schedule (ctxlen4n_s3 s64k step 1000 -> 3000, validation
+# every 500 steps on the same samples as t8 base / t11), each with a 200-step dense warm-up of its selector
+# (stage 1: page_sparse_dense_forward, only the selector learns by KL to the dense attention mass; stage 2: 1800
+# sparse steps from stage 1's step 1200, the *_s2 arm, enqueued once stage 1 finished):
+#   indexer -- a DeepSeek-V3.2-style lightning indexer scoring raw 64-token pages (top 32 pages): learned vs the
+#              parameter-free page_mean_pg at the same granularity and budget, no compression;
+#   dlsa    -- D-LSA: LSA in a learned latent space (per-KV-group key / query maps, identity at init, distilled;
+#              Megatron ab23d6826) with t11 lsa's buckets.
+# s3 = LDM residual. Placed on host002's buffer nodes (user 2026-11-10).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t15_s3_sparse_learned_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc "aux.only=[indexer,dlsa]" --yes
+defaults:
+  - t11_s3_sparse_fair_mn5
+  - _self_
+
+aux:
+  suite: t15_s3_sparse_learned
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: indexer
+          backend.megatron.page_sparse_selector: indexer
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_dense_forward: true
+          backend.megatron.exit_interval: 1200
+          backend.megatron.save_interval: 200
+        - aux.arm: indexer_s2
+          backend.megatron.page_sparse_selector: indexer
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t15_s3_sparse_learned/indexer/ckpt
+          backend.megatron.ckpt_step: 1200
+          backend.megatron.diag_consumed_train_samples: 19200
+        - aux.arm: dlsa
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 32
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_dense_forward: true
+          backend.megatron.exit_interval: 1200
+          backend.megatron.save_interval: 200
+        - aux.arm: dlsa_s2
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 32
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t15_s3_sparse_learned/dlsa/ckpt
+          backend.megatron.ckpt_step: 1200
+          backend.megatron.diag_consumed_train_samples: 19200
