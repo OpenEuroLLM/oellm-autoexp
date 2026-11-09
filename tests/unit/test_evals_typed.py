@@ -1,5 +1,6 @@
-"""The typed eval launch (scripts/evals): spec loading and checks, the launch plan, the rendered pool
-sweep and the harness commands of run_job.py (the same as mn5_oellm_run_one.sh / run_flag_fast_mn5.sh)."""
+"""The typed eval launch (scripts/evals): spec loading and checks, the oellm-eval plan it builds, the
+runtime for MN5, the rendered pool sweep, the manifest, and the harness commands the plan's units run
+(the same as the old run_job.py / mn5_oellm_run_one.sh commands)."""
 
 from __future__ import annotations
 
@@ -17,6 +18,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from scripts.evals import launch, run_job  # noqa: E402
+from oellm.runner import commands  # noqa: E402  (launch put submodules/oellm-eval on sys.path)
+from oellm.runner.plan import read_plan  # noqa: E402
+from oellm.runner.runtime import read_runtime  # noqa: E402
 from scripts.evals.spec import (  # noqa: E402
     EvalSpec, JobSpec, SpecError, eval_spec, load, merge, to_dict,
 )
@@ -68,7 +72,8 @@ def test_set_overrides_parse_their_values_as_yaml(tmp_path):
 
 
 @pytest.mark.parametrize("engine, match", [
-    ({"tp": 2, "dp": 4}, r"tp x dp = 8 > 4"),
+    ({"tp": 2, "dp": 4}, r"tp x dp x replicas = 8 > 4"),
+    ({"tp": 1, "dp": 1, "replicas": 5, "expert_parallel": False}, r"tp x dp x replicas = 5 > 4"),
     ({"dp": 4, "expert_parallel": False}, r"dp > 1 needs expert_parallel"),
     ({"request_batch_size": None}, r"response_cache needs a request_batch_size"),
     ({"max_model_length": 65536}, r"max_model_length"),
@@ -95,30 +100,38 @@ def test_export_name_follows_model_and_step(tmp_path):
 def test_shipped_specs_load_and_plan(path, tmp_path):
     data = yaml.safe_load(path.read_text())
     spec = eval_spec(data, ["export.step=13000", f"paths.out={tmp_path}", f"paths.exports={tmp_path}"])
-    jobs, items, done = launch.plan(spec)
-    assert jobs and not done
-    assert any(j.kind == "export" for j, _ in jobs)
+    export_job, plan, pools = launch.build(spec)
+    assert export_job is not None and plan.units and set(pools) == {u.id for u in plan.units}
 
 
 # ---------------------------------------------------------------- the plan
 
 
+def test_task_group_rows_are_the_old_suite_files_rows(tmp_path):
+    groups = launch.select_rows(_spec(tmp_path, {"evalchemy": {"exclude_tasks": []}}))
+    suite = launch.select_rows(_spec(tmp_path, {"rows": {"suite_file": "config/eval_tasks/flag_evals.yaml"},
+                                                "evalchemy": {"exclude_tasks": []}}))
+    assert len(groups) == 438 and sorted(groups, key=lambda r: r.name) == sorted(suite, key=lambda r: r.name)
+
+
 def test_full_plan_covers_every_row_once(tmp_path):
     spec = _spec(tmp_path)
-    jobs, items, done = launch.plan(spec)
+    export_job, plan, pools = launch.build(spec)
     rows = launch.select_rows(spec)
-    lm = {r.name for r in rows if r.suite == "lm-eval-harness"}
-    assert {i.split("@")[0] for i, _ in items} == lm
-    grouped = [r.name for j, _ in jobs for r in j.rows]
-    assert sorted(grouped) == sorted(r.name for r in rows if r.suite != "lm-eval-harness")
+    lm = {r.name for r in rows if r.harness == "lm-eval-harness"}
+    assert {i.split("@")[0] for i, _ in plan.lm_items} == lm
+    grouped = [r.name for u in plan.units for r in u.rows]
+    assert sorted(grouped) == sorted(r.name for r in rows if r.harness != "lm-eval-harness")
     assert not any("LiveCodeBench" in n for n in grouped)
-    le = [j for j, _ in jobs if j.harness == "lighteval"]
-    assert len(le) == 7 and all(len(j.rows) <= 12 for j in le)
-    assert len([j for j, _ in jobs if j.kind == "lm_eval_worker"]) == 10
-    # not ready: an export job first, every eval job gated on its marker
-    assert jobs[0][0].kind == "export" and jobs[0][1]["gate"] is None
+    le = [u for u in plan.units if u.kind == "lighteval"]
+    assert len(le) == 7 and all(len(u.rows) <= 12 for u in le)
+    assert sum(u.kind == "lm_eval_session" for u in plan.units) == 10
+    assert plan.root == f"{tmp_path}/out/ambitious_v4_2ph_hd256_fp8_13000"
+    assert plan.view_dir == f"{tmp_path}/views/ambitious_v4_2ph_hd256_fp8_13000"
+    # not ready: an export job, every unit gated on its marker
     gate = f"{tmp_path}/exports/ambitious_v4_2ph_hd256_fp8_13000/.downstream_ready"
-    assert all(pool["gate"] == gate for j, pool in jobs[1:])
+    assert export_job is not None and all(pool["gate"] == gate for pool in pools.values())
+    assert pools["lm0"]["priority"] == 60 and pools["lm0"]["time_h"] == 12 and pools["le1"]["priority"] == 55
 
 
 def test_done_rows_are_left_out_and_a_ready_export_runs_no_export_job(tmp_path):
@@ -131,144 +144,72 @@ def test_done_rows_are_left_out_and_a_ready_export_runs_no_export_job(tmp_path):
     exp = tmp_path / "exports/ambitious_v4_2ph_hd256_fp8_13000"
     exp.mkdir(parents=True)
     (exp / ".downstream_ready").touch()
-    jobs, items, done = launch.plan(spec)
-    assert {r.name for r in done} == {"vllm/mmlu/5", "lighteval/flores200:eng_Latn-mkd_Cyrl/4"}
-    assert not any(i.startswith("vllm/mmlu/5") for i, _ in items)
-    assert not any(r.task == "flores200:eng_Latn-mkd_Cyrl" for j, _ in jobs for r in j.rows)
-    assert all(j.kind != "export" and pool["gate"] is None for j, pool in jobs)
+    export_job, plan, pools = launch.build(spec)
+    assert not any(i.startswith("vllm/mmlu/5") for i, _ in plan.lm_items)
+    assert not any(r.task == "flores200:eng_Latn-mkd_Cyrl" for u in plan.units for r in u.rows)
+    assert export_job is None and all(pool["gate"] is None for pool in pools.values())
 
 
 def test_explicit_rows_and_unknown_names(tmp_path):
     spec = _spec(tmp_path, {"rows": {"names": ["vllm/mmlu/5", "vllm/gsm8k/4"], "harnesses": ["lm-eval-harness"]},
                             "lighteval": {"enabled": False}, "evalchemy": {"enabled": False},
                             "lm_eval": {"workers": 8}})
-    jobs, items, _ = launch.plan(spec)
-    workers = [j for j, _ in jobs if j.kind == "lm_eval_worker"]
-    assert len(workers) == min(8, len(items))
+    _, plan, _ = launch.build(spec)
+    assert sum(u.kind == "lm_eval_session" for u in plan.units) == min(8, len(plan.lm_items))
     with pytest.raises(SpecError, match="not in"):
-        launch.plan(_spec(tmp_path, {"rows": {"names": ["vllm/nope/0"]}}))
+        launch.build(_spec(tmp_path, {"rows": {"names": ["vllm/nope/0"]}}))
 
 
 def test_a_limited_test_run_splits_no_rows(tmp_path):
-    _, items, _ = launch.plan(_spec(tmp_path, {"rows": {"limit": 20}}))
-    assert items and not any("@" in i for i, _ in items)
-    _, items, _ = launch.plan(_spec(tmp_path))
-    assert any("@" in i for i, _ in items)
+    _, plan, _ = launch.build(_spec(tmp_path, {"rows": {"limit": 20}}))
+    assert plan.lm_items and not any("@" in i for i, _ in plan.lm_items) and plan.root.endswith("_limit20")
+    _, plan, _ = launch.build(_spec(tmp_path))
+    assert any("@" in i for i, _ in plan.lm_items)
 
 
-# ---------------------------------------------------------------- rendering
+# ---------------------------------------------------------------- the commands of the units
 
 
-def test_rendered_sweep_has_only_literals_and_no_task_names(tmp_path):
-    spec = _spec(tmp_path)
-    jobs, _, _ = launch.plan(spec)
-    cfg_path = launch.write_launch(spec, jobs, tmp_path / "launch")
-    text = cfg_path.read_text()
-    cfg = yaml.safe_load(text)
-    points = cfg["sweep"]["groups"][0]["configs"]
-    assert len(points) == len(jobs)
-    assert cfg["defaults"][0] == f"/{launch.JOB_CONFIG}"
-    assert cfg["hydra"]["searchpath"] == [f"file://{REPO / 'config'}"]
-    for pt, (job, _) in zip(points, jobs):
-        assert isinstance(pt["slurm.sbatch.time"], str) and pt["slurm.sbatch.time"].endswith(":00:00")
-        assert pt["aux.spec"] == str(tmp_path / "launch/jobs" / f"{job.name}.json")
-        assert launch.SAFE.match(pt["aux.spec"])
-        assert load(JobSpec, json.loads(Path(pt["aux.spec"]).read_text())) == job
-    assert "flores200" not in text and "mmlu" not in text
+def _unit(tmp_path, kind, data=None):
+    _, plan, _ = launch.build(_spec(tmp_path, data))
+    return plan, next(u for u in plan.units if u.kind == kind)
 
 
-def test_manifest_freezes_rows_code_and_launch_files(tmp_path):
-    spec = _spec(tmp_path)
-    jobs, items, done = launch.plan(spec)
-    d = tmp_path / "launch"
-    launch.write_launch(spec, jobs, d)
-    m = json.loads(launch.write_manifest(spec, jobs, items, done, d).read_text())
-    assert m["launch_id"] == "launch" and m["suite"]["count"] == 438 and len(m["suite"]["sha256"]) == 64
-    assert [j["name"] for j in m["jobs"]] == [j.name for j, _ in jobs]
-    assert {r for j in m["jobs"] for r in j["rows"]} == {r.name for j, _ in jobs for r in j.rows}
-    assert all(j["model"] == next(x for x, _ in jobs if x.name == j["name"]).export_dir
-               for j in m["jobs"] if j["harness"] == "lighteval")
-    assert m["lm_eval_items"] == [i for i, _ in items]
-    assert "spec.json" in m["files"] and "launch.yaml" in m["files"] and "manifest.json" not in m["files"]
-    assert "sync_stamp" in m["code"] or "commit" in m["code"]
-    assert set(m["harnesses"]["stage_files"]) == set(launch.STAGE_FILES)
-
-
-def test_job_spec_roundtrip(tmp_path):
-    jobs, _, _ = launch.plan(_spec(tmp_path))
-    for job, _ in jobs:
-        assert load(JobSpec, json.loads(json.dumps(to_dict(job)))) == job
-
-
-@pytest.mark.skipif(not (REPO / "oellm_autoexp").is_dir(), reason="needs the autoexp package")
-def test_launch_composes_in_a_run_autoexp_dry_run(tmp_path):
-    spec = _spec(tmp_path, {"rows": {"names": ["vllm/mmlu/5", "vllm/AMC23/0", "lighteval/xcopa:it/0"]}})
-    jobs, _, _ = launch.plan(spec)
-    d = tmp_path / "launch"
-    launch.write_launch(spec, jobs, d)
-    env = {**os.environ, "PYTHONPATH": str(REPO)}
-    r = subprocess.run([sys.executable, "scripts/run_autoexp.py", "--dry-run", "--dry-run-root", str(tmp_path / "dry"),
-                        "-C", str(d), "--config-name", "launch"], cwd=REPO, env=env, capture_output=True, text=True,
-                       timeout=600)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    scripts = sorted((tmp_path / "dry").rglob("job.sbatch"))
-    assert len(scripts) == len(jobs)
-    for job, _ in jobs:
-        sb = next(s for s in scripts if s.parent.name == job.name).read_text()
-        runtime = "plain" if job.kind == "export" else "vllm"
-        assert f"bash scripts/evals/job.sh {runtime} {d}/jobs/{job.name}.json" in sb
-        assert ("pylibs_hfx" in sb) == (job.kind == "export")
-
-
-# ---------------------------------------------------------------- run_job commands
-
-
-def _job(tmp_path, kind_filter, **spec_over):
-    jobs, _, _ = launch.plan(_spec(tmp_path, spec_over or None))
-    return next(j for j, _ in jobs if kind_filter(j))
-
-
-def test_lighteval_group_command_matches_the_shell_runner(tmp_path):
-    job = _job(tmp_path, lambda j: j.harness == "lighteval")
-    steps = run_job.steps_of(job, "PY")
-    call, done = steps
-    rows = job.rows
-    tasks = ",".join(r.task for r in rows)
-    shots = ",".join(str(r.n_shot) for r in rows)
+def test_lighteval_command_is_the_old_runners(tmp_path):
+    plan, unit = _unit(tmp_path, "lighteval")
+    Path(plan.view_dir).mkdir(parents=True)  # never for lighteval: it would drop the stop sequences
+    (c,) = commands.unit_commands(plan, unit, unit.rows)
+    tasks = ",".join(r.task for r in unit.rows)
+    shots = ",".join(str(r.n_shot) for r in unit.rows)
     key = "group_" + hashlib.sha1(f"{tasks}\n{shots}\n".encode()).hexdigest()[:10]  # mn5_oellm_run_one.sh
-    assert call.argv[2:5] == ["vllm", f"model_name={job.export_dir},trust_remote_code=True,dtype=bfloat16,"
-                              "gpu_memory_utilization=0.9,max_num_seqs=64,max_num_batched_tokens=32768,"
-                              "max_model_length=32768,tensor_parallel_size=4",
-                              ",".join(f"{r.task}|{r.n_shot}" for r in rows)]
-    out = call.argv[call.argv.index("--output-dir") + 1]
-    assert out.endswith(f"/lighteval/lighteval_{key}")
-    assert "--save-details" in call.argv  # per-sample details for later inspection
-    assert call.env["OELLM_GRAPH_MAX_ROWS"] == "64" and call.env["OELLM_VLLM_ENFORCE_EAGER"] == "0"
-    assert done.check and done.argv[done.argv.index("--results") + 1] == out
+    assert c.argv[3:6] == ["vllm", f"model_name={plan.model_dir},trust_remote_code=True,dtype=bfloat16,"
+                           "gpu_memory_utilization=0.9,max_num_seqs=64,max_num_batched_tokens=32768,"
+                           "max_model_length=32768,tensor_parallel_size=4",
+                           ",".join(f"{r.task}|{r.n_shot}" for r in unit.rows)]
+    assert c.argv[c.argv.index("--output-dir") + 1].endswith(f"/lighteval/lighteval_{key}")
+    assert "--save-details" in c.argv and c.env["OELLM_EP"] == "1"
+    assert c.env["OELLM_GRAPH_MAX_ROWS"] == "64" and c.env["OELLM_VLLM_ENFORCE_EAGER"] == "0"
+    plan2, unit2 = _unit(tmp_path, "lighteval", {"lighteval": {"backend": "accelerate"}})
+    (c2,) = commands.unit_commands(plan2, unit2, unit2.rows)
+    assert c2.argv[3:5] == ["accelerate", f"model_name={plan2.model_dir},trust_remote_code=True,batch_size=32"]
 
 
-def test_a_view_is_used_where_there_is_one(tmp_path):
-    job = _job(tmp_path, lambda j: j.harness == "evalchemy")
-    Path(job.view_dir).mkdir(parents=True)
-    call = run_job.steps_of(job, "PY")[0]
-    assert f"pretrained={job.view_dir}," in call.argv[call.argv.index("--model_args") + 1]
-
-
-def test_lighteval_accelerate_backend_runs_the_oellm_eval_command(tmp_path):
-    spec = _spec(tmp_path, {"lighteval": {"backend": "accelerate"}})
-    job = next(j for j, _ in launch.plan(spec)[0] if j.harness == "lighteval")
-    assert job.backend == "accelerate"
-    call = run_job.steps_of(job, "PY")[0]
-    assert call.argv[1].endswith("lighteval_accelerate_cli.py") and call.argv[2] == "accelerate"
-    assert call.argv[3] == f"model_name={job.export_dir},trust_remote_code=True,batch_size=32"
-    assert "--save-details" in call.argv and "--load-tasks-multilingual" in call.argv
-
-
-def test_lighteval_expert_parallel_follows_the_engine(tmp_path):
-    for ep, want in ((True, "1"), (False, "0")):
-        spec = _spec(tmp_path, {"lighteval": {"engine": {"expert_parallel": ep}}})
-        job = next(j for j, _ in launch.plan(spec)[0] if j.harness == "lighteval")
-        assert run_job.steps_of(job, "PY")[0].env["OELLM_EP"] == want
+def test_evalchemy_and_lm_eval_commands_are_the_old_runners(tmp_path):
+    plan, ec = _unit(tmp_path, "evalchemy")
+    calls = commands.unit_commands(plan, ec, ec.rows)
+    assert [c.argv[c.argv.index("--tasks") + 1] for c in calls] == [r.task for r in ec.rows]
+    args = calls[0].argv[calls[0].argv.index("--model_args") + 1]
+    assert args.startswith(f"pretrained={plan.view_dir},")
+    assert args.endswith(",tensor_parallel_size=4,enforce_eager=False,enable_expert_parallel=True")
+    lm = next(u for u in plan.units if u.kind == "lm_eval_session")
+    (s,) = commands.unit_commands(plan, lm, [], shard=3)
+    a = s.argv
+    for flag, val in [("--tp", "1"), ("--dp", "4"), ("--ep", "1"), ("--max-num-seqs", "256"),
+                      ("--request-batch-size", "256"), ("--shard", "3"), ("--gpu-mem", "0.85"),
+                      ("--queue", f"{plan.root}/queue_lm"), ("--model", plan.model_dir), ("--root", plan.root)]:
+        assert a[a.index(flag) + 1] == val
+    assert "--response-cache" in a
+    assert s.env["OELLM_ENGRAM_TABLES"] == "uva" and s.env["OELLM_GRAPH_MAX_ROWS"] == "256"
 
 
 def test_accelerate_backend_is_lighteval_only(tmp_path):
@@ -276,46 +217,93 @@ def test_accelerate_backend_is_lighteval_only(tmp_path):
         _spec(tmp_path, {"evalchemy": {"backend": "accelerate"}})
 
 
-def test_lighteval_never_gets_the_chat_template_view(tmp_path):
-    job = _job(tmp_path, lambda j: j.harness == "lighteval")
-    Path(job.view_dir).mkdir(parents=True)
-    call = run_job.steps_of(job, "PY")[0]
-    assert call.argv[3].startswith(f"model_name={job.export_dir},")
+# ---------------------------------------------------------------- the launch files
 
 
-def test_evalchemy_runs_one_call_per_task_and_skips_done_rows(tmp_path):
-    job = _job(tmp_path, lambda j: j.harness == "evalchemy")
-    done_dir = Path(job.out) / job.export_name / "evalchemy/done"
-    done_dir.mkdir(parents=True)
-    (done_dir / f"{job.rows[0].task}_0.ok").touch()
-    steps = run_job.steps_of(job, "PY")
-    calls = [s for s in steps if "eval.eval" in s.argv]
-    assert [c.argv[c.argv.index("--tasks") + 1] for c in calls] == [r.task for r in job.rows[1:]]
-    args = calls[0].argv[calls[0].argv.index("--model_args") + 1]
-    assert args.endswith(",tensor_parallel_size=4,enforce_eager=False,enable_expert_parallel=True")
-    assert all(c.cwd.endswith("oellm_mn5_stage/evalchemy") for c in calls)
+def test_launch_files_plan_runtime_sweep_and_manifest(tmp_path):
+    spec = _spec(tmp_path)
+    export_job, plan, pools = launch.build(spec)
+    d = tmp_path / "launch"
+    cfg_path = launch.write_launch(spec, export_job, plan, pools, d)
+    text = cfg_path.read_text()
+    cfg = yaml.safe_load(text)
+    assert cfg["defaults"][0] == "/experiments/korbi/production/evals/eval_job_mn5"
+    assert cfg["hydra"]["searchpath"] == [f"file://{REPO / 'config'}"]
+    points = cfg["sweep"]["groups"][0]["configs"]
+    assert len(points) == len(plan.units) + 1
+    assert points[0]["aux.runtime"] == "plain" and points[0]["aux.unit"] == "-"
+    assert load(JobSpec, json.loads(Path(points[0]["aux.spec"]).read_text())) == export_job
+    for pt, u in zip(points[1:], plan.units):
+        assert (pt["aux.runtime"], pt["aux.spec"], pt["aux.unit"]) == ("worker", str(d / "plan.json"), u.id)
+        assert pt["aux.job"] == pools[u.id]["job"] and pt["slurm.sbatch.time"].endswith(":00:00")
+    assert "flores200" not in text and "mmlu" not in text
+    assert read_plan(d / "plan.json") == plan
+    rt = read_runtime(d / "runtime.json")
+    assert rt.kind == "local" and rt.python == "${INFER_PY}"
+    stage = spec.paths.resolved().oellm_stage
+    assert rt.dirs == {"evalchemy": f"{stage}/evalchemy"} and rt.harness_pythonpath["evalchemy"][-1] == stage
+    assert "lm-eval-harness" not in rt.harness_pythonpath, "the sessions keep the vLLM install's lm-eval"
+    assert rt.cleanup_globs == ["/dev/shm/oellm_engram_*"] and "$DEST/typer" in rt.prune["lighteval"]
+    assert rt.hash_files == [f"{stage}/{f}" for f in launch.STAGE_FILES]
+    m = json.loads((d / "manifest.json").read_text())
+    assert {u["kind"]: u["model"] for u in m["units"]} == {"lm_eval_session": plan.model_dir,
+                                                           "lighteval": plan.model_dir, "evalchemy": plan.view_dir}
+    assert m["plan"]["rows"] == len(plan.rows) and m["plan"]["task_groups"] == ["flag-evals-vllm", "flag-evals-lighteval"]
+    assert {"plan.json", "runtime.json", "spec.json", "launch.yaml", "jobs/export.json"} <= set(m["files"])
+    assert "sync_stamp" in m["code"]["caller"]
 
 
-def test_lm_eval_worker_command(tmp_path):
-    job = _job(tmp_path, lambda j: j.kind == "lm_eval_worker" and j.shard == 3)
-    (s,) = run_job.steps_of(job, "PY")
-    a = s.argv
-    for flag, val in [("--tp", "1"), ("--dp", "4"), ("--ep", "1"), ("--max-num-seqs", "256"),
-                      ("--request-batch-size", "256"), ("--shard", "3"), ("--gpu-mem", "0.85"),
-                      ("--queue", f"{job.out}/{job.export_name}/queue_lm")]:
-        assert a[a.index(flag) + 1] == val
-    assert "--response-cache" in a and "--names" not in a
-    assert s.env["OELLM_ENGRAM_TABLES"] == "uva" and s.env["OELLM_GRAPH_MAX_ROWS"] == "256"
+def test_apptainer_runtime_for_pools_on_other_clusters(tmp_path):
+    images = {"lm-eval-harness": "/v.sif", "lighteval": "/l.sif", "evalchemy": "/v.sif"}
+    spec = _spec(tmp_path, {"runtime": {"kind": "apptainer", "images": images, "apptainer_args": ["--nv"]},
+                            "slurm": {"job_config": "experiments/korbi/production/evals/eval_job_jupiter"}})
+    _, plan, _ = launch.build(spec)
+    rt = launch.runtime(spec, plan)
+    assert rt.kind == "apptainer" and rt.images == images and rt.dirs == {"evalchemy": "/opt/evalchemy"}
+    with pytest.raises(SpecError, match="no image"):
+        _spec(tmp_path, {"runtime": {"kind": "apptainer", "images": {"lighteval": "/l.sif"}}})
+
+
+def test_job_spec_roundtrip(tmp_path):
+    export_job, _, _ = launch.build(_spec(tmp_path))
+    assert load(JobSpec, json.loads(json.dumps(to_dict(export_job)))) == export_job
+
+
+def test_job_sh_parses():
+    assert subprocess.run(["bash", "-n", str(REPO / "scripts/evals/job.sh")]).returncode == 0
+
+
+@pytest.mark.skipif(not (REPO / "oellm_autoexp").is_dir(), reason="needs the autoexp package")
+def test_launch_composes_in_a_run_autoexp_dry_run(tmp_path):
+    spec = _spec(tmp_path, {"rows": {"names": ["vllm/mmlu/5", "vllm/AMC23/0", "lighteval/xcopa:it/0"]}})
+    export_job, plan, pools = launch.build(spec)
+    d = tmp_path / "launch"
+    launch.write_launch(spec, export_job, plan, pools, d)
+    env = {**os.environ, "PYTHONPATH": str(REPO)}
+    r = subprocess.run([sys.executable, "scripts/run_autoexp.py", "--dry-run", "--dry-run-root", str(tmp_path / "dry"),
+                        "-C", str(d), "--config-name", "launch"], cwd=REPO, env=env, capture_output=True, text=True,
+                       timeout=600)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    scripts = sorted((tmp_path / "dry").rglob("job.sbatch"))
+    assert len(scripts) == len(plan.units) + 1
+    sb = next(s for s in scripts if s.parent.name == export_job.name).read_text()
+    assert f"bash scripts/evals/job.sh plain {d}/jobs/export.json -" in sb and "pylibs_hfx" in sb
+    for u in plan.units:
+        sb = next(s for s in scripts if s.parent.name == pools[u.id]["job"]).read_text()
+        assert f"bash scripts/evals/job.sh worker {d}/plan.json {u.id}" in sb and "pylibs_hfx" not in sb
+
+
+# ---------------------------------------------------------------- the export job
 
 
 def test_export_job_steps(tmp_path):
-    job = _job(tmp_path, lambda j: j.kind == "export")
-    steps = run_job.steps_of(job, "PY")
+    export_job, _, _ = launch.build(_spec(tmp_path))
+    steps = run_job.export_steps(export_job, "PY")
     assert steps[0].argv == ["bash", "scripts/korbi/hf_export/export_main_run_v2.sh", "ambitious_v4_hd256", "13000",
                              f"{tmp_path}/exports"]
     assert steps[0].env == {"EXPORT_ONLY": "1", "EXPERT_DTYPE": "fp8", "HF_EXPORTER": "parallel",
                             "OELLM_EXPORT_MAX_POSITIONS": "100000000"}
-    assert steps[-1].argv == ["touch", f"{job.export_dir}/.downstream_ready"]
+    assert steps[-1].argv == ["touch", f"{export_job.export_dir}/.downstream_ready"]
     assert any("prepare_base_model_view.py" in " ".join(s.argv) for s in steps)
 
 

@@ -1,4 +1,4 @@
-"""scripts/korbi/flag_eval/flag_queue.py: the shared-filesystem queue of the lm-eval workers."""
+"""scripts/korbi/flag_eval/flag_queue.py (a shim over oellm-eval's oellm.runner.queue): the old interface of the lm-eval row queue."""
 
 from __future__ import annotations
 

@@ -1,9 +1,10 @@
-"""Typed specs of the FLAG eval pipeline on MareNostrum 5 (scripts/evals/launch.py, run_job.py).
+"""Typed specs of the FLAG eval pipeline (scripts/evals/launch.py, run_job.py).
 
 An ``EvalSpec`` (a YAML file in config/evals/, plus ``--set key=value`` overrides) describes one
 checkpoint's evals: the export, the rows, and per harness the engine layout, the model-code
-switches and the job limits. launch.py turns it into ``JobSpec`` JSON files, one per pool job;
-run_job.py executes one. Every value is checked against its field's type when it is loaded (unknown
+switches and the job limits. launch.py turns it into an oellm-eval plan (submodules/oellm-eval,
+oellm/runner: rows -> units) and a runtime for the cluster, one pool job per unit running
+``oellm.runner.worker``; the export is the one job of autoexp's own (a ``JobSpec``, run_job.py). Every value is checked against its field's type when it is loaded (unknown
 keys, wrong types and values outside a ``Literal`` are errors that name the key), and the
 cross-field rules in ``check()`` run before anything is written or submitted.
 
@@ -201,12 +202,15 @@ class Engine:
     # lm-eval only: requests per lm-eval batch, and the durable per-request cache
     request_batch_size: int | None = None
     response_cache: bool = False
+    # lm-eval only: engines per node, each on tp x dp GPUs of its own (small dense models)
+    replicas: int = 1
 
     def check(self, where: str) -> None:
-        if self.tp < 1 or self.dp < 1:
-            raise SpecError(f"{where}: tp and dp must be positive")
-        if self.tp * self.dp > GPUS_PER_NODE:
-            raise SpecError(f"{where}: tp x dp = {self.tp * self.dp} > {GPUS_PER_NODE} GPUs of a node")
+        if self.tp < 1 or self.dp < 1 or self.replicas < 1:
+            raise SpecError(f"{where}: tp, dp and replicas must be positive")
+        if self.tp * self.dp * self.replicas > GPUS_PER_NODE:
+            raise SpecError(f"{where}: tp x dp x replicas = {self.tp * self.dp * self.replicas} > "
+                            f"{GPUS_PER_NODE} GPUs of a node")
         if self.dp > 1 and not self.expert_parallel:
             raise SpecError(f"{where}: dp > 1 needs expert_parallel (the MoE bound of the model)")
         if self.max_num_seqs < self.dp:
@@ -247,9 +251,10 @@ def _grouped_engine(max_model_length: int | None) -> Engine:
 
 @dataclass
 class LmEvalSpec:
-    """lm-eval rows through a shared queue (flag_queue.py): ``workers`` one-node jobs, one engine
-    each, items claimed until the queue is empty; rows longer than ``split_s`` of engine time become
-    up to ``max_parts`` document parts (lmeval_parts.py), merged by lm-eval's own aggregation."""
+    """lm-eval rows through a shared queue (oellm.runner.queue): ``workers`` one-node session units,
+    one engine each (``engine.replicas`` engines for small models), items claimed until the queue is
+    empty; rows longer than ``split_s`` of engine time become up to ``max_parts`` document parts
+    (oellm.runner.lm_eval_parts), merged by lm-eval's own aggregation."""
 
     enabled: bool = True
     workers: int = 10
@@ -265,7 +270,7 @@ class LmEvalSpec:
         if self.max_parts < 1 or self.split_s < 0:
             raise SpecError("lm_eval: max_parts >= 1 and split_s >= 0")
         if self.engine.max_model_length is not None:
-            raise SpecError("lm_eval.engine.max_model_length: flag_lmeval.py uses the export's window (null)")
+            raise SpecError("lm_eval.engine.max_model_length: the lm-eval session uses the export's window (null)")
         self.engine.check("lm_eval.engine")
 
 
@@ -294,8 +299,8 @@ class GroupedSpec:
             raise SpecError(f"{name}.groups must be positive")
         if self.max_rows is not None and self.max_rows < 1:
             raise SpecError(f"{name}.max_rows must be positive")
-        if self.engine.request_batch_size is not None or self.engine.response_cache:
-            raise SpecError(f"{name}.engine: request_batch_size / response_cache are lm-eval only")
+        if self.engine.request_batch_size is not None or self.engine.response_cache or self.engine.replicas != 1:
+            raise SpecError(f"{name}.engine: request_batch_size / response_cache / replicas are lm-eval only")
         self.engine.check(f"{name}.engine")
 
 
@@ -334,10 +339,17 @@ class ExportSpec:
         return f"{EXPORT_STEMS[self.model]}_{self.expert_dtype}_{self.step}"
 
 
+def _flag_groups() -> dict[str, str]:
+    return {"vllm": "flag-evals-vllm", "lighteval": "flag-evals-lighteval"}
+
+
 @dataclass
 class RowSelection:
-    suite_file: str = "config/eval_tasks/flag_evals.yaml"
-    # flag_evals.yaml names (half/task/n_shot); null: every row of the selected harnesses
+    # oellm-eval task groups per half (row names <half>/<task>/<n_shot>): the 438 FLAG rows
+    groups: dict[str, str] = field(default_factory=_flag_groups)
+    # a suite file instead (tasks: [{name, task, n_shot, suite}]; the old flag_evals.yaml)
+    suite_file: str | None = None
+    # row names (half/task/n_shot); null: every row of the selected harnesses
     names: list[str] | None = None
     harnesses: list[Harness] = field(default_factory=lambda: list(HARNESSES))
     exclude: list[str] = field(default_factory=list)
@@ -374,6 +386,35 @@ class Paths:
 class Slurm:
     account: str = "cns144"
     qos: str = "acc_xehpc"
+    # the pool job config every unit's sweep point composes (config/ path)
+    job_config: str = "experiments/korbi/production/evals/eval_job_mn5"
+
+
+@dataclass
+class RuntimeSpec:
+    """How the harnesses run on the cluster's nodes (an oellm-eval runtime.json).
+
+    mn5        the node-local vLLM install (scripts/korbi/vllm/setup_vllm_uv.sh, in job.sh) with the
+               oellm-eval stage and the harness libraries of ``paths`` (lighteval / evalchemy)
+    apptainer  one image per harness, as JUPITER's oellm-eval images (``images``: lm-eval-harness,
+               lighteval, evalchemy), ``apptainer_args`` / ``binds`` / ``env`` as the cluster needs
+    """
+
+    kind: Literal["mn5", "apptainer"] = "mn5"
+    images: dict[str, str] = field(default_factory=dict)
+    apptainer_args: list[str] = field(default_factory=list)
+    binds: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    evalchemy_dir: str = "/opt/evalchemy"  # apptainer: the evalchemy checkout inside the image
+    hang_minutes: float = 15.0             # end a command silent this long after vLLM's shutdown
+
+    def check(self) -> None:
+        if self.kind == "apptainer":
+            missing = [h for h in HARNESSES if h not in self.images]
+            if missing:
+                raise SpecError(f"runtime.images: no image for {missing}")
+        if self.hang_minutes < 0:
+            raise SpecError("runtime.hang_minutes must not be negative")
 
 
 @dataclass
@@ -385,6 +426,7 @@ class EvalSpec:
     evalchemy: GroupedSpec = field(default_factory=_evalchemy)
     paths: Paths = field(default_factory=Paths)
     slurm: Slurm = field(default_factory=Slurm)
+    runtime: RuntimeSpec = field(default_factory=RuntimeSpec)
     tag: str = ""  # job-name suffix (a second launch of the same export)
 
     def check(self) -> None:
@@ -394,6 +436,7 @@ class EvalSpec:
         self.lm_eval.check()
         self.lighteval.check("lighteval")
         self.evalchemy.check("evalchemy")
+        self.runtime.check()
 
 
 def default_dict(cls: type = None) -> dict:
@@ -416,36 +459,20 @@ def eval_spec(data: dict | None = None, sets: list[str] | None = None) -> EvalSp
     return spec
 
 
-# ---------------------------------------------------------------- one job
-
-
-@dataclass
-class Row:
-    name: str  # flag_evals.yaml name, half/task/n_shot
-    task: str
-    n_shot: int
-    suite: Harness
+# ---------------------------------------------------------------- the export job
 
 
 @dataclass
 class JobSpec:
-    """One pool job of a launch (run_job.py)."""
+    """The export job of a launch (run_job.py): the HF export of the checkpoint, its identity
+    chat-template view, its current model code and <export>/.downstream_ready. The eval units are
+    oellm-eval's (plan.json)."""
 
-    kind: Literal["export", "lm_eval_worker", "harness_group"]
+    kind: Literal["export"]
     name: str
     export_name: str
     export_dir: str
     view_dir: str
-    out: str  # results root: <out>/<export>[_limit<l>]/...
     paths: Paths
-    suite_file: str
-    limit: int = 0
-    harness: Harness | None = None
-    rows: list[Row] = field(default_factory=list)
-    engine: Engine | None = None
-    model_code: ModelCode | None = None
-    queue: str | None = None   # lm_eval_worker
-    shard: int = 0             # lm_eval_worker: its summary_shard<i>.tsv
-    export: ExportSpec | None = None  # export
+    export: ExportSpec
     est_s: float = 0.0
-    backend: Literal["vllm", "accelerate"] = "vllm"  # harness_group lighteval

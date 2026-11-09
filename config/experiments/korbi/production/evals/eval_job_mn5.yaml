@@ -1,7 +1,8 @@
 # @package _global_
 # One pool job of a typed eval launch (scripts/evals/launch.py renders the sweep of a launch: one
-# point per job, plain literals). The job's settings -- rows, engine layout, model-code switches --
-# are in its JobSpec JSON (aux.spec); the command passes only the runtime and that path.
+# point per job, plain literals). An eval unit's settings -- rows, engine layout, model-code
+# switches -- are in the launch's oellm-eval plan.json (aux.spec) under its unit id (aux.unit); the
+# export job's in its JobSpec JSON. The command passes only the runtime, that path and the unit.
 defaults:
   - ../../hybrid_speed/kernel_tests_mn5
   - _self_
@@ -9,11 +10,12 @@ defaults:
 aux:
   # placeholders so the base resolves: every sweep point of a launch sets them
   job: eval_job_base  # the job's name (its JobSpec file stem)
-  spec: none          # the JobSpec JSON
-  runtime: vllm       # scripts/evals/job.sh: vllm | plain
+  spec: none          # worker: the plan.json; plain: the export JobSpec JSON
+  unit: "-"           # worker: the unit id of the plan
+  runtime: worker     # scripts/evals/job.sh: worker | plain
   log_root: ${oc.env:OUTPUT_DIR,'./output'}/flag_evals_oellm/logs  # the launch sets <paths.out>/logs
   name: ${aux.job}
-  bench: bash scripts/evals/job.sh ${aux.runtime} ${aux.spec}
+  bench: bash scripts/evals/job.sh ${aux.runtime} ${aux.spec} ${aux.unit}
   # the export job's libraries (Megatron's checkpoint reader, the HF exporter's extras)
   export_pythonpath: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}:${aux.hybrid_env}/pylibs_hfx"
 

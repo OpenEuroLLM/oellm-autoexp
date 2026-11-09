@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Launch the FLAG evals of one checkpoint from a typed spec (scripts/evals/spec.py): the export
-(unless it is ready), lm-eval through queue workers, lighteval / evalchemy in balanced one-load
-groups -- all as pool jobs, the eval jobs gated on <export>/.downstream_ready. Run on the MN5
-login node from a synced snapshot, with the autoexp environment:
+"""Launch the FLAG evals of one checkpoint from a typed spec (scripts/evals/spec.py) as pool jobs:
+the export (unless it is ready), then one job per unit of an oellm-eval plan (submodules/oellm-eval,
+oellm/runner: lm-eval sessions over a shared row queue, lighteval and evalchemy groups), the eval
+jobs gated on <export>/.downstream_ready. Run on a login node from a synced snapshot, with the
+autoexp environment:
 
     $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/flag_full_mn5.yaml --step 13000
     ... config/evals/flag_short_mn5.yaml --step 13000 --set lm_eval.workers=12 --dry-run
 
-Each job's settings go into a JSON spec (<out>/<export>/launches/<id>/jobs/<job>.json, a JobSpec);
-the job runs ``bash scripts/evals/job.sh <runtime> <that file>`` -- no task name, list or setting
-passes through a shell or Hydra interpolation. The pool sweep for run_autoexp is rendered next to it
-(launch.yaml, composed against this repo's config/ via hydra.searchpath). manifest.json freezes what
-the launch runs: rows per job, code snapshot (SYNC_STAMP), suite hash, harness versions, the hashes of
-the stage files that score the rows and of the launch files.
+A launch directory (<out>/<export>/launches/<id>/) holds plan.json (oellm-eval's plan: rows, units,
+every setting), runtime.json (how the harnesses run on this cluster's nodes), jobs/export.json (the
+export job's JobSpec), launch.yaml (the pool sweep for run_autoexp, composed against this repo's
+config/ via hydra.searchpath; one point per job, plain literals) and manifest.json (what the launch
+planned: plan / runtime hashes, the code snapshot's SYNC_STAMP, the stage files' hashes). A unit's
+job runs ``bash scripts/evals/job.sh worker <plan.json> <unit id>`` -- no task name, list or setting
+passes through a shell or Hydra interpolation; every unit run adds a provenance record.
 
-Rows with a done marker are left out; lm-eval rows already queued, running or failed are not
+Rows with a done marker are left out; lm-eval items already queued, running or failed are not
 queued again, so a relaunch adds only what is missing. --dry-run prints the plan and writes nothing.
 """
 
@@ -32,64 +34,61 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[2]
-if str(REPO) not in sys.path:
-    sys.path.insert(0, str(REPO))
+OELLM = REPO / "submodules" / "oellm-eval"
+for _p in (REPO, OELLM):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
+from oellm.reports.manifest import write_manifest  # noqa: E402
+from oellm.runner import plan as oplan  # noqa: E402
+from oellm.runner.layout import Layout  # noqa: E402
+from oellm.runner.layout import Row as ORow  # noqa: E402
+from oellm.runner.layout import results_root as oellm_results_root  # noqa: E402
+from oellm.runner.runtime import Runtime  # noqa: E402
 from scripts.evals.spec import (  # noqa: E402
-    EvalSpec, GroupedSpec, JobSpec, Row, SpecError, eval_spec, to_dict,
+    GPUS_PER_NODE, EvalSpec, GroupedSpec, JobSpec, SpecError, eval_spec, to_dict,
 )
-from scripts.korbi.flag_eval import flag_queue  # noqa: E402
 
 ROW_TIMES = REPO / "config/eval_tasks/flag_evals_row_times.json"     # job seconds incl. a load
 ENGINE_TIMES = REPO / "config/eval_tasks/flag_evals_engine_times.json"  # engine seconds, lm-eval
-JOB_CONFIG = "experiments/korbi/production/evals/eval_job_mn5"
-LOAD_S = 600.0  # the model load inside a reference row time
 EXPORT_EST_S = 900.0
 SAFE = re.compile(r"^[A-Za-z0-9_./@=-]+$")
-
-
-def key_of(task: str) -> str:
-    """The harness runners' file key of a task name (mn5_oellm_run_one.sh key_of)."""
-    return re.sub(r"[/:| ]", "_", task)
+# files of the oellm-eval stage that decide how rows are run and scored (patched or bug-prone)
+STAGE_FILES = (
+    "evalchemy/eval/task.py",
+    "evalchemy/eval/chat_benchmarks/HumanEval/human_eval/execution.py",
+    "evalchemy/eval/chat_benchmarks/HumanEval/eval_instruct.py",
+    "evalchemy/eval/chat_benchmarks/LiveCodeBench/eval_instruct.py",
+    "lighteval/metrics/metrics_corpus.py",
+    "lighteval/models/vllm/vllm_model.py",
+    "lighteval/main_vllm.py",
+)
 
 
 # ---------------------------------------------------------------- rows
 
 
-def select_rows(spec: EvalSpec) -> list[Row]:
-    suite = yaml.safe_load((REPO / spec.rows.suite_file).read_text())["tasks"]
-    by_name = {r["name"]: r for r in suite}
+def select_rows(spec: EvalSpec) -> list[ORow]:
+    if spec.rows.suite_file:
+        suite = yaml.safe_load((REPO / spec.rows.suite_file).read_text())["tasks"]
+        rows = [ORow(name=t["name"], task=str(t["task"]), n_shot=int(t["n_shot"]), harness=t["suite"]) for t in suite]
+    else:
+        rows = oplan.rows_from_task_groups(spec.rows.groups)
+    by_name = {r.name: r for r in rows}
     if spec.rows.names is not None:
         missing = [n for n in spec.rows.names if n not in by_name]
         if missing:
-            raise SpecError(f"rows.names not in {spec.rows.suite_file}: {missing}")
-        chosen = [by_name[n] for n in dict.fromkeys(spec.rows.names)]
-    else:
-        chosen = suite
+            raise SpecError(f"rows.names not in the rows of {spec.rows.suite_file or spec.rows.groups}: {missing}")
+        rows = [by_name[n] for n in dict.fromkeys(spec.rows.names)]
     exclude = set(spec.rows.exclude)
     harness_excl = {"lighteval": set(spec.lighteval.exclude_tasks), "evalchemy": set(spec.evalchemy.exclude_tasks)}
-    out = []
-    for r in chosen:
-        if r["suite"] not in spec.rows.harnesses or r["name"] in exclude:
-            continue
-        if r["task"] in harness_excl.get(r["suite"], ()):
-            continue
-        out.append(Row(name=r["name"], task=str(r["task"]), n_shot=int(r["n_shot"]), suite=r["suite"]))
-    return out
+    return [r for r in rows if r.harness in spec.rows.harnesses and r.name not in exclude
+            and r.task not in harness_excl.get(r.harness, ())]
 
 
 def results_root(spec: EvalSpec) -> Path:
-    """<out>/<export>[_limit<l>]: where the runners put results and done markers."""
-    name = spec.export.export_name
-    lim = f"_limit{spec.rows.limit}" if spec.rows.limit else ""
-    return Path(spec.paths.out) / f"{name}{lim}"
-
-
-def row_done(spec: EvalSpec, row: Row) -> bool:
-    root = results_root(spec)
-    if row.suite == "lm-eval-harness":
-        return (root / "done" / f"{row.task}_{row.n_shot}.ok").exists()
-    return (root / row.suite / "done" / f"{key_of(row.task)}_{row.n_shot}.ok").exists()
+    """<out>/<export>[_limit<l>]: where the runners put results and done markers (oellm layout)."""
+    return oellm_results_root(spec.paths.out, spec.export.export_name, spec.rows.limit)
 
 
 # ---------------------------------------------------------------- planning
@@ -99,103 +98,115 @@ def _times(path: Path) -> dict[str, float]:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
-def expected_seconds(rows: list[Row], times: dict[str, float]) -> list[float]:
-    """Per row: its reference job time minus the load, else its harness's median."""
-    key = lambda r: f"{r.suite}|{r.task}|{r.n_shot}"  # noqa: E731
-    known: dict[str, list[float]] = {}
-    for k, t in times.items():
-        known.setdefault(k.split("|", 1)[0], []).append(max(60.0, t - LOAD_S))
-    med = {s: sorted(v)[len(v) // 2] for s, v in known.items()}
-    return [max(60.0, times[key(r)] - LOAD_S) if key(r) in times else med.get(r.suite, 600.0) for r in rows]
+def _engine(e) -> oplan.Engine:
+    return oplan.Engine(tp=e.tp, dp=e.dp, expert_parallel=e.expert_parallel, max_num_seqs=e.max_num_seqs,
+                        max_num_batched_tokens=e.max_num_batched_tokens, max_model_length=e.max_model_length,
+                        gpu_memory_utilization=e.gpu_memory_utilization, request_batch_size=e.request_batch_size,
+                        response_cache=e.response_cache, replicas=e.replicas)
 
 
-def balance(secs: list[float], groups: int) -> list[list[int]]:
-    """Longest first onto the least loaded group; each group's members in input order."""
-    import heapq
-
-    heap = [(0.0, g) for g in range(groups)]
-    out: list[list[int]] = [[] for _ in range(groups)]
-    for s, i in sorted(((s, i) for i, s in enumerate(secs)), reverse=True):
-        load, g = heapq.heappop(heap)
-        out[g].append(i)
-        heapq.heappush(heap, (load + s, g))
-    return [sorted(g) for g in out if g]
-
-
-def group_jobs(spec: EvalSpec, harness: str, rows: list[Row], times: dict[str, float]) -> list[tuple[list[Row], float]]:
-    cfg: GroupedSpec = getattr(spec, harness)
-    if not rows:
-        return []
-    secs = expected_seconds(rows, times)
-    n = max(cfg.groups, math.ceil(len(rows) / cfg.max_rows) if cfg.max_rows else 1)
-    n = min(n, len(rows))
-    out = []
-    for members in balance(secs, n):
-        loads = len(members) if harness == "evalchemy" else 1  # evalchemy: one call per task
-        out.append(([rows[i] for i in members], loads * LOAD_S + sum(secs[i] for i in members)))
-    return out
+def _group(cfg: GroupedSpec) -> oplan.GroupSettings | None:
+    if not cfg.enabled:
+        return None
+    return oplan.GroupSettings(groups=cfg.groups, max_rows=cfg.max_rows, exclude_tasks=list(cfg.exclude_tasks),
+                               engine=_engine(cfg.engine), env=cfg.model_code.env(), backend=cfg.backend)
 
 
 def wall_hours(limit_h: int | None, est_s: float) -> int:
     return limit_h if limit_h is not None else min(48, max(2, math.ceil(3 * est_s / 3600)))
 
 
-def plan(spec: EvalSpec) -> tuple[list[tuple[JobSpec, dict]], list[tuple[str, float]], list[Row]]:
-    """The launch's jobs (each with its pool settings), the lm-eval queue items, and the rows
-    left out as done."""
+def _git_rev(path: Path) -> str:
+    try:
+        rev = subprocess.run(["git", "-C", str(path), "rev-parse", "--short=7", "HEAD"], capture_output=True,
+                             text=True, timeout=30).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(path), "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, timeout=30).stdout.strip()
+        if rev:
+            return rev + ("-dirty" if dirty else "")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    stamp = REPO / "SYNC_STAMP"  # a synced snapshot has no .git: its stamp names the commit
+    if stamp.is_file():
+        for line in stamp.read_text().splitlines():
+            parts = line.split()
+            if len(parts) > 2 and parts[0] == "submodules/oellm-eval":
+                return parts[2] + ("" if parts[-1] == "dirty=da39a3ee5e6b" else "-dirty")
+    return "unknown"
+
+
+def build(spec: EvalSpec) -> tuple[JobSpec | None, oplan.Plan, dict[str, dict]]:
+    """The export job (None when the export is ready), the oellm-eval plan, and the pool settings
+    per unit id."""
     p = spec.paths.resolved()
-    export_name = spec.export.export_name
-    export_dir = f"{p.exports}/{export_name}"
-    view_dir = f"{p.views}/{export_name}"
+    name = spec.export.export_name
+    export_dir, view_dir = f"{p.exports}/{name}", f"{p.views}/{name}"
     ready = Path(export_dir, ".downstream_ready").exists()
-    rows = select_rows(spec)
-    done = [r for r in rows if row_done(spec, r)]
-    todo = [r for r in rows if not row_done(spec, r)]
-    common = dict(export_name=export_name, export_dir=export_dir, view_dir=view_dir, out=p.out,
-                  paths=p, suite_file=str(REPO / spec.rows.suite_file), limit=spec.rows.limit)
-    tag = f"_{spec.tag}" if spec.tag else ""
-    jobs: list[tuple[JobSpec, dict]] = []
-    gate = None if ready else f"{export_dir}/.downstream_ready"
+    sfx = f"_{spec.tag}" if spec.tag else ""
+    export_job = None
     if not ready:
         if spec.export.step is None:
             raise SpecError(f"{export_dir} is not ready (no .downstream_ready) and export.step is not set")
-        jobs.append((JobSpec(kind="export", name=f"ev_{export_name}_export{tag}", export=spec.export,
-                             est_s=EXPORT_EST_S, **common),
-                     dict(priority=50, time_h=1, use_excluded_nodes=True, gate=None, runtime="plain")))
+        export_job = JobSpec(kind="export", name=f"ev_{name}_export{sfx}", export_name=name, export_dir=export_dir,
+                             view_dir=view_dir, paths=p, export=spec.export, est_s=EXPORT_EST_S)
+    lm = spec.lm_eval
+    session = (oplan.SessionSettings(workers=lm.workers, split_s=lm.split_s, max_parts=lm.max_parts,
+                                     engine=_engine(lm.engine), env=lm.model_code.env()) if lm.enabled else None)
+    try:
+        plan = oplan.build_plan(model_name=name, model_dir=export_dir, view_dir=view_dir, out=p.out,
+                                rows=select_rows(spec), lm_eval=session, lighteval=_group(spec.lighteval),
+                                evalchemy=_group(spec.evalchemy), limit=spec.rows.limit,
+                                task_groups=[] if spec.rows.suite_file else list(spec.rows.groups.values()),
+                                oellm_rev=_git_rev(OELLM), engine_times=_times(ENGINE_TIMES),
+                                row_times=_times(ROW_TIMES), tag=spec.tag)
+    except ValueError as e:
+        raise SpecError(str(e)) from None
+    gate = None if ready else f"{export_dir}/.downstream_ready"
+    pools = {}
+    for u in plan.units:
+        if u.kind == "lm_eval_session":
+            lim, time_h = lm.job, lm.job.time_h if lm.job.time_h is not None else 12
+        else:
+            lim = getattr(spec, u.kind).job
+            time_h = wall_hours(lim.time_h, u.est_s)
+        pools[u.id] = dict(priority=lim.priority, time_h=time_h, use_excluded_nodes=lim.use_excluded_nodes,
+                           gate=gate, job=f"ev_{name}_{u.id}")
+    for job in [export_job.name] if export_job else []:
+        if not SAFE.match(job):
+            raise SpecError(f"job name {job!r}: unsafe characters")
+    for pool in pools.values():
+        if not SAFE.match(pool["job"]):
+            raise SpecError(f"job name {pool['job']!r}: unsafe characters")
+    return export_job, plan, pools
 
-    items: list[tuple[str, float]] = []
-    lm_rows = [r for r in todo if r.suite == "lm-eval-harness"]
-    if spec.lm_eval.enabled and lm_rows:
-        # a test run (rows.limit) evaluates the first documents of each row: no parts
-        split_s = 0 if spec.rows.limit else spec.lm_eval.split_s
-        items = flag_queue.plan([r.name for r in lm_rows], _times(ENGINE_TIMES), split_s, spec.lm_eval.max_parts)
-        queue = str(results_root(spec) / "queue_lm")
-        total = sum(s for _, s in items)
-        workers = min(spec.lm_eval.workers, len(items))
-        lim = spec.lm_eval.job
-        for w in range(workers):
-            jobs.append((JobSpec(kind="lm_eval_worker", name=f"ev_{export_name}_lm_w{w}{tag}", harness="lm-eval-harness",
-                                 engine=spec.lm_eval.engine, model_code=spec.lm_eval.model_code, queue=queue,
-                                 shard=w, est_s=total / workers, **common),
-                         dict(priority=lim.priority, time_h=lim.time_h if lim.time_h is not None else 12,
-                              use_excluded_nodes=lim.use_excluded_nodes, gate=gate, runtime="vllm")))
 
-    row_times = _times(ROW_TIMES)
-    for harness, short in (("lighteval", "le"), ("evalchemy", "ec")):
-        cfg: GroupedSpec = getattr(spec, harness)
-        h_rows = [r for r in todo if r.suite == harness]
-        if not cfg.enabled:
-            continue
-        for g, (members, est) in enumerate(group_jobs(spec, harness, h_rows, row_times), start=1):
-            jobs.append((JobSpec(kind="harness_group", name=f"ev_{export_name}_{short}_g{g}{tag}", harness=harness,
-                                 rows=members, engine=cfg.engine, model_code=cfg.model_code, est_s=est,
-                                 backend=cfg.backend, **common),
-                         dict(priority=cfg.job.priority, time_h=wall_hours(cfg.job.time_h, est),
-                              use_excluded_nodes=cfg.job.use_excluded_nodes, gate=gate, runtime="vllm")))
-    for job, _ in jobs:
-        if not SAFE.match(job.name):
-            raise SpecError(f"job name {job.name!r}: unsafe characters")
-    return jobs, items, done
+def runtime(spec: EvalSpec, plan: oplan.Plan) -> Runtime:
+    """The cluster's runtime.json: MN5's node-local vLLM install (job.sh sets $INFER_PY) or images."""
+    p = spec.paths.resolved()
+    rs = spec.runtime
+    if rs.kind == "apptainer":
+        return Runtime(kind="apptainer", python="python", images=dict(rs.images), apptainer_args=list(rs.apptainer_args),
+                       binds=list(rs.binds), env=dict(rs.env), dirs={"evalchemy": rs.evalchemy_dir}, gpus=GPUS_PER_NODE,
+                       hang_minutes=rs.hang_minutes, name="apptainer")
+    stage = p.oellm_stage
+    harness_env = {"STANZA_RESOURCES_DIR": p.stanza, "OELLM_STAGE": stage,
+                   "OELLM_INCLUDE": str(OELLM / "oellm/resources/custom_lm_eval_tasks")}
+    front = [p.pylibs_oellm, stage]
+    lighteval_front = ([p.pylibs_lighteval] if Path(p.pylibs_lighteval).is_dir() else []) + front
+    uva = any(u.env.get("OELLM_ENGRAM_TABLES") == "uva" for u in plan.units)
+    return Runtime(
+        kind="local", python="${INFER_PY}", env=dict(rs.env),
+        # the stage and the harness libraries for lighteval / evalchemy only (the lm-eval sessions
+        # run on the vLLM install's own lm-eval); lighteval's metric pins first
+        harness_env={"lighteval": harness_env, "evalchemy": harness_env},
+        harness_pythonpath={"lighteval": lighteval_front, "evalchemy": front},
+        dirs={"evalchemy": f"{stage}/evalchemy"}, gpus=GPUS_PER_NODE,
+        # Engram tables staged in /dev/shm (uva) outlive the processes; pool steps run inside a
+        # long host job, so no epilog removes them
+        cleanup_globs=["/dev/shm/oellm_engram_*"] if uva else [],
+        # the vLLM wheel pins an older typer; lighteval's CLI metadata needs the image's
+        prune={"lighteval": ["$DEST/typer", "$DEST/typer-*.dist-info", "$DEST/typer_slim-*.dist-info"]},
+        hash_files=[f"{stage}/{f}" for f in STAGE_FILES], hang_minutes=rs.hang_minutes, name="mn5")
 
 
 # ---------------------------------------------------------------- rendering
@@ -209,41 +220,42 @@ _QuotingDumper.add_representer(
     str, lambda d, v: d.represent_scalar("tag:yaml.org,2002:str", v, style='"' if ":" in v else None))
 
 
-def render_launch(spec: EvalSpec, jobs: list[tuple[JobSpec, dict]], launch_dir: Path) -> str:
+def render_launch(spec: EvalSpec, export_job: JobSpec | None, plan: oplan.Plan, pools: dict[str, dict],
+                  launch_dir: Path) -> str:
     """The primary run_autoexp config of the launch: one list-sweep point per job, all values
-    plain literals (the job's settings are in its JSON spec)."""
+    plain literals (the settings are in plan.json / jobs/export.json)."""
     p = spec.paths.resolved()
+    plan_path = str(launch_dir / "plan.json")
     points = []
-    for job, pool in jobs:
-        spec_path = str(launch_dir / "jobs" / f"{job.name}.json")
-        for v in (spec_path, p.logs):
-            if not SAFE.match(v):
-                raise SpecError(f"path {v!r}: unsafe characters for the job command")
-        pt = {
-            "aux.job": job.name,
-            "aux.runtime": pool["runtime"],
-            "aux.spec": spec_path,
-            "job.est_step_time_s": int(max(60, job.est_s)),
-            "slurm.sbatch.time": f"{pool['time_h']:02d}:00:00",
-            "job.metadata.pool_priority": pool["priority"],
-            "job.metadata.pool_use_excluded_nodes": pool["use_excluded_nodes"],
-        }
-        if job.kind == "export":
-            pt["backend.env.PYTHONPATH"] = "${aux.export_pythonpath}"
+    if export_job is not None:
+        points.append({"aux.job": export_job.name, "aux.runtime": "plain",
+                       "aux.spec": str(launch_dir / "jobs" / "export.json"), "aux.unit": "-",
+                       "job.est_step_time_s": int(export_job.est_s), "slurm.sbatch.time": "01:00:00",
+                       "job.metadata.pool_priority": 50, "job.metadata.pool_use_excluded_nodes": True,
+                       "backend.env.PYTHONPATH": "${aux.export_pythonpath}"})
+    for u in plan.units:
+        pool = pools[u.id]
+        pt = {"aux.job": pool["job"], "aux.runtime": "worker", "aux.spec": plan_path, "aux.unit": u.id,
+              "job.est_step_time_s": int(max(60, u.est_s)), "slurm.sbatch.time": f"{pool['time_h']:02d}:00:00",
+              "job.metadata.pool_priority": pool["priority"],
+              "job.metadata.pool_use_excluded_nodes": pool["use_excluded_nodes"]}
         if pool["gate"]:
             pt["job.start_condition"] = {"class_name": "FileExistsCondition", "path": pool["gate"],
                                          "persistent_pass": True}
         points.append(pt)
+    for pt in points:
+        for v in (pt["aux.spec"], pt["aux.unit"], p.logs):
+            if v != "-" and not SAFE.match(v):
+                raise SpecError(f"{v!r}: unsafe characters for the job command")
     cfg = {
         "hydra": {"searchpath": [f"file://{REPO / 'config'}"]},
-        "defaults": [f"/{JOB_CONFIG}", "_self_"],
+        "defaults": [f"/{spec.slurm.job_config}", "_self_"],
         "aux": {"log_root": p.logs},
         "slurm": {"sbatch": {"account": spec.slurm.account, "qos": spec.slurm.qos}},
-        "sweep": {"type": "list", "store_sweep_json": True,
-                  "groups": [{"type": "list", "configs": points}]},
+        "sweep": {"type": "list", "store_sweep_json": True, "groups": [{"type": "list", "configs": points}]},
     }
-    head = ("# @package _global_\n# GENERATED by scripts/evals/launch.py -- one pool job per sweep point; "
-            "each job's settings are in its jobs/<name>.json\n")
+    head = ("# @package _global_\n# GENERATED by scripts/evals/launch.py -- one pool job per sweep point: the "
+            "export (jobs/export.json) and one per unit of plan.json\n")
     return head + yaml.dump(cfg, Dumper=_QuotingDumper, sort_keys=False, width=200)
 
 
@@ -252,102 +264,39 @@ def launch_id(spec: EvalSpec) -> str:
     return f"{stamp}{'_' + spec.tag if spec.tag else ''}"
 
 
-def write_launch(spec: EvalSpec, jobs, launch_dir: Path) -> Path:
-    (launch_dir / "jobs").mkdir(parents=True, exist_ok=True)
-    for job, _ in jobs:
-        (launch_dir / "jobs" / f"{job.name}.json").write_text(json.dumps(to_dict(job), indent=1) + "\n")
+def write_launch(spec: EvalSpec, export_job: JobSpec | None, plan: oplan.Plan, pools: dict[str, dict],
+                 launch_dir: Path) -> Path:
+    launch_dir.mkdir(parents=True, exist_ok=True)
+    if export_job is not None:
+        (launch_dir / "jobs").mkdir(exist_ok=True)
+        (launch_dir / "jobs" / "export.json").write_text(json.dumps(to_dict(export_job), indent=1) + "\n")
+    plan.write(launch_dir / "plan.json")
+    runtime(spec, plan).write(launch_dir / "runtime.json")
     (launch_dir / "spec.json").write_text(json.dumps(to_dict(spec), indent=1) + "\n")
     path = launch_dir / "launch.yaml"
-    path.write_text(render_launch(spec, jobs, launch_dir))
-    return path
-
-
-# files of the oellm-eval stage that decide how rows are run and scored (patched or bug-prone)
-STAGE_FILES = (
-    "evalchemy/eval/task.py",
-    "evalchemy/eval/chat_benchmarks/HumanEval/human_eval/execution.py",
-    "evalchemy/eval/chat_benchmarks/HumanEval/eval_instruct.py",
-    "evalchemy/eval/chat_benchmarks/LiveCodeBench/eval_instruct.py",
-    "lighteval/metrics/metrics_corpus.py",
-    "lighteval/models/vllm/vllm_model.py",
-    "lighteval/main_vllm.py",
-)
-
-
-def _sha256(path: Path) -> str | None:
-    import hashlib
-
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
-
-
-def _dists(d: str | None) -> list[str]:
-    """Installed distributions (name-version) of a pylibs/stage dir, or a wheel dir's wheels."""
-    if not d or not Path(d).is_dir():
-        return []
-    return sorted(p.name.removesuffix(".dist-info") for p in Path(d).glob("*.dist-info")) + \
-        sorted(p.name for p in Path(d).glob("*.whl"))
-
-
-def manifest(spec: EvalSpec, jobs, items, done, launch_dir: Path) -> dict:
-    """What this launch runs, frozen at launch time (the counterpart of oellm-eval's
-    protocol/manifest.json): the resolved rows per job, the code snapshot (SYNC_STAMP), the suite,
-    the harness versions and the stage files that score them, and the hashes of the launch files."""
-    p = spec.paths.resolved()
-    export_dir = Path(jobs[0][0].export_dir) if jobs else None
-    suite_path = REPO / spec.rows.suite_file
-    suite = yaml.safe_load(suite_path.read_text()) if suite_path.is_file() else {}
+    path.write_text(render_launch(spec, export_job, plan, pools, launch_dir))
     stamp = REPO / "SYNC_STAMP"
-    if stamp.is_file():
-        code = {"snapshot": str(REPO), "sync_stamp": stamp.read_text().splitlines()}
-    else:  # a local checkout: its commit and whether it has uncommitted changes
-        def git(*args):
-            r = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True)
-            return r.stdout.strip()
-        code = {"snapshot": str(REPO), "commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
-    src = export_dir / "megatron_source.json" if export_dir else None
-    stage = Path(p.oellm_stage)
-    return {
-        "launch_id": launch_dir.name,
-        "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "export": {"name": spec.export.export_name, "dir": str(export_dir) if export_dir else None,
-                   "megatron_source": json.loads(src.read_text()) if src and src.is_file() else None},
-        "suite": {"file": str(suite_path), "sha256": _sha256(suite_path),
-                  "oellm_eval_rev": suite.get("oellm_eval_rev"), "count": suite.get("count")},
-        "code": code,
-        "harnesses": {"stage": str(stage),
-                      "stage_files": {f: _sha256(stage / f) for f in STAGE_FILES},
-                      "stage_dists": _dists(str(stage)),
-                      "pylibs_oellm": _dists(p.pylibs_oellm),
-                      "pylibs_lighteval": _dists(p.pylibs_lighteval)},
-        "jobs": [{"name": job.name, "kind": job.kind, "harness": job.harness, "backend": job.backend,
-                  "model": (job.export_dir if job.harness == "lighteval" else job.view_dir) if job.harness else None,
-                  "rows": [r.name for r in job.rows], "priority": pool["priority"], "time_h": pool["time_h"]}
-                 for job, pool in jobs],
-        "lm_eval_items": [name for name, _ in items],
-        "rows_done_before": [r.name for r in done],
-        "files": {str(f.relative_to(launch_dir)): _sha256(f)
-                  for f in sorted(launch_dir.rglob("*")) if f.is_file() and f.name != "manifest.json"},
-    }
-
-
-def write_manifest(spec: EvalSpec, jobs, items, done, launch_dir: Path) -> Path:
-    path = launch_dir / "manifest.json"
-    path.write_text(json.dumps(manifest(spec, jobs, items, done, launch_dir), indent=1) + "\n")
+    caller = {"autoexp": str(REPO), "sync_stamp": stamp.read_text().splitlines() if stamp.is_file() else [],
+              "spec": str(launch_dir / "spec.json")}
+    write_manifest(launch_dir, launch_dir / "plan.json", launch_dir / "runtime.json", caller=caller)
     return path
 
 
-def print_plan(spec: EvalSpec, jobs, items, done) -> None:
-    print(f"[launch] export {spec.export.export_name}: {len(done)} row(s) done already, {len(jobs)} job(s)")
-    if items:
-        print(f"[launch] lm-eval queue: {len(items)} item(s), {sum(s for _, s in items) / 3600:.1f} engine-h")
-    for job, pool in jobs:
-        what = (f"{len(job.rows)} rows" if job.rows else job.kind)
-        gate = "gated" if pool["gate"] else "now"
-        print(f"  {job.name:58s} {what:16s} est {job.est_s / 3600:5.1f} h  limit {pool['time_h']:2d} h  "
-              f"prio {pool['priority']}  {gate}")
+def print_plan(spec: EvalSpec, export_job: JobSpec | None, plan: oplan.Plan, pools: dict[str, dict]) -> None:
+    layout = Layout(plan.root)
+    done = sum(layout.is_done(r) for r in plan.rows)
+    print(f"[launch] export {spec.export.export_name}: {done} row(s) done already, "
+          f"{len(plan.units) + (export_job is not None)} job(s)")
+    if plan.lm_items:
+        print(f"[launch] lm-eval queue: {len(plan.lm_items)} item(s), "
+              f"{sum(s for _, s in plan.lm_items) / 3600:.1f} engine-h")
+    if export_job is not None:
+        print(f"  {export_job.name:58s} {'export':16s} est {export_job.est_s / 3600:5.1f} h  limit  1 h  prio 50  now")
+    for u in plan.units:
+        pool = pools[u.id]
+        what = f"{len(u.rows)} rows" if u.rows else u.kind
+        print(f"  {pool['job']:58s} {what:16s} est {u.est_s / 3600:5.1f} h  limit {pool['time_h']:2d} h  "
+              f"prio {pool['priority']}  {'gated' if pool['gate'] else 'now'}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -370,28 +319,24 @@ def main(argv: list[str] | None = None) -> int:
             sets.append(f"{key}={flag}")
     try:
         spec = eval_spec(yaml.safe_load(a.spec.read_text()) or {}, sets)
-        lid = launch_id(spec)
-        root = a.render_only if a.render_only else results_root(spec) / "launches"
-        launch_dir = root / lid
-        jobs, items, done = plan(spec)
+        export_job, plan, pools = build(spec)
     except SpecError as e:
         print(f"[launch] spec error: {e}", file=sys.stderr)
         return 2
-    print_plan(spec, jobs, items, done)
-    if not jobs:
+    print_plan(spec, export_job, plan, pools)
+    if not plan.units and export_job is None:
         print("[launch] nothing to do")
         return 0
     if a.dry_run:
         return 0
-    cfg = write_launch(spec, jobs, launch_dir)
-    print(f"[launch] {cfg}")
-    print(f"[launch] {write_manifest(spec, jobs, items, done, launch_dir)}")
+    root = a.render_only if a.render_only else results_root(spec) / "launches"
+    launch_dir = root / launch_id(spec)
+    cfg = write_launch(spec, export_job, plan, pools, launch_dir)
+    print(f"[launch] {cfg}\n[launch] {launch_dir / 'manifest.json'}")
     if a.render_only:
         return 0
-    if items:
-        q = flag_queue.Queue(results_root(spec) / "queue_lm")
-        added = q.init(items, results_root(spec) / "done")
-        print(f"[launch] queued {added} of {len(items)} lm-eval item(s); {q.status()}")
+    if plan.lm_items:
+        print(f"[launch] lm-eval queue: {oplan.init_queue(plan)}")
     p = spec.paths.resolved()
     cmd = ["bash", a.autoexp, "scripts/run_autoexp.py", "--no-monitor",
            "--monitor-state-dir", f"{p.hybrid_env}/pool_state", "--pool", p.pool,

@@ -1,4 +1,4 @@
-"""scripts/korbi/flag_eval/lmeval_parts.py: part names, document partition, per-document metrics
+"""scripts/korbi/flag_eval/lmeval_parts.py (a shim over oellm-eval's oellm.runner.lm_eval_parts): part names, document partition, per-document metrics
 (the merge itself runs lm-eval's aggregation and is checked on the cluster against an unsplit row)."""
 
 from __future__ import annotations
