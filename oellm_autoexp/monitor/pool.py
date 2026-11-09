@@ -131,8 +131,10 @@ class PoolHostConfig:
     # A host that cannot run any queued job (too few usable nodes, too little time left) is
     # released only once that has lasted this long: right after a run ends, nodes can show
     # as completing/not responding for a poll or two (JUPITER 2026-11-05: a preempt for a node
-    # check read 507 of 514 usable and released a held 516-node allocation at once). Hosts
-    # within min_hosts are never released for it -- the hold is the operator's call.
+    # check read 507 of 514 usable and released a held 516-node allocation at once). This holds
+    # for hosts within min_hosts too: a held host that cannot run the job only idles, and
+    # min_hosts submits its replacement (JUPITER 2026-11-09 20:53: host075 at 511 of 512 usable,
+    # held and idle until released by hand).
     insufficient_grace_s: float = 900.0
     # A newer host that starts while the run's host is still younger than handover_min_age_s
     # (the "block time"): False -- it waits until that host is old enough, then takes the run
@@ -1309,10 +1311,9 @@ class PoolManager:
         #    sooner when there IS queued work and this host can run none of it:
         #    too few usable nodes (excluded bad nodes) or too little time left only
         #    get worse, so waiting idle_exit_s would buy nothing -- but only once that
-        #    has lasted insufficient_grace_s, and never for a host min_hosts holds.
+        #    has lasted insufficient_grace_s (a host min_hosts holds too: min_hosts refills it).
         #    The freed slot is refilled by a fresh allocation in step 6.
         short_since = state.setdefault("insufficient_since", {})
-        held = len([h for h in live if not h.retiring]) <= cfg.min_hosts
         for host in live:
             if host.hid in busy or handover_in_progress:
                 short_since.pop(host.hid, None)
@@ -1344,16 +1345,14 @@ class PoolManager:
                     else f"{host.remaining_s(now):.0f}s left, {cfg.min_remaining_s:.0f}s needed"
                 )
                 since = short_since.setdefault(host.hid, now)
-                if held or now - since < cfg.insufficient_grace_s:
+                if now - since < cfg.insufficient_grace_s:
                     if since == now:
                         LOGGER.warning(
                             "[pool %s] host %s cannot run any queued job (%s): %s",
                             cfg.name,
                             host.hid,
                             why,
-                            "held by min_hosts, not released"
-                            if held
-                            else f"released if it lasts {cfg.insufficient_grace_s:.0f}s",
+                            f"released if it lasts {cfg.insufficient_grace_s:.0f}s",
                         )
                     continue
                 short_since.pop(host.hid, None)

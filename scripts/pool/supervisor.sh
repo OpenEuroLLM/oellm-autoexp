@@ -77,13 +77,20 @@ ALL_NODES=$(expand_hosts "$SLURM_JOB_NODELIST")
 NUM_NODES=$(printf '%s\n' "$ALL_NODES" | grep -c .)
 
 # usable nodes in allocation order, minus every exclusion source
-# Nodes of this allocation SLURM itself reports unusable: down, drained/draining, failing,
+# Nodes of this allocation SLURM itself reports unusable: down, drained, failing,
 # maintenance, unknown, or not responding (`*`). With `#SBATCH --no-kill` the allocation
 # survives a node failure; this keeps the next run off the dead node before any fault
 # scan has named it (one spare node per host is then enough to keep running).
 sick_nodes() {
   sinfo -h -N -n "$SLURM_JOB_NODELIST" -o "%N %t" 2>/dev/null |
-    awk '$2 ~ /(down|drain|drng|fail|maint|unk|npc|\*)/ {print $1}' | sort -u
+    awk '$2 ~ /(down|fail|maint|unk|npc|\*)/ || $2 == "drain" {print $1}' | sort -u
+}
+# DRAINING nodes (`drng`: drained while allocated -- an admin's planned work, e.g. "BULL HW WORK
+# 10.11.26 - Buddy of ..."): they keep working for this allocation until it ends. They come LAST
+# in usable_nodes, so a run takes them only when the healthy nodes are not enough (JUPITER
+# 2026-11-09 20:53: one draining node left host075 at 511 of 512 and idle).
+draining_nodes() {
+  sinfo -h -N -n "$SLURM_JOB_NODELIST" -o "%N %t" 2>/dev/null | awk '$2 == "drng" {print $1}' | sort -u
 }
 
 usable_nodes() { # usable_nodes <extra exclude list>
@@ -96,10 +103,19 @@ usable_nodes() { # usable_nodes <extra exclude list>
     sick_nodes
   )
   excl=$(printf '%s\n' "$excl" | grep -v '^$' | sort -u)
+  local drng ok
+  drng=$(draining_nodes)
   if [ -z "$excl" ]; then
-    printf '%s\n' "$ALL_NODES"
+    ok=$ALL_NODES
   else
-    printf '%s\n' "$ALL_NODES" | grep -vxF -f <(printf '%s\n' "$excl")
+    ok=$(printf '%s\n' "$ALL_NODES" | grep -vxF -f <(printf '%s\n' "$excl"))
+  fi
+  [ -n "$ok" ] || return 0
+  if [ -z "$drng" ]; then
+    printf '%s\n' "$ok"
+  else  # healthy nodes first, the draining ones at the end
+    printf '%s\n' "$ok" | grep -vxF -f <(printf '%s\n' "$drng")
+    printf '%s\n' "$ok" | grep -xF -f <(printf '%s\n' "$drng")
   fi
 }
 
@@ -303,15 +319,54 @@ adopt_deadline_check() {
   fi
 }
 
-load_cfg
-START_TS=$(now)
-atomic "$H/info.env" "SLURM_JOB_ID=${SLURM_JOB_ID:-}
+write_info() {
+  atomic "$H/info.env" "SLURM_JOB_ID=${SLURM_JOB_ID:-}
 NUM_NODES=$NUM_NODES
 NODELIST=$(printf '%s\n' "$ALL_NODES" | paste -sd, -)
 START_TS=$START_TS
 JOB_START_TS=${JOB_START_TS:-$START_TS}
 ADOPTED=$ADOPTED
 BATCH_HOST=$(hostname)"
+}
+
+# The allocation as SLURM holds it NOW. A job shrunk with `scontrol update JobId=.. NodeList=..`
+# keeps the SLURM_JOB_NODELIST of its start, so ALL_NODES would still list the removed nodes
+# (feat/hybrid-v0.19 fcdeecfd; on JUPITER the shrink works and later GPU steps on the kept nodes
+# start, scripts/pool/shrink_probe.sbatch 2026-11-09). Checked every POOL_ALLOC_REFRESH_S; an
+# empty or unparsable answer (a squeue hiccup) keeps the current list, and only nodes of the
+# current list are kept (a running job cannot grow). The same check re-counts the usable nodes:
+# SLURM can drain or down a node of the allocation at any time, and the state's count is what the
+# monitor assigns by (host075 kept saying 511 after a node came back, 2026-11-09).
+ALLOC_CHECKED=0
+LAST_USABLE=""
+refresh_alloc() {
+  [ $(($(now) - ALLOC_CHECKED)) -ge "${POOL_ALLOC_REFRESH_S:-60}" ] || return 0
+  ALLOC_CHECKED=$(now)
+  local list live kept gone usable
+  usable=$(usable_nodes "" | grep -c .)
+  if [ -n "$LAST_USABLE" ] && [ "$usable" != "$LAST_USABLE" ]; then
+    LAST_STATE="" # rewrite the state with the new count
+    log "usable nodes: $LAST_USABLE -> $usable"
+  fi
+  LAST_USABLE=$usable
+  list=$(squeue -h -j "$SLURM_JOB_ID" -o %N 2>/dev/null | head -n1)
+  [ -n "$list" ] || return 0
+  live=$(expand_hosts "$list")
+  [ -n "$live" ] || return 0
+  kept=$(printf '%s\n' "$ALL_NODES" | grep -xF -f <(printf '%s\n' "$live"))
+  [ -n "$kept" ] && [ "$kept" != "$ALL_NODES" ] || return 0
+  gone=$(printf '%s\n' "$ALL_NODES" | grep -vxF -f <(printf '%s\n' "$kept") | paste -sd, -)
+  ALL_NODES=$kept
+  NUM_NODES=$(printf '%s\n' "$ALL_NODES" | grep -c .)
+  write_info
+  LAST_STATE="" # the usable node count in the state changes with it
+  log "allocation shrunk to $NUM_NODES node(s), gone: $gone"
+  ledger "-" "host resized nodes=$NUM_NODES gone=$gone"
+}
+
+load_cfg
+START_TS=$(now)
+write_info
 touch "$H/alive"
 set_state idle
 ledger "-" "host start nodes=$NUM_NODES"
@@ -418,6 +473,7 @@ idle_since=$(now)
 while true; do
   touch "$H/alive"
   load_cfg
+  refresh_alloc
   adopt_deadline_check
   reap
   stopping=""

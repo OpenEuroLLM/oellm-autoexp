@@ -1091,10 +1091,20 @@ def test_a_short_dip_in_usable_nodes_does_not_release(env):
     assert not exit_file.exists()
 
 
-def test_min_hosts_holds_a_host_that_cannot_fit(env):
-    hid, exit_file = _short_host(env, insufficient_grace_s=0.0, min_hosts=1)
-    env.poll(3)
-    assert not exit_file.exists(), "the hold released the host"
+def test_a_held_host_that_cannot_fit_is_released_after_the_grace_too(env):
+    # JUPITER 2026-11-09 20:53: host075 (held by min_hosts) at 511 of 512 usable sat idle; the
+    # run should move on to the next host instead, and min_hosts submits a replacement
+    hid, exit_file = _short_host(env, insufficient_grace_s=60.0, min_hosts=1)
+    env.poll()
+    assert not exit_file.exists(), "released on the first poll"
+    state = env.layout.load_state()
+    state["insufficient_since"][hid] -= 61.0
+    env.layout.write_state(state)
+    env.poll()
+    assert exit_file.exists() and "needs 2 node(s), 1 usable" in exit_file.read_text()
+    (env.layout.host_dir(hid) / "exited").write_text("exit requested\n")
+    env.poll(2)
+    assert len([h for h in env.hosts() if h.runtime.final_state is None]) >= 1  # a replacement
 
 
 def test_no_release_loop_for_a_job_bigger_than_every_host(env):

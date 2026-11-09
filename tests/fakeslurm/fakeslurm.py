@@ -531,14 +531,24 @@ def cmd_squeue(argv: list[str]) -> int:
         iso = lambda ts: time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)) if ts else "N/A"  # noqa: E731
         start = job.get("start_ts")
         limit = int(job.get("time_s") or 0)
-        rows.append({
-            "i": job["id"], "T": job["state"], "j": job["name"], "L": left,
-            # adoption (pool_ctl adopt, the adopted supervisor) reads these
-            "S": iso(start), "e": iso(start + limit) if start and limit else "N/A",
-            "D": job.get("nodes", 1), "a": job.get("account") or "",
-            "l": f"{limit // 3600}:{limit % 3600 // 60:02d}:{limit % 60:02d}" if limit else "UNLIMITED",
-            "Z": job.get("cwd", ""), "N": ",".join(job.get("nodelist", [])) if start else "",
-        })
+        rows.append(
+            {
+                "i": job["id"],
+                "T": job["state"],
+                "j": job["name"],
+                "L": left,
+                # adoption (pool_ctl adopt, the adopted supervisor) reads these
+                "S": iso(start),
+                "e": iso(start + limit) if start and limit else "N/A",
+                "D": job.get("nodes", 1),
+                "a": job.get("account") or "",
+                "l": f"{limit // 3600}:{limit % 3600 // 60:02d}:{limit % 60:02d}"
+                if limit
+                else "UNLIMITED",
+                "Z": job.get("cwd", ""),
+                "N": ",".join(job.get("nodelist", [])) if start else "",
+            }
+        )
     if header:
         print(_fmt(fmt, {"i": "JOBID", "T": "STATE", "j": "NAME", "L": "TIME_LEFT"}))
     for row in rows:
@@ -609,6 +619,21 @@ def cmd_scontrol(argv: list[str]) -> int:
             print(h)
         return 0
     if argv[:1] == ["update"]:
+        fields = dict(a.split("=", 1) for a in argv[1:] if "=" in a)
+        jid = fields.get("JobId") or fields.get("JobID")
+        nodelist = fields.get("NodeList") or fields.get("Nodelist")
+        if jid and nodelist:
+            # shrinking a running job, as `scontrol update JobId=.. NodeList=..` on SLURM: the
+            # batch shell keeps its SLURM_JOB_NODELIST, squeue / srun see the new list
+            job = _job(jid)
+            new = expand_hostlist(nodelist)
+            if not new or any(n not in job["nodelist"] for n in new):
+                print(
+                    "scontrol: error: Requested node configuration is not available",
+                    file=sys.stderr,
+                )
+                return 1
+            _update(jid, nodelist=new, nodes=len(new))
         return 0
     if argv[:2] == ["show", "job"] and len(argv) > 2:
         job = _job(argv[2])

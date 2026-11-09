@@ -1148,6 +1148,49 @@ def test_settle_excludes_nothing_when_more_nodes_are_busy_than_settle_max_exclud
     assert "settle not trusted" in (pool.pool_dir / "ledger.tsv").read_text()
 
 
+def test_a_draining_node_is_used_only_when_the_healthy_ones_are_not_enough(pool):
+    """JUPITER 2026-11-09 20:53: an admin set a node of host075 draining for work the next day;
+    the supervisor counted it unusable, 511 of 512, and the host sat idle. A draining node keeps
+    working for the allocation: it comes last, taken only when the healthy nodes run short."""
+    pool.create_pool(*FAST, "job.pool_host.min_hosts=1", "job.pool_host.idle_exit_s=600")
+    pool.start_monitor()
+    info = pool.layout.host_dir("host001") / "info.env"
+    pool.wait_for(lambda: info.exists() and "SLURM_JOB_ID=" in info.read_text(), 60, "a host")
+    host_job = info.read_text().split("SLURM_JOB_ID=")[1].split()[0]
+    (pool.fs / "node_states").write_text(f"n{host_job}-0 drng\n")
+    pool.enqueue("one", "aux.iters=5", "aux.tick=0.1")  # 1 node of the 2-node host
+    pool.enqueue("two", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=2")
+    one = pool.wait_for(lambda: pool.runs_of("dummy_one"), 30, "run one")[0]
+    pool.wait_for(lambda: pool.run_state(one).status == "COMPLETED", 60, "run one")
+    assert pool.run_state(one).started["nodes"] == f"n{host_job}-1", "the healthy node first"
+    two = pool.wait_for(lambda: pool.runs_of("dummy_two"), 30, "run two")[0]
+    pool.wait_for(lambda: pool.run_state(two).status == "COMPLETED", 60, "run two")
+    assert sorted(pool.run_state(two).started["nodes"].split(",")) == [
+        f"n{host_job}-0",
+        f"n{host_job}-1",
+    ], "the draining node is used when needed"
+
+
+def test_the_supervisor_follows_a_shrunk_allocation(pool):
+    """A host shrunk with `scontrol update JobId=.. NodeList=..` keeps its start-time
+    SLURM_JOB_NODELIST; refresh_alloc (feat/hybrid-v0.19 fcdeecfd) reads the live allocation, so
+    info.env and the usable count follow it and no run gets a removed node."""
+    pool.env["POOL_ALLOC_REFRESH_S"] = "1"
+    pool.create_pool(*FAST, "slurm.sbatch.nodes=3")
+    pool.enqueue("a", "aux.iters=40", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_a"), 30, "run")[0]
+    pool.wait_for(lambda: pool.run_state(first).status == "RUNNING", 30, "the run")
+    jid, node = pool.run_state(first).started["job"], pool.run_state(first).started["nodes"]
+    keep = [n for n in (f"n{jid}-0", f"n{jid}-1", f"n{jid}-2") if n == node]
+    keep += [n for n in (f"n{jid}-0", f"n{jid}-1", f"n{jid}-2") if n != node][:1]
+    pool.slurm("scontrol", "update", f"JobId={jid}", f"NodeList={','.join(sorted(keep))}")
+    info = pool.layout.host_dir("host001") / "info.env"
+    pool.wait_for(lambda: "NUM_NODES=2\n" in info.read_text(), 30, "info.env follows the shrink")
+    assert "host resized nodes=2" in (pool.pool_dir / "ledger.tsv").read_text()
+    pool.wait_for(lambda: pool.run_state(first).status == "COMPLETED", 60, "the run across it")
+
+
 def test_a_node_slurm_reports_down_is_skipped_by_the_next_run(pool):
     # the spare-node model: a host one node larger than its job, with --no-kill, survives a
     # node failure; the supervisor keeps the next run off a node SLURM reports unusable,
