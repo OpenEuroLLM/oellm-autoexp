@@ -1,0 +1,40 @@
+# @package _global_
+# The ckda_branch checkpoint surgery as a 1-node job on p264 host003 (user 2026-11-09: a well-defined,
+# reproducible step on one node of host003): scripts/korbi/production/ckda_branch_surgery.sh <mode> <arms>
+# in the training image, from a synced snapshot, fixed seed (add_ckda_branch.py --seed 1234). Every output
+# checkpoint carries ckda_branch_surgery.json (arguments, source + .metadata SHA-256, SYNC_STAMP, torch,
+# SHA-256 of each new tensor); add_ckda_branch.py verify --dst <ckpt> re-derives and compares them.
+#   mode test: fctrl/ckpt/iter_0001100 -> /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/<arm>_src
+#   mode prod: main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval/iter_0023300
+#              -> /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/<arm>_src (hard links)
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/ckda_branch_surgery_mn5 --yes aux.mode=prod
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: ckda_branch_surgery_${aux.mode}
+  mode: test
+  arms: "bgqa b8 cgqa d"
+  tests: ""
+  bench: ""
+
+backend:
+  command: bash scripts/korbi/production/ckda_branch_surgery.sh ${aux.mode} ${aux.arms}
+
+job:
+  name: ckda_branch_surgery_${aux.mode}
+  est_step_time_s: 2400
+  metadata:
+    pool_priority: 60
+    # not on excluded nodes: p264 host003 lists its shrink-removed nodes there
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    # p264's hosts: account cns144, qos acc_xehpc
+    account: cns144
+    qos: acc_xehpc

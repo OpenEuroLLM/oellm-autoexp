@@ -32,6 +32,11 @@ s c v, the update s sigmoid(b) (v - S k) -- complex_kda's delta rule, on the nor
     PYTHONPATH=<fla fork> python add_ckda_branch.py gpucheck
     python add_ckda_branch.py apply --src <ckpt>/iter_0023300 --dst <new>/iter_0023300 \\
         --branch attention --groups 2 --layers 9,25,41 [--eps 1e-3] [--seed 1234]
+    python add_ckda_branch.py verify --dst <new>/iter_0023300   (re-derive, compare the manifest's hashes)
+
+apply writes <dst>/ckda_branch_surgery.json: arguments + seed, the source and its .metadata SHA-256, the code
+(SYNC_STAMP / git), torch, and the SHA-256 of every new tensor. Production runs go through the 1-node pool job
+config/experiments/korbi/production/ckda_branch_surgery_mn5.yaml (scripts/korbi/production/ckda_branch_surgery.sh).
 """
 
 from __future__ import annotations
@@ -368,6 +373,12 @@ def _selftest_apply(src, heads, dc, hidden):
             else:
                 assert tuple(smd[_key(9, "branch.layer.qkv_proj.weight")].size) == (3 * heads * dc, hidden)
                 assert tuple(smd[_key(9, "branch.layer.qkv_conv1d.weight")].size) == (3 * heads * dc, 1, 4)
+            # the manifest, and a re-derivation from it reproduces every new tensor bit for bit
+            import json
+
+            doc = json.load(open(f"{dst}/{MANIFEST}"))
+            assert doc["args"]["branch"] == branch and len(doc["new_tensors"]) == len(set(smd) - set(sd))
+            assert main(["verify", "--dst", dst]) == 0
             # the source's own tensors are untouched (hard-linked shards, same metadata entries)
             back = {_key(9, "layer.q_proj.weight"): torch.empty(heads * dc, hidden, dtype=torch.bfloat16)}
             dcp.load(back, storage_reader=FileSystemReader(dst), no_dist=True)
@@ -430,15 +441,13 @@ def gpucheck() -> int:
 # ---------------------------------------------------------------------------------------------
 
 
-def apply(a) -> int:
+def derive(a, md=None) -> dict:
+    """The new tensors {checkpoint key: tensor} for the arguments ``a`` (deterministic: seed ``a.seed``)."""
     import torch.distributed.checkpoint as dcp
     from torch.distributed.checkpoint import FileSystemReader
 
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from dcp_surgery import write_surgery
-
     t0 = time.time()
-    md = FileSystemReader(a.src).read_metadata()
+    md = md if md is not None else FileSystemReader(a.src).read_metadata()
     smd = md.state_dict_metadata
     layers = [int(x) for x in a.layers.split(",")]
     gen = torch.Generator().manual_seed(a.seed)
@@ -476,6 +485,19 @@ def apply(a) -> int:
                 raise SystemExit(f"{key} already exists: the source has a branch already")
             replace[key] = t.to(_like_dtype(smd, layer, rel, t)).contiguous()
         print(f"layer {layer}: {len(new)} new tensors", flush=True)
+    return replace
+
+
+def apply(a) -> int:
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint import FileSystemReader
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from dcp_surgery import write_surgery
+
+    t0 = time.time()
+    md = FileSystemReader(a.src).read_metadata()
+    replace = derive(a, md)
     # every key is new: 64 MB chunks (the fallback, the source's median chunk, is tiny for small models and
     # split one test run's tensors into 86k chunks)
     write_surgery(a.src, a.dst, md, replace, tag="ckda_branch", chunk_bytes=64 << 20)
@@ -485,8 +507,82 @@ def apply(a) -> int:
     bad = [k for k in back if not torch.equal(back[k], replace[k])]
     if bad:
         raise SystemExit(f"read-back mismatch: {bad[:5]}")
-    print(f"done in {time.time() - t0:.0f} s: {len(replace)} new keys in {a.dst}", flush=True)
+    manifest = write_manifest(a, replace)
+    print(f"done in {time.time() - t0:.0f} s: {len(replace)} new keys in {a.dst}; manifest {manifest}", flush=True)
     return 0
+
+
+MANIFEST = "ckda_branch_surgery.json"
+
+
+def _tensor_sha256(t: torch.Tensor) -> str:
+    import hashlib
+
+    return hashlib.sha256(t.detach().cpu().contiguous().view(torch.uint8).numpy().tobytes()).hexdigest()
+
+
+def _code_state() -> dict:
+    """The code that ran: the synced snapshot's SYNC_STAMP (commits + diff hashes of every repo), else git."""
+    import subprocess
+
+    root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+    out = {"script": os.path.abspath(__file__), "root": root}
+    stamp = os.path.join(root, "SYNC_STAMP")
+    if os.path.exists(stamp):
+        out["sync_stamp"] = open(stamp).read()
+    try:
+        out["git_head"] = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                         timeout=30).stdout.strip() or None
+        out["git_dirty"] = bool(subprocess.run(["git", "-C", root, "status", "--porcelain", "--", "scripts"],
+                                               capture_output=True, text=True, timeout=60).stdout.strip())
+    except Exception:  # no git on the node: the stamp is the record
+        pass
+    return out
+
+
+def write_manifest(a, replace: dict) -> str:
+    """<dst>/ckda_branch_surgery.json: what was done, from what, by which code, and the SHA-256 of every new
+    tensor (a rerun with the same arguments and seed must reproduce them bit for bit)."""
+    import hashlib
+    import json
+    import platform
+
+    meta = os.path.join(a.src, ".metadata")
+    h = hashlib.sha256()
+    with open(meta, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            h.update(block)
+    doc = {
+        "tool": "add_ckda_branch.py apply",
+        "args": {k: v for k, v in vars(a).items() if k != "cmd"},
+        "source": os.path.abspath(a.src),
+        "source_metadata_sha256": h.hexdigest(),
+        "code": _code_state(),
+        "torch": torch.__version__,
+        "host": platform.node(),
+        "date": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "new_tensors": {k: {"shape": list(t.shape), "dtype": str(t.dtype).replace("torch.", ""),
+                            "sha256": _tensor_sha256(t)} for k, t in sorted(replace.items())},
+    }
+    path = os.path.join(a.dst, MANIFEST)
+    with open(path, "w") as f:
+        json.dump(doc, f, indent=1)
+    return path
+
+
+def verify(a) -> int:
+    """Re-derive the new tensors from the manifest's source and arguments (no writing) and compare their
+    SHA-256 with the manifest's: the surgery is reproducible when every one matches."""
+    import json
+
+    doc = json.load(open(os.path.join(a.dst, MANIFEST)))
+    args = argparse.Namespace(**doc["args"])
+    replace = derive(args)
+    want = doc["new_tensors"]
+    bad = [k for k, t in replace.items() if want.get(k, {}).get("sha256") != _tensor_sha256(t)]
+    bad += [k for k in want if k not in replace]
+    print(f"verify {a.dst}: {len(replace)} tensors, {len(bad)} differ" + (f": {bad[:5]}" if bad else ""))
+    return 1 if bad else 0
 
 
 def main(argv=None) -> int:
@@ -494,6 +590,8 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("selftest")
     sub.add_parser("gpucheck", help="kronlstm mapping on a real complex_kda layer (FLA fork, one GPU)")
+    v = sub.add_parser("verify", help="re-derive a surgery's new tensors from its manifest and compare hashes")
+    v.add_argument("--dst", required=True, help="a surgery's output checkpoint (holds ckda_branch_surgery.json)")
     p = sub.add_parser("apply")
     p.add_argument("--src", required=True)
     p.add_argument("--dst", required=True)
@@ -504,7 +602,7 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--b-bias", action="store_true", help="kronlstm: an erase-gate bias at 0 (neg_eigval_init_bias on)")
     a = ap.parse_args(argv)
-    return {"selftest": selftest, "gpucheck": gpucheck}.get(a.cmd, lambda: apply(a))()
+    return {"selftest": selftest, "gpucheck": gpucheck, "verify": lambda: verify(a)}.get(a.cmd, lambda: apply(a))()
 
 
 if __name__ == "__main__":

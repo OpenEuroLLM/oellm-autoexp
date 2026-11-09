@@ -3,12 +3,9 @@
 # <ROOT>/<arm>_src/ckpt/iter_<IT> = the source's shards hard-linked + the branch tensors, and its
 # latest_checkpointed_iteration.txt. An arm whose checkpoint exists is skipped. Run from a synced snapshot.
 #
-#   test (hybrid_v4_ckda_branch_test_mn5; small model, a login node is fine):
-#     scripts/korbi/production/ckda_branch_surgery.sh test
-#   production (hybrid_ambitious_v4_ckda_branch_mn5; the 84B checkpoint's .metadata: run in a job):
-#     scripts/korbi/mn5_autoexp_bg.sh ckdab_surgery scripts/run_autoexp.py \
-#         --config-name experiments/korbi/hybrid_speed/kernel_tests_mn5 --yes aux.name=ckda_branch_surgery \
-#         'aux.bench="bash scripts/korbi/production/ckda_branch_surgery.sh prod"' slurm.sbatch.time=02:00:00
+# Run as the 1-node job on p264 host003, config/experiments/korbi/production/ckda_branch_surgery_mn5.yaml
+# (aux.mode=test: hybrid_v4_ckda_branch_test_mn5's checkpoints; aux.mode=prod: hybrid_ambitious_v4_ckda_branch_mn5's).
+# Each output holds ckda_branch_surgery.json; add_ckda_branch.py verify --dst <ckpt> checks it reproduces.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SIF=${SIF:-/gpfs/projects/ehpc533/users/bsc088649/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif}
