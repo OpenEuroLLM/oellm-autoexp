@@ -1260,6 +1260,26 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - Whether training with the bonus (T10b: parallel rule, QB logits, s3) lowers that cost is the open question;
     a training-side hysteresis would need a sequential router scan (chunked, cheap).
 
+- **2026-11-09, T10b (stay bonus in training, s3, QB, 100 steps) and T6b (latent MTP speed, concurrent rerun):**
+  - **T10b:** step time base 4186 ms; beta 0.1 / 0.3 / 1.0: 4236 / 4233 / 4236 ms (**+1.2 %**).
+
+    | beta (QB logits) | stay rate | loss, steps 1051-1100 |
+    |---|---:|---:|
+    | 0 | 0.224 | 2.4136 |
+    | 0.1 | 0.232 | 2.4137 |
+    | 0.3 | 0.247 | 2.4136 |
+    | 1.0 | 0.297 | 2.4145 |
+
+    - The stay rate is the same at steps 1001-1010 and 1051-1100: in 100 steps the model does not move toward
+      locality by itself; the bonus only buys what the routing rule forces. Loss cost ≤ +0.001 at beta 1.0.
+    - The parallel rule at s3 gives less locality than hysteresis on v4 (R3). Next if wanted: training-side
+      hysteresis (sequential, chunked router scan), and a longer run to see whether the cost or the stay rate
+      moves.
+  - **T6b** (all MTP arms + base in one launch, fused-loss fix 5a244338f): base 4171 ms; k3 stride 1 5375 ms
+    (**+28.9 %**, ~+9.6 % per depth), k3 stride 4 4768 ms (**+14.3 %**, ~+4.8 % per depth); memory 0.70 ->
+    0.88-0.90. The k8 arms still OOM in the depths' forward (inside the checkpoint): ~3.7 GiB per depth is not
+    the fused head; allocator traces queued (t6m).
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
