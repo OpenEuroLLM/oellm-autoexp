@@ -1,0 +1,53 @@
+# @package _global_
+# 2-node check of MEGATRON_DEBUG_LOAD_TIMING (Megatron 802955429 on oellm/v4main-diag): resume the 2-node
+# v4 hd256 test checkpoint (hybrid_v4_diagweight_test_mn5 diagw19b, iteration 20) read-only, train 2 steps,
+# exit without saving; the log must show "[load-timing] <phase>: min .. max .." for every load phase.
+# A pool run on the buffer nodes of the p264 hosts (user 2026-11-09), not the debug queue:
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state --pool <p264> --yes \
+#       --config-name experiments/korbi/production/hybrid_v4_loadtiming_test_mn5
+defaults:
+  - hybrid_v4_diaggrad_test_mn5
+  - _self_
+
+aux:
+  suite: v4_loadtiming_test
+  arm: resume
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4loadtiming
+
+backend:
+  env:
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
+  megatron:
+    load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diagweight/diagw19b/ckpt
+    exit_on_missing_checkpoint: true
+    strict_fsdp_dtensor_load: true
+    finetune: false
+    no_load_optim: false
+    no_load_rng: false
+    exit_interval: 22
+    save: null
+    save_interval: null
+    diagnostics_interval: 1
+    diag_layer_grad_norms: true
+    diag_clip_events: true
+    diag_weight_stats: true
+    diag_norm_gains: true
+
+job:
+  name: v4_loadtiming_${aux.arm}
+  concurrency_group: null
+  max_active: null
+  metadata:
+    pool_singleton: null
+    pool_priority: 500
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: resume
