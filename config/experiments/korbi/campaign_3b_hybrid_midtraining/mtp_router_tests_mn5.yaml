@@ -1,0 +1,21 @@
+# @package _global_
+# The latent-MTP / router stay-bonus / Liger tests that need Transformer Engine or Liger (one MN5 GPU):
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/mtp_router_tests_mn5 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: mtp_router_tests
+  bench: "cd submodules/Megatron-LM && python -m torch.distributed.run --standalone --nproc-per-node 1 -m pytest -q -p no:cacheprovider -o addopts= -rfE -s tests/unit_tests/models/test_hybrid_mtp_latent.py tests/unit_tests/transformer/moe/test_router_stay_bonus.py tests/unit_tests/fusions/test_liger_masked_first_token.py tests/unit_tests/fusions/test_liger_z_loss.py"
+
+job:
+  name: campaign_mid_${aux.name}
+  metadata:
+    pool_priority: 85
+
+slurm:
+  sbatch:
+    time: "00:30:00"
+    qos: acc_xehpc
+    account: cns144
