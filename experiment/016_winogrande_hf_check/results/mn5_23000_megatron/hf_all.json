@@ -1,0 +1,11 @@
+{
+ "prefix": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/paired/v8ml-valid-sub64/all_text_document",
+ "samples": 64,
+ "seq_len": 4096,
+ "loss_tokens": 262144,
+ "segments": 309,
+ "config": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/config-mn5-pool-p264.0133.yaml",
+ "model": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_hd256_fp8_23000",
+ "lm_loss": 1.2714664997364196,
+ "nonfinite_samples": []
+}

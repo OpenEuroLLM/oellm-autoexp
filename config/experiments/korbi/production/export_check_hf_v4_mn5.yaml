@@ -1,0 +1,50 @@
+# @package _global_
+# HF side of the Megatron-vs-export check (experiment/016_winogrande_hf_check, user 2026-11-10): the export
+# scored on the very samples of Megatron's fixed-validation evaluation (paired_valid_check: Megatron's
+# GPTDataset with the run's settings, each document segment as its own sequence), with per-token losses
+# (--dump-tokens) for the comparison with Megatron's token dump (fixedvalid_eval_export_check_v4_mn5).
+# Sets: the 64-sample v8ml subset at 4096 and the Winogrande / WSC273 requests at 512 (make_mc_set.py).
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/export_check_hf_v4_mn5 --yes
+defaults:
+  - hf_export_mn5
+  - _self_
+
+aux:
+  export: ambitious_v4_2ph_hd256_fp8_23000
+  exports_root: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  paired_root: ${aux.exports_root}/paired
+  run_config: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/config-mn5-pool-p264.0133.yaml
+  out_root: /gpfs/scratch/ehpc533/hybrid_nucleus/analysis/export_check
+  name: export_check_hf_${aux.export}
+  check: >-
+    python -m oellm_autoexp.hf_export.paired_valid_check --model-dir ${aux.exports_root}/${aux.export}
+    --config ${aux.run_config} --gpu-mem-gib 54 --engram-tables-cpu
+  bench: >-
+    ${aux.check} --prefix ${aux.paired_root}/v8ml-valid-sub64/all_text_document --seq-len 4096
+    --out ${aux.out_root}/${aux.export}/hf_all.json --dump-tokens ${aux.out_root}/${aux.export}/hf_all_tokens.pt
+    && ${aux.check} --prefix ${aux.paired_root}/mc-winogrande-wsc273-512/mc_text_document --seq-len 512
+    --out ${aux.out_root}/${aux.export}/hf_mc.json --dump-tokens ${aux.out_root}/${aux.export}/hf_mc_tokens.pt
+
+backend:
+  env:
+    # batch 1 per segment: no micro-batch pipelining; the export's code as shipped (no refresh)
+    OELLM_HF_PIPELINE: "0"
+    OELLM_HF_REFRESH_CODE: "0"
+
+job:
+  name: ${aux.name}
+  base_output_dir: ${aux.out_root}/logs/${aux.name}
+  est_step_time_s: 3600
+  metadata:
+    pool_priority: 60
+    # not on excluded nodes: p264 host003 lists its shrink-removed nodes there
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    # the account of the pool's hosts (p264: cns144)
+    account: cns144

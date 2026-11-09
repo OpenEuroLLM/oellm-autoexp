@@ -69,8 +69,10 @@ def segments(item: dict, seq_len: int) -> list[tuple[int, int]]:
     return list(zip(ends[:-1], ends[1:]))
 
 
-def segment_loss(model, ids: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor, chunk: int = 1024) -> float:
-    """Summed masked CE of one segment run as a sequence of its own (the LM head in chunks)."""
+def segment_loss(model, ids: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor, chunk: int = 1024,
+                 per_token: list | None = None) -> float:
+    """Summed masked CE of one segment run as a sequence of its own (the LM head in chunks); the
+    unmasked per-token CE is appended to ``per_token`` if given."""
     dev0 = next(model.parameters()).device
     hidden = model.model(input_ids=ids[None].to(dev0), use_cache=False).last_hidden_state[0]
     head = model.lm_head
@@ -80,6 +82,8 @@ def segment_loss(model, ids: torch.Tensor, labels: torch.Tensor, mask: torch.Ten
     for i in range(0, hidden.shape[0], chunk):
         ce = torch.nn.functional.cross_entropy(head(hidden[i : i + chunk]).float(), labels[i : i + chunk], reduction="none")
         total += float((ce * mask[i : i + chunk]).sum())
+        if per_token is not None:
+            per_token.append(ce.cpu())
     return total
 
 
@@ -93,6 +97,7 @@ def main() -> None:
     p.add_argument("--gpu-mem-gib", type=float, default=None)
     p.add_argument("--engram-tables-cpu", action="store_true")
     p.add_argument("--data-only", action="store_true", help="build the samples and report them; no model")
+    p.add_argument("--dump-tokens", type=Path, help="per-token CE of every sample with its tokens / labels (.pt)")
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
     m = megatron_args(a.config)
@@ -118,16 +123,23 @@ def main() -> None:
             model = AutoModelForCausalLM.from_pretrained(a.model_dir, trust_remote_code=True, dtype=torch.bfloat16,
                                                          device_map=dmap).eval()
         print(f"loaded {a.model_dir} in {time.time() - t0:.0f}s", flush=True)
-        per_sample = []
+        per_sample, dump = [], []
         t0 = time.time()
         with torch.no_grad():
             for k, (it, sg) in enumerate(zip(items, segs)):
-                tot = sum(segment_loss(model, it["tokens"][s:e], it["labels"][s:e], it["loss_mask"][s:e]) for s, e in sg)
+                ce = [] if a.dump_tokens else None
+                tot = sum(segment_loss(model, it["tokens"][s:e], it["labels"][s:e], it["loss_mask"][s:e], per_token=ce)
+                          for s, e in sg)
                 per_sample.append(tot)
+                if ce is not None:
+                    dump.append({"tokens": it["tokens"], "labels": it["labels"], "loss_mask": it["loss_mask"],
+                                 "segments": sg, "losses": torch.cat(ce)})
                 if k % 8 == 0:
                     print(f"sample {k}/{n}: {tot / float(it['loss_mask'].sum()):.4f} ({time.time() - t0:.0f}s)", flush=True)
         res.update(model=str(a.model_dir), lm_loss=float(np.sum(per_sample)) / tokens,
                    per_sample_loss_sum=per_sample, nonfinite_samples=[i for i, x in enumerate(per_sample) if not np.isfinite(x)])
+        if a.dump_tokens:
+            torch.save(dump, a.dump_tokens)
     print(json.dumps({k: v for k, v in res.items() if k != "per_sample_loss_sum"}, indent=2))
     a.out.write_text(json.dumps(res, indent=2) + "\n")
 

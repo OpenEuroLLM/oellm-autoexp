@@ -1,0 +1,11 @@
+{
+ "prefix": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/paired/mc-winogrande-wsc273-512/mc_text_document",
+ "samples": 160,
+ "seq_len": 512,
+ "loss_tokens": 81920,
+ "segments": 3236,
+ "config": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/config-mn5-pool-p264.0133.yaml",
+ "model": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_hd256_fp8_23000",
+ "lm_loss": 4.18560502261389,
+ "nonfinite_samples": []
+}

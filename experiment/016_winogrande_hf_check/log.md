@@ -48,3 +48,36 @@ ambitious_v4_2ph_hd256_fp8_23000 (results/mn5_23000):
 - The log-likelihood differences (0.03 nats / token) are the known HF-vs-vLLM bf16 noise (experiment 013: mean |dlogp| 0.025).
 
 The bias is in the exported model. Not excluded: a Megatron -> HF conversion error shared by both ports. There is no paired Megatron-vs-HF check of a v4 export yet; conservative was exact to 5e-6. The step-2000 export already shows the bias, so if it is a model property it formed early.
+
+## Megatron vs export (user 2026-11-10: "add an explicit Megatron-export check")
+
+Setup:
+- **Megatron side:** `fixedvalid_eval_export_check_v4_mn5`, p264.0328, 8 nodes, 4.5 min.
+  - Generated from the run config that produced 23000 (config-mn5-pool-p264.0133), then hand-edited: EP 8 alltoall as paired_amb4.
+  - Loads ckpt_eval/iter_0023000 and scores two fixed sets.
+  - Megatron `pretrain_hybrid._eval_token_dump` (env `MEGATRON_EVAL_TOKEN_DUMP`) writes per-token losses of every eval micro-batch.
+- **HF side:** `export_check_hf_v4_mn5`, p264.0329. `paired_valid_check --dump-tokens` scores the same GPTDataset samples, each document segment as its own sequence.
+- **Sets:**
+  - `v8ml-valid-sub64` (64 x 4096);
+  - `mc-winogrande-wsc273-512` (`make_mc_set.py`): every Winogrande / WSC273 request of the vLLM run as one document (lm-eval's encoding; Megatron adds the BOS), plus one filler document, 160 x 512.
+- **Comparison:** `compare_megatron_hf.py` matches samples by token content. Requests that lie whole in one segment (2946 of 3080) get continuation log-likelihoods from both sides, which are compared with vLLM's.
+- The export tokenizer is byte-identical to the training tokenizer (tokenizer-256k-agent).
+
+Results (results/mn5_23000_megatron):
+
+| set | Megatron loss | HF loss | HF - Megatron | mean abs dCE / token | token corr |
+|---|---:|---:|---:|---:|---:|
+| v8ml sub64 (262k tokens) | 1.271544 | 1.271466 | -7.8e-5 | 0.020 | 0.99978 |
+| Winogrande / WSC273 set (82k tokens) | 4.186029 | 4.185605 | -4.2e-4 | 0.047 | 0.99986 |
+
+| decisions (whole docs) | docs | acc Megatron / HF / vLLM | picks closer Megatron / HF / vLLM | same pick Megatron-HF / Megatron-vLLM / HF-vLLM |
+|---|---:|---|---|---|
+| Winogrande | 1168 | 0.635 / 0.633 / 0.637 | 0.700 / 0.696 / 0.690 | 0.975 / 0.974 / 0.977 |
+| WSC273 | 242 | 0.789 / 0.777 / 0.773 | | 0.971 / 0.975 / 0.963 |
+
+**Result:** the export reproduces Megatron.
+- The aggregate loss agrees to 8e-5 on general text.
+- Per-token differences are bf16-level, and all three implementations disagree with one another equally rarely (2.5 %).
+- Megatron itself has the closer-mention bias (picks closer 0.70).
+
+So the Winogrande / WSC deficit is a property of the trained model, not of the export or the inference ports.

@@ -1,0 +1,69 @@
+{
+ "hf_all_tokens.pt": {
+  "hf_samples": 64,
+  "matched": 64,
+  "unmatched": 0,
+  "tokens": 262144,
+  "megatron_loss": 1.2715444564819336,
+  "hf_loss": 1.2714664936065674,
+  "hf_minus_megatron": -7.795232522767037e-05,
+  "mean_abs_token_diff": 0.020123686641454697,
+  "p99_abs_token_diff": 0.1748111993074417,
+  "max_abs_token_diff": 2.094493865966797,
+  "token_corr": 0.9997832781781699,
+  "per_sample_mean_diff_range": [
+   -0.0014295214787125587,
+   0.0019892530981451273
+  ],
+  "megatron_samples": 64
+ },
+ "hf_mc_tokens.pt": {
+  "hf_samples": 160,
+  "matched": 160,
+  "unmatched": 0,
+  "tokens": 81920,
+  "megatron_loss": 4.186028957366943,
+  "hf_loss": 4.185605049133301,
+  "hf_minus_megatron": -0.0004240464768372476,
+  "mean_abs_token_diff": 0.046605177223682404,
+  "p99_abs_token_diff": 0.29107725620269775,
+  "max_abs_token_diff": 2.2215681076049805,
+  "token_corr": 0.999858345780945,
+  "per_sample_mean_diff_range": [
+   -0.0078804986551404,
+   0.008788012899458408
+  ],
+  "megatron_samples": 160,
+  "requests_whole": 2946,
+  "requests_total": 3080,
+  "decisions": {
+   "winogrande": {
+    "docs_complete": 1168,
+    "acc_megatron": 0.6352739726027398,
+    "picks_closer_megatron": 0.7000871839581517,
+    "acc_hf": 0.6327054794520548,
+    "picks_closer_hf": 0.6957279860505667,
+    "acc_vllm": 0.636986301369863,
+    "picks_closer_vllm": 0.6896251089799477,
+    "agree_megatron_hf": 0.9751712328767124,
+    "mean_abs_dll_per_token_megatron_hf": 0.03695895271743373,
+    "agree_megatron_vllm": 0.9743150684931506,
+    "mean_abs_dll_per_token_megatron_vllm": 0.036591119936359065,
+    "agree_hf_vllm": 0.9768835616438356,
+    "mean_abs_dll_per_token_hf_vllm": 0.03584006866727291
+   },
+   "wsc273": {
+    "docs_complete": 242,
+    "acc_megatron": 0.7892561983471075,
+    "acc_hf": 0.7768595041322314,
+    "acc_vllm": 0.7727272727272727,
+    "agree_megatron_hf": 0.9710743801652892,
+    "mean_abs_dll_per_token_megatron_hf": 0.040891471784122134,
+    "agree_megatron_vllm": 0.9752066115702479,
+    "mean_abs_dll_per_token_megatron_vllm": 0.03654241413935422,
+    "agree_hf_vllm": 0.9628099173553719,
+    "mean_abs_dll_per_token_hf_vllm": 0.037402717230355056
+   }
+  }
+ }
+}

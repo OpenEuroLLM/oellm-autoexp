@@ -1,0 +1,2 @@
+[default3]: validation-all loss at iteration 23000 on validation set | lm loss value: 1.271544E+00 | lm loss PPL: 3.566356E+00 | 
+[default3]: validation-mc loss at iteration 23000 on validation set | lm loss value: 4.186029E+00 | lm loss PPL: 6.576113E+01 | 
