@@ -25,6 +25,9 @@ aux:
 backend:
   env:
     MEGATRON_DIAG_WEIGHT_EVERY: "10"
+    # per-phase checkpoint-load timing, min / max over all ranks (Megatron 802955429); the load reads
+    # .metadata once per process (669510a48); phase 2 onwards (snapshot autoexp_v4hd256diag2lf)
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
   megatron:
     kv_channels: 256
     # a missing / unwidened checkpoint must be fatal, never a silent fresh start or a partial load
