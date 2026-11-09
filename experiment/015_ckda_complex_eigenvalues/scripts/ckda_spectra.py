@@ -428,7 +428,7 @@ def main() -> None:
     (a.out / "meta.json").write_text(json.dumps(meta, indent=1))
 
     # ---- ablations
-    runs = [(ab, None) for ab in a.ablations.split(",") if ab]
+    runs = [(ab, None) for ab in a.ablations.split(",") if ab and ab != "none"]
     if a.group_size:
         runs += [("cplx_abs", set(range(g, min(g + a.group_size, len(ckda)))))
                  for g in range(0, len(ckda), a.group_size)]
