@@ -21,11 +21,11 @@ sweep:
           aux.gbs: 1024
           backend.megatron.micro_batch_size: 1
           aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
-          # checkpoint >= 25000 (the current run is stopped after its 25000 checkpoint + validation; its
-          # graceful stop saves the step it is on, 25000 + a few)
+          # the 25000 checkpoint exactly (user 2026-11-10): the watcher stops the running job after its 25000
+          # validation + save (graceful SIGUSR2: Megatron saves the step it is on, 25000 + k, and prunes
+          # ckpt/iter_0025000), then deletes that stop checkpoint, relinks ckpt_eval/iter_0025000 into ckpt/,
+          # writes 25000 into the tracker, and only then this marker
           job.start_condition:
-            class_name: FileContentCondition
-            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
-            pattern: "^\\s*(2[5-9][0-9]{3}|[3-9][0-9]{4}|[1-9][0-9]{5,})\\s*$"
-            mode: regex
+            class_name: FileExistsCondition
+            path: "\\${job.base_output_dir}/restart25k_ready"
             persistent_pass: true
