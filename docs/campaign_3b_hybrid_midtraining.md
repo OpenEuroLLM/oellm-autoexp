@@ -1212,6 +1212,35 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     - So int4 storage needs calibration with real activations and probably QAT: the s3 int4-QAT test is
       warranted. g128 is the format to aim for on speed.
 
+- **2026-11-09 evening, training-speed tests on p264 host003** (s3 = ctxlen4n_s3 s64k from step 1000, 4 nodes per
+  arm, concurrent; median ms/step past warm-up):
+  - **T9, sparse attention on the production v4 shape at 64k** (hybrid_v4_hd256_test: Megatron-FSDP, EP 4, MoonEP,
+    hd256 gated GQA, 2 nodes, 8 routed experts, 20 steps, block-wise selection b64, one packed flex call):
+    - dense (TE) 12.8 s (noisy, 11.4-15.0), page_mean 13.1 s (+2 %), quest 13.2 s (+3 %), window 12.2 s (-5 %).
+    - **No training-speed gain at 64k** on the production stack, even with 8 instead of 360 experts (which
+      overstates attention's share). At 7:1 attention is too small a share at 64k; sparse attention is for the
+      longer phases and for inference, not for the 64k switch.
+  - **T10, routing locality (moe_router_stay_bonus, Megatron 126e99310 / 741c9c5f8):** a selection-only bonus
+    on the experts the previous token selects without it (parallel in training, the same rule at inference).
+    - Step time: base 4183 ms; beta 0.1 / 0.3 / 1.0 (logits, QB): 4217 / 4223 / 4226 ms (**+0.8-1.0 %**); memory
+      unchanged (0.704-0.706).
+    - The stay_rate metric was not recorded on the QB path (its routing runs under no_grad; fixed 741c9c5f8):
+      rerun T10b for stay rates and the 100-step loss.
+    - Router-only check (random router): the parallel rule raises the stay rate 0.185 -> 0.37 at a bonus of the
+      size of the score gaps; a huge bonus only copies the predecessor's plain selection (one-token shift).
+      The sequential form (hysteresis, on the previous FINAL selection) gets more locality per beta; R3 on frozen
+      v4 compares both (`router_probe.py --stages r3`, `r3_router_stay_probe_mn5`).
+  - **T6, latent MTP (CKDA depths) speed:** first launch failed on `recompute_num_layers must be 1 for MTP
+    recompute` (s3 recomputes uniformly in 2-layer chunks; fixed 56bb5998f).
+    - Second launch: k3 stride 1 5380 ms (+29 % vs the T10 base 4183 ms), k3 stride 4 4787 ms (+14 %); memory
+      0.70 -> 0.88.
+    - All k8 arms OOM: the Liger fused head keeps a [vocab, h] output-weight gradient per call, so one call per
+      depth held 8 of them (~3.8 GiB each). Fixed (691ec9cd7): one fused call over all depths. Rerun as T6b
+      (all arms + base, concurrent).
+    - Found on the way: Liger's backward scales by grad_output[0], i.e. by 0 if the first token is masked, which
+      zeroes the whole call's gradient (fixed af4a64671). Our runs use eod_mask_loss false, so it should not have
+      triggered.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
