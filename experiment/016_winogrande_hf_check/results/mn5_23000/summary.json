@@ -1,0 +1,115 @@
+{
+ "model": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_hd256_fp8_23000",
+ "env": {
+  "OELLM_HF_PLACEMENT": "oellm",
+  "OELLM_HF_REFRESH_CODE": "0",
+  "OELLM_HF_PIPELINE": "0",
+  "OELLM_HF_IMPL": "fast",
+  "OELLM_HF_MOE": "fused",
+  "OELLM_HF_GRAD": "0",
+  "OELLM_BASE": "/gpfs/scratch/ehpc533",
+  "OELLM_HF_ENGRAM_UVA": "1",
+  "OELLM_AUTOEXP_CACHE": "/workspace/cache"
+ },
+ "files": {
+  "/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm/ambitious_v4_2ph_hd256_fp8_23000/results/winogrande_0/qdpv68r5/samples_winogrande_2026-11-09T20-14-18.187274.jsonl": {
+   "vllm_all": {
+    "docs": 1267,
+    "acc": 0.6400947119179163,
+    "agree_with_vllm_pick": 1,
+    "mean_abs_dll_vs_vllm": 0.0,
+    "max_abs_dll_vs_vllm": 0.0,
+    "mean_abs_dll_per_token": 0.0,
+    "picks_closer": 0.6845906902086677,
+    "acc_gold_closer": 0.8308943089430895,
+    "acc_gold_farther": 0.45800316957210774
+   },
+   "hf_fast": {
+    "docs": 1267,
+    "acc": 0.6361483820047356,
+    "agree_with_vllm_pick": 0.9771112865035517,
+    "mean_abs_dll_vs_vllm": 0.17470678778918833,
+    "max_abs_dll_vs_vllm": 2.032500244677067,
+    "mean_abs_dll_per_token": 0.031093341779590056,
+    "picks_closer": 0.6902086677367576,
+    "acc_gold_closer": 0.832520325203252,
+    "acc_gold_farther": 0.44849445324881143
+   },
+   "vllm_on_fast_docs": {
+    "docs": 1267,
+    "acc": 0.6400947119179163,
+    "agree_with_vllm_pick": 1,
+    "mean_abs_dll_vs_vllm": 0.0,
+    "max_abs_dll_vs_vllm": 0.0,
+    "mean_abs_dll_per_token": 0.0,
+    "picks_closer": 0.6845906902086677,
+    "acc_gold_closer": 0.8308943089430895,
+    "acc_gold_farther": 0.45800316957210774
+   },
+   "hf_reference": {
+    "docs": 150,
+    "acc": 0.7133333333333334,
+    "agree_with_vllm_pick": 0.9866666666666667,
+    "mean_abs_dll_vs_vllm": 0.17010345032299065,
+    "max_abs_dll_vs_vllm": 1.695113182067871,
+    "mean_abs_dll_per_token": 0.03070459392111745,
+    "picks_closer": 0.6466666666666666,
+    "acc_gold_closer": 0.8461538461538461,
+    "acc_gold_farther": 0.5694444444444444
+   },
+   "vllm_on_reference_docs": {
+    "docs": 150,
+    "acc": 0.7266666666666667,
+    "agree_with_vllm_pick": 1,
+    "mean_abs_dll_vs_vllm": 0.0,
+    "max_abs_dll_vs_vllm": 0.0,
+    "mean_abs_dll_per_token": 0.0,
+    "picks_closer": 0.6333333333333333,
+    "acc_gold_closer": 0.8461538461538461,
+    "acc_gold_farther": 0.5972222222222222
+   }
+  },
+  "/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm/ambitious_v4_2ph_hd256_fp8_23000/results/wsc273_0/qdpv68r5/samples_wsc273_2026-11-09T20-14-44.353287.jsonl": {
+   "vllm_all": {
+    "docs": 273,
+    "acc": 0.7802197802197802,
+    "agree_with_vllm_pick": 1,
+    "mean_abs_dll_vs_vllm": 0.0,
+    "max_abs_dll_vs_vllm": 0.0,
+    "mean_abs_dll_per_token": 0.0
+   },
+   "hf_fast": {
+    "docs": 273,
+    "acc": 0.7838827838827839,
+    "agree_with_vllm_pick": 0.967032967032967,
+    "mean_abs_dll_vs_vllm": 0.1978305847104481,
+    "max_abs_dll_vs_vllm": 1.3701362758874893,
+    "mean_abs_dll_per_token": 0.032534788931296584
+   },
+   "vllm_on_fast_docs": {
+    "docs": 273,
+    "acc": 0.7802197802197802,
+    "agree_with_vllm_pick": 1,
+    "mean_abs_dll_vs_vllm": 0.0,
+    "max_abs_dll_vs_vllm": 0.0,
+    "mean_abs_dll_per_token": 0.0
+   },
+   "hf_reference": {
+    "docs": 150,
+    "acc": 0.8066666666666666,
+    "agree_with_vllm_pick": 0.9733333333333334,
+    "mean_abs_dll_vs_vllm": 0.17271697685304085,
+    "max_abs_dll_vs_vllm": 0.8650813028216362,
+    "mean_abs_dll_per_token": 0.028314258500498502
+   },
+   "vllm_on_reference_docs": {
+    "docs": 150,
+    "acc": 0.8066666666666666,
+    "agree_with_vllm_pick": 1,
+    "mean_abs_dll_vs_vllm": 0.0,
+    "max_abs_dll_vs_vllm": 0.0,
+    "mean_abs_dll_per_token": 0.0
+   }
+  }
+ }
+}

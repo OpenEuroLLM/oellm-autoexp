@@ -1,0 +1,48 @@
+# @package _global_
+# Winogrande / WSC273 of an ambitious export re-scored with the HF port (fast path on every request, the
+# reference path on the first aux.limit_reference documents) and compared request by request with the
+# vLLM run's lm-eval samples (experiment/016_winogrande_hf_check). One node, read-only on the export.
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/winogrande_hf_check_mn5 --yes
+defaults:
+  - hf_export_mn5
+  - _self_
+
+aux:
+  export: ambitious_v4_2ph_hd256_fp8_23000
+  exports_root: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  eval_root: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  samples: >-
+    ${aux.eval_root}/${aux.export}/results/winogrande_0/qdpv68r5/samples_winogrande_2026-11-09T20-14-18.187274.jsonl
+    ${aux.eval_root}/${aux.export}/results/wsc273_0/qdpv68r5/samples_wsc273_2026-11-09T20-14-44.353287.jsonl
+  out_root: /gpfs/scratch/ehpc533/hybrid_nucleus/analysis/winogrande_hf_check
+  limit_reference: 150
+  name: winogrande_hf_check_${aux.export}
+  bench: >-
+    python experiment/016_winogrande_hf_check/scripts/score_mc_hf.py
+    --model-dir ${aux.exports_root}/${aux.export} --samples ${aux.samples}
+    --out ${aux.out_root}/${aux.export} --gpu-mem-gib 54 --engram-tables-cpu
+    --impls fast,reference --limit-reference ${aux.limit_reference}
+
+backend:
+  env:
+    # batch 1 per request: no micro-batch pipelining; the export's code as shipped (no refresh)
+    OELLM_HF_PIPELINE: "0"
+    OELLM_HF_REFRESH_CODE: "0"
+
+job:
+  name: ${aux.name}
+  base_output_dir: ${aux.out_root}/logs/${aux.name}
+  est_step_time_s: 3600
+  metadata:
+    pool_priority: 60
+    # not on excluded nodes: p264 host003 lists its shrink-removed nodes there
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    # the account of the pool's hosts (p264: cns144)
+    account: cns144
