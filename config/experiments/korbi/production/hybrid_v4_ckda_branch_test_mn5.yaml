@@ -8,7 +8,7 @@
 #   ref     no branch, 1100 -> 1300 (the reference losses)
 #   bgqa    attention 16q / 2kv on layers 9, 25, 41 (the B-gqa arm), the production schedule (alpha 1 for 25
 #           steps, -> 0 over 175; m 4 -> 1 over 200), gamma_scale 1, save at 1200
-#   bgqa_r  resume bgqa's 1200 save (strict load of a checkpoint with a branch), 1200 -> 1210
+#   bgqa_r  resume bgqa_xf's 1200 save (strict load of a checkpoint with a branch), 1200 -> 1210
 #   bgqa_gs as bgqa, gamma_scale 10 (Adam moves gamma ~lr per step: at scale 1 the branch's share can
 #           reach only ~0.2-0.4 by step 200, when alpha is 0)
 #   b8      attention 16q / 8kv (the B arm), gamma_scale 10, 1100 -> 1150
@@ -16,7 +16,11 @@
 #   d       KronLSTM (normalized v; b_proj = c_proj = complex_kda's b_proj), gamma_scale 10, 1100 -> 1300
 #   bgqa_xf / d_xf  the production schedule (user 2026-11-09): linear crossfade, weights adding up to 1,
 #           alpha 1 -> 0 over 150 steps, branch weight (1 - alpha)(1 + gamma), 1100 -> 1300 (from the same
-#           surgery checkpoints: gamma 0 = weight 1)
+#           surgery checkpoints: gamma 0 = weight 1); bgqa_xf saves at 1200 for bgqa_r
+#   On p264 host003 (user 2026-11-09: experiments there, not acc_debug), side by side:
+#     ... --no-monitor --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#         "aux.only=[bgqa_xf,d_xf]" slurm.sbatch.account=cns144 +job.metadata.pool_use_excluded_nodes=false \
+#         job.concurrency_group=null job.max_active=null
 # Checks: step 1101 loss = ref's (gamma = 0: the model is unchanged), the [ckda_branch] lines (gamma moves,
 # rms of both mixers), no NaN through the hand-over, bgqa_r loads strictly and continues bgqa's losses.
 #
@@ -73,11 +77,14 @@ sweep:
           backend.megatron.save: ${aux.test_root}/bgqa/ckpt
           backend.megatron.save_interval: 1200
         - aux.arm: bgqa_r
-          backend.megatron.load: ${aux.test_root}/bgqa/ckpt
+          backend.megatron.load: ${aux.test_root}/bgqa_xf/ckpt
           backend.megatron.exit_interval: 1210
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41]
           backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
         - aux.arm: bgqa_gs
           backend.megatron.load: ${aux.test_root}/bgqa_src/ckpt
           backend.megatron.ckda_branch: attention
@@ -117,6 +124,8 @@ sweep:
           backend.megatron.ckda_branch_crossfade: true
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.save: ${aux.test_root}/bgqa_xf/ckpt
+          backend.megatron.save_interval: 1200
         - aux.arm: d_xf
           backend.megatron.load: ${aux.test_root}/d_src/ckpt
           backend.megatron.ckda_branch: kronlstm
