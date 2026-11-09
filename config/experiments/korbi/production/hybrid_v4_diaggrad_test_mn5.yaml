@@ -1,0 +1,91 @@
+# @package _global_
+# Per-layer grad norms under Megatron-FSDP (user 2026-11-09: locate the growing grad-norm spikes of the v4_2ph
+# main run; log every step). megatron/training/diagnostics.py deduplicated gradient shards via the distributed
+# optimizer's gbuf_ranges, which Megatron-FSDP does not have; the fix counts the local DTensor shards of
+# __fsdp_param__ parameters (world all-reduce, / HSDP instances). This test runs the main run's own config
+# (hybrid_ambitious_v4_2ph_hd256_mn5: Megatron-FSDP optim_grads_params, EP 4, MoonEP, muown_classical, hd256,
+# z-loss, forward expert spectral cap, FP8 expert gather) on 2 nodes as the hd256 test does (8 experts, Engram
+# 1/16, gbs 64), fresh init, 20 steps:
+#   diag  --diagnostics-interval 1 --diag-layer-grad-norms --diag-clip-events
+#   ctrl  diagnostics off, same batches: losses / grad-norm must equal diag's step for step (no side effect),
+#         and the step-time difference is the collector's cost
+# Pass: diag/grad_norm/total_check == grad-norm to ~1e-3 on every step (scripts/korbi/check_diagnostics_smoke.py
+# reads the tensorboard dirs). One after another on the debug lane:
+#   cd $R/autoexp_diaggrad && scripts/korbi/mn5_autoexp_bg.sh diaggrad scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_v4_diaggrad_test_mn5 --yes
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_mn5
+  - _self_
+
+aux:
+  suite: v4_diaggrad_test
+  arm: diag
+  only: []
+  nodes: 2
+  phase: 1
+  seq: 8192
+  gbs: 64
+  stage_datamix: /gpfs/scratch/ehpc533/users/korbip/tmp/v4norm/capspeed_datamix.txt
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4diaggrad
+
+backend:
+  megatron:
+    num_experts: 8
+    engram_table_size: 1623365
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    micro_batch_size: 8
+    load: null
+    exit_on_missing_checkpoint: false
+    strict_fsdp_dtensor_load: false
+    exit_interval: 20
+    log_interval: 1
+    timing_log_level: 1
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    save_retain_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+    tensorboard_dir: ${job.base_output_dir}/tb
+    tensorboard_log_interval: 1
+    diagnostics_interval: 0
+    diag_layer_grad_norms: false
+    diag_clip_events: false
+
+job:
+  name: v4_diaggrad_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  est_step_time_s: 5.0
+  concurrency_group: acc_debug
+  max_active: 1
+  metadata:
+    pool_singleton: null
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (test: no retry)"}
+
+slurm:
+  sbatch:
+    account: ehpc533
+    time: "01:00:00"
+    qos: acc_debug
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: diag
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+        - aux.arm: ctrl
