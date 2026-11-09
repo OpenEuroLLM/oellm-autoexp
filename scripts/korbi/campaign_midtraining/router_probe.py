@@ -694,6 +694,15 @@ def make_policy(spec, preds):
                 score = free_score(kind, probe, m, moe)
             top = score.topk(spec["K"], dim=-1).indices
             avail.scatter_(-1, top, True)
+        early = avail.clone()  # the first stage (pred: issued earliest, e.g. two layers ahead)
+        if spec.get("pred2"):  # the second stage (e.g. one layer ahead): fetch what the first missed
+            kind2 = spec["pred2"]
+            if kind2 in LEARNED:
+                feats2 = {f: feature(probe, f, m, x.device, e) for f in LEARNED[kind2]}
+                score2 = preds[(kind2, m)](feats2)
+            else:
+                score2 = free_score(kind2, probe, m, moe)
+            avail.scatter_(-1, score2.topk(spec["K2"], dim=-1).indices, True)
         if spec.get("win"):
             oh = onehot(idx, e, torch.int32)
             cum = torch.cumsum(oh, dim=1)
@@ -709,6 +718,7 @@ def make_policy(spec, preds):
         avail[:, 0] = True  # position 0: everything (a prefill / the first token)
         hit = avail.gather(-1, idx)
         lw = gate_weights(moe, logits.reshape(-1, e), idx.reshape(-1, k)).view(b, s, k)
+        st["early"] += float(early.gather(-1, idx)[:, 1:].sum()) if spec.get("pred") else 0.0
         st["miss"] += float((~hit[:, 1:]).sum())
         st["assign"] += float(hit[:, 1:].numel())
         st["wmiss"] += float((lw * ~hit)[:, 1:].sum() / moe.scaling)
@@ -755,6 +765,13 @@ def r2_specs(have_learned: bool, rows16: bool):
                 name=f"win16+{best}_K10_bs1_{miss}", pred=best, K=10, win=16, scope="bs1", miss=miss
             )
         )
+    # two-stage prefetch: two layers ahead (base_d2, top-K) refined one layer ahead (base_d1, top-K2)
+    for k2, k1 in ((10, 5), (10, 10), (16, 5), (5, 10)):
+        for miss in ("skip", "sub"):
+            specs.append(dict(name=f"d2K{k2}+d1K{k1}_bs1_{miss}", pred="base_d2", K=k2, pred2="base_d1", K2=k1,
+                              scope="bs1", miss=miss))
+    specs.append(dict(name="d2K10+d1K5+win16_bs1_sub", pred="base_d2", K=10, pred2="base_d1", K2=5, win=16,
+                      scope="bs1", miss="sub"))
     if rows16:
         for kk in (5, 10):
             for miss in ("skip", "sub"):
@@ -834,6 +851,7 @@ def run_r2(model, probe, args, out: Path, preds):
                 "miss": st["miss"] / max(st["assign"], 1),
                 "wmiss": st["wmiss"] / max(st["wsum"], 1e-9),
                 "avail": st["avail"] / max(st["avail_n"], 1),
+                "early": st["early"] / max(st["assign"], 1),
                 "spec": {k: v for k, v in spec.items() if k != "name"},
             }
             r = results[f"{dom}|{spec['name']}"]
@@ -845,7 +863,8 @@ def run_r2(model, probe, args, out: Path, preds):
     (out / "r2_results.json").write_text(json.dumps(results, indent=1))
     lines = [
         "# R2 skip policy (NLL change vs the unmodified routing. miss: share of the router's assignments "
-        "outside the available set, w-miss: gate-weighted, avail: available experts per layer)",
+        "outside the available set, w-miss: gate-weighted, avail: available experts per layer, early: share of "
+        "assignments covered by the first prefetch stage, e.g. two layers ahead)",
         "",
     ]
     chk = results["check|native_vs_probe"]
@@ -861,14 +880,15 @@ def run_r2(model, probe, args, out: Path, preds):
         lines += [
             f"## {dom} (full NLL {base:.4f})",
             "",
-            "| policy | ΔNLL | miss | w-miss | avail |",
-            "|---|---:|---:|---:|---:|",
+            "| policy | ΔNLL | miss | w-miss | avail | early |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
         for key, r in results.items():
             d, name = key.split("|")
             if d == dom and name != "full" and "nll" in r:
                 lines.append(
-                    f"| {name} | {r['nll'] - base:+.4f} | {r['miss']:.3f} | {r['wmiss']:.3f} | {r['avail']:.1f} |"
+                    f"| {name} | {r['nll'] - base:+.4f} | {r['miss']:.3f} | {r['wmiss']:.3f} | {r['avail']:.1f} | "
+                    f"{r.get('early', 0.0):.3f} |"
                 )
         lines.append("")
     (out / "r2_summary.md").write_text("\n".join(lines))

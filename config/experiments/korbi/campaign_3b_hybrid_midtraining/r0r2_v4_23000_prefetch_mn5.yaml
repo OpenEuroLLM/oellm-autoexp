@@ -1,0 +1,16 @@
+# @package _global_
+# R0 / R2 re-run on the current v4 (hd256, step 23000; the first run was step 8000) with the two-stage prefetch
+# policies (router_probe.py: two layers ahead top-K, refined one layer ahead; "early" = the share of assignments
+# the first stage covered) next to the single-stage ones. One node, on host002's buffer nodes (user 2026-11-09).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/r0r2_v4_23000_prefetch_mn5 --yes
+defaults:
+  - r0_r2_router_probe_mn5
+  - _self_
+
+aux:
+  name: r0r2_v4_2ph_hd256_23000
+  export: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_hd256_fp8_23000
+
+job:
+  metadata:
+    pool_priority: 80

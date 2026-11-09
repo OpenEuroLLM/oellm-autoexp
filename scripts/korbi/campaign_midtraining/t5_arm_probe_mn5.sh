@@ -6,6 +6,8 @@
 #
 #   t5_arm_probe_mn5.sh <arm> "<probe policy>" [probe args...]
 #   e.g. t5_arm_probe_mn5.sh nsa "nsa:topk=32,select_window=512,block=32,stride=16,select_block=64,decode=token"
+# Probe args after the policy override the defaults (argparse: the last one wins), e.g. --lengths 131072 --tasks
+# retrieval with T5_PROBE_TAG=_long for a separate output directory.
 set -euo pipefail
 arm=$1; policy=$2; shift 2
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
@@ -14,7 +16,7 @@ run=$R/production/t5_s3_sparse/$arm
 ckpt=$run/ckpt/iter_0001500
 [ -d "$ckpt" ] || { echo "no step-1500 checkpoint under $run" >&2; exit 1; }
 out=$R/hf_exports/t5_s3_${arm}_1500
-probe_out=$R/campaign_midtraining/t5_probe/$arm
+probe_out=$R/campaign_midtraining/t5_probe${T5_PROBE_TAG:-}/$arm  # T5_PROBE_TAG: e.g. _long
 config=$(readlink -f "$(ls -t "$run"/current_*.yaml | head -1)")
 tok=$(python - "$config" <<'PY'
 import sys

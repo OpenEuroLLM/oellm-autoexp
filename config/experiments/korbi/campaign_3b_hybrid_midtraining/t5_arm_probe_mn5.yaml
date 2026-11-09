@@ -9,11 +9,13 @@ defaults:
   - _self_
 
 aux:
-  name: t5_probe_${aux.arm}
+  name: t5_probe${aux.probe_tag}_${aux.arm}
   arm: dense
   policy: dense
   only: []
-  bench: "bash scripts/korbi/campaign_midtraining/t5_arm_probe_mn5.sh ${aux.arm} '${aux.policy}'"
+  probe_tag: ""  # e.g. "_128k": separate run / output names (T5_PROBE_TAG), with aux.probe_args
+  probe_args: ""  # e.g. "--lengths 131072 --tasks retrieval"
+  bench: "T5_PROBE_TAG=${aux.probe_tag} bash scripts/korbi/campaign_midtraining/t5_arm_probe_mn5.sh ${aux.arm} '${aux.policy}' ${aux.probe_args}"
 
 job:
   name: campaign_mid_${aux.name}
