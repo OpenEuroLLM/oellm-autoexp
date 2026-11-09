@@ -149,7 +149,7 @@ class Stats:
         T = ids.shape[0]
         for m in METRICS:
             self.lh[m][layer] += per[m].sum(0).cpu().numpy()
-        pos = torch.arange(T, device=ids.device)
+        pos = torch.arange(T, device=per["count"].device)  # the layer's GPU (ids sit on the embedding's)
         lb = log2_bin(pos)
         for m in POS_METRICS:
             v = per[m]
@@ -403,7 +403,7 @@ def main() -> None:
         nll[s] = []
         for n, (j, d) in enumerate(items):
             ids = ids_of(d)
-            State.ids = ids[0]
+            State.ids = ids[0].cpu()  # host copy: the CKDA layers run on other GPUs than the embedding
             State.dump = {} if n < a.dump_docs else None
             State.verify = n == 0
             t1 = time.time()
