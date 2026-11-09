@@ -82,6 +82,13 @@ sweep:
           backend.megatron.save_interval: 1200
         - aux.arm: bgqa_r
           backend.megatron.load: ${aux.test_root}/bgqa_xf/ckpt
+          # starts once bgqa_xf saved 1200 (one launch with bgqa_xf: no staggered relaunch of the suite)
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_xf/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*1200\\s*$"
+            mode: regex
+            persistent_pass: true
           backend.megatron.exit_interval: 1210
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41]
