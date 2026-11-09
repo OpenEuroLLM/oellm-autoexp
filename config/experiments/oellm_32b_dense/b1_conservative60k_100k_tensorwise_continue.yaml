@@ -102,6 +102,13 @@ backend:
     # verifies it; build.json in the directory records the switch. Do NOT rebuild it for a later
     # iteration: it already holds the switch point.
     data_cache_path: /e/scratch/e-ext-2025e02-108/oellm_32b_dense_b1/data_cache_agenttrove_pure
+    # ROLLING CHECKPOINTS ON /e/fscratch (2026-11-09, from iteration 400000). On /e/scratch the
+    # rolling directory hung (17:29, one save took 1826 s; even `ls` blocked) and saves then took
+    # 50-462 s instead of ~20 s. fscratch is the separate flash file system (e-ext: empty, 42 TB
+    # soft); the rolling set is ~2 x 442 GB and rewritten every 125 iterations, so the 30-day
+    # fscratch purge never reaches it while the run trains. Persistent checkpoints (every 2000)
+    # stay on /e/scratch; a resume without rolling ones falls back to them.
+    non_persistent_global_ckpt_dir: /e/fscratch/e-ext-2025e02-108/oellm_32b_dense_b1/${backend.aux.variant}/checkpoints_rolling
 
 sweep:
   type: list
