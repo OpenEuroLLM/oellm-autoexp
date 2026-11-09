@@ -1389,8 +1389,23 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - Parallel: ~+4.5 % for the trunk layer, then ~1.3 % per extra offset at stride 4 (the vocabulary head on a
     quarter of the positions); depth: ~2.5 % per depth. At 8 offsets parallel costs about half of depth.
   - No memory overhead in either form. Quality: T14 (parallel k3 / k8 on the t8 schedule) running.
-- **2026-11-09, long-context retrieval probes (128k / 256k, s3 step-5 arms, 8 items per task):** dense: passkey
-  1.00 / 1.00, kvret64 0.25 / 0.25, vt 0.25 / 0.62. Sparse arms queued on host002's buffer nodes.
+- **2026-11-10, long-context retrieval probes (s3 step-5 arms at step 1500, trained at 64k; 2x / 4x the training
+  length; 8 items per task, 10-way: differences under ~0.25 are noise; t5_arm_probe_mn5 aux.probe_tag=_long, on
+  host002's buffer nodes):**
+
+  | arm | 128k passkey / kvret64 / vt | 256k passkey / kvret64 / vt |
+  |---|---|---|
+  | dense | 1.00 / 0.25 / 0.25 | 1.00 / 0.25 / 0.62 |
+  | page_mean_pg | 1.00 / 0.25 / 0.00 | 1.00 / 0.38 / 0.38 |
+  | page_mean | 1.00 / 0.12 / 0.25 | 1.00 / 0.38 / 0.38 |
+  | quest | 1.00 / 0.00 / 0.12 | 1.00 / 0.12 / 0.38 |
+  | nsa | 1.00 / 0.12 / 0.00 | 1.00 / 0.00 / 0.12 |
+  | csa2 | 1.00 / 0.12 / 0.12 | 1.00 / 0.00 / 0.12 |
+  | lsa | 1.00 / 0.12 / 0.50 | 1.00 / 0.50 / 0.12 |
+
+  - Every per-layer selector keeps passkey 1.00 up to 4x the training length; kvret / vt are at the noise level
+    (8 items) -- no selector separates from dense or from each other here. A real separation needs more items
+    (n >= 32) or harder tasks.
 
 ## References
 
