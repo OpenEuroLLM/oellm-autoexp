@@ -1,0 +1,81 @@
+# @package _global_
+# Fairness check of the learned sparse selectors (user 2026-11-09): step 5 trained every arm for 500 steps, which
+# favours the parameter-free page selectors (they inherit the dense model's q.k from step 0; NSA's compressors /
+# gates and CSA2's indexer / compression weights start untrained). Here 2000 steps (ctxlen4n_s3 s64k step 1000 ->
+# 3000, the t8 schedule: the dense reference is t8_s3_mtp_quality/base, same data and validation samples),
+# validation every 500 steps, the CSA2 indexer KL logged (indexer_kl), and CSA2 with a dense warm-up of its indexer
+# (DeepSeek's sparse-attention recipe: stage 1 = 200 steps of dense attention while only the indexer learns the
+# dense attention mass, page_sparse_dense_forward; stage 2 = 1800 sparse steps from stage 1's step-1200 checkpoint,
+# arm csa2_warm_s2, enqueued once csa2_warm finished). s3 = the LDM residual (the main run is mHC-4).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t11_s3_sparse_fair_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc "aux.only=[page_mean_pg,nsa,lsa,csa2,csa2_warm]" --yes
+defaults:
+  - t5_s3_sparse_branch_mn5
+  - _self_
+
+aux:
+  suite: t11_s3_sparse_fair
+  only: []
+
+backend:
+  megatron:
+    train_iters: 3000
+    exit_interval: 3000
+    eval_interval: 500
+    save_interval: 1000
+
+job:
+  metadata:
+    pool_priority: 80
+
+slurm:
+  sbatch:
+    time: "08:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.arm: nsa
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
+        - aux.arm: lsa
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 512
+          backend.megatron.page_sparse_lsa_buckets: 32
+        - aux.arm: csa2
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+        - aux.arm: csa2_warm  # stage 1: dense attention, only the indexer learns (KL to the dense mass)
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_dense_forward: true
+          backend.megatron.exit_interval: 1200
+          backend.megatron.save_interval: 200
+        - aux.arm: csa2_warm_s2  # stage 2: sparse from stage 1's step 1200
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 4
+          backend.megatron.page_sparse_indexer_dim: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/csa2_warm/ckpt
+          backend.megatron.ckpt_step: 1200
+          backend.megatron.diag_consumed_train_samples: 19200

@@ -1,0 +1,56 @@
+# @package _global_
+# Latent MTP speed / memory on the production residual (user 2026-11-09: the main run is mHC-4, and the MTP depths
+# use it): the v4 64k phase shape of hybrid_v4_hd256_test_mn5 (Megatron-FSDP, EP 4, MoonEP, hd256 gated GQA,
+# mHC-4, 2 nodes, 8 routed experts, fresh init) with 3 / 8 latent CKDA depths ("/L" each, mHC-4 inside every depth:
+# Megatron's _mtp_depth_config keeps mHC; shared LM head through the Liger fused CE on every stride-th position),
+# against no MTP, 30 steps; step time and memory past warm-up.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t12_v4_mtp_speed_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t9_v4_sparse_speed_mn5
+  - _self_
+
+aux:
+  suite: t12_v4_mtp_speed
+  arm: base
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/t12_v4_mtp_speed
+
+backend:
+  megatron:
+    page_sparse_selector: null
+    exit_interval: 30
+    log_interval: 1
+
+job:
+  name: t12_v4_mtp_speed_${aux.arm}
+  metadata:
+    pool_priority: 82
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: k3_s1
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 1
+        - aux.arm: k3_s4
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L"
+          backend.megatron.mtp_num_layers: 3
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+        - aux.arm: k8_s4
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 4
+        - aux.arm: k8_s8
+          backend.megatron.hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE/L/L/L/L/L/L/L/L"
+          backend.megatron.mtp_num_layers: 8
+          backend.megatron.mtp_latent: true
+          backend.megatron.mtp_loss_stride: 8
