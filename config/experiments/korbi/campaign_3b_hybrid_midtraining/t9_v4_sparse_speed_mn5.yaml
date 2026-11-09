@@ -33,8 +33,7 @@ backend:
     page_sparse_sink_pages: 1
     page_sparse_select_block: 64
     page_sparse_flex_q_block: 64
-    page_sparse_backend: flex
-    page_sparse_packed_flex: true
+    page_sparse_backend: flex  # one packed flex call per layer: Megatron's default since b99388935
 
 job:
   name: t9_v4_sparse_speed_${aux.arm}
