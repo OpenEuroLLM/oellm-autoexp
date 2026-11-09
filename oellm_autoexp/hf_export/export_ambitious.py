@@ -109,11 +109,43 @@ def _balancing(m: dict) -> str:
     return "expert_bias"
 
 
+def branch_fold(m: dict) -> tuple[set[int], float]:
+    """A ckda_branch run (megatron/core/ssm/ckda_branch.py) past its hand-over: the decoder layers whose
+    complex_kda mixer is weighted 0 (alpha_end 0) and whose attention branch is the mixer, and the
+    factor m * gamma_scale on the branch's output (times the layer's gamma). Those layers export as
+    standard attention layers. ``m["_ckpt_iteration"]``: the checkpoint's iteration."""
+    if not m.get("ckda_branch"):
+        return set(), 1.0
+    if m["ckda_branch"] != "attention":
+        raise ValueError(f"ckda_branch {m['ckda_branch']!r}: only attention branches export (as attention layers)")
+    if float(m.get("ckda_branch_alpha_end", 0.0)) != 0.0:
+        raise ValueError("ckda_branch: complex_kda still weighted after the ramp (alpha_end != 0): not exportable")
+    it = m.get("_ckpt_iteration")
+    start = int(m.get("ckda_branch_start_iteration", 0))
+    hold, ramp = int(m.get("ckda_branch_alpha_hold", 25)), int(m.get("ckda_branch_alpha_ramp", 175))
+    if it is None or it - start < hold + ramp:
+        raise ValueError(f"ckda_branch: checkpoint {it} is inside the hand-over ({start} + {hold} + {ramp}): "
+                         "complex_kda still contributes")
+    groups = int(m.get("ckda_branch_num_query_groups", 2))
+    stack = m["num_query_groups"] if m.get("group_query_attention") else m["num_attention_heads"]
+    if groups != stack:
+        raise ValueError(f"ckda_branch: {groups} KV groups in the branch, {stack} in the stack's attention: "
+                         "per-layer KV groups are not in the HF model")
+    t = it - start
+    m0, mramp = float(m.get("ckda_branch_m_start", 4.0)), int(m.get("ckda_branch_m_ramp", 200))
+    mult = 1.0 if mramp <= 0 or t >= mramp else m0 + (1.0 - m0) * t / mramp
+    return set(int(i) for i in m.get("ckda_branch_layers") or []), mult * float(m.get("ckda_branch_gamma_scale", 1.0))
+
+
 def hf_config(m: dict, vocab: int) -> dict:
     syms = [c for c in m["hybrid_layer_pattern"] if c != "|"]
     bad = sorted({c for c in syms if c not in _KINDS})
     if bad:
         raise ValueError(f"unsupported pattern symbols {bad}")
+    folded, _ = branch_fold(m)
+    if any(syms[i] != "L" for i in folded):
+        raise ValueError(f"ckda_branch layers {sorted(folded)} must be complex_kda (L) layers")
+    syms = ["*" if i in folded else c for i, c in enumerate(syms)]
     ldm = bool(m.get("depth_memory"))
     if ldm:
         if m.get("mhc"):
@@ -289,7 +321,22 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     else:
         for n in _MHC:  # mHC coefficients stay fp32 (Megatron computes them in fp32)
             add(hp + f"mhc.{n}", g(f"{mixer}.{n}").float())
-    if kind == "attention":
+    folded, scale = branch_fold(m)
+    if kind == "attention" and i in folded:
+        # a ckda_branch layer past its hand-over: the branch is the mixer (complex_kda weighted 0), its
+        # input norm the layer's, m * gamma_scale * gamma folded into the output projection
+        b = "self_attention.branch."
+        q, z, kk, v = _split_attention(g(b + "linear_qkv.weight"), cfg)
+        for n, w in (("q_proj", q), ("gate_proj", z), ("k_proj", kk), ("v_proj", v)):
+            add(hp + f"mixer.{n}.weight", w.to(cast))
+        gamma = float(g("self_attention.branch_mix.gamma").float().reshape(-1)[0])
+        add(hp + "mixer.o_proj.weight", (g(b + "linear_proj.weight").float() * (scale * gamma)).to(cast))
+        add(hp + "mixer.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
+        add(hp + "mixer.k_norm.weight", g(b + "k_layernorm.weight").to(cast))
+        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        for k in [k for k in t if k.startswith(p + "self_attention.layer.")]:  # the weight-0 complex_kda
+            t.pop(k)
+    elif kind == "attention":
         q, z, kk, v = _split_attention(g("self_attention.linear_qkv.weight"), cfg)
         for n, w in (("q_proj", q), ("gate_proj", z), ("k_proj", kk), ("v_proj", v)):
             add(hp + f"mixer.{n}.weight", w.to(cast))
@@ -364,6 +411,8 @@ def finish_export(out_dir: Path, cfg: dict, tokenizer: Path | None, ckpt_dir: Pa
 def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | None, dtype: str = "bf16",
             engram_table_dtype: str = "bf16", expert_dtype: str = "bf16") -> Path:
     m = megatron_args(config_yaml)
+    it = re.search(r"iter_(\d+)", Path(ckpt_dir).name)
+    m["_ckpt_iteration"] = int(it.group(1)) if it else None  # ckda_branch folding (branch_fold)
     cast = {"bf16": torch.bfloat16, "fp32": torch.float32}[dtype]
     tcast = {"bf16": torch.bfloat16, "fp32": torch.float32}[engram_table_dtype]
     out_dir = Path(out_dir)

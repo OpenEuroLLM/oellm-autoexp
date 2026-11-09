@@ -275,6 +275,8 @@ def convert(ckpt_dir: Path, config_yaml: Path, out_dir: Path, tokenizer: Path | 
             read_threads: int = 4, table_unit_gib: float = 1.0) -> Path:
     started = time.perf_counter()
     m = megatron_args(config_yaml)
+    it = re.search(r"iter_(\d+)", Path(ckpt_dir).name)
+    m["_ckpt_iteration"] = int(it.group(1)) if it else None  # ckda_branch folding (export_ambitious.branch_fold)
     cast = {"bf16": torch.bfloat16, "fp32": torch.float32}[dtype]
     tcast = {"bf16": torch.bfloat16, "fp32": torch.float32}[engram_table_dtype]
     cfg, units, files = plan(

@@ -1,0 +1,108 @@
+# @package _global_
+# The ckda_branch "post-fit" arms (user 2026-11-09): does re-introducing attention (or CKLSTM) next to
+# complex_kda layers of the v4_2ph hd256 main run help reading / commonsense / math? From the main run's
+# checkpoint 23300 (ckpt_eval), 200 steps on the main run's own batches (phase 1, the reference-layout
+# sampler: dp 512 x mbs 8), read out at 23400 and 23500 against the main run's 23400 / 23500 (arm A).
+#   bgqa  attention 16q / 2kv, head dim 256 (the stack's attention: gate, qk norm, XSA, NoPE) next to the
+#         complex_kda mixers at positions 4 / 12 / 20 = layers 9, 25, 41 (lower half at 3:1)
+#   b8    the same with 8 KV groups (complex_kda's 16 K / V heads merged in pairs: no GQA pooling)
+#   cgqa  16q / 2kv at all six positions, layers 9, 25, 41, 58, 74, 90 (3:1 everywhere)
+#   d     KronLSTM (normalized v; complex_kda's projections, convolution, gates) at layers 9, 25, 41
+# Per layer out = alpha(t) ckda + m(t) gamma_scale gamma branch, gamma = 0 at 23300 (the model is unchanged),
+# alpha 1 for 25 steps then -> 0 at 23500, m 4 -> 1 over 200 steps, main lr, no warmup
+# (megatron/core/ssm/ckda_branch.py). At alpha = 0 the attention arms are standard attention layers.
+#
+# Before a launch (none without the user's go):
+#   1. the checkpoints: scripts/korbi/production/ckda_branch_surgery.sh prod  (in a job: the 84B .metadata)
+#      -> /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/<arm>_src/ckpt/iter_0023300 (hard links)
+#   2. hybrid_v4_ckda_branch_test_mn5 passed (exact start, strict resume, the gamma speed: aux.gamma_scale)
+# Disk: saves are model only (no_save_optim, ~0.34 TB each; the eval / HF export load without optimizer),
+# 23400 and 23500 per arm: ~2.7 TB for the four (scratch had 6.9 TB free on 2026-11-09). Full saves
+# (1.1 TB) only for an arm to be continued: backend.megatron.no_save_optim=false.
+# Cost per arm at 128 nodes: ~29 s/step x 200 + load / node check ~0.5 h: ~2.2 h, ~1.1k GPU-h (4.5k for four).
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp_bg.sh ckdab_<arm> scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_mn5 --yes aux.only=[bgqa]
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_128_mn5
+  - _self_
+
+aux:
+  suite: ckda_branch
+  arm: bgqa
+  only: []
+  phase: 1
+  seq: 8192
+  gbs: 8192
+  stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
+  branch_root: ${aux.main_root}/production/ckda_branch
+  start: 23300
+  # the scaled gamma the layer uses moves ~gamma_scale x lr per step (Adam); 10 lets the branch carry
+  # the layer by the end of the hand-over (at 1 its share reaches only ~0.2-0.4 by 23500); see the test
+  gamma_scale: 10.0
+
+backend:
+  megatron:
+    micro_batch_size: 8
+    load: ${aux.branch_root}/${aux.arm}_src/ckpt
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 100
+    no_save_optim: true
+    save_retain_interval: null
+    non_persistent_save_interval: null
+    exit_interval: 23500
+    ckda_branch_start_iteration: ${aux.start}
+    ckda_branch_alpha_hold: 25
+    ckda_branch_alpha_ramp: 175
+    ckda_branch_alpha_end: 0.0
+    ckda_branch_m_start: 4.0
+    ckda_branch_m_ramp: 200
+    ckda_branch_gamma_scale: ${aux.gamma_scale}
+    ckda_branch_log_interval: 5
+
+job:
+  name: ckda_branch_${aux.arm}
+  # 200 steps (23300 -> 23500) at the main run's 128-node phase-1 step time (~29 s), the 1.1 TB load +
+  # thorough node check before the first step
+  est_steps: 200
+  est_step_time_s: 29.0
+  est_startup_min: 35.0
+  metadata:
+    # never the main run's singleton: these run next to it, never instead of it
+    pool_singleton: null
+    pool_priority: 50
+  start_condition: null
+
+slurm:
+  sbatch:
+    time: "04:00:00"
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: bgqa
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        - aux.arm: b8
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 8
+        - aux.arm: cgqa
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        - aux.arm: d
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          # complex_kda's gates: beta = 2 sigmoid(b) (as linear_beta_max 2), no erase bias, write in [0, 2]
+          # (no unit_write) so c = beta is the delta rule; low-rank output gate
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
