@@ -1,0 +1,15 @@
+# @package _global_
+# Prepared for use after reviewing the baseline, not submitted automatically.
+defaults:
+  - launch_config
+  - _self_
+aux:
+  name: ckda018_diagnose
+  bench: bash /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/scripts/run_node.sh diagnose
+job:
+  name: ckda018_diagnose
+  base_output_dir: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/results/diagnostic_job
+  est_step_time_s: 3600
+slurm:
+  sbatch:
+    time: "03:00:00"

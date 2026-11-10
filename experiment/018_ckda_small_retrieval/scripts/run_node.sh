@@ -76,5 +76,31 @@ case "${1:-probe}" in
     for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
     [[ $failed == 0 ]]
     ;;
+  screen)
+    # Four independent workers; each processes a fixed subset of the 16 cells.
+    screen_worker() {
+      local gpu=$1 index=0
+      for arm in ckda kda; do
+        if [[ $arm == ckda ]]; then model=skda-shipped-hybrid-lowrank; else model=kda-sig-hybrid-lowrank; fi
+        for condition in baseline no_neg_alpha no_reflection both alpha_gain_0p5 alpha_gain_2p0 window_512 window_1024; do
+          if [[ $((index % 4)) == "$gpu" ]]; then
+            CUDA_VISIBLE_DEVICES=$gpu python "$CKDA_WORK/scripts/evaluate.py" \
+              --source "$CKDA_WORK/source" \
+              --model "$CKDA_WORK/assets/exports/${model}_983M_gbs256_decay80B" \
+              --tokenizer "$CKDA_WORK/assets/tokenizer" --suite recall --limit 64 \
+              --batch-size 4 --condition "$condition" \
+              --out "$CKDA_WORK/results/screen/$arm/$condition" \
+              > "$CKDA_WORK/results/screen_${arm}_${condition}.log" 2>&1 || return
+          fi
+          index=$((index + 1))
+        done
+      done
+    }
+    pids=()
+    for gpu in 0 1 2 3; do screen_worker "$gpu" & pids+=("$!"); done
+    failed=0
+    for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+    [[ $failed == 0 ]]
+    ;;
   *) echo "unknown mode: $1" >&2; exit 2 ;;
 esac
