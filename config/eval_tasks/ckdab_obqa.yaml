@@ -1,0 +1,7 @@
+# ckda_branch post-fit (user 2026-11-10): openbookqa + winogrande first -- fast, and the commonsense rows the
+# user watches; openbookqa is not in ckdab_focus.yaml (not one of the generator's three categories). The FLAG
+# rows of config/eval_tasks/flag_evals.yaml.
+count: 2
+tasks:
+- {name: vllm/openbookqa/0, half: vllm, row: 282, task: openbookqa, n_shot: 0, suite: lm-eval-harness}
+- {name: vllm/winogrande/0, half: vllm, row: 181, task: winogrande, n_shot: 0, suite: lm-eval-harness}
