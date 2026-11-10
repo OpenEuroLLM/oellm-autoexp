@@ -1448,6 +1448,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   CSA2 with indexer warm-up +0.054 (warm-up no help so far). The indexer KL of both CSA2 arms plateaus at
   0.35-0.38.
 
+- **2026-11-10, T11 final: are the learned selectors treated fairly?** (s3, 2000 steps from the dense step 1000;
+  validation gap to dense (t8 base) at 1500 / 2000 / 2500 / 3000; dense at 3000: 2.0338)
+
+  | arm | 1500 | 2000 | 2500 | 3000 | indexer KL at the end |
+  |---|---:|---:|---:|---:|---:|
+  | page_mean_pg | +0.018 | +0.017 | +0.014 | **+0.017** | -- |
+  | NSA | +0.039 | +0.027 | +0.032 | **+0.027** | -- |
+  | LSA (parameter-free) | +0.055 | +0.052 | +0.053 | **+0.047** | -- |
+  | CSA2 | +0.059 | +0.054 | +0.062 | **+0.055** | 0.26-0.36 |
+  | CSA2, 200-step indexer warm-up | +0.061 | +0.054 | +0.060 | **+0.052** | 0.33-0.43 |
+
+  - **Four times the training changes the order of nothing.** NSA narrows from +0.039 to +0.027 and then stays;
+    LSA / CSA2 move by ~0.005; page_mean_pg keeps a constant +0.017.
+  - **The indexer warm-up (DeepSeek's recipe) is within noise** for CSA2 (+0.052 vs +0.055); its indexer learns
+    (KL 1.4 -> ~0.35) but plateaus. CSA2 attends compressed entries (4 tokens averaged), which costs information
+    at an equal budget -- its price for 4x less KV.
+  - **T15 interim (300 sparse steps after a 200-step warm-up), at 1500:** a learned DeepSeek-V3.2-style page
+    indexer over raw pages +0.017 (= page_mean_pg at the same granularity / budget; indexer KL 0.14); D-LSA
+    (LSA in a learned latent space) +0.059 (= LSA, despite KL 0.18). So learned selection over raw pages is not
+    worse; the gap of NSA / CSA2 / LSA comes from their designs (compression, block/bucket granularity), not from
+    learned vs parameter-free selection. Final T15 at 3000: D-LSA ~07:45, indexer ~11:00.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
