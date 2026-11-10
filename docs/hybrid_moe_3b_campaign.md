@@ -3896,7 +3896,19 @@ layout `data_sampler_reference_dp_size 512`, so node-count changes keep the orde
   - Head dim 256 doubles the straggler's attention (+4.3 vs +3.1 s at 2 nodes).
 - At 256 nodes the visible cost is +2.2 s/step, partly overlapping the larger FSDP / expert communication.
   Rebalancing is impossible at one sequence per rank without changing the data order.
-- **Consequence for sparse attention:** attention linear in document length removes the straggler. Gate: on phase-2
-  data at the v4 shape, sparse must beat dense on the slowest rank (t9s3, running 11-10). Quality gate: the best sparse
+- **Consequence for sparse attention:** attention linear in document length removes the straggler.
+- **Sparse-attention speed baseline** (user, 11-10; `campaign_3b_hybrid_midtraining/t9s3_v4_sparse_speed_mn5`: t9 on
+  the phase-2 data, snapshot `autoexp_midt9b`, 2 nodes, median of steps 10–29):
+
+  | arm | median | min |
+  |---|---:|---:|
+  | dense | **11.52 s** | 9.73 s |
+  | window | 12.09 s | 11.05 s |
+  | page_mean | 12.98 s | 11.60 s |
+  | quest | 13.02 s | 11.64 s |
+
+  - Even on long documents every sparse arm is slower than dense: the selection and packed flex overhead outweighs
+    the saved attention. Kernel work was handed to the arch / midtraining session on 11-10.
+  - Gate for the main run: a sparse arm faster than dense in the same launch of this config. Quality gate: the best sparse
   family (page selection) costs +0.021–0.023 nats at 64k after 500 steps (t5). At the main run's loss slope, 10 %
   speed is worth only ~0.004–0.012 nats, so the penalty has to shrink with longer adaptation first.

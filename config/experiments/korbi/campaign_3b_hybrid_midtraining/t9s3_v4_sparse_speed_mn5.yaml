@@ -1,0 +1,33 @@
+# @package _global_
+# THE SPARSE-ATTENTION SPEED BASELINE (user 2026-11-10): t9 (v4 64k phase shape: Megatron-FSDP, EP 4, MoonEP, hd256 gated
+# GQA + qk norm + XSA, mHC-4, 2 nodes, 8 routed experts, Engram 1/16) on the main run's PHASE-2 DATA (s3 opt81 stage 2,
+# long documents). capspeed hides the cost: at 64k every rank holds one sequence and the step waits for the rank with
+# the longest documents (attention 0.05-2.3 s per rank and step, docs/hybrid_moe_3b_campaign.md "Phase 2 (64k) and the
+# restart at 25,000"). Baseline, 2026-11-10, snapshot autoexp_midt9b, median of steps 10-29:
+#   dense 11.52 s (min 9.73) | window 12.09 | page_mean 12.98 | quest 13.02
+# Gate for the main run: a sparse arm faster than dense here (same launch), plus the quality gate (t5 / t11).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t9s3_v4_sparse_speed_mn5 --yes
+defaults:
+  - t9_v4_sparse_speed_mn5
+  - _self_
+
+aux:
+  suite: t9s3_v4_sparse_speed
+  stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/t9s3_v4_sparse_speed
+
+backend:
+  megatron:
+    exit_interval: 30
+
+job:
+  name: t9s3_${aux.arm}
+  concurrency_group: null
+  max_active: null
+  metadata:
+    pool_priority: 500
+
+slurm:
+  sbatch:
+    account: cns144
+    qos: acc_xehpc
