@@ -1472,6 +1472,15 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - **T15 D-LSA final:** 2.0820 at 3000 = +0.048 (parameter-free LSA +0.047); gaps +0.059 / +0.052 / +0.054 /
     +0.048 track LSA's exactly. The learned latent space lowers the selector's KL (0.18 vs CSA2's ~0.35) but not
     the loss: LSA's bucket granularity, not its key space, sets its gap.
+  - **T15 learned page indexer final:** 2.0528 at 3000 = +0.019 (page_mean_pg +0.017); gaps +0.017 / +0.016 /
+    +0.015 / +0.019 track page_mean_pg's within noise (indexer KL 0.14). A learned DeepSeek-V3.2-style indexer
+    over raw pages is as good as the parameter-free page mean -- but not better, and its KL target (dense
+    attention for the selecting queries every step) made the sparse stage ~2.6x slower than page_mean_pg
+    (15.5 vs 5.9 s / step at s3).
+  - **Selector decision (all at 2000 steps, gap to dense at step 3000):** page_mean_pg +0.017, learned page
+    indexer +0.019, NSA +0.027, D-LSA +0.048, LSA +0.047, CSA2 +0.052-0.055, (step 5: window +0.118). Page
+    selection over raw 64-token pages is the method; page_mean_pg (parameter-free, per KV group) is the default,
+    a learned page indexer the alternative if selection cost at 1M+ calls for a small learned index.
 
 ## References
 
