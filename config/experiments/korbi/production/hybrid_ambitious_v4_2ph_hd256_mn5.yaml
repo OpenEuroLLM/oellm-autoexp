@@ -58,6 +58,15 @@ backend:
     # parameters, coefficient down to 0.03). Dense parameters: clip_grad 1.0 against the norm of the rest.
     # Live from the 25000 restart (user 2026-11-09: 23692-25000 = the 64k extension alone, then this).
     engram_clip_grad: 1.0
+    # the rest of the Engram package, live from the same restart (session -2f, user 11-10; screen5engopt_s3):
+    # Adam on the tables at lr x 1 (was x 5: 5-18x DeepSeek-V4.1's per-element step) and a row-norm cap on the
+    # tables, ramping geometrically from 13 (the max at 25000) to 7 over 1000 table steps from 25000 (Megatron
+    # 3447acc90 / f60f5a53e). The ramp counts the checkpointed table step, so every later restart continues it.
+    engram_lr_mult: 1.0
+    engram_clip_rownorm: 7.0
+    engram_clip_rownorm_start: 13.0
+    engram_clip_rownorm_ramp_start: 25000
+    engram_clip_rownorm_ramp_steps: 1000
 
 job:
   name: ambitious_v4_2ph_hd256_256n_p${aux.phase}

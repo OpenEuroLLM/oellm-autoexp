@@ -1,0 +1,31 @@
+# @package _global_
+# THE v4_2ph hd256 PHASE-2 CONTINUATION (user 2026-11-10): resume from the latest checkpoint, whatever its step.
+# The 25000 restart (hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5) was the one exact-step transition. Everything
+# it introduced now lives in the main config: --engram-clip-grad 1.0, engram_lr_mult 1.0, the row-norm cap 13 -> 7
+# over 1000 table steps from 25000, plus the dataset fix (Megatron f60f5a53e). The phase-2 entry of the opt81
+# curriculum, waiting only for a checkpoint >= 25000 (never for 23691 again). Use this for every later re-enqueue of
+# the main run, e.g. after a crash that exhausted the pool's retries or a move to another host / pool:
+#   cd $R/<snapshot with Megatron >= f60f5a53e> && PYTHONPATH=. HYBRID_OUTPUT_DIR=/gpfs/scratch/ehpc533/hybrid_nucleus \
+#       scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool $P/mn5_pool_p264 --yes ++job.metadata.pool_priority=1000 aux.node_check=off \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_2ph_hd256_p2cont_mn5
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_mn5
+  - _self_
+
+# literals in the entry: interpolations inside a sweep entry resolve against the base config
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          backend.megatron.micro_batch_size: 1
+          aux.stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "\\${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt"
+            pattern: "^\\s*(2[5-9][0-9]{3}|[3-9][0-9]{4}|[1-9][0-9]{5,})\\s*$"
+            mode: regex
+            persistent_pass: true
