@@ -31,6 +31,18 @@ ids = torch.arange(128, device='cuda').unsqueeze(0)
 with torch.no_grad():
     out = model(ids, use_cache=False).logits
 assert out.shape == (1, 128, 256) and torch.isfinite(out).all()
+# A bounded KDA control must remain exactly unchanged by removing signed behavior.
+cfg.allow_neg_eigval = False
+control = SignedKDAForCausalLM(cfg).to('cuda', torch.bfloat16).eval()
+from interventions import Intervention
+with torch.no_grad():
+    expected = control(ids, use_cache=False).logits
+    for condition in ['no_reflection', 'no_neg_alpha', 'both']:
+        with Intervention(control, condition) as patch:
+            actual = control(ids, use_cache=False).logits
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert patch.stats['calls'] > 0
+print('KDA_SIGN_CONTROLS_PASS', flush=True)
 print(json.dumps({'torch': torch.__version__, 'transformers': transformers.__version__,
                   'lm_eval': getattr(lm_eval, '__version__', 'unknown'),
                   'device': torch.cuda.get_device_name(), 'logits': list(out.shape)}), flush=True)

@@ -25,7 +25,7 @@ def paired(left, right, repeats=2000):
         and k not in {'doc_id', 'idx'} and not k.endswith('seed')
     } for row in [*l.values(), *r.values()]]) if l else set()
     result = {}
-    for metric in sorted(metrics & {'acc', 'acc_norm', 'f1', 'exact_match', 'contains'}):
+    for metric in sorted(metrics & {'acc', 'acc_norm', 'f1', 'em', 'exact_match', 'contains'}):
         delta = [float(l[k][metric]) - float(r[k][metric]) for k in l]
         rng = random.Random(2026)
         draws = sorted(statistics.mean(rng.choices(delta, k=len(delta))) for _ in range(repeats))
