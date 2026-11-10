@@ -1,7 +1,8 @@
 # The ckda_branch post-fit round (user 2026-11-10): reading / commonsense / math (the FLAG categories that
 # lag; summarize-evals' own categories) + the recall suite, at 23500 (the arms' branch-only checkpoint), for
-# the main run (arm A) and the arms whose branch exports as standard attention layers (bgqa, cgqa, drop;
-# b8's per-layer KV groups and d's KronLSTM are not in the HF / vLLM model). Suite file:
+# the main run (arm A) and the arms whose branch exports: bgqa, cgqa, drop (standard attention layers) and d
+# (kronlstm blocks; vLLM port c6edf94218, checked by ckda_branch_export_check_mn5); b8's per-layer KV groups
+# are not in the HF / vLLM model. Suite file:
 # config/eval_tasks/ckdab_focus.yaml (scripts/evals/gen_group_suite.py). ~26 engine-h per model.
 #
 #   arm A:  $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/ckdab_focus_mn5.yaml --step 23500
