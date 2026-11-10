@@ -18,6 +18,10 @@
    attention to 512/1024. Run both arms; sign/reflection interventions MUST be
    no-ops on KDA. Record kernel calls and restore all patches on exit. These
    identify dependencies and are not trained replacement architectures.
+   Capping beta changes both erasure and writing in this tied delta update;
+   interpret it as a beta-range diagnostic, not an isolated rotation test.
+   Memory-gain interventions likewise change the distribution seen by later
+   layers; an immediate loss does not rule out learning a better replacement.
 5. Native adaptation compatibility gate before training: original Megatron
    loader, exact saved model arguments, strict state-dict coverage, fixed-token
    logits/loss comparison against original model. Never substitute the current
