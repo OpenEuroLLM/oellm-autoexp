@@ -9,6 +9,28 @@ import sys
 import time
 
 
+def audit_sample(row, tokenizer, max_length):
+    """Record whether left truncation removed an answer-bearing context."""
+    for args in row.get('arguments', []):
+        if len(args) != 2 or not isinstance(args[1], dict):
+            continue
+        prompt, kwargs = args
+        ids = tokenizer(str(prompt), add_special_tokens=False)['input_ids']
+        budget = max_length - int(kwargs.get('max_gen_toks', 128))
+        if budget <= 0:
+            raise ValueError('Generation budget exhausts model context')
+        retained = tokenizer.decode(ids[-budget:], skip_special_tokens=False)
+        gold = row.get('doc', {}).get('value', row.get('target', ''))
+        if not isinstance(gold, (list, tuple)):
+            gold = [gold]
+        gold = [str(g).lower() for g in gold if g]
+        return {'prompt_tokens': len(ids), 'context_budget': budget,
+                'dropped_front_tokens': max(0, len(ids) - budget),
+                'gold_substring_in_prompt': any(g in str(prompt).lower() for g in gold),
+                'gold_substring_after_truncation': any(g in retained.lower() for g in gold)}
+    return None
+
+
 def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--source', type=Path, required=True)
@@ -60,6 +82,7 @@ def main():
                         row['task'] = name
                         row['document_sha256'] = hashlib.sha256(json.dumps(
                             doc, sort_keys=True, default=str).encode()).hexdigest()
+                        row['context_audit'] = audit_sample(row, lm.tok, lm.max_length)
                         f.write(json.dumps(row, default=str) + '\n')
             payload = {'results': result['results'], 'configs': result.get('configs'),
                        'provenance': {'model': str(a.model), 'source': str(a.source),
