@@ -1,0 +1,20 @@
+{
+ "model": "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/ambitious_v4_2ph_hd256_fp8_23000_probe",
+ "tiny": false,
+ "data": "web_en=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/web_en_text_document,multilingual=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/multilingual_text_document,code=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/code_text_document,math=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/math_text_document,reasoning=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/reasoning_text_document,long_64k=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document",
+ "long": "long_64k",
+ "stages": "r0,r2",
+ "out": "/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/r0r2_v4_2ph_hd256_23000",
+ "seq_len": 2048,
+ "long_seq_len": 65536,
+ "rows": 16,
+ "batches": 24,
+ "warm": 8,
+ "trace_batches": 2,
+ "train_chunks": 4,
+ "lrs": "3e-6,3e-5",
+ "r2_batches": 2,
+ "r3_batches": 2,
+ "predictors": null,
+ "bos": 1
+}

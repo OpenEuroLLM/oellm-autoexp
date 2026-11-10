@@ -1407,6 +1407,29 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     (8 items) -- no selector separates from dense or from each other here. A real separation needs more items
     (n >= 32) or harder tasks.
 
+- **2026-11-10, R0 / R2 on v4 hd256 step 23000 + two-stage prefetch** (p264.0311, 1 node, 1 h;
+  `docs/campaign_3b_hybrid_midtraining_results/r0r2_v4_2ph_hd256_23000/`; 2 batches x 32k tokens per domain, so
+  ΔNLL about ±0.003 is noise; "early" = share of the router's assignments already covered by the first stage):
+  - **R0:** next-layer prediction is a bit weaker than at step 8000: base_d1 R@10 0.89 (code; step 8000: 0.91-0.95),
+    base_d2 R@10 0.82, base_d4 0.72; next-token (sel_prev) R@5 0.31; learned predictors again no better.
+  - **R2, batch 1, re-route on miss (sub), six domains:**
+
+    | policy | experts available | miss | ΔNLL | early (2 layers ahead) |
+    |---|---:|---:|---|---:|
+    | 1 layer ahead, top-10 | 10 | 6.2-8.0 % | +0.002-0.014 | -- (all 1 layer) |
+    | 1 layer ahead, top-16 | 16 | 4.3-5.4 % | +0.002-0.012 | -- |
+    | 2 ahead top-10 + 1 ahead top-5 | 10.3 | 7.5-10 % | +0.001-0.009 | 0.87-0.90 |
+    | 2 ahead top-10 + 1 ahead top-10 | 12 | 4.8-6.5 % | +0.001-0.007 | 0.87-0.89 |
+    | 2 ahead top-16 + 1 ahead top-5 | 16.2 | 5.2-7.1 % | +0.001-0.008 | 0.91-0.93 |
+    | 2 ahead top-10 + 1 ahead top-5 + last 16 tokens' experts | 40-48 | 3.1-3.5 % | **+0.0003-0.0023** | 0.87-0.90 |
+
+  - **Two-stage prefetch works:** ~88 % of the assignments are covered two layers ahead, and topping up one layer
+    ahead (+2 experts) brings the misses below the one-layer-only top-10 (4.8-6.5 % vs 6.2-8.0 %). With the
+    16-token recency cache the cost is within noise. The top-up adds few experts: the two predictions overlap
+    mostly (top-5 one layer ahead adds 0.3 experts to top-10 two ahead).
+  - Recommended engine policy: two layers ahead top-10 (~90 % of the bytes with two layers of lead), one layer
+    ahead top-5-10 top-up, recency cache of the last 16 tokens, re-route on miss.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
