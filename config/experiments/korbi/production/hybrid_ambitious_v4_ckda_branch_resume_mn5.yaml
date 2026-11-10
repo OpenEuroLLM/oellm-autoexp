@@ -1,13 +1,25 @@
 # @package _global_
-# Resume a ckda_branch arm from its own 23400 save (hybrid_ambitious_v4_ckda_branch_mn5 otherwise unchanged):
-# drop crashed at step 23500 before its save (2026-11-10 04:14, "CUDA error: misaligned address" on many ranks
-# at once, async in NCCL's watchdog). Full 23400 checkpoint (optimizer + data state): the same batches. Saves
-# at 23450 (alpha 0: the branch-only model even if 23500 failed again) and 23500; pool priority above the
-# queued arms so it takes host003's freed nodes (the arms go to host004).
-#   ... --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_resume_mn5 --yes "aux.only=[drop]"
+# Resume the ckda_branch arms from their own saves and END AT 23499 (hybrid_ambitious_v4_ckda_branch_mn5
+# otherwise unchanged). 2026-11-10: every arm crashed computing step 23500 at 64 nodes ("CUDA error:
+# misaligned address", async in NCCL's watchdog; the main run passed that step at 256 nodes: a kernel edge case
+# on that batch's 64-node split), and the pool restarted them from their `load` = the 23300 surgery
+# checkpoints, so they looped 23300 -> 23500 -> crash. Now:
+#   - load = a hard-linked copy of the arm's own save (<arm>_r<step>/ckpt, its own pointer: restarts and
+#     stray saves in <arm>/ckpt cannot move it); a restart (node check, crash) reloads the same copy
+#   - exit_interval 23499 (with its final save): the crashing step is never run; 49 branch-only steps
+#     (alpha 0 from 23450) for every arm
+#   - saves every 50 steps (23450): a failure costs at most 50 steps
+#   - pool priority 75 (above the eval jobs)
+#   ... --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_resume_mn5 --yes \
+#       "aux.only=[bgqa,d,cgqa,drop]"
 defaults:
   - hybrid_ambitious_v4_ckda_branch_mn5
   - _self_
+
+backend:
+  megatron:
+    save_interval: 50
+    exit_interval: 23499
 
 job:
   est_steps: 100
@@ -18,15 +30,45 @@ sweep:
   groups:
     - type: list
       configs:
+        - aux.arm: bgqa
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa_r23400/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa_r23400/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        - aux.arm: d
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d_r23400/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d_r23400/ckpt
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
+        - aux.arm: cgqa
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa_r23400/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa_r23400/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
         - aux.arm: drop
           job.start_condition:
             class_name: FileExistsCondition
-            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_r23400/ckpt/iter_0023400/.metadata
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_r23450/ckpt/iter_0023450/.metadata
             persistent_pass: true
-          # a hard-linked copy of drop/ckpt/iter_0023400 with its own pointer: a cancelled duplicate (started
-          # from 23300) saved 23301 into drop/ckpt on its graceful stop and moved drop/ckpt's pointer
-          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_r23400/ckpt
-          backend.megatron.save_interval: 50
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_r23450/ckpt
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41]
           backend.megatron.ckda_branch_num_query_groups: 2
