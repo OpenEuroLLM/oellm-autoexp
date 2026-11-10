@@ -1,4 +1,6 @@
 # @package _global_
+hydra:
+  searchpath: [file:///gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_ckdab27/config]
 defaults:
   - launch_config
   - _self_
