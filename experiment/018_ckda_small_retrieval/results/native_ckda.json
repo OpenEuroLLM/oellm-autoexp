@@ -1,0 +1,64 @@
+{
+  "checkpoint_version": 3.0,
+  "iteration": 76294,
+  "model_keys": 490,
+  "args": {
+    "num_layers": 24,
+    "hidden_size": 1536,
+    "ffn_hidden_size": 5952,
+    "num_attention_heads": 24,
+    "kv_channels": 64,
+    "seq_length": 4096,
+    "max_position_embeddings": 4096,
+    "padded_vocab_size": 50304,
+    "normalization": "RMSNorm",
+    "layernorm_epsilon": 1e-05,
+    "swiglu": true,
+    "add_bias_linear": false,
+    "add_qkv_bias": false,
+    "qk_layernorm": false,
+    "position_embedding_type": "rope",
+    "untie_embeddings_and_output_weights": false,
+    "tensor_model_parallel_size": 1,
+    "pipeline_model_parallel_size": 1,
+    "spec": [
+      "lm_scaling.megatron_ext.specs",
+      "arm_spec"
+    ],
+    "tokenizer_model": "EleutherAI/gpt-neox-20b",
+    "tokenizer_type": "HuggingFaceTokenizer",
+    "lr": 0.0005,
+    "min_lr": 1e-05,
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.95,
+    "adam_eps": 1e-08,
+    "weight_decay": 0.1,
+    "global_batch_size": 256,
+    "micro_batch_size": 2,
+    "bf16": true,
+    "fp16": false,
+    "use_distributed_optimizer": true,
+    "train_data_path": [
+      "/e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all"
+    ],
+    "valid_data_path": [
+      "/e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all"
+    ],
+    "consumed_train_samples": 19531264,
+    "seed": 1234
+  },
+  "key_examples": [
+    "embedding.word_embeddings.weight",
+    "decoder.layers.0.input_layernorm.weight",
+    "decoder.layers.0.input_layernorm._extra_state",
+    "decoder.layers.0.self_attention.layer.A_log",
+    "decoder.layers.0.self_attention.layer.dt_bias",
+    "decoder.layers.0.self_attention.layer.q_proj.weight",
+    "decoder.layers.0.self_attention.layer.k_proj.weight",
+    "decoder.layers.0.self_attention.layer.v_proj.weight",
+    "decoder.layers.0.self_attention.layer.q_conv1d.weight",
+    "decoder.layers.0.self_attention.layer.k_conv1d.weight",
+    "decoder.layers.0.self_attention.layer.v_conv1d.weight",
+    "decoder.layers.0.self_attention.layer.f_proj.0.weight"
+  ]
+}

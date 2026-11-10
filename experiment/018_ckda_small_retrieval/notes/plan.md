@@ -41,3 +41,24 @@
 No large adaptation sweep is launched before baseline and compatibility gates.
 No new work goes to o260c. Shrink only in an idle-step window after explicit
 authorization of the concrete node count; verify GPU access before resuming.
+
+## Native adaptation preparation
+
+`scripts/native_smoke.sh` is a prepared, unsubmitted two-step compatibility
+check using the original Megatron package and original `--spec` module.
+It loads native model weights, resets the optimizer and RNG on both arms, and
+uses identical micro/global batches (1/4). It must pass strict checkpoint
+loading and backward before it is extended into an adaptation recipe.
+
+The original checkpoints were inspected without loading tensor storage:
+both have checkpoint version 3, step 76294, 490 model keys, 24 layers,
+hidden size 1536, FFN 5952, 24 heads of dimension 64, tied vocabulary 50304,
+RMSNorm epsilon 1e-5. Their original micro-batches differed (CKDA 2, KDA 4),
+so new continuation comparisons deliberately fix the same batch layout.
+
+MN5 already holds NeoX-tokenized Nemotron training and validation prefixes:
+`/gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-{318BT,valid}/high-all`.
+The staged original tokenizer's vocabulary and BPE merges were checked equal
+to MN5's NeoX tokenizer. These are a different Nemotron sample from Jupiter's
+original paths; use an unchanged continuation control to measure adaptation
+under that data change. The validation prefix is never used as training data.
