@@ -310,6 +310,20 @@ def test_export_job_steps(tmp_path):
     assert any("prepare_base_model_view.py" in " ".join(s.argv) for s in steps)
 
 
+def test_export_of_any_run_dir(tmp_path):
+    """export.run_dir (e.g. a ckda_branch post-fit arm): export_run.sh into the export dir itself."""
+    spec = _spec(tmp_path, {"export": {"step": 23500, "name": "ckdab_bgqa_fp8_23500",
+                                        "run_dir": "/runs/ckda_branch/bgqa"}})
+    assert spec.export.export_name == "ckdab_bgqa_fp8_23500"
+    export_job, _, _ = launch.build(spec)
+    steps = run_job.export_steps(export_job, "PY")
+    assert steps[0].argv == ["bash", "scripts/korbi/hf_export/export_run.sh", "/runs/ckda_branch/bgqa", "23500",
+                             export_job.export_dir]
+    assert export_job.export_dir.endswith("/ckdab_bgqa_fp8_23500")
+    with pytest.raises(SpecError, match="run_dir needs"):
+        _spec(tmp_path, {"export": {"step": 23500, "run_dir": "/runs/x"}}).export.export_name
+
+
 def test_run_job_rejects_a_bad_spec(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"kind": "worker", "name": "x"}))

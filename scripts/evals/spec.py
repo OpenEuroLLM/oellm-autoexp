@@ -329,9 +329,15 @@ class ExportSpec:
     max_positions: int = 100_000_000
     # an existing export by its directory name instead (no export job when it is ready)
     name: str | None = None
+    # a training run export_main_run_v2.sh does not name (e.g. a ckda_branch post-fit arm,
+    # production/ckda_branch/<arm>): the export job runs scripts/korbi/hf_export/export_run.sh on it;
+    # needs name and step
+    run_dir: str | None = None
 
     @property
     def export_name(self) -> str:
+        if self.run_dir and (not self.name or self.step is None):
+            raise SpecError("export.run_dir needs export.name and export.step")
         if self.name:
             return self.name
         if self.step is None:

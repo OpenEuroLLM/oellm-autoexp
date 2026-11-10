@@ -37,7 +37,12 @@ def export_steps(job: JobSpec, py: str) -> list[Step]:
     env = {"EXPORT_ONLY": "1", "EXPERT_DTYPE": e.expert_dtype, "HF_EXPORTER": e.exporter,
            "OELLM_EXPORT_MAX_POSITIONS": str(e.max_positions)}
     root = str(Path(job.export_dir).parent)
-    steps = [Step(["bash", "scripts/korbi/hf_export/export_main_run_v2.sh", e.model, str(e.step), root], env, check=True),
+    if e.run_dir:  # any training run (export_run.sh: export only, into the export dir itself)
+        first = Step(["bash", "scripts/korbi/hf_export/export_run.sh", e.run_dir, str(e.step), job.export_dir], env,
+                     check=True)
+    else:
+        first = Step(["bash", "scripts/korbi/hf_export/export_main_run_v2.sh", e.model, str(e.step), root], env, check=True)
+    steps = [first,
              Step([py, "-c", "import sys, pathlib; sys.exit(0 if pathlib.Path(sys.argv[1]).is_dir() else 1)",
                    job.export_dir], check=True)]
     if not Path(job.view_dir).is_dir():
