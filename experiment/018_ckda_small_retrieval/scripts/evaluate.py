@@ -44,6 +44,23 @@ def main():
         'baseline', 'no_reflection', 'no_neg_alpha', 'both',
         'alpha_gain_0p5', 'alpha_gain_2p0', 'window_512', 'window_1024'])
     a = p.parse_args()
+    tasks = [('winogrande', 0), ('squadv2', 10), ('coqa', 0)] if a.suite == 'focus' else [
+        ('squad_completion', 0), ('swde', 0), ('fda', 0)]
+    a.out.mkdir(parents=True, exist_ok=True)
+    model_hash = hashlib.sha256((a.model / 'config.json').read_bytes()).hexdigest()
+    pending = []
+    for task, shots in tasks:
+        dest = a.out / f'{task}.json'
+        if dest.exists():
+            old = json.loads(dest.read_text())['provenance']
+            if (old['model_config_sha256'], old['condition'], old['limit']) != (
+                    model_hash, a.condition, a.limit):
+                raise ValueError(f'Result identity differs: {dest}')
+        else:
+            pending.append((task, shots))
+    if not pending:
+        print('All requested task results already exist.', flush=True)
+        return
     sys.path[:0] = [str(a.source), str(a.source / 'lm_scaling')]
     from eval_downstream import build_lm
     from metric_compat import install
@@ -53,19 +70,9 @@ def main():
     from interventions import Intervention
     import lm_eval
     from lm_eval.tasks import TaskManager
-    tasks = [('winogrande', 0), ('squadv2', 10), ('coqa', 0)] if a.suite == 'focus' else [
-        ('squad_completion', 0), ('swde', 0), ('fda', 0)]
-    a.out.mkdir(parents=True, exist_ok=True)
-    model_hash = hashlib.sha256((a.model / 'config.json').read_bytes()).hexdigest()
     with Intervention(lm.model, a.condition) as intervention:
-        for task, shots in tasks:
+        for task, shots in pending:
             dest = a.out / f'{task}.json'
-            if dest.exists():
-                old = json.loads(dest.read_text())['provenance']
-                if (old['model_config_sha256'], old['condition'], old['limit']) != (
-                        model_hash, a.condition, a.limit):
-                    raise ValueError(f'Result identity differs: {dest}')
-                continue
             start = time.time()
             result = lm_eval.simple_evaluate(
                 model=lm, tasks=[task], num_fewshot=shots,
