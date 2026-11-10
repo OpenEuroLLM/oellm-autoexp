@@ -1,0 +1,243 @@
+# @package _global_
+# Fixed held-out validation sets (all / web_en / multilingual / code / math / reasoning at 4k, long_64k) for the
+# ckda_branch post-fit arms (user 2026-11-10): the main run (arm A, ckpt_eval) and the five arms
+# (hybrid_ambitious_v4_ckda_branch_mn5) at 23400 (2/3 branch) and 23500 (branch only), same sets, same model
+# code. The model and environment: fixedvalid_eval_ckdab_base_mn5 (generated from the main run's 23300-23500
+# resolved config); each arm entry adds its ckda_branch settings (the checkpoint holds the branch, calib and
+# gamma) and waits for the arm's save. Needs Megatron >= 2687e419b: an eval-only run never enters the
+# training loop, and the branch schedule must take the checkpoint's step (else alpha 1 = complex_kda only).
+# 8 nodes, EP 8 (as fixedvalid_eval_hd256_v4: 4 nodes / EP 4 OOM). Into the p264 pool (host003):
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/fixedvalid_eval_ckdab_mn5 --yes
+defaults:
+  - fixedvalid_eval_ckdab_base_mn5
+  - _self_
+
+aux:
+  suite: ckdab
+  nodes: 8
+
+backend:
+  megatron:
+    expert_model_parallel_size: 8  # eval at 8 nodes: EP 4 builds 90 experts per GPU (OOM)
+
+job:
+  # the load (~40 min for the 84B checkpoint) + one evaluation pass; not train_iters steps
+  est_steps: 1
+  est_step_time_s: 600.0
+  est_startup_min: 40.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 40
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    nodes: 8
+    account: cns144
+    qos: acc_xehpc
+    time: "02:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: a_23400
+          job.start_condition:  # with the first arm's evaluations (not before: host003's nodes go to the arms)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+        - aux.arm: bgqa_23400
+          job.start_condition:  # the arm's save at 23400 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: b8_23400
+          job.start_condition:  # the arm's save at 23400 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/b8/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/b8/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_num_query_groups: 8
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: cgqa_23400
+          job.start_condition:  # the arm's save at 23400 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: d_23400
+          job.start_condition:  # the arm's save at 23400 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
+        - aux.arm: drop_23400
+          job.start_condition:  # the arm's save at 23400 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: false
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: a_23500
+          job.start_condition:  # with the first arm's evaluations (not before: host003's nodes go to the arms)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+        - aux.arm: bgqa_23500
+          job.start_condition:  # the arm's save at 23500 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa/ckpt
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: b8_23500
+          job.start_condition:  # the arm's save at 23500 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/b8/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/b8/ckpt
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_num_query_groups: 8
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: cgqa_23500
+          job.start_condition:  # the arm's save at 23500 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa/ckpt
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        - aux.arm: d_23500
+          job.start_condition:  # the arm's save at 23500 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d/ckpt
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
+        - aux.arm: drop_23500
+          job.start_condition:  # the arm's save at 23500 (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_calibrate: false
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
