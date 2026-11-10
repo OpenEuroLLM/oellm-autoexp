@@ -47,3 +47,8 @@ sweep:
         - aux.arm: sink1
           backend.megatron.engram_table_optimizer: sinkhorn
           backend.megatron.engram_lr_mult: 1.0
+# Result 2026-11-10 ~11:30 (second launch, v4engopt_resume2; the first landed on the GRES-broken host003): PASS. All
+# three arms rc 0, 20 steps, no NaN / OOM. Step 21 identical in all arms (7.579112, = every earlier Adam resume of
+# diagw19b). The Sinkhorn arms print "[engram-table-optimizer] sinkhorn ... lr mult 1.0 / 5.0" and train from the Adam
+# state. Loss at 40: adam1 6.9183, sink1 6.9257, sink5 6.9345 (too few steps to rank; screen5engopt_s3 is the quality
+# evidence). Row-norm cap: 9.54 at 25, 7.0 from 30 (does not bind: rows ~0.7 at this scale).
