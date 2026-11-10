@@ -1,0 +1,124 @@
+# @package _global_
+# Engram table optimizer screen (user 2026-11-10): before switching the v4_2ph main run's Engram tables from Adam to
+# DeepSeek-V4.1's Sinkhorn-balanced momentum update (report §2.5, Algorithm 1), check it has no negative effect.
+# Base: screen5e_s3's h5_moe_eng45 arm (s3: hidden 1280, CKDA 5:1 hybrid, 80 experts top-3 + shared, Engram [2, 3]
+# x 8 heads, 45 % of the inactive expert parameters as tables, angular MuOwn, flag 8k, gbs 64, 4000 of 7629 steps),
+# its settings promoted to the base below, with the main run's table settings (row-wise v, bf16 momentum).
+# Arms (only the Engram table update differs):
+#   adam5  TableAdam, engram_lr_mult 5 (the main run up to 25k)
+#   adam1  TableAdam, engram_lr_mult 1 (the main run's 25k setting)
+#   sink5  Sinkhorn, engram_lr_mult 5, sinkhorn_lr_ratio 0.18, momentum 0.95, K 11 (DeepSeek-V4.1; Megatron f05a44c25)
+# Same train_iters / seed / gbs in every arm (paired data order). Monitoring: per-layer grad norms + clip events every
+# step, weight stats every 50 steps, and engram_clip_rownorm 1e9 (never rescales; its [engram-rownorm] line reports the
+# tables' largest row norm every 100 steps). Pass: sink5's loss not worse than adam5 / adam1 beyond the ~0.004
+# data-order noise; look at the Engram grad norm (total_check vs grad-norm), clip events and the tables' row norms.
+#   cd $R/autoexp_engopt && scripts/korbi/mn5_autoexp_bg.sh engopt scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b/screen5engopt_s3_mn5 --yes
+defaults:
+  - screen5e_s3_mn5
+  - _self_
+
+backend:
+  megatron:
+    num_attention_heads: 10
+    num_query_groups: 2
+    kv_channels: 128
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: 10
+    linear_num_value_heads: 10
+    experimental_attention_variant: complex_kda
+    linear_beta_max: 2.0
+    linear_gate_activation: signed_sigmoid2
+    linear_gate_init_style: shipped
+    linear_output_gate: lowrank
+    linear_drop_qkv_silu: true
+    position_embedding_type: none
+    attention_output_gate: true
+    exclusive_self_attention: true
+    num_experts: 80
+    moe_ffn_hidden_size: 896
+    moe_router_topk: 3
+    moe_shared_expert_intermediate_size: 896
+    moe_grouped_gemm: true
+    moe_token_dispatcher_type: alltoall
+    moe_router_dtype: fp32
+    moe_permute_fusion: true
+    expert_model_parallel_size: 16
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.0001
+    moe_per_layer_logging: true
+    moe_expert_viability_metrics: true
+    cuda_graph_modules: [moe_router, moe_preprocess]
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 0.001
+    micro_batch_size: 1
+    optimizer: angular_muown
+    lr: 0.0018
+    min_lr: 0.0018
+    lr_warmup_iters: 0
+    exit_interval: 4000
+    per_split_data_args_path: null
+    data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
+    split: 998,2,0
+    seq_length: 8192
+    max_position_embeddings: 8192
+    dataloader_inter_document_masking: true
+    num_workers: 4
+    dataloader_prefetch_factor: 2
+    manual_gc: true
+    manual_gc_interval: 10
+    mmap_bin_files: false
+    global_batch_size: 64
+    train_iters: 7629
+    cuda_graph_impl: local
+    data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+    engram_ngram_orders: [2, 3]
+    engram_num_heads: 8
+    engram_embed_dim: 64
+    engram_table_size: 2580480
+    engram_table_parallel: dp
+    engram_token_map: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
+    engram_gate_signed_sqrt: true
+    engram_conv_prenorm: true
+    engram_hash_per_layer: true
+    engram_lr_mult: 5.0
+    engram_table_rowwise_v: true
+    engram_table_momentum_dtype: bf16
+    engram_clip_rownorm: 1.0e9
+    diagnostics_interval: 1
+    diag_layer_grad_norms: true
+    diag_clip_events: true
+    diag_weight_stats: true
+    tensorboard_log_interval: 1
+  env:
+    MEGATRON_DIAG_WEIGHT_EVERY: "50"
+aux:
+  pattern: LENLELELELE*ELELELELELE*ENLELELELELE*ELELELELELE*E
+  seq: 8192
+  gbs: 64
+  suite: screen5engopt_s3
+  arm: adam5
+  only: []
+job:
+  est_steps: 4000
+  array_group: null
+slurm:
+  sbatch:
+    nodes: 4
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: adam5
+          backend.megatron.engram_lr_mult: 5.0
+        - aux.arm: adam1
+          backend.megatron.engram_lr_mult: 1.0
+        - aux.arm: sink5
+          backend.megatron.engram_lr_mult: 5.0
+          backend.megatron.engram_table_optimizer: sinkhorn
