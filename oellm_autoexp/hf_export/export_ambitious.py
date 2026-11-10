@@ -28,7 +28,7 @@ from .fsdp_dtensor import ShardedSafetensorsWriter, iter_layers
 LOGGER = logging.getLogger(__name__)
 _HERE = Path(__file__).resolve().parent
 _PKG = _HERE / "oellm_ambitious"
-_KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram"}
+_KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram", "K": "kronlstm"}  # K: a ckda_branch KronLSTM
 _MHC = ("phi", "b_pre", "b_post", "b_res", "alpha_pre", "alpha_post", "alpha_res")
 
 # megatron/core/ssm/engram.py
@@ -117,8 +117,8 @@ def branch_fold(m: dict) -> tuple[set[int], float]:
     ``m["_ckpt_iteration"]``: the checkpoint's iteration."""
     if not m.get("ckda_branch"):
         return set(), 1.0
-    if m["ckda_branch"] != "attention":
-        raise ValueError(f"ckda_branch {m['ckda_branch']!r}: only attention branches export (as attention layers)")
+    if m["ckda_branch"] not in ("attention", "kronlstm"):
+        raise ValueError(f"ckda_branch {m['ckda_branch']!r}: attention or kronlstm branches export")
     if float(m.get("ckda_branch_alpha_end", 0.0)) != 0.0:
         raise ValueError("ckda_branch: complex_kda still weighted after the ramp (alpha_end != 0): not exportable")
     it = m.get("_ckpt_iteration")
@@ -129,7 +129,7 @@ def branch_fold(m: dict) -> tuple[set[int], float]:
                          "complex_kda still contributes")
     groups = int(m.get("ckda_branch_num_query_groups", 2))
     stack = m["num_query_groups"] if m.get("group_query_attention") else m["num_attention_heads"]
-    if groups != stack:
+    if m["ckda_branch"] == "attention" and groups != stack:
         raise ValueError(f"ckda_branch: {groups} KV groups in the branch, {stack} in the stack's attention: "
                          "per-layer KV groups are not in the HF model")
     t = it - start
@@ -140,6 +140,35 @@ def branch_fold(m: dict) -> tuple[set[int], float]:
     return set(int(i) for i in m.get("ckda_branch_layers") or []), mult * float(m.get("ckda_branch_gamma_scale", 1.0))
 
 
+def _kronlstm_layer_spec(m: dict) -> dict:
+    """The FLA KronLSTM layer a ckda_branch builds (Megatron fla_hybrid.KronLSTM._build, with
+    ckda_branch_from_ckda: the convolution without SiLU when complex_kda has none)."""
+    head_dim, heads = int(m["linear_key_head_dim"]), int(m["linear_num_key_heads"])
+    expand_v = float(m.get("linear_fla_expand_v") or 1.0)
+    kw = dict(
+        hidden_size=int(m["hidden_size"]), k_head_dim=head_dim, v_head_dim=int(head_dim * expand_v),
+        num_k_heads=heads, num_v_heads=heads, mode="chunk", use_short_conv=True,
+        conv_size=int(m.get("linear_conv_kernel_dim") or 4), conv_bias=False,
+        normalize_v=bool(m.get("linear_kronlstm_normalize_v", True)),
+        allow_neg_eigval=bool(m.get("linear_fla_allow_neg_eigval")),
+        use_target_gate=bool(m.get("linear_kronlstm_target_gate", True)),
+        decouple_erase=bool(m.get("linear_kronlstm_decouple_erase", True)),
+        neg_eigval_init_bias=bool(m.get("linear_kronlstm_neg_eigval_init_bias")),
+        unit_write=bool(m.get("linear_kronlstm_unit_write")),
+        forget_offset=float(m.get("linear_kronlstm_forget_offset") or 0.0),
+        forget_angle=bool(m.get("linear_kronlstm_forget_angle")),
+        forget_angle_init=str(m.get("linear_kronlstm_forget_angle_init") or "narrow"),
+        erase_angle=bool(m.get("linear_kronlstm_erase_angle")),
+        signed_write=bool(m.get("linear_kronlstm_signed_write")),
+        drop_silu=bool(m.get("linear_drop_qkv_silu")),
+        output_gate_rank={"linear": "full", "lowrank": "lowrank"}[m.get("linear_kronlstm_output_gate") or "linear"],
+        decay_gate="vector", gate=str(m.get("linear_fla_gate") or "softplus"),
+        lower_bound=float(m.get("linear_fla_lower_bound") if m.get("linear_fla_lower_bound") is not None else -5.0),
+        norm_eps=float(m["layernorm_epsilon"]),
+    )
+    return {"class": "fla.layers.kronlstm.KronLSTM", "kwargs": kw}
+
+
 def hf_config(m: dict, vocab: int) -> dict:
     syms = [c for c in m["hybrid_layer_pattern"] if c != "|"]
     bad = sorted({c for c in syms if c not in _KINDS})
@@ -148,7 +177,8 @@ def hf_config(m: dict, vocab: int) -> dict:
     folded, _ = branch_fold(m)
     if any(syms[i] != "L" for i in folded):
         raise ValueError(f"ckda_branch layers {sorted(folded)} must be complex_kda (L) layers")
-    syms = ["*" if i in folded else c for i, c in enumerate(syms)]
+    new = "*" if m.get("ckda_branch") == "attention" else "K"
+    syms = [new if i in folded else c for i, c in enumerate(syms)]
     ldm = bool(m.get("depth_memory"))
     if ldm:
         if m.get("mhc"):
@@ -201,6 +231,7 @@ def hf_config(m: dict, vocab: int) -> dict:
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
         "fla_layer": _fla_layer_spec(m),
+        "fla_layer_kronlstm": _kronlstm_layer_spec(m) if "kronlstm" in types else None,
         "num_experts": m["num_experts"],
         "num_experts_per_tok": m["moe_router_topk"],
         "moe_intermediate_size": m["moe_ffn_hidden_size"],
@@ -314,7 +345,7 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     kind = cfg["block_types"][i]
     p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
     g = lambda name: t.pop(p + name)  # noqa: E731
-    mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
+    mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "kronlstm": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
              "engram": "residual_scheme.mhc_mixer"}[kind]
     if cfg["residual"] == "ldm":  # this layer's write and the next read's query
         for n in _LDM_NET + ("forget_logit",):
@@ -340,6 +371,22 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         add(hp + "mixer.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
         add(hp + "mixer.k_norm.weight", g(b + "k_layernorm.weight").to(cast))
         add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        for k in [k for k in t if k.startswith(p + "self_attention.layer.")]:  # the weight-0 complex_kda
+            t.pop(k)
+    elif kind == "kronlstm" and i in folded:
+        # a ckda_branch KronLSTM past its hand-over: the branch's layer is the mixer (complex_kda weighted 0),
+        # the layer's input norm, the branch's output weight folded into its o_proj
+        gamma = float(g("self_attention.branch_mix.gamma").float().reshape(-1)[0])
+        weight = 1.0 + scale * gamma if m.get("ckda_branch_crossfade") else scale * gamma
+        if p + "self_attention.branch_mix.calib" in t:
+            weight *= float(g("self_attention.branch_mix.calib").float().reshape(-1)[0])
+        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        pre = p + "self_attention.branch.layer."
+        for k in sorted(k for k in t if k.startswith(pre)):
+            w = t.pop(k)
+            if k == pre + "o_proj.weight":
+                w = w.float() * weight
+            add(hp + "mixer.layer." + k[len(pre):], w.to(cast))
         for k in [k for k in t if k.startswith(p + "self_attention.layer.")]:  # the weight-0 complex_kda
             t.pop(k)
     elif kind == "attention":

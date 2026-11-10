@@ -25,8 +25,8 @@ def test_branch_fold_rules():
         branch_fold(_m(_ckpt_iteration=200))
     with pytest.raises(ValueError, match="per-layer KV groups"):
         branch_fold(_m(ckda_branch_num_query_groups=8))
-    with pytest.raises(ValueError, match="only attention"):
-        branch_fold(_m(ckda_branch="kronlstm"))
+    with pytest.raises(ValueError, match="attention or kronlstm"):
+        branch_fold(_m(ckda_branch="mamba"))
     with pytest.raises(ValueError, match="alpha_end"):
         branch_fold(_m(ckda_branch_alpha_end=0.5))
 
@@ -69,3 +69,50 @@ def test_folded_layer_is_an_attention_layer():
                   torch.float32, torch.float32, "bf16")
     assert torch.allclose(out[hp + "mixer.o_proj.weight"],
                           src[p + "self_attention.branch.linear_proj.weight"] * 1.7 * 2.5)
+
+
+def _kron_m(**kw):
+    m = _m(ckda_branch="kronlstm", ckda_branch_crossfade=True, ckda_branch_calibrate=True, hidden_size=HID,
+           linear_key_head_dim=D, linear_num_key_heads=HEADS, linear_conv_kernel_dim=4, linear_drop_qkv_silu=True,
+           linear_fla_allow_neg_eigval=True, linear_fla_gate="signed_sigmoid2", linear_fla_lower_bound=-5.0,
+           linear_kronlstm_output_gate="lowrank", layernorm_epsilon=1e-5)
+    m.update(kw)
+    return m
+
+
+def test_kronlstm_branch_folds_into_a_kronlstm_block():
+    from oellm_autoexp.hf_export.export_ambitious import _kronlstm_layer_spec
+
+    assert branch_fold(_kron_m(ckda_branch_num_query_groups=8)) == ({1}, 10.0)  # KV groups irrelevant here
+    g = torch.Generator().manual_seed(1)
+    p, hp = "decoder.layers.1.", "model.layers.1."
+    t = {p + f"mhc_attn_mixer.{n}": torch.randn(3, generator=g) for n in _MHC}
+    t[p + "input_layernorm.weight"] = torch.rand(HID, generator=g)
+    t[p + "self_attention.layer.q_proj.weight"] = torch.randn(HID, HID, generator=g)
+    for n, shape in (("qkv_proj.weight", (3 * HID, HID)), ("o_proj.weight", (HID, HID)), ("b_proj.weight", (HEADS, HID)),
+                     ("c_proj.weight", (HEADS, HID)), ("A_log", (HEADS,))):
+        t[p + "self_attention.branch.layer." + n] = torch.randn(*shape, generator=g)
+    t[p + "self_attention.branch_mix.gamma"] = torch.tensor([0.1])
+    t[p + "self_attention.branch_mix.calib"] = torch.tensor([2.0])
+    src = dict(t)
+    cfg = {"block_types": ["attention", "kronlstm"], "residual": "mhc"}
+    out = {}
+    convert_layer(1, t, cfg, _kron_m(), out.__setitem__, torch.float32, torch.float32, "bf16")
+    assert not t
+    # crossfade, calibrated: weight = calib * (1 + gamma_scale * gamma) = 2 * (1 + 10 * 0.1) = 4
+    assert torch.allclose(out[hp + "mixer.layer.o_proj.weight"], src[p + "self_attention.branch.layer.o_proj.weight"] * 4)
+    assert torch.equal(out[hp + "mixer.layer.qkv_proj.weight"], src[p + "self_attention.branch.layer.qkv_proj.weight"])
+    assert torch.equal(out[hp + "input_layernorm.weight"], src[p + "input_layernorm.weight"])
+    assert not any(".layer.q_proj" in k for k in out)  # the weight-0 complex_kda is dropped
+    spec = _kronlstm_layer_spec(_kron_m())
+    assert spec["class"] == "fla.layers.kronlstm.KronLSTM"
+    kw = spec["kwargs"]
+    assert kw["drop_silu"] and kw["output_gate_rank"] == "lowrank" and kw["gate"] == "signed_sigmoid2"
+    assert kw["allow_neg_eigval"] and kw["decouple_erase"] and not kw["unit_write"] and kw["normalize_v"]
+    try:
+        import inspect
+
+        from fla.layers.kronlstm import KronLSTM
+    except Exception:  # the FLA fork is not on the path
+        return
+    assert set(kw) <= set(inspect.signature(KronLSTM.__init__).parameters)

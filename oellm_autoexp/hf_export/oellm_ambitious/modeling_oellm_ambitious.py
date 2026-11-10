@@ -15,6 +15,7 @@
   - "attention" ``*``: NoPE softmax attention with qk-norm, exclusive self attention (XSA,
     ``fused_xsa.xsa_reference``) and the sigmoid output gate, behind ``linear_qkv``'s fused norm;
   - "ckda" ``L``: the FLA ComplexKimiDeltaAttention layer, as Megatron's ComplexKDA builds it;
+  - "kronlstm": a ckda_branch KronLSTM past its hand-over (FLA KronLSTM, ``fla_layer_kronlstm``);
   - "moe" ``E``: Megatron's sigmoid router, balanced by an expert bias (top-k on scores + bias) or
     quantile balancing (top-k on logits - qb_beta); weights = the unbiased scores normalised to 1.
     SwiGLU experts with the gpt-oss / DeepSeek-V4.1 clamp and optionally the bounded
@@ -676,6 +677,9 @@ class OellmAmbitiousLayer(nn.Module):
         elif self.kind == "ckda":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer)
+        elif self.kind == "kronlstm":  # a ckda_branch KronLSTM (the FLA layer, as Megatron built it)
+            self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
+            self.mixer = OellmFLALayer(config.fla_layer_kronlstm)
         elif self.kind == "moe":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmMoE(config)
@@ -687,7 +691,7 @@ class OellmAmbitiousLayer(nn.Module):
         new_state = None
         if self.kind == "attention":
             out, new_state = self.mixer(xin, state, keep_state)
-        elif self.kind == "ckda":
+        elif self.kind in ("ckda", "kronlstm"):
             # stateless (scoring, fast path): FLA's fused input projections, no final state
             stateless = not keep_state and state is None and _fast(xin)
             out, new_state = self.mixer(xin, state, attention_mask, not stateless)

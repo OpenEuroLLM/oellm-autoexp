@@ -2,7 +2,7 @@
 Depth Memory).
 
 Unlike ``oellm_hybrid`` (one HF layer = mixer + MLP), the layers here are Megatron's own: one per
-pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram"} (not ``layer_types``:
+pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram", "kronlstm"} (not ``layer_types``:
 transformers validates that name against its own attention kinds), each wrapped by its residual
 read / write: mHC over ``mhc_expansion_rate`` streams (``residual="mhc"``) or the Linear Depth
 Memory (``residual="ldm"``).
@@ -10,7 +10,8 @@ Memory (``residual="ldm"``).
 
 from transformers import PretrainedConfig
 
-LAYER_TYPES = ("attention", "ckda", "moe", "engram")
+# kronlstm: a ckda_branch KronLSTM past its hand-over (the FLA layer of fla_layer_kronlstm)
+LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm")
 
 
 class OellmAmbitiousConfig(PretrainedConfig):
@@ -44,6 +45,8 @@ class OellmAmbitiousConfig(PretrainedConfig):
         xsa_eps: float = 1e-6,
         # CKDA: the FLA layer spec ({"class", "kwargs"}) as Megatron built it
         fla_layer: dict | None = None,
+        # kronlstm blocks: the FLA KronLSTM layer spec ({"class", "kwargs"})
+        fla_layer_kronlstm: dict | None = None,
         # MoE (sigmoid router + expert bias, SwiGLU experts, ungated shared expert)
         num_experts: int = 216,
         num_experts_per_tok: int = 5,
@@ -114,6 +117,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.exclusive_self_attention = exclusive_self_attention
         self.xsa_eps = xsa_eps
         self.fla_layer = fla_layer
+        self.fla_layer_kronlstm = fla_layer_kronlstm
         self.num_experts = num_experts
         self.num_experts_per_tok = num_experts_per_tok
         self.moe_intermediate_size = moe_intermediate_size
