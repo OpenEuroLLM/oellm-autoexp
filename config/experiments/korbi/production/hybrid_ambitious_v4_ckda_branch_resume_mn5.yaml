@@ -1,0 +1,31 @@
+# @package _global_
+# Resume a ckda_branch arm from its own 23400 save (hybrid_ambitious_v4_ckda_branch_mn5 otherwise unchanged):
+# drop crashed at step 23500 before its save (2026-11-10 04:14, "CUDA error: misaligned address" on many ranks
+# at once, async in NCCL's watchdog). Full 23400 checkpoint (optimizer + data state): the same batches. Saves
+# at 23450 (alpha 0: the branch-only model even if 23500 failed again) and 23500; pool priority above the
+# queued arms so it takes host003's freed nodes (the arms go to host004).
+#   ... --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_resume_mn5 --yes "aux.only=[drop]"
+defaults:
+  - hybrid_ambitious_v4_ckda_branch_mn5
+  - _self_
+
+job:
+  est_steps: 100
+  metadata:
+    pool_priority: 75
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: drop
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt
+          backend.megatron.save_interval: 50
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_calibrate: false
