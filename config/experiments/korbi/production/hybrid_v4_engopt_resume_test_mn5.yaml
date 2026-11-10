@@ -1,0 +1,49 @@
+# @package _global_
+# Adam -> Sinkhorn switch on a RESUME (user 2026-11-10: the open question before sink5 could go into the main run).
+# The 2-node v4 hd256 test checkpoint diagw19b (saved at step 19 by Adam on the tables) is loaded read-only, 20 steps
+# per arm, no save, all arms in one launch (snapshot autoexp_v4hd256p2sink5, Megatron f05a44c25 cherry-picked onto
+# f60f5a53e). Every arm has the main run's Engram package (clip_grad 1.0, row-norm cap 13 -> 7, here over 10 steps
+# from 20, report every 5 steps):
+#   adam1  Adam x 1                (the deployed package; control)
+#   sink5  Sinkhorn x 5            (DeepSeek-V4.1; screen5engopt_s3: +1.7-2.0 mnat vs adam1, rows grow fastest)
+#   sink1  Sinkhorn x 1            (unscreened; session -2f's safer Sinkhorn variant)
+# Pass: the Sinkhorn arms load the Adam state (exp_avg = momentum), print "[engram-table-optimizer] sinkhorn ...",
+# train 20 steps without NaN or loss jump against adam1 (same batches), no OOM (+1 fp32 table-shard buffer).
+#   cd $R/autoexp_v4hd256p2sink5 && PYTHONPATH=. $R/autoexp_env/bin/python scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool $P/mn5_pool_p264 --yes \
+#       --config-name experiments/korbi/production/hybrid_v4_engopt_resume_test_mn5
+defaults:
+  - hybrid_v4_loadtiming_test_mn5
+  - _self_
+
+aux:
+  suite: v4_engopt_resume_test
+  arm: adam1
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4engopt_resume
+
+backend:
+  env:
+    MEGATRON_ENGRAM_ROWNORM_REPORT: "5"
+  megatron:
+    exit_interval: 40
+    engram_clip_grad: 1.0
+    engram_clip_rownorm: 7.0
+    engram_clip_rownorm_start: 13.0
+    engram_clip_rownorm_ramp_start: 20
+    engram_clip_rownorm_ramp_steps: 10
+
+job:
+  name: v4_engopt_${aux.arm}
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: adam1
+          backend.megatron.engram_lr_mult: 1.0
+        - aux.arm: sink5
+          backend.megatron.engram_table_optimizer: sinkhorn
+          backend.megatron.engram_lr_mult: 5.0
+        - aux.arm: sink1
+          backend.megatron.engram_table_optimizer: sinkhorn
+          backend.megatron.engram_lr_mult: 1.0
