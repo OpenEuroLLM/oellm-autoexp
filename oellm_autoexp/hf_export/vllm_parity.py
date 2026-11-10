@@ -64,6 +64,16 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
                       "kwargs": {"hidden_size": h, "num_heads": 4, "head_dim": head_dim, "allow_neg_eigval": True,
                                  "gate": "signed_sigmoid2", "gate_init_style": "shipped", "lower_bound": -5.0,
                                  "output_gate": "lowrank", "drop_silu": True, "conv_size": 4, "norm_eps": 1e-5}},
+        # kronlstm blocks (a ckda_branch KronLSTM): the production arm's settings (signed gate, s = 2,
+        # decoupled erase, no unit write, normalized v, no conv SiLU, low-rank output gate)
+        "fla_layer_kronlstm": {"class": "fla.layers.kronlstm.KronLSTM",
+                               "kwargs": {"hidden_size": h, "k_head_dim": head_dim, "v_head_dim": head_dim,
+                                          "num_k_heads": 4, "num_v_heads": 4, "mode": "chunk", "use_short_conv": True,
+                                          "conv_size": 4, "conv_bias": False, "normalize_v": True,
+                                          "allow_neg_eigval": True, "use_target_gate": True, "decouple_erase": True,
+                                          "neg_eigval_init_bias": False, "unit_write": False, "drop_silu": True,
+                                          "output_gate_rank": "lowrank", "decay_gate": "vector",
+                                          "gate": "signed_sigmoid2", "lower_bound": -5.0, "norm_eps": 1e-5}},
         "num_experts": 8, "num_experts_per_tok": 2, "moe_intermediate_size": 128,
         "shared_expert_intermediate_size": 128, "router_scaling_factor": 1.0, "activation_clamp_value": 10.0,
         "router_balancing": "quantile" if quantile else "expert_bias",
@@ -292,6 +302,11 @@ def main() -> None:
         # and hangs at startup: the MoE models carry one attention layer (compare with "attention")
         comps = {"attention": dict(base, blocks=["attention"] * 3), "ckda": dict(base, blocks=["ckda"] * 3),
                  "moe": dict(base, blocks=["attention", "moe", "moe"]), "engram": dict(base, blocks=["engram"] * 2),
+                 # a ckda_branch KronLSTM (kronlstm blocks), alone and in the v4 mix with attention and CKDA
+                 "kronlstm": dict(base, blocks=["ckda", "kronlstm", "kronlstm"]),
+                 "ckdab_kronlstm_mix": dict(base, quantile=False, head_dim=128,
+                                            blocks=["attention", "engram", "ckda", "moe", "kronlstm", "moe",
+                                                    "attention", "moe", "engram", "ckda", "moe"], router_std=1.0),
                  "ldm_attention": dict(base, residual="ldm", blocks=["attention"] * 3),
                  "ldm_moe": dict(base, residual="ldm", blocks=["attention", "moe", "moe"]),
                  # routing flips vs a mismatch: the MoE model with a router whose top-k margins are wide
