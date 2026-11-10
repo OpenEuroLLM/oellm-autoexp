@@ -3872,10 +3872,19 @@ layout `data_sampler_reference_dp_size 512`, so node-count changes keep the orde
 
 - **Switch:** phase 1 saved 23,691 at 20:55 (11-09); phase 2 (p264.0284) trained from 21:24 at 17.2 s/step vs 15.0 s at
   8k (4,369 → 3,810 tok/s/GPU, −13 %). Restart cost and the dataset-build fix: `docs/checkpoint_load_analysis.md` §6.
-- **Restart at 25,000** (user): 23,692–25,000 is the 64k extension alone. From 25,000 on, `--engram-clip-grad 1.0`
-  (Megatron 238343442; end of phase 1: Engram 60 % of spike norm², led 116 of 152 spikes, 8 % of steps clipped every
-  parameter) and the dataset fix. It resumes from checkpoint 25,000 exactly: the stop's own save is removed and the
-  tracker set back (entry `ambitious_v4_2ph_hd256_256n_p2_e5d385`, config `hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5`).
+- **Restart at 25,000** (user): 23,692–25,000 is the 64k extension alone. From 25,000 on, the full Engram package
+  (the user had session -2f's package taken over) and the dataset fix:
+  - `--engram-clip-grad 1.0` (Megatron 238343442; end of phase 1: Engram 60 % of spike norm², led 116 of 152 spikes,
+    8 % of steps clipped every parameter);
+  - `engram_lr_mult` 5 → 1: DeepSeek-V4.1's ×5 applies to a Sinkhorn-balanced momentum update; our Adam took 5–18×
+    larger steps;
+  - row-norm cap 13 → 7 over 1000 steps from 25,000 (Megatron 3447acc90 / f60f5a53e; rows > 7: ~7k–10k of 623M in
+    ckpt 24,000).
+
+  It resumes from checkpoint 25,000 exactly: the stop's own save is removed and the tracker set back (entry
+  `ambitious_v4_2ph_hd256_256n_p2_d37d29`, config `hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5`, snapshot
+  `autoexp_v4hd256p2rowcap`). The Engram update rule (Adam vs Sinkhorn, `screen5engopt_s3`) would be a later,
+  separate intervention.
 
 **Why 64k costs 13 % (`hybrid_v4_ctxspeed_mn5`, 2 nodes, main-run code and per-GPU work, median of steps 10–29):**
 
