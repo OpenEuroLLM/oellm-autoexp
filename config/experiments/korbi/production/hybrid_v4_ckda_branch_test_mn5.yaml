@@ -246,3 +246,34 @@ sweep:
           backend.megatron.ckda_branch_calibrate: true
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
+        # checkpoints past the hand-over (1300, alpha 0) for the HF / vLLM export checks (user 2026-11-10: CKLSTM
+        # downstream evals): d_cal_full trains the calibrated KronLSTM arm 1100 -> 1300; bgqa_cal_full resumes
+        # bgqa_cal's 1200 save to 1300 (also the resume check: calib is loaded, not re-measured)
+        - aux.arm: d_cal_full
+          backend.megatron.load: ${aux.test_root}/d_cal_src/ckpt
+          backend.megatron.save: ${aux.test_root}/d_cal_full/ckpt
+          backend.megatron.save_interval: 1300
+          backend.megatron.ckda_branch: kronlstm
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.linear_kronlstm_output_gate: lowrank
+          backend.megatron.linear_kronlstm_normalize_v: true
+          backend.megatron.linear_kronlstm_target_gate: true
+          backend.megatron.linear_kronlstm_decouple_erase: true
+          backend.megatron.linear_kronlstm_neg_eigval_init_bias: false
+          backend.megatron.linear_kronlstm_unit_write: false
+          backend.megatron.linear_kronlstm_signed_write: false
+        - aux.arm: bgqa_cal_full
+          backend.megatron.load: ${aux.test_root}/bgqa_cal/ckpt
+          backend.megatron.save: ${aux.test_root}/bgqa_cal_full/ckpt
+          backend.megatron.save_interval: 1300
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
