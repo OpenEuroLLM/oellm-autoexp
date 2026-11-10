@@ -14,8 +14,8 @@ set -u
 SSH=${SSH_TARGET:-marenostrum_new}
 POOL=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
 R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
-SNAP=${SNAP:-autoexp_ckdab14}
-ARMS=${ARMS:-"ckda_branch_bgqa ckda_branch_d ckda_branch_cgqa ckda_branch_b8"}
+SNAP=${SNAP:-autoexp_poolshrink1}
+ARMS=${ARMS:-"ckda_branch_bgqa ckda_branch_d ckda_branch_cgqa ckda_branch_drop"}
 KEEP=${KEEP:-"host001 host002 host003"}
 BIG=${BIG:-16}
 INTERVAL=${INTERVAL:-300}
@@ -37,13 +37,17 @@ while :; do
   pending=0; declare -A live=() used=()
   for arm in $ARMS; do
     # newest run of this arm: the highest run id among lines whose job name is the arm
-    # (a sweep launch appends its index: ckda_branch_d_4; drop / the *_cal_full tests do not match)
+    # (a sweep launch appends its index: ckda_branch_d_4; the *_cal_full tests do not match)
     line=$(printf '%s\n' "$st" | awk -v a="$arm" '$3 ~ ("^" a "(_[0-9]+)?$")' | sort -t. -k2 -n | tail -1)
     if [ -z "$line" ]; then echo "$(date -Is) $arm: no run yet"; pending=1; continue; fi
     state=$(awk '{print $2}' <<<"$line")
     host=$(awk '{for (i = 1; i <= NF; i++) if ($i == "host") print $(i + 1)}' <<<"$line")
     echo "$(date -Is) $arm: $state on ${host:--}"
-    if [ -z "$host" ] || [ "$host" = "-" ]; then pending=1; continue; fi  # not placed yet
+    if [ -z "$host" ] || [ "$host" = "-" ]; then
+      # never placed: waiting, unless it ended unplaced (a cancelled arm does not hold hosts open)
+      case $state in COMPLETED|FAILED|CANCELLED) ;; *) pending=1 ;; esac
+      continue
+    fi
     grep -qw "$host" <<<"$KEEP" && continue
     used[$host]=1
     case $state in COMPLETED|FAILED|CANCELLED) ;; *) live[$host]=1 ;; esac
