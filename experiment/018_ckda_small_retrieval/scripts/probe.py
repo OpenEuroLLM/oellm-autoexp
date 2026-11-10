@@ -31,6 +31,13 @@ ids = torch.arange(128, device='cuda').unsqueeze(0)
 with torch.no_grad():
     out = model(ids, use_cache=False).logits
 assert out.shape == (1, 128, 256) and torch.isfinite(out).all()
+with torch.no_grad():
+    full = model(ids[:, :65], use_cache=False).logits[:, -1]
+    prefix = model(ids[:, :64], use_cache=True)
+    cached = model(ids[:, 64:65], past_key_values=prefix.past_key_values,
+                   use_cache=True).logits[:, -1]
+torch.testing.assert_close(cached, full, rtol=0.02, atol=0.03)
+print('CHUNK_CACHE_PARITY_PASS', flush=True)
 # A bounded KDA control must remain exactly unchanged by removing signed behavior.
 cfg.allow_neg_eigval = False
 control = SignedKDAForCausalLM(cfg).to('cuda', torch.bfloat16).eval()
