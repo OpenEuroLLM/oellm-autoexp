@@ -3867,3 +3867,36 @@ layout `data_sampler_reference_dp_size 512`, so node-count changes keep the orde
 - Held hosts: the monitor no longer scancels a held host for a stale heartbeat, on `pool_ctl close` or on an unnamed drain. Queued SLURM jobs are not edited automatically (`refresh_queued_excludes`, default off; autoexp 49b9f66f).
 - `git worktree` of the Megatron submodule inherits the shared `core.worktree`: git then treats the git dir as the work tree, and a cherry-pick writes files into `.git/modules/…`. Commit Megatron work from an independent clone (`pushurl` = git@github.com:…).
 - Restart cost and checkpoint load: see `docs/checkpoint_load_analysis.md`.
+
+### Phase 2 (64k) and the restart at 25,000 (11-09 – 11-10)
+
+- **Switch:** phase 1 saved 23,691 at 20:55 (11-09); phase 2 (p264.0284) trained from 21:24 at 17.2 s/step vs 15.0 s at
+  8k (4,369 → 3,810 tok/s/GPU, −13 %). Restart cost and the dataset-build fix: `docs/checkpoint_load_analysis.md` §6.
+- **Restart at 25,000** (user): 23,692–25,000 is the 64k extension alone. From 25,000 on, `--engram-clip-grad 1.0`
+  (Megatron 238343442; end of phase 1: Engram 60 % of spike norm², led 116 of 152 spikes, 8 % of steps clipped every
+  parameter) and the dataset fix. It resumes from checkpoint 25,000 exactly: the stop's own save is removed and the
+  tracker set back (entry `ambitious_v4_2ph_hd256_256n_p2_e5d385`, config `hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5`).
+
+**Why 64k costs 13 % (`hybrid_v4_ctxspeed_mn5`, 2 nodes, main-run code and per-GPU work, median of steps 10–29):**
+
+| data | 8k hd256 | 64k hd256 | 8k hd128 | 64k hd128 |
+|---|---:|---:|---:|---:|
+| capspeed (short documents) | 9.62 s | 9.79 s | 9.44 s | 9.46 s |
+| phase-2 mix (s3 opt81) | 9.68 s | **14.02 s** | 9.45 s | **12.50 s** |
+
+- The v2 runs (132 nodes, hd128) showed no 16k → 64k cost (31.7 vs 29.9–30.8 s): same per-token work, longer
+  communication-heavy steps.
+- A torch-profiler trace of all 8 ranks (64k, phase-2 data) shows the cause: **attention load imbalance across ranks**.
+  - Per step, attention kernel time per rank varies from 0.05 to 2.3 s; attention + NCCL wait per rank is ~constant.
+  - Every rank holds one 64k sequence. One long document costs close to full causal 64k attention; short documents
+    cost almost nothing. The step waits for the most expensive sequence: here the max over 8 ranks, in the main run
+    over 1024.
+  - The mean attention cost is small (rank 0: +0.36 s attention kernels over 8k). At 8k no sequence holds more than
+    8k of one document.
+  - Head dim 256 doubles the straggler's attention (+4.3 vs +3.1 s at 2 nodes).
+- At 256 nodes the visible cost is +2.2 s/step, partly overlapping the larger FSDP / expert communication.
+  Rebalancing is impossible at one sequence per rank without changing the data order.
+- **Consequence for sparse attention:** attention linear in document length removes the straggler. Gate: on phase-2
+  data at the v4 shape, sparse must beat dense on the slowest rank (t9s3, running 11-10). Quality gate: the best sparse
+  family (page selection) costs +0.021–0.023 nats at 64k after 500 steps (t5). At the main run's loss slope, 10 %
+  speed is worth only ~0.004–0.012 nats, so the penalty has to shrink with longer adaptation first.
