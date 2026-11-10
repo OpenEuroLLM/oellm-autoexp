@@ -14,6 +14,16 @@ the pool's files directly and are picked up by the supervisors.
   pool_ctl.py <pool_dir> close | open            stop / resume submitting hosts
   pool_ctl.py <pool_dir> set key=value ...       change pool settings (live), e.g. keep_pending=1
   pool_ctl.py <pool_dir> exclude <node> ...      never launch a run on these nodes again
+  pool_ctl.py <pool_dir> freeze | unfreeze <host> no new run on the host, never released (resize prep)
+  pool_ctl.py <pool_dir> shrink <host> --keep N  plan a resize of a frozen host to N nodes; --apply does it
+
+Resizing a host (2026-11-10): `freeze` it, wait until no run is active on it (or preempt them), then
+`shrink --keep N --apply`, then `unfreeze`. A step running during `scontrol update NodeList=` stays
+RESIZING and keeps its GPUs after it ends ("Insufficient GRES" for every later step there: p134c host006
+11-06, p264 host003 11-10), also on nodes the resize keeps. shrink keeps the batch node, every node a
+run holds, and free non-excluded nodes up to N; it writes the removed nodes into <host>/exclude_nodes and
+<host>/inuse/zz_shrunk_removed_nodes (old supervisors keep their start-time node list) before the update.
+A resize changes a SLURM job: only with the user's explicit go (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -441,6 +451,120 @@ def cmd_hold(layout: PoolLayout, args) -> int:
     return 0
 
 
+def cmd_freeze(layout: PoolLayout, args) -> int:
+    """freeze / unfreeze a host: a frozen host gets no new run and is never released by the
+    monitor (pool.PoolManager._frozen); its running runs continue."""
+    hdir = layout.host_dir(args.host)
+    if not hdir.exists():
+        print(f"no such host: {args.host}", file=sys.stderr)
+        return 1
+    path = hdir / "control" / "freeze"
+    if args.cmd == "freeze":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"pool_ctl freeze {time.time():.0f}\n")
+        print(f"host {args.host}: frozen (no new run, never released; running runs continue)")
+    else:
+        path.unlink(missing_ok=True)
+        print(f"host {args.host}: unfrozen")
+    return 0
+
+
+def _slurm(argv: list[str]) -> str:
+    import subprocess
+
+    return subprocess.run(argv, capture_output=True, text=True).stdout
+
+
+def _hostnames(nodelist: str, slurm=_slurm) -> list[str]:
+    nodelist = nodelist.strip()
+    return [] if not nodelist else slurm(["scontrol", "show", "hostnames", nodelist]).split()
+
+
+def shrink_plan(layout: PoolLayout, hid: str, keep: int, slurm=_slurm) -> dict:
+    """What `shrink` would do: the host's live allocation, the nodes runs hold, the batch node, the
+    active run steps, and the kept / removed node sets."""
+    hdir = layout.host_dir(hid)
+    info = read_env_file(hdir / "info.env")
+    jid = str(info.get("SLURM_JOB_ID") or "").strip()
+    if not jid:
+        raise SystemExit(f"host {hid}: no SLURM_JOB_ID in info.env")
+    alloc = sorted(set(_hostnames(slurm(["squeue", "-h", "-j", jid, "-o", "%N"]), slurm)))
+    if not alloc:
+        raise SystemExit(f"job {jid} has no allocation (not running?)")
+    job = slurm(["scontrol", "show", "job", jid])
+    batch = next((w.split("=", 1)[1] for w in job.split() if w.startswith("BatchHost=")), "")
+    inuse_dir = hdir / "inuse"
+    held, runs = set(), {}
+    for f in sorted(inuse_dir.glob("*")) if inuse_dir.exists() else []:
+        nodes = {n for n in f.read_text().replace("\n", ",").split(",") if n}
+        if f.name.startswith("zz_"):
+            continue  # nodes a previous shrink removed: not in the allocation
+        runs[f.name] = sorted(nodes & set(alloc))
+        held |= nodes & set(alloc)
+    steps = [
+        line.split()[0]
+        for line in slurm(["squeue", "-s", "-h", "-j", jid, "-o", "%i %j"]).splitlines()
+        if line.split() and not line.split()[0].endswith((".batch", ".extern"))
+    ]
+    excl_file = hdir / "exclude_nodes"
+    excluded = set(excl_file.read_text().split()) if excl_file.exists() else set()
+    must = sorted(held | ({batch} if batch else set()))
+    if len(must) > keep:
+        raise SystemExit(f"{len(must)} nodes must stay (batch node + runs' nodes) > keep {keep}")
+    free = [n for n in alloc if n not in held and n != batch and n not in excluded]
+    kept = sorted(set(must) | set(free[: keep - len(must)]))
+    if len(kept) < keep:
+        raise SystemExit(f"only {len(kept)} usable nodes for keep {keep}")
+    return {"job": jid, "alloc": alloc, "batch": batch, "runs": runs, "steps": steps,
+            "keep": kept, "remove": sorted(set(alloc) - set(kept))}
+
+
+def cmd_shrink(layout: PoolLayout, args, slurm=_slurm) -> int:
+    hid = args.host
+    if not (layout.host_dir(hid) / "control" / "freeze").exists():
+        print(f"host {hid} is not frozen: pool_ctl freeze {hid} first (no run may start during a resize)",
+              file=sys.stderr)
+        return 1
+    plan = shrink_plan(layout, hid, args.keep, slurm)
+    print(f"host {hid} job {plan['job']}: {len(plan['alloc'])} -> {len(plan['keep'])} nodes "
+          f"(batch {plan['batch']}; {sum(len(v) for v in plan['runs'].values())} held by "
+          f"{len(plan['runs'])} run(s); remove {len(plan['remove'])})")
+    for rid, nodes in plan["runs"].items():
+        print(f"  run {rid}: {len(nodes)} node(s) kept")
+    if plan["steps"]:
+        msg = (f"run steps active: {' '.join(plan['steps'])} -- a resize now leaves their GPUs reserved "
+               "after they end (their nodes are then lost for GPU work)")
+        if not args.accept_gpu_leak:
+            print(f"refused: {msg}; wait / preempt, or --accept-gpu-leak", file=sys.stderr)
+            return 1
+        print(f"warning: {msg}")
+    if not args.apply:
+        print("plan only (--apply resizes the SLURM job: only with the user's go)")
+        return 0
+    hdir = layout.host_dir(hid)
+    excl = hdir / "exclude_nodes"
+    have = set(excl.read_text().split()) if excl.exists() else set()
+    with excl.open("a") as fh:
+        for n in plan["remove"]:
+            if n not in have:
+                fh.write(n + "\n")
+    zz = hdir / "inuse" / "zz_shrunk_removed_nodes"
+    old = {n for n in (zz.read_text().split(",") if zz.exists() else []) if n.strip()}
+    zz.parent.mkdir(parents=True, exist_ok=True)
+    tmp = zz.with_suffix(".tmp")
+    tmp.write_text(",".join(sorted(old | set(plan["remove"]))))
+    tmp.replace(zz)
+    keep_list = slurm(["scontrol", "show", "hostlist", ",".join(plan["keep"])]).strip()
+    slurm(["scontrol", "update", f"JobId={plan['job']}", f"NodeList={keep_list}"])
+    now = len(_hostnames(slurm(["squeue", "-h", "-j", plan["job"], "-o", "%N"]), slurm))
+    if now != len(plan["keep"]):
+        print(f"host {hid}: the job has {now} node(s) after the update, {len(plan['keep'])} expected",
+              file=sys.stderr)
+        return 1
+    print(f"host {hid}: resized to {now} node(s); unfreeze with pool_ctl unfreeze {hid}")
+    return 0
+
+
 def cmd_set(layout: PoolLayout, args) -> int:
     meta = layout.load_meta()
     config = dict(meta.get("config") or {})
@@ -540,6 +664,17 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("exclude")
     p.add_argument("nodes", nargs="+")
     p.set_defaults(func=cmd_exclude)
+    for name in ("freeze", "unfreeze"):
+        p = sub.add_parser(name, help="no new run on / never release a host while a resize is prepared")
+        p.add_argument("host")
+        p.set_defaults(func=cmd_freeze)
+    p = sub.add_parser("shrink", help="resize a frozen host to --keep nodes (plan; --apply does it)")
+    p.add_argument("host")
+    p.add_argument("--keep", type=int, required=True)
+    p.add_argument("--apply", action="store_true", help="write the markers and scontrol update (user's go)")
+    p.add_argument("--accept-gpu-leak", action="store_true",
+                   help="resize although run steps are active (their nodes' GPUs stay reserved)")
+    p.set_defaults(func=cmd_shrink)
     args = parser.parse_args(argv)
     layout = PoolLayout(args.pool_dir)
     if not layout.exists():

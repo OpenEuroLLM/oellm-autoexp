@@ -107,3 +107,80 @@ def test_preempt_only_a_running_run(env, capsys):
     assert _ctl(env, "preempt", running) == 1
     assert "is PREEMPTED (rc 0 preempted)" in capsys.readouterr().err
     assert _ctl(env, "preempt", "pool.9999") == 1
+
+
+# ---------------------------------------------------------------- freeze / shrink (2026-11-10)
+class _FakeSlurm:
+    """squeue / scontrol for shrink: one job, its nodes, its run steps, and the updates it gets."""
+
+    def __init__(self, nodes, batch, steps=()):
+        self.nodes, self.batch, self.steps, self.updates = list(nodes), batch, list(steps), []
+
+    def __call__(self, argv):
+        if argv[:2] == ["scontrol", "show"] and argv[2] == "hostnames":
+            return "\n".join(argv[3].split(",")) + "\n"
+        if argv[:2] == ["scontrol", "show"] and argv[2] == "hostlist":
+            return argv[3] + "\n"
+        if argv[:2] == ["scontrol", "show"] and argv[2] == "job":
+            return f"JobId=7 BatchHost={self.batch} NumNodes={len(self.nodes)}\n"
+        if argv[:2] == ["scontrol", "update"]:
+            self.updates.append(argv[2:])
+            self.nodes = argv[3].split("=", 1)[1].split(",")
+            return ""
+        if argv[0] == "squeue" and "-s" in argv:
+            return "".join(f"{s} x\n" for s in ["7.batch", "7.extern", *self.steps])
+        if argv[0] == "squeue":
+            return ",".join(self.nodes) + "\n"
+        raise AssertionError(argv)
+
+
+def _shrink_host(env, nodes, runs):
+    hdir = env.layout.host_dir(env.hid)
+    (hdir / "info.env").write_text((hdir / "info.env").read_text() + "SLURM_JOB_ID=7\n"
+                                   if (hdir / "info.env").exists() else "SLURM_JOB_ID=7\n")
+    (hdir / "inuse").mkdir(parents=True, exist_ok=True)
+    for rid, rn in runs.items():
+        (hdir / "inuse" / rid).write_text(",".join(rn))
+    return hdir
+
+
+def test_freeze_unfreeze_and_a_frozen_host_takes_no_new_run(env, capsys):
+    assert _ctl(env, "freeze", env.hid) == 0
+    assert (env.layout.host_dir(env.hid) / "control" / "freeze").exists()
+    from oellm_autoexp.monitor.pool import PoolManager
+
+    assert PoolManager._frozen(env.layout, env.hid)
+    assert _ctl(env, "unfreeze", env.hid) == 0
+    assert not PoolManager._frozen(env.layout, env.hid)
+
+
+def test_shrink_needs_a_frozen_host_and_no_active_run_step(env, capsys):
+    nodes = [f"n{i:02d}" for i in range(10)]
+    _shrink_host(env, nodes, {"mn5-pool-x.0001": ["n03", "n04"]})
+    fake = _FakeSlurm(nodes, "n00", steps=["7.12"])
+    args = pool_ctl.argparse.Namespace(host=env.hid, keep=5, apply=True, accept_gpu_leak=False)
+    assert pool_ctl.cmd_shrink(env.layout, args, fake) == 1  # not frozen
+    assert "not frozen" in capsys.readouterr().err
+    _ctl(env, "freeze", env.hid)
+    assert pool_ctl.cmd_shrink(env.layout, args, fake) == 1  # a run step is active
+    assert "refused" in capsys.readouterr().err and fake.updates == []
+
+
+def test_shrink_keeps_batch_and_held_nodes_marks_the_removed_and_updates(env, capsys):
+    nodes = [f"n{i:02d}" for i in range(10)]
+    hdir = _shrink_host(env, nodes, {"mn5-pool-x.0001": ["n03", "n04"]})
+    (hdir / "exclude_nodes").write_text("n01\n")  # a bad node: not among the kept free ones
+    _ctl(env, "freeze", env.hid)
+    fake = _FakeSlurm(nodes, "n00")
+    plan = pool_ctl.shrink_plan(env.layout, env.hid, 5, fake)
+    assert plan["keep"] == ["n00", "n02", "n03", "n04", "n05"]
+    args = pool_ctl.argparse.Namespace(host=env.hid, keep=5, apply=False, accept_gpu_leak=False)
+    assert pool_ctl.cmd_shrink(env.layout, args, fake) == 0 and fake.updates == []  # plan only
+    args.apply = True
+    assert pool_ctl.cmd_shrink(env.layout, args, fake) == 0
+    assert fake.updates == [["JobId=7", "NodeList=n00,n02,n03,n04,n05"]]
+    removed = {"n01", "n06", "n07", "n08", "n09"}
+    assert removed <= set((hdir / "exclude_nodes").read_text().split())
+    assert removed <= set((hdir / "inuse" / "zz_shrunk_removed_nodes").read_text().split(","))
+    with pytest.raises(SystemExit):  # more held nodes than keep
+        pool_ctl.shrink_plan(env.layout, env.hid, 2, fake)

@@ -1227,8 +1227,20 @@ class PoolManager:
 
     @staticmethod
     def _held(layout: PoolLayout, cfg: PoolHostConfig, hid: str) -> bool:
-        """hold_hosts, or a <host>/control/hold file (pool_ctl hold)."""
-        return bool(cfg.hold_hosts) or (layout.host_dir(hid) / "control" / "hold").exists()
+        """hold_hosts, or a <host>/control/hold file (pool_ctl hold); a frozen host counts as held."""
+        return (
+            bool(cfg.hold_hosts)
+            or (layout.host_dir(hid) / "control" / "hold").exists()
+            or PoolManager._frozen(layout, hid)
+        )
+
+    @staticmethod
+    def _frozen(layout: PoolLayout, hid: str) -> bool:
+        """A <host>/control/freeze file (pool_ctl freeze): the monitor assigns the host no new run
+        and never releases it (its running runs continue; exit-host / its wall clock still end it).
+        For a resize (pool_ctl shrink): no run may start on the host meanwhile -- a step that runs
+        during `scontrol update NodeList=` keeps its GPUs reserved after it ends (SLURM, MN5)."""
+        return (layout.host_dir(hid) / "control" / "freeze").exists()
 
     def _cancel_host_job(self, host: HostView) -> None:
         rid = host.record.runtime.runtime_job_id
@@ -1484,6 +1496,8 @@ class PoolManager:
         for host in sorted(live, key=lambda h: -h.start_ts):
             if host.hid in unverified or host.hid in handover_old:
                 continue  # in its preflight / being handed over: no new run
+            if self._frozen(layout, host.hid):
+                continue  # pool_ctl freeze: no new run (a resize is prepared)
             active = [r for r in host.assignments() if not (layout.run_dir(r) / "rc").exists()]
             check_refused(host.hid)  # runs of this host that ended since 2b
             # the supervisor puts a USE_EXCLUDED_NODES run on the excluded nodes first: free
