@@ -1,0 +1,134 @@
+{
+  "source": "/e/project1/e-sta-openeurollm/poeppel1/signed_kda",
+  "python_tree_sha256": "d531dfad26787bd6827feab8cc22596209da86181b0634edb0fe77034fd4a1b5",
+  "files": [
+    {
+      "arm": "ckda",
+      "role": "native",
+      "source": "/e/scratch/e-sta-openeurollm/poeppel1/signed_kda_runs/megatron_ladder_finegrained/ckpt_decay/skda-shipped-hybrid-lowrank_983M_gbs256/decay80B/iter_0076294/mp_rank_00/model_optim_rng.pt",
+      "relative": "native/ckda/iter_0076294/mp_rank_00/model_optim_rng.pt",
+      "bytes": 1968882437,
+      "sha256": "ba15f63a701c577486a647179acc920d1965cc12082514f0bc0bf2156335f9ac"
+    },
+    {
+      "arm": "ckda",
+      "role": "reference_config",
+      "source": "/e/scratch/e-sta-openeurollm/poeppel1/eval_finegrained/export/skda-shipped-hybrid-lowrank_983M_gbs256_decay80B/config.json",
+      "bytes": 998,
+      "sha256": "f7e5791666909e1e96e1109506d83b29d70a5853cfd01b7a2c3941d72685f647",
+      "config": {
+        "architectures": [
+          "SignedKDAForCausalLM"
+        ],
+        "model_type": "signed_kda",
+        "attn_mode": "chunk",
+        "hidden_size": 1536,
+        "num_hidden_layers": 24,
+        "num_heads": 24,
+        "head_dim": 64,
+        "intermediate_size": 5952,
+        "hidden_ratio": null,
+        "hidden_act": "swish",
+        "vocab_size": 50304,
+        "max_position_embeddings": 4096,
+        "tie_word_embeddings": true,
+        "norm_eps": 1e-05,
+        "conv_size": 4,
+        "use_short_conv": true,
+        "fuse_norm": true,
+        "fuse_swiglu": true,
+        "fuse_cross_entropy": true,
+        "initializer_range": 0.02,
+        "allow_neg_eigval": true,
+        "lower_bound": -5.0,
+        "expand_v": 1.0,
+        "gate": "signed_sigmoid2",
+        "gate_init_style": "shipped",
+        "output_gate": "lowrank",
+        "attn": {
+          "layers": [
+            3,
+            7,
+            11,
+            15,
+            19,
+            23
+          ],
+          "num_heads": 24,
+          "num_kv_heads": 24,
+          "qkv_bias": false,
+          "qk_norm": false,
+          "output_gate": true,
+          "use_rope": false,
+          "rope_theta": 10000.0,
+          "window_size": null
+        },
+        "drop_silu": true
+      }
+    },
+    {
+      "arm": "kda",
+      "role": "native",
+      "source": "/e/scratch/e-sta-openeurollm/poeppel1/signed_kda_runs/megatron_ladder_finegrained/ckpt_decay/kda-sig-hybrid-lowrank_983M_gbs256/decay80B/iter_0076294/mp_rank_00/model_optim_rng.pt",
+      "relative": "native/kda/iter_0076294/mp_rank_00/model_optim_rng.pt",
+      "bytes": 1968897758,
+      "sha256": "aa38e1b29ce204a207b9500263771dea9c3686ab0cfa4ed2933dfb9a36b17914"
+    },
+    {
+      "arm": "kda",
+      "role": "reference_config",
+      "source": "/e/scratch/e-sta-openeurollm/poeppel1/eval_finegrained/export/kda-sig-hybrid-lowrank_983M_gbs256_decay80B/config.json",
+      "bytes": 991,
+      "sha256": "b25e0516006b164c8446ecc0766ccc1f46d6b2b6aa21f2f3751c790bcd082851",
+      "config": {
+        "architectures": [
+          "SignedKDAForCausalLM"
+        ],
+        "model_type": "signed_kda",
+        "attn_mode": "chunk",
+        "hidden_size": 1536,
+        "num_hidden_layers": 24,
+        "num_heads": 24,
+        "head_dim": 64,
+        "intermediate_size": 5952,
+        "hidden_ratio": null,
+        "hidden_act": "swish",
+        "vocab_size": 50304,
+        "max_position_embeddings": 4096,
+        "tie_word_embeddings": true,
+        "norm_eps": 1e-05,
+        "conv_size": 4,
+        "use_short_conv": true,
+        "fuse_norm": true,
+        "fuse_swiglu": true,
+        "fuse_cross_entropy": true,
+        "initializer_range": 0.02,
+        "allow_neg_eigval": false,
+        "lower_bound": -5.0,
+        "expand_v": 1.0,
+        "gate": "sigmoid",
+        "gate_init_style": "shipped",
+        "output_gate": "lowrank",
+        "attn": {
+          "layers": [
+            3,
+            7,
+            11,
+            15,
+            19,
+            23
+          ],
+          "num_heads": 24,
+          "num_kv_heads": 24,
+          "qkv_bias": false,
+          "qk_norm": false,
+          "output_gate": true,
+          "use_rope": false,
+          "rope_theta": 10000.0,
+          "window_size": null
+        },
+        "drop_silu": true
+      }
+    }
+  ]
+}

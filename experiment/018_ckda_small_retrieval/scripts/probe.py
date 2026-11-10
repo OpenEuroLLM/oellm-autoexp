@@ -47,4 +47,7 @@ for task in ['winogrande', 'squadv2', 'coqa', 'squad_completion', 'swde', 'fda']
         errors.append((task, repr(exc)))
 if errors:
     raise RuntimeError(errors)
+(root / 'results/probe_pass.json').write_text(json.dumps({
+    'torch': torch.__version__, 'transformers': transformers.__version__,
+    'device': torch.cuda.get_device_name(), 'tasks': 'all six ready'}) + '\n')
 print('PROBE_PASS', flush=True)
