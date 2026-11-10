@@ -1430,6 +1430,24 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - Recommended engine policy: two layers ahead top-10 (~90 % of the bytes with two layers of lead), one layer
     ahead top-5-10 top-up, recency cache of the last 16 tokens, re-route on miss.
 
+- **2026-11-10, T14: parallel vs depth latent MTP, quality** (s3, t8 schedule, 2000 steps, loss stride 4;
+  validation gap to no MTP at 1500 / 2000 / 2500 / 3000):
+
+  | arm | 1500 | 2000 | 2500 | 3000 |
+  |---|---:|---:|---:|---:|
+  | depth k3 (t8b) | +0.005 | -0.003 | +0.0005 | -0.0007 |
+  | parallel k3 | +0.009 | -0.003 | -0.0007 | +0.0002 |
+  | depth k8 (t8b) | +0.009 | +0.002 | +0.007 | +0.004 |
+  | parallel k8 | +0.006 | +0.002 | +0.006 | +0.002 |
+
+  - **Parallel = depth in quality** (both flat at 3 offsets, both slightly worse at 8), at about half the cost at
+    8 offsets (T13: +12 % vs +21 %). As the latent form carries no future-token information, this was expected:
+    parallel replaces depth as the latent MTP form. Neither improves the main loss at this scale.
+- **2026-11-10, T11 interim (2000-step selectors):** page_mean_pg final at 3000: 2.0512 vs dense 2.0338, a constant
+  gap (+0.018 / +0.017 / +0.014 / +0.017). At 2000: NSA +0.027 (from +0.039: closing), LSA +0.052, CSA2 +0.054,
+  CSA2 with indexer warm-up +0.054 (warm-up no help so far). The indexer KL of both CSA2 arms plateaus at
+  0.35-0.38.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
