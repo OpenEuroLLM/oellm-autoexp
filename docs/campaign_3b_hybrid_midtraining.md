@@ -1469,6 +1469,9 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     (LSA in a learned latent space) +0.059 (= LSA, despite KL 0.18). So learned selection over raw pages is not
     worse; the gap of NSA / CSA2 / LSA comes from their designs (compression, block/bucket granularity), not from
     learned vs parameter-free selection. Final T15 at 3000: D-LSA ~07:45, indexer ~11:00.
+  - **T15 D-LSA final:** 2.0820 at 3000 = +0.048 (parameter-free LSA +0.047); gaps +0.059 / +0.052 / +0.054 /
+    +0.048 track LSA's exactly. The learned latent space lowers the selector's KL (0.18 vs CSA2's ~0.35) but not
+    the loss: LSA's bucket granularity, not its key space, sets its gap.
 
 ## References
 
