@@ -42,4 +42,5 @@ sweep:
       configs:
         - aux.arm: d_cal_full
         - aux.arm: bgqa_cal_full
-        - aux.arm: e_cal_full  # option E (kvshare blocks)
+        - aux.arm: e_cal  # option E (kvshare blocks): its final save at 1260 (past the hand-over at 1250)
+          aux.step: 1260

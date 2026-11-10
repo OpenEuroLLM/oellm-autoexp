@@ -1,6 +1,6 @@
 # @package _global_
-# Derived from fixedvalid_eval_ckdabsub64_e_mn5.yaml (gen_fixedvalid_eval.py output) for the kvshare arm e_cal_full
-# (option E): ckda_branch kvshare + ckda_branch_kv_source_layers, the e_cal checkpoints; gated on the 1300 save.
+# Derived from fixedvalid_eval_ckdabsub64_e_mn5.yaml (gen_fixedvalid_eval.py output) for the kvshare arm e_cal
+# (option E): ckda_branch kvshare + ckda_branch_kv_source_layers; e_cal's final save at 1260 (past the hand-over at 1250).
 # Fixed held-out validation sets at 1300 (/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_cal_full/ckpt); the model and environment
 # of the run's resolved config /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_cal_full/config-mn5-pool-p264.0389.yaml (keys not in the current schema dropped: none).
 # Enqueue into a pool with spare nodes (4-node runs next to a main run):
@@ -1226,11 +1226,7 @@ sweep:
   groups:
   - type: list
     configs:
-    - aux.arm: s1300
-      job.start_condition:
-        class_name: FileExistsCondition
-        path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/e_cal_full/ckpt/iter_0001300/.metadata
-        persistent_pass: true
-      backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/e_cal_full/ckpt
-      backend.megatron.ckpt_step: 1300
-      backend.megatron.train_iters: 1300
+    - aux.arm: s1260
+      backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/e_cal/ckpt
+      backend.megatron.ckpt_step: 1260
+      backend.megatron.train_iters: 1260
