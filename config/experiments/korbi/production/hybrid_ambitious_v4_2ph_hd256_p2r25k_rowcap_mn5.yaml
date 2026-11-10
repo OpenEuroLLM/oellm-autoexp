@@ -1,0 +1,16 @@
+# @package _global_
+# The 25000 restart (hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5: --engram-clip-grad 1.0, dataset fix, exact resume on
+# the marker restart25k_ready) plus the Engram table row-norm cap (session -2f; Megatron 7c67b1193 + 78f818ef8 on
+# oellm/v4main-diag): rows above the cap rescaled after each update, the cap ramping geometrically from 13 (the
+# current max row norm, no jump at the restart) to 7 (trims the tail above p99.999 of ckpt 24000's rows) over
+# 2000 table steps from 25000 (the table step = the iteration; checkpointed). Snapshot autoexp_v4hd256p2rowcap.
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5
+  - _self_
+
+backend:
+  megatron:
+    engram_clip_rownorm: 7.0
+    engram_clip_rownorm_start: 13.0
+    engram_clip_rownorm_ramp_start: 25000
+    engram_clip_rownorm_ramp_steps: 2000
