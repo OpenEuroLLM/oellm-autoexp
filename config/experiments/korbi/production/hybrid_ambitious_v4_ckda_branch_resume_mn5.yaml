@@ -21,9 +21,11 @@ sweep:
         - aux.arm: drop
           job.start_condition:
             class_name: FileExistsCondition
-            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt/iter_0023400/.metadata
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_r23400/ckpt/iter_0023400/.metadata
             persistent_pass: true
-          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop/ckpt
+          # a hard-linked copy of drop/ckpt/iter_0023400 with its own pointer: a cancelled duplicate (started
+          # from 23300) saved 23301 into drop/ckpt on its graceful stop and moved drop/ckpt's pointer
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop_r23400/ckpt
           backend.megatron.save_interval: 50
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 41]
