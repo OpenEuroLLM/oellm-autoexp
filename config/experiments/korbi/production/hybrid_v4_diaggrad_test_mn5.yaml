@@ -98,3 +98,19 @@ sweep:
           backend.megatron.diag_layer_grad_norms: true
           backend.megatron.diag_clip_events: true
           backend.megatron.engram_clip_grad: 1.0
+        # Engram stabilisation as planned for the main run at 25k (Megatron 7c67b1193 / 78f818ef8): engram_clip_grad
+        # + the row-norm cap, here ramped 0.25 -> 0.18 over steps 5-15 so that it bites at fresh init (table rows start
+        # at ~0.16 = 0.02 x sqrt(64)). Pass: [engram-rownorm] lines (rows rescaled, cap per step), diag/weight/engram
+        # rownorm_max <= cap from step 15 on, stable losses, step time ~ unchanged.
+        - aux.arm: rowcap
+          backend.env.MEGATRON_ENGRAM_ROWNORM_REPORT: "1"
+          backend.env.MEGATRON_DIAG_WEIGHT_EVERY: "1"
+          backend.megatron.diagnostics_interval: 1
+          backend.megatron.diag_layer_grad_norms: true
+          backend.megatron.diag_clip_events: true
+          backend.megatron.diag_weight_stats: true
+          backend.megatron.engram_clip_grad: 1.0
+          backend.megatron.engram_clip_rownorm: 0.18
+          backend.megatron.engram_clip_rownorm_start: 0.25
+          backend.megatron.engram_clip_rownorm_ramp_start: 5
+          backend.megatron.engram_clip_rownorm_ramp_steps: 10
