@@ -1,0 +1,44 @@
+# @package _global_
+# End-to-end export check of a ckda_branch arm (scripts/korbi/hf_export/validate_branch_export.sh: HF export,
+# check_export, HF loss on v8ml-valid-sub64, vLLM vs HF) on one node, gated on the checkpoint. The small-model
+# arms past the hand-over (hybrid_v4_ckda_branch_test_mn5 d_cal_full / bgqa_cal_full, 1300):
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/ckda_branch_export_check_mn5 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: ckdab_export_check_${aux.arm}
+  arm: d_cal_full
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch
+  step: 1300
+  tests: ""
+  bench: "bash scripts/korbi/hf_export/validate_branch_export.sh ${aux.test_root}/${aux.arm} ${aux.step} ${aux.test_root}/export_check/${aux.arm}"
+
+job:
+  name: ckdab_export_check_${aux.arm}
+  base_output_dir: ${aux.test_root}/export_check/${aux.arm}/logs
+  est_step_time_s: 2400
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.test_root}/${aux.arm}/ckpt/iter_000${aux.step}/.metadata
+    persistent_pass: true
+  metadata:
+    pool_priority: 45
+    pool_use_excluded_nodes: true  # one node, no training: a slow GPU only slows the check
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - aux.arm: d_cal_full
+        - aux.arm: bgqa_cal_full
