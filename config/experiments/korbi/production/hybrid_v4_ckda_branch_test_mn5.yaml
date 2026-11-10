@@ -277,3 +277,37 @@ sweep:
           backend.megatron.ckda_branch_calibrate: true
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
+        # option E (user 2026-11-10): kvshare -- attention with new q / gate / o over the keys / values of the
+        # block's own attention layer (0 / 17 / 33), replacing complex_kda on 9 / 25 / 41; 1100 -> 1260 (past the
+        # hand-over), save at 1200; e_cal_r resumes that save strictly (calib loaded, not re-measured)
+        - aux.arm: e_cal
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/e_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.exit_interval: 1260
+          backend.megatron.save: ${aux.test_root}/e_cal/ckpt
+          backend.megatron.save_interval: 1200
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33]
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+        - aux.arm: e_cal_r
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/e_cal/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*1200\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: ${aux.test_root}/e_cal/ckpt
+          backend.megatron.exit_interval: 1210
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33]
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150

@@ -770,6 +770,11 @@ class MegatronConfig(ConfigInterface):
     # lsa: buckets per cluster block (page_sparse_topk buckets are selected).
     page_sparse_lsa_buckets: int = 32
 
+    # lsa: D-LSA -- cluster and score in a learned latent space (per-KV-group key / query
+    # maps, identity at init), trained by KL to the dense attention mass per bucket
+    # (page_sparse_indexer_loss_coeff; with page_sparse_dense_forward as its warm-up).
+    page_sparse_lsa_latent: bool = False
+
     # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
     # is the polar forget gate's init cap without its angle.
     linear_kronlstm_forget_offset: float = 0.0
@@ -979,10 +984,12 @@ class MegatronConfig(ConfigInterface):
     # branch(x)``. ``"attention"`` is Megatron's own softmax attention as the hybrid's ``*``
     # layers build it (kv_channels, output gate, qk norm, XSA, NoPE) with
     # ``ckda_branch_num_query_groups`` KV groups; ``"kronlstm"`` is the KronLSTM layer (the
-    # ``linear_kronlstm_*`` / ``linear_fla_*`` settings). ``gamma`` (one per layer, 0 at
-    # insertion) makes the branch start as a no-op; the branch's weights come from checkpoint
-    # surgery (scripts/korbi/production/add_ckda_branch.py).
-    ckda_branch: Literal["attention", "kronlstm"] | None = None
+    # ``linear_kronlstm_*`` / ``linear_fla_*`` settings); ``"kvshare"`` is that attention with
+    # its own query (and output gate) projection only, reading the keys / values of an earlier
+    # attention layer (``ckda_branch_kv_source_layers``): no KV cache of its own. ``gamma``
+    # (one per layer, 0 at insertion) makes the branch start as a no-op; the branch's weights
+    # come from checkpoint surgery (scripts/korbi/production/add_ckda_branch.py).
+    ckda_branch: Literal["attention", "kronlstm", "kvshare"] | None = None
 
     # 0-based indices (in the decoder's layer list, as the checkpoint keys
     # ``decoder.layers.<i>``) of the complex_kda layers that get the branch.
@@ -990,6 +997,13 @@ class MegatronConfig(ConfigInterface):
 
     # KV groups of the attention branch (its query heads: num_attention_heads).
     ckda_branch_num_query_groups: int = 2
+
+    # ``ckda_branch="kvshare"``: per entry of ``ckda_branch_layers``, the 0-based index of the
+    # attention layer whose keys / values (after its k norm, as its own core attention gets
+    # them) the branch attends over. They are detached: the source layer's projections get no
+    # gradient from the branch (full-layer recompute runs the source's forward without
+    # autograd).
+    ckda_branch_kv_source_layers: list[int] | None = None
 
     # The iteration the branch was inserted at; the schedules below count from it.
     ckda_branch_start_iteration: int = 0
@@ -2272,6 +2286,25 @@ class MegatronConfig(ConfigInterface):
 
     # Gradient clipping based on global L2 norm.
     clip_grad: float = 1.0
+
+    # Update rule of the sharded Engram tables: adam (TableAdam) or sinkhorn (DeepSeek-V4.1:
+    # Nesterov momentum + Sinkhorn row / column balancing, --sinkhorn-momentum / --sinkhorn-
+    # iters / --sinkhorn-lr-ratio; lr = base x --engram-lr-mult).
+    engram_table_optimizer: Literal["adam", "sinkhorn"] = "adam"
+
+    # Cap on the L2 norm of every Engram table row: after each update, rows above it are
+    # rescaled to it (Adam moments unchanged). Default: off.
+    engram_clip_rownorm: float | None = None
+
+    # Start of a geometric ramp down to --engram-clip-rownorm (no cap before --engram-clip-
+    # rownorm-ramp-start when set).
+    engram_clip_rownorm_start: float | None = None
+
+    # Table-optimizer step (~ iteration) at which the row-norm cap or its ramp starts.
+    engram_clip_rownorm_ramp_start: int = 0
+
+    # Steps of the geometric ramp of the row-norm cap.
+    engram_clip_rownorm_ramp_steps: int = 0
 
     # Clip the Engram tables separately: take them out of the global norm (the dense
     # parameters are then clipped with the norm of everything else, --clip-grad) and clip them

@@ -1,0 +1,53 @@
+# @package _global_
+# ckda_branch option E (user 2026-11-10): shared-KV attention REPLACING complex_kda on layers 9 / 25 / 41 --
+# per layer an attention with new (random) q / output-gate / output projections over the keys / values of
+# the block's own attention layer (0 / 17 / 33; megatron/core/ssm/ckda_branch.py ckda_branch="kvshare"): no
+# KV cache of its own. The direct comparison is bgqa (same layers, its own new 2-group KV) and drop.
+# Everything else as the other arms (hybrid_ambitious_v4_ckda_branch_mn5): the main run's batches from 23300,
+# linear crossfade over 150 steps with the calibrated branch scale, end at 23499 (the other arms' end).
+# 256 nodes on p264 host002 (user 2026-11-10: speed; the other arms ran at 64): the reference-layout sampler
+# gives the same batches at dp 1024 x mbs 8 (one micro-batch per rank, as the main run at 256n). Saves every
+# 50 steps (full, with optimizer: kept for later continuation, user).
+# Budget (user 2026-11-10): +~1k GPU-h approved for E.
+# Before: surgery ckda_branch_surgery_mn5 aux.mode=prod aux.arms=e_cal -> ckda_branch/e_cal_src/ckpt/iter_0023300
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_e_mn5 --yes aux.node_check=off
+defaults:
+  - hybrid_ambitious_v4_ckda_branch_mn5
+  - _self_
+
+aux:
+  nodes: 256
+  arm: e
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/e_cal_src/ckpt
+    save_interval: 50
+    exit_interval: 23499
+    ckda_branch: kvshare
+    ckda_branch_layers: [9, 25, 41]
+    ckda_branch_kv_source_layers: [0, 17, 33]
+
+job:
+  # the main run at 256n: 15.1 s/step; the 1.1 TB load at 256 nodes
+  est_steps: 200
+  est_step_time_s: 16.0
+  est_startup_min: 25.0
+  metadata:
+    pool_priority: 75
+
+slurm:
+  sbatch:
+    time: "03:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: e
+          job.start_condition:  # its surgery checkpoint
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/e_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
