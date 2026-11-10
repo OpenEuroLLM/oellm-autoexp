@@ -213,3 +213,39 @@ sweep:
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
           backend.megatron.ckda_branch_alpha_end: 0.0
+        # option E (kvshare: attention over the block attention's keys / values, 256 nodes)
+        - aux.arm: e_23400
+          job.start_condition:  # the arm's save (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/e/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/e/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
+        # option E (kvshare: attention over the block attention's keys / values, 256 nodes)
+        - aux.arm: e_23499
+          job.start_condition:  # the arm's save (DCP writes .metadata last)
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/e/ckpt/iter_0023499/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/e/ckpt
+          backend.megatron.ckpt_step: 23499
+          backend.megatron.train_iters: 23499
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33]
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150
+          backend.megatron.ckda_branch_alpha_end: 0.0
