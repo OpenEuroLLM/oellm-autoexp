@@ -3,13 +3,18 @@
 # the marker restart25k_ready) plus the Engram table row-norm cap (session -2f; Megatron 7c67b1193 + 78f818ef8 on
 # oellm/v4main-diag): rows above the cap rescaled after each update, the cap ramping geometrically from 13 (the
 # current max row norm, no jump at the restart) to 7 (trims the tail above p99.999 of ckpt 24000's rows) over
-# 2000 table steps from 25000 (the table step = the iteration; checkpointed). Snapshot autoexp_v4hd256p2rowcap.
+# 2000 table steps from 25000 (the table step = the iteration; checkpointed). Plus engram_lr_mult 5 -> 1 (session -2f:
+# DeepSeek-V4.1's "Engram lr x5" is on a Sinkhorn-balanced momentum update, ~2.3e-4 per element and step; our Adam at
+# 5 x 8.5e-4 takes 5-18x larger steps). The new multiplier is kept at load: the table optimizer matches checkpoint
+# groups by sharded_table_lr_mult, so the saved 5.0 group does not match (check "param_group 7 ... lr=0.00085" in the
+# log). Snapshot autoexp_v4hd256p2rowcap.
 defaults:
   - hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5
   - _self_
 
 backend:
   megatron:
+    engram_lr_mult: 1.0
     engram_clip_rownorm: 7.0
     engram_clip_rownorm_start: 13.0
     engram_clip_rownorm_ramp_start: 25000
