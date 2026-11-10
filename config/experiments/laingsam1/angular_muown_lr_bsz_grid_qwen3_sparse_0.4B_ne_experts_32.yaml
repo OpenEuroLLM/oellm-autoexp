@@ -54,7 +54,9 @@ stage: ""
 
 job:
   name: "0.4B_ne_sparse_angular_muown_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_gbsz${backend.megatron.global_batch_size}_lr${backend.megatron.lr}_40BT"
-  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  # Fixed directory (where the first runs of this grid live), not derived from
+  # wandb_project, so logging to Risto's W&B project doesn't move checkpoints.
+  base_output_dir: "/scratch/project_462001516/experiments/moe_angular_muown_lr_bsz_grid/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 backend:
@@ -130,7 +132,7 @@ backend:
     # the optimizer state, so dropping it would restart the u-decay schedule.
     no_load_optim: False
     wandb_exp_name: "${job.name}"
-    wandb_project: "moe_angular_muown_lr_bsz_grid"
+    wandb_project: "moe_muon_lr_bsz_grid"
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
@@ -138,6 +140,11 @@ backend:
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: openeurollm/tokenizer-256k
     data_cache_path: /scratch/project_462001516/users/laingsam1/cache/MEGATRON_262k/${job.name}
+    # datamix4 moved from multilingual_dataset/ to multilingual_oellm/ (Oct 2026).
+    # Same datasets and weights as datamix4_lumi_per_split_v19.json, new root;
+    # Val entry nemotron-cc/high-actual-new (5.4% of val) is dropped: its new copy
+    # (high-actual-merged) is truncated, .bin 20.4 GB vs 22.9 GB expected by .idx.
+    per_split_data_args_path: /scratch/project_462001516/users/laingsam1/oellm-autoexp/config/experiments/laingsam1/datamix4_lumi_per_split_v19_multilingual_oellm.json
 
     seq_length: 4096
     max_position_embeddings: 4096

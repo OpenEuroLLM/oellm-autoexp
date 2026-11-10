@@ -1,0 +1,213 @@
+# @package _global_
+#
+# Muon at gbsz 4096, lr 5e-3, for comparison with AdamW and AngularMuown at the
+# same batch size (adamw_gbsz4096_*, angular_muown_gbsz4096_*). Muon settings
+# are Risto's (experiments/risto/muon_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32);
+# schedule, data, code and container are the same as the AdamW/AngularMuown runs.
+# lr: in Risto's gbsz 4096 runs, 5e-3 was ahead of 1e-3 at iter 1000 (val 2.514
+# vs 2.547), but that run died at iter 1341 on a node failure. This is a fresh
+# run in its own directory and never touches Risto's checkpoints.
+# Two runs, branched WSD (autoexp stable/decay siblings):
+#   main    ..._150BT: 8941 iters. Warmup 119 steps (5% of the 40BT run's 2385
+#           iters, same as a standalone 40BT run), constant LR, then linear
+#           decay over the last 20% (120BT -> 150BT, 1788 iters). Saves an
+#           extra checkpoint at iter 1908 (32BT) for the branch.
+#   branch  ..._40BT_decay_from_150BT: loads the main run's iter-1908
+#           checkpoint (model + optimizer state) and decays linearly over 477
+#           iters to 40BT, i.e. the schedule of a standalone 40BT run. It starts
+#           automatically once that checkpoint exists (the monitor must keep
+#           running) and saves into its own directory; it only reads the main
+#           run's checkpoint.
+# 16 nodes, as in Risto's gbsz 4096 Muon runs (grad accumulation 16).
+#
+# Render the sbatch script without submitting:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/muon_gbsz4096_qwen3_sparse_0.4B_ne_experts_32 \
+#     --dry-run
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: auto_restart
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32
+  - /backend/megatron/multilingual_scaling/data: datamix4_lumi
+  - _self_
+
+container:
+  image: /scratch/project_462001516/users/laingsam1/containers/AutoExp_2026-07-02.sif
+  env:
+    WANDB_TAGS: "lumi,muon_lr_bsz_grid,muon,gbsz4096,40BT"
+
+index: 0
+stage: ""
+
+job:
+  name: "0.4B_ne_sparse_muon_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_gbsz${backend.megatron.global_batch_size}_lr${backend.megatron.lr}_${backend.aux.run_label}"
+  # Fixed directory, not derived from wandb_project, so changing the W&B
+  # project never moves checkpoints.
+  base_output_dir: "/scratch/project_462001516/experiments/moe_muon_gbsz4096_150BT/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    # Schedule knobs (see backend.megatron.lr_warmup_iters / eval_interval).
+    lr_warmup_fraction: 0.05
+    eval_every_tokens: 2_500_000_000  # overridden per stage by the sweep
+    # Token horizon of this job (overridden per stage by the sweep) and of the
+    # short run whose warmup and branch point both jobs share.
+    horizon_tokens: 150_000_000_000
+    short_horizon_tokens: 40_000_000_000
+    run_label: 150BT  # overridden per stage by the sweep
+    # Checkout of oellm/v0.19-moe-lumi-angular-muown @ 1f88af5d1 (see header).
+    megatron_dir: /scratch/project_462001516/users/laingsam1/NVIDIA-Megatron-LM-angular
+    # emerging_optimizers 0.2.0 (provides Muon), as in the AngularMuown runs.
+    emerging_optimizers_dir: /scratch/project_462001516/users/rluukkon/python-external/muon
+
+  launcher_script: ${backend.aux.megatron_dir}/pretrain_gpt.py
+
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # Iters for this job's horizon; scale with global_batch_size (seq_length=4096).
+    train_iters: "${oc.eval:'(${backend.aux.horizon_tokens} + (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}) - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    eval_iters: 5
+    # Same eval cadence as the AngularMuown grid: every ~2.5B tokens, rounded to
+    # a multiple of 100 iters. gbsz 256/512/1024/2048 -> 2400/1200/600/300 iters.
+    eval_interval: "${oc.eval:'max(100, round(${backend.aux.eval_every_tokens} / (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}) / 100) * 100)'}"
+    # 8 checkpoints per run (~every 5B tokens).
+    save_interval: "${oc.eval:'-(-${backend.megatron.train_iters} // 8)'}"
+    # Extra checkpoints: the 40BT branch point (= where a standalone 40BT run's
+    # decay starts, iter 1908) and where this job's own decay starts.
+    save_extra_steps:
+      - "${oc.eval:'((${backend.aux.short_horizon_tokens} + (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}) - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) - int((((${backend.aux.short_horizon_tokens} + (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}) - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}))) * 0.2)'}"
+      - "${oc.eval:'${backend.megatron.train_iters} - ${backend.megatron.lr_wsd_decay_iters}'}"
+    load: "${job.base_output_dir}/checkpoints"
+
+    moe_grouped_gemm: True
+    use_distributed_optimizer: True
+    # Load optimizer and RNG state on resume, so an auto-restart keeps the Muon
+    # momentum and Adam moments instead of re-initialising them.
+    no_load_optim: False
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_muon_lr_bsz_grid"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/laingsam1/cache/MEGATRON_262k/${job.name}
+    # datamix4 moved from multilingual_dataset/ to multilingual_oellm/ (Oct 2026).
+    # Same datasets and weights as datamix4_lumi_per_split_v19.json, new root;
+    # Val entry nemotron-cc/high-actual-new (5.4% of val) is dropped: its new copy
+    # (high-actual-merged) is truncated, .bin 20.4 GB vs 22.9 GB expected by .idx.
+    per_split_data_args_path: /scratch/project_462001516/users/laingsam1/oellm-autoexp/config/experiments/laingsam1/datamix4_lumi_per_split_v19_multilingual_oellm.json
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    # Warmup fixed at 5% of the 40BT run's iters (119 at gbsz 4096) for both jobs.
+    lr_warmup_iters: "${oc.eval:'int(${backend.aux.lr_warmup_fraction} * (((${backend.aux.short_horizon_tokens} + (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}) - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}))))'}"
+    # Linear decay over the last 20% of this job's iters.
+    lr_wsd_decay_iters: "${oc.eval:'int(${backend.megatron.train_iters} * 0.2)'}"
+
+    micro_batch_size: 2
+    global_batch_size: 256  # overridden by sweep
+
+    moe_aux_loss_coeff: 1.e-3
+    moe_expert_viability_metrics: True
+    moe_masked_layer_validation: True
+    moe_masked_layer_eval_iters: 8
+
+    # Spectral Muon with RMS matching for hidden 2-D matrices; Adam for
+    # scalar/vector and embedding/output params. Same as Risto's Muon grid.
+    lr: 5.e-4  # overridden by sweep
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+    optimizer: muon
+    muon_momentum: 0.95
+    muon_nesterov: True
+    muon_scale_mode: spectral
+    muon_coefficient_type: polar_express
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: True
+    muon_extra_scale_factor: 0.2
+    muon_scalar_optimizer: adam
+
+    overlap_param_gather_with_optimizer_step: False
+    overlap_grad_reduce: True
+    overlap_param_gather: True
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+
+# One (gbsz, lr) cell x two stages. The decay40BT stage is a sibling of the
+# stable (main, 150BT) stage; ${sibling.stable...} refers to the main run.
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - {backend.megatron.global_batch_size: 4096, backend.megatron.lr: 5.e-3, slurm.sbatch.nodes: 16}
+    - type: list
+      configs:
+        # Main run to 150BT (with its own decay over the last 20%). Evals every
+        # ~16.8B tokens (1000 iters): each eval (incl. masked-layer validation)
+        # takes ~31 min at gbsz 4096, so 300 iters cost ~25% of wall time.
+        - stage: stable
+          backend.aux.horizon_tokens: 150_000_000_000
+          backend.aux.run_label: 150BT
+          backend.aux.eval_every_tokens: 16_777_216_000
+        # 40BT cooldown branch from the main run's iter-1908 checkpoint.
+        - stage: decay40BT
+          backend.aux.horizon_tokens: 40_000_000_000
+          backend.aux.run_label: 40BT_decay_from_150BT
+          backend.aux.eval_every_tokens: 16_777_216_000  # 1000 iters: eval at 2000 + final
+          backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
+          backend.megatron.ckpt_step: "\\${oc.eval:'\\${backend.megatron.train_iters} - \\${backend.megatron.lr_wsd_decay_iters}'}"
+          # Take the LR schedule from these args, not from the main run's checkpoint.
+          backend.megatron.override_opt_param_scheduler: true
+          # Start when the branch checkpoint is complete: .metadata is written last.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters} - \\${backend.megatron.lr_wsd_decay_iters}).zfill(7)'}/.metadata"
+          # No cancel_condition: the main run's recoverable crashes (NCCL timeouts,
+          # bus errors) print tracebacks and are auto-restarted, and a log-pattern
+          # cancel would kill the branch permanently. A waiting branch uses no GPUs.
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    PYTHONPATH: "${backend.aux.emerging_optimizers_dir}:${backend.aux.megatron_dir}:."
+    SINGULARITYENV_PYTHONPATH: "${backend.aux.emerging_optimizers_dir}:${backend.aux.megatron_dir}:."
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 8  # overridden per run by the sweep
+    account: "project_462001516"
+    partition: standard-g
+    time: "02-00:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
