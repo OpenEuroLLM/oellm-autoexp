@@ -2,21 +2,5 @@
 hydra:
   searchpath: [file:///gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_ckdab27/config]
 defaults:
-  - /experiments/korbi/hybrid_speed/kernel_tests_mn5
+  - shared_config
   - _self_
-aux:
-  name: ckda018_probe
-  tests: ""
-  bench: bash /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/scripts/run_node.sh probe
-job:
-  name: ckda018_probe
-  base_output_dir: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/results/probe_job
-  est_step_time_s: 600
-  metadata:
-    pool_priority: 60
-    pool_singleton: null
-slurm:
-  sbatch:
-    account: cns144
-    qos: acc_xehpc
-    time: "00:30:00"

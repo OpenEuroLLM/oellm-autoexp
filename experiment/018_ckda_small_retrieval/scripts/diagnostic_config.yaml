@@ -3,7 +3,7 @@
 hydra:
   searchpath: [file:///gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_ckdab27/config]
 defaults:
-  - launch_config
+  - shared_config
   - _self_
 aux:
   name: ckda018_diagnose
