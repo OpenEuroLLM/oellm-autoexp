@@ -20,6 +20,10 @@ aux:
   nodes: 8
 
 backend:
+  env:
+    # long_64k OOMed at the training cap 0.80 (2.5 GiB short with 11 GiB of the GPU free, all four 23400 evals,
+    # 2026-11-10); the eval holds no optimizer state
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,per_process_memory_fraction:0.92
   megatron:
     expert_model_parallel_size: 8  # eval at 8 nodes: EP 4 builds 90 experts per GPU (OOM)
     moe_token_dispatcher_type: alltoall  # MoonEP's IPC buffers are intra-node; EP 8 spans 2 nodes
