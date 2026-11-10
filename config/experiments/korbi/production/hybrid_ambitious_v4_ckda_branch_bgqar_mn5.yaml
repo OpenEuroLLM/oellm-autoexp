@@ -1,0 +1,51 @@
+# @package _global_
+# ckda_branch bgqa-random (user 2026-11-10): the bgqa arm -- attention 16q / 2kv, head dim 256 (the stack's
+# attention: output gate, qk norm, XSA, NoPE) on layers 9 / 25 / 41, replacing complex_kda -- but with its own
+# q / gate / k / v / o initialized at RANDOM (directions; row norms and q / k norm gains of the block's attention
+# layer 0 / 17 / 33), after the arms started from complex_kda's projections did not help. Everything else as the
+# other arms (hybrid_ambitious_v4_ckda_branch_mn5): the main run's batches from 23300, linear crossfade over 150
+# steps with the calibrated branch scale (RMS(ckda) / RMS(branch) on the first step), end at 23499; saves every 50
+# (full, kept). 256 nodes on the o260c host002 (260 nodes, user: "do these experiments now one after another").
+# Before: surgery ckda_branch_surgery_mn5 aux.mode=prod aux.arms=bgqar_cal -> ckda_branch/bgqar_cal_src/ckpt/iter_0023300
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o260c \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_ckda_branch_bgqar_mn5 --yes aux.node_check=off
+defaults:
+  - hybrid_ambitious_v4_ckda_branch_mn5
+  - _self_
+
+aux:
+  nodes: 256
+  arm: bgqar
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqar_cal_src/ckpt
+    save_interval: 50
+    exit_interval: 23499
+    ckda_branch: attention
+    ckda_branch_layers: [9, 25, 41]
+    ckda_branch_num_query_groups: 2
+
+job:
+  # E at 256n: ~16-24 s/step, the load ~10 min
+  est_steps: 200
+  est_step_time_s: 20.0
+  est_startup_min: 20.0
+  metadata:
+    pool_priority: 75
+
+slurm:
+  sbatch:
+    time: "03:00:00"
+    qos: acc_xehpc
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: bgqar
+          job.start_condition:  # its surgery checkpoint
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqar_cal_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true

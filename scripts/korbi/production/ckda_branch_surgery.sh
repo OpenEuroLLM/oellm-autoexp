@@ -50,6 +50,8 @@ for arm in "${ARMS[@]}"; do
     d_cal)    args=(--branch kronlstm --layers 9,25,41 --calibrate) ;;
     # option E: kvshare attention (new q / gate / o) over the keys / values of the block's attention layer
     e_cal)    args=(--branch kvshare --groups 2 --layers 9,25,41 --kv-sources 0,17,33 --calibrate) ;;
+    # bgqa with RANDOM q / gate / k / v / o (user 2026-11-10), row norms of the block's attention layer
+    bgqar_cal) args=(--branch attention --groups 2 --layers 9,25,41 --init random --kv-sources 0,17,33 --calibrate) ;;
     *) echo "unknown arm $arm" >&2; exit 2 ;;
   esac
   dst=$ROOT/${arm}_src/ckpt
