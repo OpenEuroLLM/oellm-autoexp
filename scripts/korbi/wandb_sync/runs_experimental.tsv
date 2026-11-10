@@ -127,3 +127,17 @@ x_engaux__faux	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/faux
 x_engaux__fauxbase	/gpfs/scratch/ehpc533/users/korbip/tmp/v4hd256pool/fauxbase
 x_screen5fp16_s3__v4ldm_bf16	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fp16_s3/v4ldm_bf16
 x_screen5fp16_s3__v4ldm_fp16	/gpfs/scratch/ehpc533/hybrid_nucleus/campaign_3b/screen5fp16_s3/v4ldm_fp16
+x_ckdab__bgqa	/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa
+x_ckdab__b8	/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/b8
+x_ckdab__cgqa	/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa
+x_ckdab__d	/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/d
+x_ckdab__drop	/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/drop
+x_ckdabtest__ref	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/ref
+x_ckdabtest__bgqa_xf	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_xf
+x_ckdabtest__bgqa_mm	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_mm
+x_ckdabtest__bgqa_cal	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_cal
+x_ckdabtest__bgqa_r	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/bgqa_r
+x_ckdabtest__drop	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/drop
+x_ckdabtest__d_xf	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_xf
+x_ckdabtest__d_mm	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_mm
+x_ckdabtest__d_cal	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_cal

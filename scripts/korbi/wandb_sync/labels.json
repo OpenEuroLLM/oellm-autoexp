@@ -338,5 +338,159 @@
    "fp16"
   ],
   "notes": "screen5fp16 (user 2026-11-08): FP16 vs BF16 of the v4_ldm recipe at s3 (screen5qbg ldm_pab setting + embedding norm, QB EMA 0 + global aux 1e-4, no wd on embedding / routers), 4 nodes per arm, 4000 steps, paired arms. This arm: FP16 (CuTe LDM FP16 storage cute_kernels a4e4da1, shared loss scaler, fp32 router counts; Megatron f4bd89ceb), initial loss scale 2^16."
+ },
+ "x_ckdab__bgqa": {
+  "name": "ckdab_bgqa",
+  "tags": [
+   "ckda_branch",
+   "production",
+   "23300",
+   "attention",
+   "gqa",
+   "lower"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. 84B main-run checkpoint 23300 -> 23500 on its own batches, 64 nodes (p264 host003). This arm: attention 16q/2kv hd256 (gate, qk norm, XSA, NoPE) on layers 9/25/41 (lower half 3:1), calibrated."
+ },
+ "x_ckdab__b8": {
+  "name": "ckdab_b8",
+  "tags": [
+   "ckda_branch",
+   "production",
+   "23300",
+   "attention",
+   "kv8",
+   "lower"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. 84B main-run checkpoint 23300 -> 23500 on its own batches, 64 nodes (p264 host003). This arm: attention 16q/8kv on layers 9/25/41, calibrated."
+ },
+ "x_ckdab__cgqa": {
+  "name": "ckdab_cgqa",
+  "tags": [
+   "ckda_branch",
+   "production",
+   "23300",
+   "attention",
+   "gqa",
+   "all"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. 84B main-run checkpoint 23300 -> 23500 on its own batches, 64 nodes (p264 host003). This arm: attention 16q/2kv on all six positions 9/25/41/58/74/90 (3:1 everywhere), calibrated."
+ },
+ "x_ckdab__d": {
+  "name": "ckdab_d",
+  "tags": [
+   "ckda_branch",
+   "production",
+   "23300",
+   "kronlstm",
+   "lower"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. 84B main-run checkpoint 23300 -> 23500 on its own batches, 64 nodes (p264 host003). This arm: KronLSTM (CKLSTM, normalized v, from the complex_kda weights) on layers 9/25/41, calibrated."
+ },
+ "x_ckdab__drop": {
+  "name": "ckdab_drop",
+  "tags": [
+   "ckda_branch",
+   "production",
+   "23300",
+   "control",
+   "drop"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. 84B main-run checkpoint 23300 -> 23500 on its own batches, 64 nodes (p264 host003). This arm: control: complex_kda faded out on 9/25/41, nothing in its place."
+ },
+ "x_ckdabtest__ref": {
+  "name": "ckdabtest_ref",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "reference"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: reference: no branch, 1100 -> 1300."
+ },
+ "x_ckdabtest__bgqa_xf": {
+  "name": "ckdabtest_bgqa_xf",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "attention"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: attention 16q/2kv on 9/25/41, crossfade, unscaled."
+ },
+ "x_ckdabtest__bgqa_mm": {
+  "name": "ckdabtest_bgqa_mm",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "attention",
+   "matched"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: attention, gamma set by hand to the measured RMS ratio."
+ },
+ "x_ckdabtest__bgqa_cal": {
+  "name": "ckdabtest_bgqa_cal",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "attention",
+   "calibrated"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: attention, auto-calibrated (ckda_branch_calibrate), cancelled after the 1200 save."
+ },
+ "x_ckdabtest__bgqa_r": {
+  "name": "ckdabtest_bgqa_r",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "attention",
+   "resume"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: resume check of bgqa_xf 1200 -> 1210."
+ },
+ "x_ckdabtest__drop": {
+  "name": "ckdabtest_drop",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "control",
+   "drop"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: control: complex_kda faded out on 9/25/41, nothing in its place."
+ },
+ "x_ckdabtest__d_xf": {
+  "name": "ckdabtest_d_xf",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "kronlstm"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: KronLSTM on 9/25/41, crossfade, unscaled."
+ },
+ "x_ckdabtest__d_mm": {
+  "name": "ckdabtest_d_mm",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "kronlstm",
+   "matched"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: KronLSTM, gamma set by hand to the measured RMS ratio."
+ },
+ "x_ckdabtest__d_cal": {
+  "name": "ckdabtest_d_cal",
+  "tags": [
+   "ckda_branch",
+   "test",
+   "small",
+   "kronlstm",
+   "calibrated"
+  ],
+  "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: KronLSTM, auto-calibrated; cancelled at load (calibration values only)."
  }
 }
