@@ -1,0 +1,46 @@
+# Fast round: winogrande + SQuADv2 + CoQA (config/eval_tasks/ckdab_fast.yaml), lm-eval only, 8 workers, priority 70,
+# into the o260c pool (the sequential 256-node experiments run there; user 2026-11-10).
+# The ckda_branch post-fit round (user 2026-11-10): reading / commonsense / math (the FLAG categories that
+# lag; summarize-evals' own categories) + the recall suite, at 23500 (the arms' branch-only checkpoint), for
+# the main run (arm A) and the arms whose branch exports: bgqa, cgqa, drop (standard attention layers) and d
+# (kronlstm blocks; vLLM port c6edf94218, checked by ckda_branch_export_check_mn5); b8's per-layer KV groups
+# are not in the HF / vLLM model. Suite file:
+# config/eval_tasks/ckdab_focus.yaml (scripts/evals/gen_group_suite.py). ~26 engine-h per model.
+#
+#   arm A:  $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/ckdab_focus_mn5.yaml --step 23500
+#   an arm: ... launch.py config/evals/ckdab_focus_mn5.yaml --set export.step=23500 \
+#               --set export.name=ckdab_bgqa_fp8_23500 \
+#               --set export.run_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/bgqa
+# (an arm's export job runs scripts/korbi/hf_export/export_run.sh; launch after its 23500 save)
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+
+rows:
+  harnesses: [lm-eval-harness]
+  suite_file: config/eval_tasks/ckdab_fast.yaml
+
+lm_eval:
+  workers: 8
+  split_s: 300
+  max_parts: 8
+  engine: {tp: 1, dp: 4, expert_parallel: true, max_num_seqs: 256, request_batch_size: 256}
+  job: {priority: 70}
+
+lighteval:
+  groups: 2
+  max_rows: 12
+  engine: {tp: 4, max_num_seqs: 64, max_model_length: 32768}
+  job: {priority: 70}
+
+evalchemy:
+  groups: 2
+  exclude_tasks: []
+  engine: {tp: 4, max_num_seqs: 256, max_model_length: 40960}
+  job: {priority: 45, time_h: 12}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o260c

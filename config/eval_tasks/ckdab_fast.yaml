@@ -1,0 +1,7 @@
+# ckda_branch fast round (user 2026-11-10): winogrande, SQuADv2, CoQA only -- the rows with the largest gaps to the 32B;
+# the FLAG rows of config/eval_tasks/flag_evals.yaml.
+count: 3
+tasks:
+- {name: vllm/coqa/0, half: vllm, row: 113, task: coqa, n_shot: 0, suite: lm-eval-harness}
+- {name: vllm/winogrande/0, half: vllm, row: 181, task: winogrande, n_shot: 0, suite: lm-eval-harness}
+- {name: vllm/squadv2/10, half: vllm, row: 358, task: squadv2, n_shot: 10, suite: lm-eval-harness}
