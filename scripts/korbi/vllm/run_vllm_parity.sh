@@ -11,6 +11,9 @@ export DEST=/tmp/pylibs_vllm_$SHA
 bash scripts/korbi/vllm/build_pylibs_vllm.sh
 export PYTHONPATH="$DEST:$PWD:$PWD/flash-linear-attention"
 export VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL:-WARNING} HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# as the eval runtime (setup_vllm_uv.sh): tp > 1 JIT-builds FlashInfer's all-reduce on first use (minutes),
+# longer than the default 300 s RPC timeout of the first forward
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800} VLLM_WORKER_MULTIPROC_METHOD=spawn
 mode=$1; shift
 case $mode in
   tiny)   python3 -m oellm_autoexp.hf_export.vllm_parity tiny --out "${1:-/tmp/vllm_parity_tiny}" ;;
