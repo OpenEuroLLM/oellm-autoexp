@@ -2,7 +2,7 @@
 Depth Memory).
 
 Unlike ``oellm_hybrid`` (one HF layer = mixer + MLP), the layers here are Megatron's own: one per
-pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram", "kronlstm"} (not ``layer_types``:
+pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram", "kronlstm", "kvshare"} (not ``layer_types``:
 transformers validates that name against its own attention kinds), each wrapped by its residual
 read / write: mHC over ``mhc_expansion_rate`` streams (``residual="mhc"``) or the Linear Depth
 Memory (``residual="ldm"``).
@@ -11,7 +11,9 @@ Memory (``residual="ldm"``).
 from transformers import PretrainedConfig
 
 # kronlstm: a ckda_branch KronLSTM past its hand-over (the FLA layer of fla_layer_kronlstm)
-LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm")
+# kvshare: a ckda_branch kvshare attention past its hand-over (its own q / gate / o, the keys / values of the
+# attention layer kv_share_sources[str(index)])
+LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm", "kvshare")
 
 
 class OellmAmbitiousConfig(PretrainedConfig):
@@ -43,6 +45,8 @@ class OellmAmbitiousConfig(PretrainedConfig):
         attention_output_gate: bool = True,
         exclusive_self_attention: bool = True,
         xsa_eps: float = 1e-6,
+        # kvshare blocks: {str(layer index): index of the attention layer whose keys / values it reads}
+        kv_share_sources: dict | None = None,
         # CKDA: the FLA layer spec ({"class", "kwargs"}) as Megatron built it
         fla_layer: dict | None = None,
         # kronlstm blocks: the FLA KronLSTM layer spec ({"class", "kwargs"})
@@ -116,6 +120,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.attention_output_gate = attention_output_gate
         self.exclusive_self_attention = exclusive_self_attention
         self.xsa_eps = xsa_eps
+        self.kv_share_sources = {str(k): int(v) for k, v in (kv_share_sources or {}).items()}
         self.fla_layer = fla_layer
         self.fla_layer_kronlstm = fla_layer_kronlstm
         self.num_experts = num_experts

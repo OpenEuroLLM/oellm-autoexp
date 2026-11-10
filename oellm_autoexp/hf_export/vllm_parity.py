@@ -60,6 +60,9 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
         "ldm_groups": 4, "ldm_key_dim": 8, "ldm_hidden_dim": 32, "ldm_alpha": 1.0,
         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": head_dim, "qk_layernorm": True,
         "attention_output_gate": True, "exclusive_self_attention": True, "xsa_eps": 1e-6,
+        # kvshare blocks (a ckda_branch kvshare attention): the keys / values of the nearest earlier attention layer
+        "kv_share_sources": {str(i): max(j for j in range(i) if blocks[j] == "attention")
+                             for i, b in enumerate(blocks) if b == "kvshare"},
         "fla_layer": {"class": "fla.layers.complex_kda_layer.ComplexKimiDeltaAttention",
                       "kwargs": {"hidden_size": h, "num_heads": 4, "head_dim": head_dim, "allow_neg_eigval": True,
                                  "gate": "signed_sigmoid2", "gate_init_style": "shipped", "lower_bound": -5.0,
@@ -304,6 +307,11 @@ def main() -> None:
                  "moe": dict(base, blocks=["attention", "moe", "moe"]), "engram": dict(base, blocks=["engram"] * 2),
                  # a ckda_branch KronLSTM (kronlstm blocks), alone and in the v4 mix with attention and CKDA
                  "kronlstm": dict(base, blocks=["ckda", "kronlstm", "kronlstm"]),
+                 # a ckda_branch kvshare attention (the keys / values of an earlier attention layer, its own q / o)
+                 "kvshare": dict(base, blocks=["attention", "kvshare", "moe", "kvshare"]),
+                 "ckdab_kvshare_mix": dict(base, quantile=False, head_dim=128,
+                                           blocks=["attention", "engram", "ckda", "moe", "kvshare", "moe",
+                                                   "attention", "moe", "engram", "kvshare", "moe"], router_std=1.0),
                  "ckdab_kronlstm_mix": dict(base, quantile=False, head_dim=128,
                                             blocks=["attention", "engram", "ckda", "moe", "kronlstm", "moe",
                                                     "attention", "moe", "engram", "ckda", "moe"], router_std=1.0),

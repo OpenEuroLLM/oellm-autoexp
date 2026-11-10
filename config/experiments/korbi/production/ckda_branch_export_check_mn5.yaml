@@ -42,3 +42,4 @@ sweep:
       configs:
         - aux.arm: d_cal_full
         - aux.arm: bgqa_cal_full
+        - aux.arm: e_cal_full  # option E (kvshare blocks)

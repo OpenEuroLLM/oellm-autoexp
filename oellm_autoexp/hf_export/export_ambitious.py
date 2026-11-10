@@ -28,7 +28,8 @@ from .fsdp_dtensor import ShardedSafetensorsWriter, iter_layers
 LOGGER = logging.getLogger(__name__)
 _HERE = Path(__file__).resolve().parent
 _PKG = _HERE / "oellm_ambitious"
-_KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram", "K": "kronlstm"}  # K: a ckda_branch KronLSTM
+_KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram", "K": "kronlstm",  # K: a ckda_branch KronLSTM
+          "S": "kvshare"}  # S: a ckda_branch kvshare attention (an earlier attention layer's keys / values)
 _MHC = ("phi", "b_pre", "b_post", "b_res", "alpha_pre", "alpha_post", "alpha_res")
 
 # megatron/core/ssm/engram.py
@@ -117,8 +118,8 @@ def branch_fold(m: dict) -> tuple[set[int], float]:
     ``m["_ckpt_iteration"]``: the checkpoint's iteration."""
     if not m.get("ckda_branch"):
         return set(), 1.0
-    if m["ckda_branch"] not in ("attention", "kronlstm"):
-        raise ValueError(f"ckda_branch {m['ckda_branch']!r}: attention or kronlstm branches export")
+    if m["ckda_branch"] not in ("attention", "kronlstm", "kvshare"):
+        raise ValueError(f"ckda_branch {m['ckda_branch']!r}: attention, kronlstm or kvshare branches export")
     if float(m.get("ckda_branch_alpha_end", 0.0)) != 0.0:
         raise ValueError("ckda_branch: complex_kda still weighted after the ramp (alpha_end != 0): not exportable")
     it = m.get("_ckpt_iteration")
@@ -177,8 +178,15 @@ def hf_config(m: dict, vocab: int) -> dict:
     folded, _ = branch_fold(m)
     if any(syms[i] != "L" for i in folded):
         raise ValueError(f"ckda_branch layers {sorted(folded)} must be complex_kda (L) layers")
-    new = "*" if m.get("ckda_branch") == "attention" else "K"
+    new = {"attention": "*", "kronlstm": "K", "kvshare": "S"}.get(m.get("ckda_branch"), "K")
     syms = [new if i in folded else c for i, c in enumerate(syms)]
+    kv_sources = {}
+    if folded and m.get("ckda_branch") == "kvshare":
+        # per kvshare layer, the attention layer whose keys / values it reads (ckda_branch_kv_source_layers)
+        layers, sources = list(m["ckda_branch_layers"]), list(m["ckda_branch_kv_source_layers"])
+        kv_sources = {str(l): int(src) for l, src in zip(layers, sources)}
+        if any(syms[src] != "*" or src >= l for l, src in zip(layers, sources)):
+            raise ValueError(f"ckda_branch kvshare: sources {sources} must be earlier attention layers")
     ldm = bool(m.get("depth_memory"))
     if ldm:
         if m.get("mhc"):
@@ -230,6 +238,7 @@ def hf_config(m: dict, vocab: int) -> dict:
         "attention_output_gate": bool(m.get("attention_output_gate")),
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
+        "kv_share_sources": kv_sources,
         "fla_layer": _fla_layer_spec(m),
         "fla_layer_kronlstm": _kronlstm_layer_spec(m) if "kronlstm" in types else None,
         "num_experts": m["num_experts"],
@@ -345,7 +354,8 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     kind = cfg["block_types"][i]
     p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
     g = lambda name: t.pop(p + name)  # noqa: E731
-    mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "kronlstm": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
+    mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "kronlstm": "mhc_attn_mixer",
+             "kvshare": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
              "engram": "residual_scheme.mhc_mixer"}[kind]
     if cfg["residual"] == "ldm":  # this layer's write and the next read's query
         for n in _LDM_NET + ("forget_logit",):
@@ -370,6 +380,23 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         add(hp + "mixer.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
         add(hp + "mixer.k_norm.weight", g(b + "k_layernorm.weight").to(cast))
+        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        for k in [k for k in t if k.startswith(p + "self_attention.layer.")]:  # the weight-0 complex_kda
+            t.pop(k)
+    elif kind == "kvshare" and i in folded:
+        # a ckda_branch kvshare attention past its hand-over: q / gate / o / q norm of its own, the keys / values
+        # of the source attention layer at run time (cfg kv_share_sources); the branch's output weight folded into
+        # o_proj, the layer's input norm
+        b = "self_attention.branch."
+        q, z = _split_kvshare(g(b + "linear_qkv.weight"), cfg)
+        add(hp + "mixer.q_proj.weight", q.to(cast))
+        add(hp + "mixer.gate_proj.weight", z.to(cast))
+        gamma = float(g("self_attention.branch_mix.gamma").float().reshape(-1)[0])
+        weight = 1.0 + scale * gamma if m.get("ckda_branch_crossfade") else scale * gamma
+        if p + "self_attention.branch_mix.calib" in t:
+            weight *= float(g("self_attention.branch_mix.calib").float().reshape(-1)[0])
+        add(hp + "mixer.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
+        add(hp + "mixer.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
         add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
         for k in [k for k in t if k.startswith(p + "self_attention.layer.")]:  # the weight-0 complex_kda
             t.pop(k)
@@ -491,6 +518,18 @@ def _split_attention(qkv: torch.Tensor, cfg: dict):
     qz, k, v = split_gated_qkv(qkv, heads, groups, d)
     qz = qz.view(heads, 2 * d, -1)
     return qz[:, :d].reshape(heads * d, -1), qz[:, d:].reshape(heads * d, -1), k, v
+
+
+def _split_kvshare(w: torch.Tensor, cfg: dict):
+    """A kvshare branch's linear_qkv, per query group [q heads | gate heads] (ckda_branch.py), -> q, gate."""
+    heads, groups, d = cfg["num_attention_heads"], cfg["num_key_value_heads"], cfg["head_dim"]
+    if not cfg["attention_output_gate"]:
+        raise ValueError("expects the gated attention")
+    hpg = heads // groups
+    rows = w.view(groups * 2 * hpg, d, -1)
+    q = torch.cat([torch.arange(2 * hpg * gi, 2 * hpg * gi + hpg) for gi in range(groups)])
+    z = q + hpg
+    return rows[q].reshape(heads * d, -1), rows[z].reshape(heads * d, -1)
 
 
 def main() -> None:

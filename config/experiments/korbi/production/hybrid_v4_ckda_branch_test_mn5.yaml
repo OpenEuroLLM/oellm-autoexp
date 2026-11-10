@@ -311,3 +311,21 @@ sweep:
           backend.megatron.ckda_branch_calibrate: true
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
+        # E past the hand-over (1300, alpha 0) for the HF / vLLM export check: e_cal's 1200 save -> 1300
+        - aux.arm: e_cal_full
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/e_cal/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*1200\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: ${aux.test_root}/e_cal/ckpt
+          backend.megatron.save: ${aux.test_root}/e_cal_full/ckpt
+          backend.megatron.save_interval: 1300
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33]
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 150

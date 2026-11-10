@@ -16,6 +16,9 @@
     ``fused_xsa.xsa_reference``) and the sigmoid output gate, behind ``linear_qkv``'s fused norm;
   - "ckda" ``L``: the FLA ComplexKimiDeltaAttention layer, as Megatron's ComplexKDA builds it;
   - "kronlstm": a ckda_branch KronLSTM past its hand-over (FLA KronLSTM, ``fla_layer_kronlstm``);
+  - "kvshare": a ckda_branch kvshare attention past its hand-over: the attention above with its own q / gate /
+    o / q norm over the keys / values of an earlier attention layer (``kv_share_sources``; XSA against that
+    layer's value of the token), no KV of its own;
   - "moe" ``E``: Megatron's sigmoid router, balanced by an expert bias (top-k on scores + bias) or
     quantile balancing (top-k on logits - qb_beta); weights = the unbiased scores normalised to 1.
     SwiGLU experts with the gpt-oss / DeepSeek-V4.1 clamp and optionally the bounded
@@ -256,6 +259,9 @@ class OellmXSAAttention(nn.Module):
         zcg = config.layernorm_zero_centered_gamma
         self.q_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
         self.k_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
+        # a kvshare source (OellmAmbitiousModel sets keep_kv): last_kv = this call's keys / values incl. the
+        # past, [b, nkv, S, d] each, for the kvshare layers after it
+        self.keep_kv, self.last_kv = False, None
 
     def _fast_forward(self, x: torch.Tensor, keep_state: bool):
         """No past: one GEMM for q | gate | k | v, the fused qk-norm, GQA inside SDPA, XSA against
@@ -289,6 +295,8 @@ class OellmXSAAttention(nn.Module):
         elif gate is not None:
             o = (o.float() * torch.sigmoid(gate.reshape(b, s, nh, d).float())).to(x.dtype)
         state = (kt, vt) if keep_state else None
+        if self.keep_kv:
+            self.last_kv = (kt, vt)
         return self.o_proj(o.reshape(b, s, nh * d)), state
 
     def forward(self, x: torch.Tensor, state=None, keep_state: bool = True):
@@ -308,6 +316,8 @@ class OellmXSAAttention(nn.Module):
             k = torch.cat([state[0], k], dim=2)
             v = torch.cat([state[1], v], dim=2)
         new_state = (k, v)
+        if self.keep_kv:
+            self.last_kv = new_state
         rep = self.nh // self.nkv
         kk = k.repeat_interleave(rep, dim=1) if rep > 1 else k
         vv = v.repeat_interleave(rep, dim=1) if rep > 1 else v
@@ -329,6 +339,60 @@ class OellmXSAAttention(nn.Module):
         elif self.gate_proj is not None:
             o = (o.float() * torch.sigmoid(self.gate_proj(x).view(b, s, self.nh, self.d).float())).to(x.dtype)
         return self.o_proj(o.reshape(b, s, self.nh * self.d)), new_state
+
+
+class OellmKVShareAttention(nn.Module):
+    """Megatron ckda_branch ``KVShareSelfAttention`` past its hand-over: q (+ sigmoid output gate), q-norm
+    and ``linear_proj`` of its own; keys / values are those of the source attention layer for the same
+    tokens (``kv``, set by the model before each call: [b, nkv, S, d] incl. the past), XSA against the
+    source's value of each token. No state of its own (the source's cache holds the keys / values)."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        h, d = config.hidden_size, config.head_dim
+        self.nh, self.nkv, self.d = config.num_attention_heads, config.num_key_value_heads, d
+        self.xsa, self.xsa_eps = config.exclusive_self_attention, config.xsa_eps
+        self.q_proj = nn.Linear(h, self.nh * d, bias=False)
+        self.gate_proj = nn.Linear(h, self.nh * d, bias=False) if config.attention_output_gate else None
+        self.o_proj = nn.Linear(self.nh * d, h, bias=False)
+        zcg = config.layernorm_zero_centered_gamma
+        self.q_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
+        self.kv = None
+
+    def forward(self, x: torch.Tensor, state=None, keep_state: bool = True):
+        if self.kv is None:
+            raise RuntimeError("kvshare attention called without its source layer's keys / values")
+        k, v = self.kv
+        b, s, _ = x.shape
+        nh, nkv, d = self.nh, self.nkv, self.d
+        q = self.q_proj(x).view(b, s, nh, d)
+        if self.q_norm is not None:
+            q = self.q_norm(q)
+        past = k.shape[2] - s
+        qt = q.transpose(1, 2)
+        if past == 0:
+            o = F.scaled_dot_product_attention(qt, k, v, is_causal=True, scale=d**-0.5, enable_gqa=nh != nkv)
+        else:  # queries at past..past+s-1 see keys 0..their position
+            rep = nh // nkv
+            kk = k.repeat_interleave(rep, dim=1) if rep > 1 else k
+            vv = v.repeat_interleave(rep, dim=1) if rep > 1 else v
+            qp = torch.arange(past, past + s, device=x.device)[:, None]
+            mask = torch.arange(k.shape[2], device=x.device)[None, :] <= qp
+            o = F.scaled_dot_product_attention(qt, kk, vv, attn_mask=mask[None, None], scale=d**-0.5)
+        o = o.transpose(1, 2)  # [b, s, nh, d]
+        gate = self.gate_proj(x).view(b, s, nh, d) if self.gate_proj is not None else None
+        if self.xsa:
+            rep = nh // nkv
+            vf = v[:, :, past:].transpose(1, 2).float().unsqueeze(-2)  # [b, s, nkv, 1, d]: the token's own value
+            of = o.float().reshape(b, s, nkv, rep, d)
+            c = (of * vf).sum(-1, keepdim=True) / (vf.pow(2).sum(-1, keepdim=True) + self.xsa_eps)
+            of = (of - c * vf).reshape(b, s, nh, d)
+            if gate is not None:
+                of = of * torch.sigmoid(gate.float())
+            o = of.to(x.dtype)
+        elif gate is not None:
+            o = (o.float() * torch.sigmoid(gate.float())).to(x.dtype)
+        return self.o_proj(o.reshape(b, s, nh * d)), None
 
 
 # --------------------------------------------------------------------------- MoE
@@ -677,6 +741,9 @@ class OellmAmbitiousLayer(nn.Module):
         elif self.kind == "ckda":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer)
+        elif self.kind == "kvshare":  # a ckda_branch kvshare attention (an earlier attention layer's keys / values)
+            self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
+            self.mixer = OellmKVShareAttention(config)
         elif self.kind == "kronlstm":  # a ckda_branch KronLSTM (the FLA layer, as Megatron built it)
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer_kronlstm)
@@ -689,7 +756,7 @@ class OellmAmbitiousLayer(nn.Module):
     def _mix(self, xin, state, input_ids, token_mask, attention_mask, keep_state):
         """The mixer on its (normalised, except Engram) input."""
         new_state = None
-        if self.kind == "attention":
+        if self.kind in ("attention", "kvshare"):
             out, new_state = self.mixer(xin, state, keep_state)
         elif self.kind in ("ckda", "kronlstm"):
             # stateless (scoring, fast path): FLA's fused input projections, no final state
@@ -764,6 +831,13 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         self.embed_norm = OellmEmbedNorm(config.hidden_size, config.rms_norm_eps) if getattr(config, "embedding_norm", False) else None
         self.ldm_boundary = OellmLDMBoundary(config) if config.residual == "ldm" else None
         self.layers = nn.ModuleList(OellmAmbitiousLayer(config, i) for i in range(config.num_hidden_layers))
+        # kvshare layers: {layer index: source attention layer index}; the sources keep their keys / values
+        self.kv_share = {int(i): int(src) for i, src in (getattr(config, "kv_share_sources", None) or {}).items()}
+        for i, src in self.kv_share.items():
+            if config.block_types[i] != "kvshare" or config.block_types[src] != "attention" or src >= i:
+                raise ValueError(f"kv_share_sources: layer {i} ({config.block_types[i]}) reads layer {src} "
+                                 f"({config.block_types[src]}): an earlier attention layer expected")
+            self.layers[src].mixer.keep_kv = True
         self.norm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, config.layernorm_zero_centered_gamma)
         self.post_init()
 
@@ -834,7 +908,12 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
             if hidden is not None:
                 hidden.append(streams[0] if self.ldm_boundary is not None else streams.mean(dim=-2))
             st = cache.states[i] if cache is not None else None
+            src = self.kv_share.get(i)
+            if src is not None:  # this forward's keys / values of the source layer (on this layer's device)
+                layer.mixer.kv = _to(self.layers[src].mixer.last_kv, _device(streams))
             streams, new_state = layer(streams, st, input_ids, token_mask, attention_mask, keep_state)
+            if src is not None:
+                layer.mixer.kv = None
             if cache is not None:
                 cache.states[i] = new_state
         return streams
@@ -845,6 +924,8 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         a device map compute concurrently. Returns (hidden, head(hidden)) concatenated over rows,
         or None when it does not apply."""
         if os.environ.get("OELLM_HF_PIPELINE", "1") == "0":
+            return None
+        if self.kv_share:  # micro-batches interleave across stages: the sources' keys / values are per call
             return None
         stages = self._stages()
         b = input_ids.shape[0]
