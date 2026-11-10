@@ -22,6 +22,11 @@
    interpret it as a beta-range diagnostic, not an isolated rotation test.
    Memory-gain interventions likewise change the distribution seen by later
    layers; an immediate loss does not rule out learning a better replacement.
+   Two additional diagnostics disentangle tied beta without rewriting kernels:
+   erase_cap_preserve_write caps beta at 1 and scales v by beta/beta_cap;
+   write_cap_preserve_erase keeps beta and scales v by beta_cap/beta.
+   The untouched term is preserved algebraically, with bf16 rounding in v.
+   Both transformations are exact no-ops on the bounded KDA control.
 5. Native adaptation compatibility gate before training: original Megatron
    loader, exact saved model arguments, strict state-dict coverage, fixed-token
    logits/loss comparison against original model. Never substitute the current

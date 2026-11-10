@@ -77,12 +77,12 @@ case "${1:-probe}" in
     [[ $failed == 0 ]]
     ;;
   screen)
-    # Four independent workers; each processes a fixed subset of the 16 cells.
+    # Four independent workers; each processes a fixed subset of the 20 cells.
     screen_worker() {
       local gpu=$1 index=0
       for arm in ckda kda; do
         if [[ $arm == ckda ]]; then model=skda-shipped-hybrid-lowrank; else model=kda-sig-hybrid-lowrank; fi
-        for condition in baseline no_neg_alpha no_reflection both alpha_gain_0p5 alpha_gain_2p0 window_512 window_1024; do
+        for condition in baseline no_neg_alpha no_reflection both alpha_gain_0p5 alpha_gain_2p0 window_512 window_1024 erase_cap_preserve_write write_cap_preserve_erase; do
           if [[ $((index % 4)) == "$gpu" ]]; then
             CUDA_VISIBLE_DEVICES=$gpu python "$CKDA_WORK/scripts/evaluate.py" \
               --source "$CKDA_WORK/source" \

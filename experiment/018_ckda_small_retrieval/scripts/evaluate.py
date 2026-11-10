@@ -42,7 +42,8 @@ def main():
     p.add_argument('--batch-size', type=int, default=4)
     p.add_argument('--condition', default='baseline', choices=[
         'baseline', 'no_reflection', 'no_neg_alpha', 'both',
-        'alpha_gain_0p5', 'alpha_gain_2p0', 'window_512', 'window_1024'])
+        'alpha_gain_0p5', 'alpha_gain_2p0', 'window_512', 'window_1024',
+        'erase_cap_preserve_write', 'write_cap_preserve_erase'])
     a = p.parse_args()
     tasks = [('winogrande', 0), ('squadv2', 10), ('coqa', 0)] if a.suite == 'focus' else [
         ('squad_completion', 0), ('swde', 0), ('fda', 0)]

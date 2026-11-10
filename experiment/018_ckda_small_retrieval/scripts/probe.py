@@ -44,7 +44,8 @@ control = SignedKDAForCausalLM(cfg).to('cuda', torch.bfloat16).eval()
 from interventions import Intervention
 with torch.no_grad():
     expected = control(ids, use_cache=False).logits
-    for condition in ['no_reflection', 'no_neg_alpha', 'both']:
+    for condition in ['no_reflection', 'no_neg_alpha', 'both',
+                      'erase_cap_preserve_write', 'write_cap_preserve_erase']:
         with Intervention(control, condition) as patch:
             actual = control(ids, use_cache=False).logits
             torch.testing.assert_close(actual, expected, rtol=0, atol=0)
