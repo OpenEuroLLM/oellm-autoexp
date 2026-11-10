@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - launch_config
+  - _self_
+aux:
+  name: ckda018_baseline
+  bench: bash /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/scripts/run_node.sh baseline
+job:
+  name: ckda018_baseline
+  base_output_dir: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/results/baseline_job
+  est_step_time_s: 7200
+  start_condition:
+    class_name: FileExistsCondition
+    path: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/ready
+    persistent_pass: true
+slurm:
+  sbatch:
+    time: "04:00:00"

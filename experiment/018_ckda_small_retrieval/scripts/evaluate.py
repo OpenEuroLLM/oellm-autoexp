@@ -13,6 +13,7 @@ def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument('--source', type=Path, required=True)
     p.add_argument('--model', type=Path, required=True)
+    p.add_argument('--tokenizer', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--suite', choices=['focus', 'recall'], required=True)
     p.add_argument('--limit', type=int, default=256)
@@ -23,7 +24,9 @@ def main():
     a = p.parse_args()
     sys.path[:0] = [str(a.source), str(a.source / 'lm_scaling')]
     from eval_downstream import build_lm
-    lm = build_lm(str(a.model), str(a.model), a.batch_size, 4096, 'cuda',
+    from metric_compat import install
+    install()
+    lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda',
                   context_prefix='none')
     from interventions import Intervention
     import lm_eval

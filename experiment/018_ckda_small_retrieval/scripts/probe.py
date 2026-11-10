@@ -9,6 +9,8 @@ root = Path(os.environ['CKDA_WORK'])
 sys.path[:0] = [str(root / 'source'), str(root / 'source/lm_scaling')]
 from eval_downstream import ensure_lm_eval
 ensure_lm_eval()
+from metric_compat import install
+install()
 import torch
 import transformers
 import lm_eval
@@ -34,6 +36,7 @@ print(json.dumps({'torch': torch.__version__, 'transformers': transformers.__ver
                   'device': torch.cuda.get_device_name(), 'logits': list(out.shape)}), flush=True)
 from lm_eval.tasks import TaskManager, get_task_dict
 tm = TaskManager(include_path=str(root / 'source/lm_scaling/eval_tasks'))
+errors = []
 for task in ['winogrande', 'squadv2', 'coqa', 'squad_completion', 'swde', 'fda']:
     try:
         obj = get_task_dict([task], tm)[task]
@@ -41,5 +44,7 @@ for task in ['winogrande', 'squadv2', 'coqa', 'squad_completion', 'swde', 'fda']
         print('TASK_READY', task, len(docs), flush=True)
     except Exception as exc:
         print('TASK_ERROR', task, repr(exc), flush=True)
-        raise
+        errors.append((task, repr(exc)))
+if errors:
+    raise RuntimeError(errors)
 print('PROBE_PASS', flush=True)
