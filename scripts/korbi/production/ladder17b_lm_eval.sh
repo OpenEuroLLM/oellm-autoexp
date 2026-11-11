@@ -18,6 +18,9 @@ TASKS=${3:-coqa,squadv2}   # comma separated: the config passes one argument
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 export PYTHONPATH=${PYLIBS_OELLM:-$R/pylibs_oellm}:${PYTHONPATH:-}
 export HF_HOME=${HF_HOME:-$R/cache/hf}
+# the eval datasets: CoQA copied from jupiter, SQuAD v2 symlinked from the shared MN5 cache
+# (/gpfs/projects/ehpc533/hf-cache/datasets) -- `datasets` looks in $HF_HOME/datasets by default
+export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-$HF_HOME/datasets}
 export HF_DATASETS_OFFLINE=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 mkdir -p "$OUT"
 
