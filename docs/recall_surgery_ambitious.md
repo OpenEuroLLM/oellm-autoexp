@@ -102,6 +102,26 @@ Winogrande **falls monotonically with attention fraction**, ~4 pp from 0% to 100
 free good for coreference; a hybrid has to *add* retrieval capacity without diluting the linear path. (CoQA and
 SQuAD v2 are not in that campaign — they are being run on the same 1.7B exports, see §6.)
 
+### 3.1 CoQA at 1.7B: attention *presence* is worth +12 F1 (measured 2026-11-11)
+
+Same rows and harness (HF backend, `recall_surgery/ladder17b_evals`), the pi agent's 1.7B exports:
+
+| 1.7B arm | attention | Winogrande | CoQA EM | CoQA F1 |
+|---|---:|---:|---:|---:|
+| `skda-shipped-lowrank` (pure CKDA) | 0 % | **62.83** | 43.33 | **55.95** |
+| `skda-shipped-hybrid-lowrank` | 25 % | 61.01 | 55.72 | 68.40 |
+| `kda-sig-hybrid-lowrank` | 25 % | 59.91 | 56.82 | 70.70 |
+| `attn` | 100 % | 58.33 | 52.97 | 65.04 |
+
+* CoQA needs *some* attention: pure CKDA -> 25 % hybrid is **+12.4 F1**; more than 25 % does not help.
+* Winogrande goes the other way (-2 at 25 %, -4.5 at 100 %).
+* A 1.7B / 50 BT hybrid (CoQA F1 68.4) **matches the 84B-A2.9B ambitious run at 1.6T (66.1)**. Ambitious has
+  attention in 6 of 92 layers (6.5 %): on this axis it sits near the pure-CKDA end. The direct
+  intervention is to raise the attention fraction toward 25 % *additively* (CKDA kept, the early CKDA
+  layers untouched), and the decisive small-scale test is adding attention branches to the **pure-CKDA**
+  1.7B model (every 4th layer, the hybrid's placement) and checking how much of the +12 F1 short training
+  recovers (§8).
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
