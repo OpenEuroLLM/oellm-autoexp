@@ -21,6 +21,14 @@ export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1  # native checkpoints pickle numpy obj
 export PYTHONPATH="$HERE/notitan:$NATIVE_MEGATRON:$CODE_DIR:$CODE_DIR/lm_scaling:$CODE_DIR"
 status=0
 IFS=',' read -ra items <<< "$ARMS"
+# attn_kv arms (GQA by mean pooling): check pool_kv on fla's Attention first (flash-attn on the node's GPU)
+if [[ "$ARMS" == *attn_kv@* ]]; then
+  dev=$(python -c "import torch; print('cuda' if torch.cuda.is_available() else 'cpu')")
+  for kv in $(grep -o 'attn_kv@[0-9]*' <<< "$ARMS" | cut -d@ -f2 | sort -u); do
+  python "$HERE/native_patch/kv_pool_check.py" --surgery "$CODE_DIR/lm_scaling/megatron_ext/surgery.py" --device "$dev" --kv "$kv" \
+    || { echo "[ladder17b_surgery] FAIL: kv_pool_check (kv $kv)"; exit 1; }
+  done
+fi
 for item in "${items[@]}"; do
   IFS=':' read -r name model intervention init <<< "$item"
   [ -n "$name" ] || continue

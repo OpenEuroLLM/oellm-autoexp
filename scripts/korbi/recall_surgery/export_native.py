@@ -7,6 +7,8 @@ config, renames and cross-checks) and adds:
   layers read off the checkpoint and checked against SKDA_INTERVENTION's layer tokens, and config.recall_branches
   (the hybrid sibling's fla attention spec + add_rope / add_swa window); loaded by hf_branch.load_exported;
 * attn_rope: use_rope on the existing attention spec;
+* attn_kv@<n>: num_kv_heads = n on the existing attention spec (GQA reverse test, section 3.7), checked against the
+  k_proj / v_proj shapes of every attention layer on disk;
 * STRICT KEY ACCOUNTING: every checkpoint tensor must be written (TE extra state and a tied output layer aside);
   an unmapped key is an error -- export_megatron.rename returns [] for anything it does not know, which silently
   dropped the branches (and would have evaluated the control under the arm's name).
@@ -28,7 +30,7 @@ NEOX_EQUIVALENT = ("/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/asset
 
 
 def parse_intervention(spec: str) -> dict:
-    out = {"add": [], "attn_rope": False, "add_rope": False}
+    out = {"add": [], "attn_rope": False, "add_rope": False, "attn_kv": None}
     spec = (spec or "").strip()
     if not spec or spec in ("none", "ctrl"):
         return out
@@ -42,6 +44,8 @@ def parse_intervention(spec: str) -> dict:
             out["attn_rope"] = True
         elif p[0] == "add_rope":
             out["add_rope"] = True
+        elif p[0] == "attn_kv":
+            out["attn_kv"] = int(p[1])
         else:
             raise SystemExit(f"intervention item {item!r}: unknown")
     return out
@@ -133,6 +137,23 @@ def main(argv=None) -> int:
         if not cfg.get("attn"):
             raise SystemExit("attn_rope on a stack without attention layers")
         cfg["attn"] = dict(cfg["attn"], use_rope=True)
+    if cfg.get("attn"):
+        # KV heads of the existing attention layers: the checkpoint's k_proj / v_proj rows must be the config's
+        # num_kv_heads x head_dim (attn_kv@<n> sets n; otherwise MHA). A mismatch would only surface as a load error.
+        if iv["attn_kv"]:
+            if cfg["attn"]["num_heads"] % iv["attn_kv"]:
+                raise SystemExit(f"attn_kv@{iv['attn_kv']}: {cfg['attn']['num_heads']} heads do not split")
+            cfg["attn"] = dict(cfg["attn"], num_kv_heads=int(iv["attn_kv"]))
+        hd = cfg["hidden_size"] // cfg["attn"]["num_heads"]
+        for i in cfg["attn"]["layers"]:
+            for proj in ("k_proj", "v_proj"):
+                rows = model[f"decoder.layers.{i}.self_attention.layer.{proj}.weight"].shape[0]
+                if rows != cfg["attn"]["num_kv_heads"] * hd:
+                    raise SystemExit(f"layer {i} {proj}: {rows} rows on disk != num_kv_heads "
+                                     f"{cfg['attn']['num_kv_heads']} x head_dim {hd} (SKDA_INTERVENTION="
+                                     f"{a.intervention!r})")
+    elif iv["attn_kv"]:
+        raise SystemExit("attn_kv on a stack without attention layers")
     if on_disk:
         cfg["recall_intervention"] = a.intervention
 
@@ -159,7 +180,8 @@ def main(argv=None) -> int:
     save_file(out, str(a.out / "model.safetensors"), metadata={"format": "pt"})
     n = sum(t.numel() for t in out.values())
     print(f"[export_native] {a.out}: {len(out)} tensors, {n:,} parameters; {a.arm} iteration {it}; "
-          f"intervention {a.intervention!r}: branches {on_disk}, attn_rope {iv['attn_rope']}")
+          f"intervention {a.intervention!r}: branches {on_disk}, attn_rope {iv['attn_rope']}, "
+          f"attn num_kv_heads {(cfg.get('attn') or {}).get('num_kv_heads')}")
     # structural gate: strict load (branches included) through the eval's own loader
     hf_branch.install()
     export_hf.load_exported(a.out)

@@ -10,6 +10,10 @@
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
 #       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
 #       --config-name experiments/korbi/recall_surgery/ladder17b_surgery_mn5 --yes
+# Later arms come with their own code dir on the CLI, e.g. the KV-capacity reverse test (section 3.7; the job first
+# runs native_patch/kv_pool_check.py on the node's GPU):
+#   ... aux.code_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v3 \
+#       "aux.arms='hybrid_kv2:skda-shipped-hybrid-lowrank:attn_kv@2:random'"
 defaults:
   - ../hybrid_speed/kernel_tests_mn5
   - _self_

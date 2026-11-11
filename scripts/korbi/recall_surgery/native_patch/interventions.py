@@ -17,6 +17,12 @@ items:
     add_swa@<window>@<layers>  the same with a sliding window of <window> tokens (local copy path)
     attn_rope                  RoPE on the stack's EXISTING attention layers (theta 10000); their weights
                                are kept (they were trained NoPE)
+    attn_kv@<n>                the stack's EXISTING attention layers rebuilt as GQA with <n> KV heads (the
+                               query heads, o_proj and g_proj unchanged); surgery.py writes k_proj / v_proj
+                               as the per-group MEANS of the original heads (GQA uptraining, Ainslie et al.
+                               2023). Query head h reads KV head h // (num_heads / n), as flash-attn and
+                               SDPA(enable_gqa) group them. Changes the function (the KV-capacity reverse
+                               test, docs/recall_surgery_ambitious.md section 3.7)
     add_rope                   RoPE on the added branches
     <layers>: comma list of 1-based layer numbers, or "lin" = every CKDA layer, or "lin_late" = the CKDA
     layers of the second half (keeps the first layers untouched), or "post_attn" = the layer right after
@@ -37,9 +43,10 @@ from .mixer import FLAMixer, arm_kwargs
 
 
 def parse(spec: str | None = None) -> dict:
-    """{"add": [(layers, window|None)], "attn_rope": bool, "add_rope": bool} from SKDA_INTERVENTION."""
+    """{"add": [(layers, window|None)], "attn_rope": bool, "add_rope": bool, "attn_kv": int|None} from
+    SKDA_INTERVENTION."""
     spec = (spec if spec is not None else os.environ.get("SKDA_INTERVENTION", "")).strip()
-    out = {"add": [], "attn_rope": False, "add_rope": False}
+    out = {"add": [], "attn_rope": False, "add_rope": False, "attn_kv": None}
     if not spec or spec in ("none", "ctrl"):
         return out
     for item in spec.split("+"):
@@ -53,6 +60,10 @@ def parse(spec: str | None = None) -> dict:
             out["attn_rope"] = True
         elif name == "add_rope":
             out["add_rope"] = True
+        elif name == "attn_kv":
+            out["attn_kv"] = int(parts[1])
+            if out["attn_kv"] < 1:
+                raise ValueError(f"SKDA_INTERVENTION item {item!r}: need >= 1 KV heads")
         else:
             raise ValueError(f"SKDA_INTERVENTION item {item!r}: unknown")
     return out
@@ -90,8 +101,9 @@ def branch_layers(iv: dict, num_layers: int, every: int | None) -> dict[int, int
     return out
 
 
-def branch_kwargs(hybrid_arm: str, config, layer_number: int, window: int | None, rope: bool):
-    """(class, kwargs) of a branch: the hybrid's attention class and kwargs (+ window / rope)."""
+def branch_kwargs(hybrid_arm: str, config, layer_number: int, window: int | None, rope: bool,
+                  num_kv_heads: int | None = None):
+    """(class, kwargs) of a branch: the hybrid's attention class and kwargs (+ window / rope / KV heads)."""
     head_dim = config.kv_channels or (config.hidden_size // config.num_attention_heads)
     cls, kw = arm_kwargs(hybrid_arm, config.hidden_size, config.num_attention_heads, head_dim,
                          layer_number - 1, config.num_layers, config.layernorm_epsilon, role="attn")
@@ -100,6 +112,10 @@ def branch_kwargs(hybrid_arm: str, config, layer_number: int, window: int | None
         kw["window_size"] = int(window)
     if rope:
         kw["use_rope"] = True
+    if num_kv_heads:
+        if kw["num_heads"] % int(num_kv_heads):
+            raise ValueError(f"{kw['num_heads']} query heads do not split into {num_kv_heads} KV groups")
+        kw["num_kv_heads"] = int(num_kv_heads)
     return cls, kw
 
 
@@ -123,19 +139,21 @@ class AddBranchMixer(FLAMixer):
 
 
 class RopeAttnMixer(FLAMixer):
-    """The hybrid's attention layer with use_rope switched on (same weights)."""
+    """The hybrid's attention layer with use_rope switched on (same weights) and / or rebuilt with fewer KV
+    heads (attn_kv; parameter keys unchanged, k_proj / v_proj smaller)."""
 
     def __init__(self, config, submodules=None, layer_number: int = 1, attn_mask_type=None,
-                 arm: str | None = None, role: str = "attn", **kwargs):
+                 arm: str | None = None, role: str = "attn", rope: bool = True,
+                 num_kv_heads: int | None = None, **kwargs):
         super(FLAMixer, self).__init__(config=config)
         self.arm = arm
-        cls, kw = branch_kwargs(arm, config, layer_number, None, True)
+        cls, kw = branch_kwargs(arm, config, layer_number, None, rope, num_kv_heads)
         self.layer = cls(**kw)
 
 
 def active() -> bool:
     iv = parse()
-    return bool(iv["add"] or iv["attn_rope"])
+    return bool(iv["add"] or iv["attn_rope"] or iv["attn_kv"])
 
 
 def apply(specs: list, config, hybrid_arm: str, every: int | None) -> list:
@@ -143,8 +161,10 @@ def apply(specs: list, config, hybrid_arm: str, every: int | None) -> list:
     period, None for a pure linear stack (then ``hybrid_arm`` is the arm's hybrid sibling, whose attention
     flavor -- fla's gated NoPE MHA -- the branches take)."""
     iv = parse()
-    if not iv["add"] and not iv["attn_rope"]:
+    if not iv["add"] and not iv["attn_rope"] and not iv["attn_kv"]:
         return specs
+    if iv["attn_kv"] and not every:
+        raise ValueError("attn_kv needs a hybrid stack (existing attention layers)")
     branches = branch_layers(iv, config.num_layers, every)
     out = []
     for i, spec in enumerate(specs):
@@ -156,12 +176,14 @@ def apply(specs: list, config, hybrid_arm: str, every: int | None) -> list:
                 module=AddBranchMixer,
                 params={**sa.params, "hybrid_arm": hybrid_arm, "window": branches[n], "rope": iv["add_rope"]})
             spec.submodules.self_attention.submodules = None
-        elif every and n % every == 0 and iv["attn_rope"]:
+        elif every and n % every == 0 and (iv["attn_rope"] or iv["attn_kv"]):
             spec = copy.deepcopy(spec)
-            spec.submodules.self_attention = ModuleSpec(module=RopeAttnMixer, params=dict(sa.params))
+            spec.submodules.self_attention = ModuleSpec(
+                module=RopeAttnMixer,
+                params={**sa.params, "rope": iv["attn_rope"], "num_kv_heads": iv["attn_kv"]})
             spec.submodules.self_attention.submodules = None
         out.append(spec)
     print(f"[recall_surgery] SKDA_INTERVENTION={os.environ.get('SKDA_INTERVENTION', '')!r}: branches "
           f"{ {k: v for k, v in sorted(branches.items())} }, attn_rope={iv['attn_rope']}, "
-          f"add_rope={iv['add_rope']}", flush=True)
+          f"add_rope={iv['add_rope']}, attn_kv={iv['attn_kv']}", flush=True)
     return out

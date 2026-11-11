@@ -203,3 +203,23 @@ sweep:
           aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v2
           aux.intervention: "add_attn@post_attn"
           aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_add_post_attn/ckpt
+        # KV-capacity reverse test (docs/recall_surgery_ambitious.md section 3.7): the six existing attention layers
+        # rebuilt as GQA with 2 KV heads (32 query heads, 16 per group), k_proj / v_proj = per-group means of the
+        # original heads (surgery attn_kv@2, code/v3). Paired with hybrid_ctrl_fresh / dec_hybrid_ctrl_fresh: same
+        # model-only start, fresh Adam, warmup 100, lr 5e-4, seed, mbs 1, gbs 128, 2 nodes (aux.nodes=2 on the CLI, as
+        # the controls), 2000 steps, saves every 500; the decay resumes the step-2000 save, 1000 steps to 1e-5.
+        - aux.arm: hybrid_kv2
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v3
+          aux.intervention: attn_kv@2
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_kv2
+        - aux.arm: dec_hybrid_kv2
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ffn: 7936
+          aux.load_mode: resume
+          aux.resume_warmup: 100
+          aux.decay: 1000
+          aux.steps: 1000
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v3
+          aux.intervention: "attn_kv@2"
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_kv2/ckpt
