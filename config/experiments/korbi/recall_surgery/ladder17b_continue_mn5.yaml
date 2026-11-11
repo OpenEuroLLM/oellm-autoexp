@@ -39,7 +39,10 @@ aux:
   src: ${aux.root}/ladder17b_native/${aux.model}
   steps: 1000
   gbs: 128
-  mbs: 2
+  # micro-batch 1 for the arms and their paired controls: six extra MHA branches at mbs 2 x 4096 OOM at the loss
+  # (logits.float(), 61.9 of 63.3 GiB; smoke o134c 1630). Same global batch = same data order; ctrl_resume keeps the
+  # original run's mbs 2 (the continuity check).
+  mbs: 1
   lr: 0.0005
   warmup: 100
   save_interval: 500
@@ -94,6 +97,7 @@ sweep:
         # controls on the hybrid stable end, straight from the native checkpoint
         - aux.arm: ctrl_resume
           aux.load_mode: resume
+          aux.mbs: 2
         - aux.arm: ctrl_fresh
           aux.load_mode: model_only
         # surgery arms (ladder17b_surgery_mn5 writes ladder17b_surgery/<arm>; literals: sweep entries resolve
