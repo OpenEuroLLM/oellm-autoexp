@@ -241,6 +241,35 @@ was a no-op. `override_opt_param_scheduler` only overrode the scheduler's own fi
 discarded, no save had been written). Any earlier schedule change on a resumed run under this override was
 affected the same way.
 
+**c9c04235f was itself a no-op; real fix Megatron 2c8a1a0f4.** The relaunch (o134c 1855) printed "per-group lr
+bounds reset to the arguments (0 of 8 groups differed)" and still logged 8.5e-4, with `min_lr=0.00085` on groups
+0-6 after the load. The reset kept references to the pre-load group dicts and wrote into them after the load, but
+`torch.optim.Optimizer.load_state_dict` replaces every group dict. Every Megatron optimizer's load ends there: the
+Megatron-FSDP path in `DistributedOptimizer.load_state_dict` and the plain distributed optimizer alike. So the
+optimizer's live groups kept the checkpoint's `min_lr = lr`. The unit test missed this because its fake load
+mutated the dict in place. 2c8a1a0f4 (`load_checkpoint` in `megatron/training/checkpointing.py`) captures the
+bounds by position and writes them into `optimizer.param_groups` as the optimizer holds them after the load. The
+unit test now loads through torch's `load_state_dict` and fails on c9c04235f.
+
+The fix was verified locally on a tiny GPT through the dec100 code path: Megatron-FSDP, `fsdp_dtensor`,
+`muown_classical`, `--phase-transition-variable-batch` and `--data-sampler-reference-dp-size`. It trained at
+constant lr 1e-3 = min_lr for 6 steps, then resumed with WSD minus_sqrt over 4 steps, `--min-lr 0` and the
+override:
+
+| Megatron commit | groups reported as differing | logged lr at 7-10 |
+|---|---|---|
+| c9c04235f | 0 of 3 | 1e-3 at every step |
+| 2c8a1a0f4 | 3 of 3 | 5.0e-4, 2.93e-4, 1.34e-4, 0 (the exact 1-sqrt values) |
+
+`dec100` should now log "7 of 8 groups differed" and lr 7.65e-4 at 23401. Group 7 is the Engram table group: it
+keeps its current-argument bounds on load, which is why the 25000 Engram x5 -> x1 restart did take effect.
+
+The same restore affects more than the lr bounds. Under Megatron-FSDP the whole group metadata is restored from
+the checkpoint, so a resume that changes a per-group lr multiplier (`residual_mixer_lr_mult`, embedding / output
+lr mults) is silently ignored without the override flag. A changed `wd_mult` (`embedding_wd_mult` /
+`moe_router_wd_mult`) is ignored with or without it. Adam betas / eps are re-applied only for
+`optimizer == adam`, not for `muown_classical`'s Adam groups.
+
 ### 3.5 Attention temperature (inference, 23500 export; vLLM `OELLM_ATTN_LOGIT_SCALE`)
 
 | attention softmax scale | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) |
