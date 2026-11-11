@@ -1125,3 +1125,24 @@ dec_hybrid_ctrl_fresh); 1.7B reverse KV test (MHA -> 2 KV groups, §3.7 when don
   Winogrande 60.14 vs 60.93, CoQA 50.27 / 63.03 vs 49.73 / 62.07 (+1.0), **SQuAD v2 14.89 vs 13.14 (+1.75), HasAns 28.59
   vs 25.23 (+3.4)** -- the first 1.7B branch arm with a SQuAD gain beyond noise (all earlier branch placements:
   <= +0.7). Step 2000 and the decay arm (`dec_hybrid_add_post_attn`, paired with `dec_hybrid_ctrl_fresh`) running.
+
+### 9.2 Night of 2026-11-11/12
+
+* **Main run** (p264 host004): crashed 21:28 (as06r2b06 GPU0, CUDA illegal memory access) and 23:40 (as07r5b02 GPU1, "CUDA
+  error: unknown error"); one restart failed on a node without usable GPUs. The pool's restart p264.0737 trains again
+  from the rolling checkpoint 32400 (00:22, iteration 32403). Recall-surgery runs on host004's spare nodes were
+  cancelled (spares stay free for main-run node replacement from now on); as07r5b02 excluded for future launches
+  (`pool_ctl exclude`). as06r2b06 (one fault, then 2 h clean) and as07r5b06 (very slow filesystem / container start)
+  flagged, not excluded. A read-only watcher reports main-run ends / new runs / stalls (no action on the cluster).
+* **o134c host002** released itself at 23:44 on Slurm's end-of-time USR1 (walltime 00:25) -- the scheduled end.
+* **1.7B reverse KV test** (§3.7): 32 -> 2 KV heads by mean-pooling costs CoQA -5.6 F1 after 1000 steps (~2.7 sigma),
+  SQuAD / Winogrande recover -- KV capacity matters for multi-turn copying at 1.7B. Its decay / s2000 / s3000 readouts
+  were cancelled with the spare-node runs (rerun commands in §3.7).
+* **1.7B second attention step** (`hybrid_add_post_attn`): +1.75 SQuAD v2 F1 / +1.0 CoQA F1 at step 1000 (§9.1); its
+  step-2000 readout and decay arm were cancelled likewise (rerun: `ladder17b_eval_mn5` CLI entry with code/v2,
+  `dec_hybrid_add_post_attn`).
+
+**Blocked on a 32-node allocation:** `kv8_lr4`, `post4_lr4`, `dec100`, `kv8_k6`, then `kv8` / `post4` controls (all
+verified exact at insertion; first-step loss checks in §4.4). The 1.7B evidence (reverse KV test, post-attention
+SQuAD gain) points at `kv8_lr4` and `post4_lr4` as the two candidates most likely to move CoQA / SQuAD within the
+main run's update budget.
