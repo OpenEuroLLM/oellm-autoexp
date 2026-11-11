@@ -412,6 +412,111 @@ original codebase's `ablate_attention`, every attention sublayer's output zeroed
   candidates are the recurrent part's contribution *with* attention present (conversation-history tracking
   in CoQA's multi-turn questions) or single-seed noise.
 
+### 3.7 KV capacity at 1.7B (reverse test; 2026-11-11 night, INCOMPLETE)
+
+Question: does KV capacity matter for in-context copying in a CKDA hybrid? The ambitious model has 2 KV groups for
+16 query heads in its 6 NoPE attention layers (the KV-duplication surgery 2 -> 8 of §4.3 is the forward test). The
+1.7B testbed (`skda-shipped-hybrid-lowrank`, fla gated NoPE MHA 32 x 64 in every 4th layer) runs the reverse:
+its six attention layers rebuilt as **GQA with 2 KV heads** (16 query heads per group) by **mean-pooling** each
+group's K and V heads (the GQA-uptraining recipe), then trained exactly paired with `hybrid_ctrl_fresh` /
+`dec_hybrid_ctrl_fresh` (model-only start from the stable end, fresh Adam, warmup 100, lr 5e-4, seed 1234, mbs 1,
+gbs 128, 2 nodes, same data order).
+
+**Code** (commit 40d6d5e0; immutable code dir `recall_surgery/code/v3`):
+* `native_patch/interventions.py`: item `attn_kv@<n>`. The existing attention layers are rebuilt
+  (`RopeAttnMixer`, now with `rope` / `num_kv_heads`) with fla `Attention(num_kv_heads=n)`; query heads, `g_proj`
+  and `o_proj` are unchanged, parameter keys are the same, `k_proj` / `v_proj` become (n x 64, 2048).
+* `native_patch/surgery.py`: `pool_kv`. KV head g is the float64 mean of the original heads g*G .. (g+1)*G-1
+  (G = 16), cast back to bf16. This is the grouping flash-attn and SDPA(enable_gqa) use. `recall_surgery.json`
+  lists the 12 replaced tensors (old / new shape + sha256). Output: `ladder17b_surgery/hybrid_kv2`.
+* `native_patch/kv_pool_check.py` runs inside the surgery job, on the node's GPU, before the surgery. It
+  checks fla `Attention` + flash-attn in bf16 at 8->2 and 32->2 heads:
+  * strict load of the pooled tensors;
+  * identical heads inside each group -> |d| 0 against the MHA layer;
+  * pooled GQA == the MHA layer with every head's K/V replaced by its group mean, |d| 0;
+  * perturbing KV head 0 changes exactly query heads 0..15.
+
+  All PASS. It was also run locally (CPU float64 / GPU float32 SDPA): PASS.
+* `export_native.py`: `attn_kv@n` -> `attn.num_kv_heads = n` in the HF config (the stock fla SignedKDA config
+  carries `num_kv_heads` in its `attn` spec, so the stock model builds GQA). It checks every attention layer's
+  on-disk `k_proj` / `v_proj` rows = n x head_dim. The readout loads strictly ("440 tensors, strict, every
+  tensor placed"; 1,665,101,504 parameters, 6 x 2 x 1920 x 2048 = 47.2 M fewer than the MHA hybrid).
+* Arms `hybrid_kv2` / `dec_hybrid_kv2` in `ladder17b_continue_mn5.yaml`. The surgery comes from
+  `ladder17b_surgery_mn5` with `aux.code_dir=.../code/v3 "aux.arms='hybrid_kv2:skda-shipped-hybrid-lowrank:attn_kv@2:random'"`.
+
+**Insertion cost** (smoke, 1 node, mbs 1, the same batches as the §8 smokes): step-1 loss **2.5293** vs the
+control's 2.2756 (**+0.254**), grad norm 1.58 vs 0.12-0.37. On 2 nodes (the run itself): 2.4703 vs 2.2230 (+0.247).
+That is twice RoPE-on-NoPE's +0.13 (`hybrid_attn_rope`). Load strict (`successfully loaded`, no non-strict
+fallback).
+
+**Training loss** (mean of the logged 10-step losses per window, 2 nodes; kv2 minus control):
+
+| window | 11-250 | 251-500 | 501-750 | 751-1000 | 1001-1250 | 1251-1500 | 1501-1750 | 1751-2000 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `hybrid_ctrl_fresh` | 2.2339 | 2.2423 | 2.2425 | 2.2425 | 2.2414 | 2.2410 | 2.2425 | 2.2387 |
+| `hybrid_kv2` | 2.3003 | 2.2796 | 2.2642 | 2.2589 | 2.2559 | 2.2539 | 2.2545 | 2.2501 |
+| gap | +0.066 | +0.037 | +0.022 | +0.016 | +0.015 | +0.013 | +0.012 | **+0.011** |
+
+**Readout** (`ladder17b_evals/<arm>/summary.txt`; SQuAD v2 = first 4000 docs; delta to the paired control):
+
+| arm | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 EM | SQuAD v2 F1 | HasAns F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| `native_ckda_hybrid` (stable end = step 0 of both) | 59.51 | 47.37 | 60.03 | 13.50 | 17.98 | 34.44 |
+| `hybrid_kv2_s0` (pooled, no training) | 57.62 (-1.89) | 18.47 (-28.90) | **26.52** (-33.51) | 5.05 (-8.45) | **9.99** (-7.99) | 17.40 |
+| `hybrid_ctrl_fresh_s1000` | 60.93 | 49.73 | 62.07 | 9.60 | 13.14 | 25.23 |
+| `hybrid_kv2_s1000` | 60.30 (-0.63) | 44.20 (-5.53) | **56.44 (-5.63)** | 9.70 (+0.10) | 13.69 (+0.55) | 26.29 (+1.06) |
+| `hybrid_ctrl_fresh_s2000` | 58.56 | 46.08 | 59.64 | 11.62 | 15.56 | 29.88 |
+| `hybrid_kv2_s2000` | 57.93 (-0.63) | not run | not run | not run | not run | not run |
+| `dec_hybrid_ctrl_fresh_s3000` | 59.75 | 50.70 | 64.67 | 13.90 | 18.79 | 36.09 |
+| `dec_hybrid_kv2_s3000` | not run | | | | | |
+
+Noise: Winogrande +-1.4, CoQA +-~1.5 F1, SQuAD subset +-~0.6 F1.
+
+Reading (two readouts, single seed):
+* **Pooling at insertion is the attention-zeroed floor.** CoQA F1 26.5 / SQuAD v2 F1 10.0 equal the §3.6
+  ablation with attention outputs zeroed (28.8 / 10.1 on the 50 BT export). Mean-pooled K/V destroy the copy
+  function of the six layers; the rest of the network is intact (Winogrande -1.9).
+* **Most of it comes back within 1000 steps (0.52 BT), but not all of it on CoQA.** At s1000, CoQA F1 is -5.6 /
+  EM -5.5 below the paired control. That is well outside the noise: about 2.7 sigma of a difference of two
+  readouts at +-1.5 each. SQuAD v2 is at par (+0.55 F1,
+  HasAns +1.1), and so is Winogrande (-0.6). The training-loss gap is still closing at 2000 steps
+  (+0.011, from +0.25), so the s1000 CoQA deficit is a recovery-in-progress number, not an asymptote.
+* What this does and does not say about the ambitious model:
+  * Copying in these hybrids lives in the attention K/V. A 16x KV cut costs a lot at insertion and is
+    only partly recovered after 0.5 BT, on the multi-turn task (CoQA).
+  * It does NOT yet separate two explanations:
+    1. "2 KV heads cannot hold what 32 can" (a capacity limit);
+    2. "the pooled start is a bad init that needs more tokens".
+
+  Telling them apart needs the s2000 and decayed s3000 readouts: CoQA still -5 after the decay would mean
+  capacity; convergence to the control would mean init. It also does not say whether 2 -> 8 helps a model
+  trained with 2 KV heads from the start (the ambitious case, §4.3).
+
+**Status / what is left.** On 2026-11-12 ~00:20 the coordinator cancelled `dec_hybrid_kv2` (p264.0734) and the
+`hybrid_kv2_s2000` readout (p264.0736). The main run on p264 host004 needed the spare nodes: it crashed at
+21:28 and its restarts were failing on a node without usable GPUs.
+* Done:
+  * the surgery: `ladder17b_surgery/hybrid_kv2`;
+  * the 2000-step run: `ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_kv2/ckpt/iter_{0500,1000,1500,2000}`,
+    complete and saved;
+  * readouts s0 and s1000.
+* Lost:
+  * the decay ran to iteration 2150 with no save (its `ckpt/` is empty);
+  * the s2000 readout finished only Winogrande (57.93) and 3 of 5 Belebele before the cancel.
+* To finish, in a new allocation, from a fresh snapshot, with priority below the main run, and avoiding
+  `as07r5b06`: on p264 host004 that node took > 40 min to copy ~1700 small files and never got through
+  container start-up (login node: 3.5 s for 524 files). Steps:
+  1. `ladder17b_eval_mn5 "aux.only=[hybrid_kv2_s2000]" aux.name=hybrid_kv2_s2000 aux.model=skda-shipped-hybrid-lowrank
+     aux.ckpt=$S/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_kv2/ckpt/iter_0002000 aux.code_dir=$S/code/v3
+     aux.intervention=attn_kv@2` (1 node, ~1 h). The export dir `ladder17b_exports/hybrid_kv2_s2000` is already
+     written and marked done, so the rerun goes straight to the evals.
+  2. `ladder17b_continue_mn5 "aux.only=[dec_hybrid_kv2]" aux.nodes=2 aux.save_interval=500`. It resumes the
+     step-2000 save (2 nodes, ~55 min). Its save dir is empty, so it starts cleanly from `hybrid_kv2/ckpt`.
+  3. `ladder17b_eval_mn5 ... aux.name=dec_hybrid_kv2_s3000 aux.ckpt=.../dec_hybrid_kv2/ckpt/iter_0003000` (same
+     flags as 1).
+* Gotcha: build code dirs on the login node (`native_patch/make_code_dir.sh`, about 1 min). Building in the
+  surgery job on a compute node took > 40 min on as07r5b06.
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
