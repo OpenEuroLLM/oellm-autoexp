@@ -548,7 +548,7 @@ expectation) and each copy's gradient is nearly uncorrelated with the others' (|
 measured 0.48-0.56 at r = 4), so Adam's second moment / r too. `--moments copy` keeps everything verbatim
 (momentum r x too strong for ~1/(1-beta) steps). `args.num_query_groups` = G'. Every other key (317,973 in total)
 is untouched: the new tree hard-links the source's 1024 `.distcp` shards (`dcp_surgery.write_surgery`, source-
-sized row chunks) and adds files with the 36 rewritten tensors; the main run's directory is only read.
+sized row chunks) and adds files with the 36 rewritten tensors; the main run's directory is only read. kv8: read 284 s, written in 345 s (24,588 chunks); kv16 223 s.
 Deterministic (no randomness): `verify` re-derives every tensor and compares the manifest's SHA-256.
 
 **Exactness evidence.**
@@ -559,8 +559,8 @@ Deterministic (no randomness): `verify` re-derives every tensor and compares the
 | `megatron-test` (local GPU: Megatron `HybridModel` '*' layer, TE linear_qkv with fused input norm, unfused core attention, fused XSA, output gate; random layer 16 x 128) | 2 -> 8 and 2 -> 16, fp32 and bf16, also `fused_qk_norm_rope`: attention output and logits **bit-identical (0.0)**; negative control (two q heads swapped) 0.40 rel L2 |
 | `export-test` (local GPU) | exporter split of the duplicated layout: q / gate identical, k / v = the 2 heads repeated; tiny HF OellmAmbitious 2 vs 4 KV heads: max \|dlogit\| 4e-5 (scale 38), cached decoding 1.7e-5 |
 | fake fsdp_dtensor checkpoint (local): apply / verify / gpucheck | read-back exact, verify 0 differ, Megatron output identical |
-| production `gpucheck` (the real 23400 layers through Megatron's attention, TE flash, fp32 + bf16, seq 4096) | in the surgery job, pool run o134c.1954 (queued 20:10) |
-| end-to-end, eval-only, token level (`fixedvalid_eval_kvdup_v4_mn5`, 8 nodes, EP 8, sub64 v8ml + Winogrande/WSC273 requests, `MEGATRON_EVAL_TOKEN_DUMP`; `duplicate_kv_groups.py compare-dumps`) | queued: s23400 = o134c.1953, s23400kv8 enqueued (starts when kv8_src exists) |
+| production `gpucheck` (o134c.1954: the real 23400 layers, read back from both checkpoints, through Megatron's attention with TE (auto backend), seq 4096) | kv8, all six layers: **fp32 bit-identical (0.0)**; bf16 + fused qk-norm attention-output rel L2 1.2-2.4e-4 (max 3.6e-3; the bf16 GEMMs of a 9216- vs 12288-row projection round differently), logits 1.5-5.9e-4; kv16: fp32 **and** bf16 bit-identical (0.0) in all six layers; `verify` 0 of 36 tensors differ for both, source `.metadata` unchanged |
+| end-to-end, eval-only, token level (`fixedvalid_eval_kvdup_v4_mn5`, 8 nodes, EP 8, sub64 v8ml + Winogrande/WSC273 requests, `MEGATRON_EVAL_TOKEN_DUMP`; `duplicate_kv_groups.py compare-dumps`) | s23400 (o134c.1953, done): validation-all 1.274705, mc 4.231813; s23400kv8 (o134c.1965) and s23400kv16 (o134c.1999) queued behind the host's eval runs |
 | end-to-end, training: kv8's first step (23401) vs `lr_decay/dec100`'s 23401 (same 32-node layout, same batch, unchanged model) | reference **1.123511** (dec100, identical in two attempts o134c.1806 / .1855; ls120 at x1.2: 1.130263); kv8 must land within bf16 noise of it when it runs |
 
 The HF export (`export_ambitious.py` takes `num_key_value_heads` from the run's `num_query_groups`) and vLLM
