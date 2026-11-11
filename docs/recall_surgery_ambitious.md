@@ -230,6 +230,36 @@ This is not an architecture change, but every surgery arm's readout is confounde
 helps a decayed model is what matters for the final model, and if the decay closes much of the gap, the bar for
 the intervention is different.
 
+**First `dec100` launch did not decay** (o134c 1806, snapshot ckdab35): `learning rate: 8.500000E-04` at 23401-23404
+with `lr_decay_style WSD`, `lr_wsd_decay_iters 100`, `override_opt_param_scheduler True` all in the args. The
+scheduler is right in isolation (same arguments, a dummy optimizer: 7.65e-4, 7.30e-4, 7.03e-4 at 23401-23403);
+the optimizer load restores the checkpoint's *param groups*, including their per-group `max_lr` / `min_lr`, and the
+main run's groups carry `min_lr = lr = 8.5e-4` -- every group interpolates between its own bounds, so the decay
+was a no-op. `override_opt_param_scheduler` only overrode the scheduler's own fields. Fixed in Megatron c9c04235f
+(`load_checkpoint` resets the per-group bounds to the arguments' under the override flag; unit test
+`tests/unit_tests/test_override_lr_bounds.py`); `dec100` relaunched from ckdab37 (the 5 constant-lr steps
+discarded, no save had been written). Any earlier schedule change on a resumed run under this override was
+affected the same way.
+
+### 3.5 Attention temperature (inference, 23500 export; vLLM `OELLM_ATTN_LOGIT_SCALE`)
+
+| attention softmax scale | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) |
+|---|---:|---:|---:|
+| x1 (as trained) | 50.42 / 66.13 | 62.51 | 26.89 (52.94) |
+| x1.1 | (running) | | |
+| x1.2 | (running) | | |
+| x1.25 | 53.85 / **69.25** | 62.19 | (running) |
+| x1.5 | 51.85 / 66.89 | 62.35 | 25.38 (50.03) |
+| XSA off | 29.85 / 43.95 | 65.04 | -- |
+
+A sharper softmax in the six NoPE attention layers reads spans better at x1.25 (CoQA F1 +3.1, ~2 sigma at
+n = 500) and overshoots at x1.5; the curve (x1.1 / x1.2) and belebele at x1.25 decide whether it is a candidate.
+Megatron 35f74ae9c adds `attention_logit_scale` (factor on the softmax scale) for a training arm. XSA is
+load-bearing for CoQA (the model was trained with it); removing it is not an option.
+
+**The main run after the Engram fix (25000 restart: Engram Adam lr x1 instead of x5, own clip, row-norm cap 13 -> 7):**
+26000 CoQA 50.30 / 66.61, Winogrande 65.82 (24000: 49.82 / 65.90, 65.82); 30000 running.
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
