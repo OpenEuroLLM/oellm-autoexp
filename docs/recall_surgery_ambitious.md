@@ -469,6 +469,26 @@ scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state
     aux.ckpt=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-lowrank/pure_add_every4/ckpt \
     aux.code_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1 aux.intervention=add_attn@every4
 ```
-**Open:** exporting an INTERVENTION arm is untested. `export_megatron.py` maps native keys to the HF
-`signed_kda` layout by arm name; the branch tensors (`*.branch.*`) have no HF counterpart yet, so the exporter will
-either reject or drop them -- dropping would silently evaluate the control. The control arms export as before.
+**Intervention-arm export** (`scripts/korbi/recall_surgery/export_native.py` + `hf_branch.py`, 2026-11-11):
+* `export_native.py` wraps `export_megatron.py` (loader, config, renames, cross-checks) and adds the branches
+  (`decoder.layers.N.self_attention.branch.X` -> `model.layers.N.attn.branch.X`, their layers read off the checkpoint
+  and checked against SKDA_INTERVENTION's tokens), `config.recall_branches` (the hybrid sibling's fla attention spec +
+  `use_rope` / `window_size`) and `attn_rope` (`use_rope` on the existing attention spec). **Strict key accounting**:
+  every checkpoint tensor must get an HF name (TE extra state / a tied output layer aside) -- `export_megatron.rename`
+  returns `[]` for any unknown key, which would have dropped the branches and evaluated the control under the arm's
+  name. Then a strict load through the eval's own loader.
+* `hf_branch.py`: the stock fla `SignedKDAForCausalLM` (upstream fla untouched) with an fla `Attention` attached as
+  `attn.branch` to the named blocks' mixers, `out = mixer(x) + branch(x)` on the same normalized input (as the native
+  `AddBranchMixer`); the branch keeps its own KV cache for generation. Installed into `export_hf.load_exported`, so
+  `eval_downstream.build_lm` (and thus every readout) picks it up.
+* **Paired loss check** (`ladder17b_paired_mn5`, `ladder17b_paired_check.sh`; native = `native_loss.py` through the
+  training launcher, i.e. the arm's own spec, code dir and SKDA_INTERVENTION): 8 x 4096 validation tokens, step 500:
+
+| arm | branches | native mean | HF mean | delta | max per-sequence |delta| |
+|---|---|---:|---:|---:|---:|
+| `pure_add_every4` | 6 (3, 7, ..., 23) | 2.610099 | 2.610101 | +2.4e-6 | 3.7e-4 |
+| `pure_ctrl_fresh` | - | 2.610351 | 2.610111 | -2.4e-4 | 6.2e-4 |
+| `hybrid_add_lin_late` | 9 (12-14, 16-18, 20-22) | 2.596326 | 2.596388 | +6.2e-5 | 6.7e-4 |
+| `hybrid_attn_rope` | - (RoPE on 6 attention layers) | 2.612688 | 2.612500 | -1.9e-4 | 6.3e-4 |
+
+  All PASS (tolerance 0.01 mean / 0.05 per sequence; bf16 kernel differences only).
