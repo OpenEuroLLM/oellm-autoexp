@@ -505,6 +505,18 @@ class MegatronConfig(ConfigInterface):
     # wide; not trained, not checkpointed: a function of a fixed seed).
     engram_sign_table_size: int = 8192
 
+    # Factor on every Engram layer's output (recall surgery: damping the hashed n-gram path,
+    # which drives a closer-mention bias). 1 = unchanged; reached linearly over
+    # ``engram_output_scale_ramp`` steps from ``engram_output_scale_start``
+    # (megatron/core/ssm/engram.py engram_output_scale).
+    engram_output_scale: float = 1.0
+
+    # Iteration where the ramp of ``engram_output_scale`` starts (the factor is 1 before it).
+    engram_output_scale_start: int = 0
+
+    # Steps of the linear ramp from 1 to ``engram_output_scale`` (0: at once).
+    engram_output_scale_ramp: int = 0
+
     # Hash multipliers of their own for every Engram layer (the reference code seeds them per
     # layer), so two Engram layers do not share their n-gram collisions. False: one set of
     # multipliers for all Engram layers.
