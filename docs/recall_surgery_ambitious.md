@@ -1008,3 +1008,15 @@ kv8_lr4, post4_lr4, dec100, kv8_k6, controls. A positive arm is a main-run candi
 
 **Running overnight:** moe_topk/k6 trained readout (23425); 1.7B post-attention arm (2000 steps + decay, paired with
 dec_hybrid_ctrl_fresh); 1.7B reverse KV test (MHA -> 2 KV groups, §3.7 when done) on host004's spare nodes.
+
+### 9.1 Late results (2026-11-11 23:25)
+
+* **moe_topk/k6 trained** (top-k 6 from 23400, 25 steps, read out at 23425 with top-k 6): CoQA 51.03 / 67.64,
+  Winogrande 61.80, belebele +0.46 (17 up / 5 down; n = 23). Inference-only top-k 6: 68.70 at 23500, 67.48 at 30000
+  (+0.4). Top-k 6 is a small, cost-free-in-quality gain (+1-1.5 CoQA F1, no belebele loss, lower LM loss at insertion)
+  at ~+20 % expert compute -- not the lever for an 8-point gap.
+* **1.7B second attention step behind each attention layer** (`hybrid_add_post_attn`, branches at 5/9/13/17/21 copied
+  from the preceding attention layer, o_proj zero), step 1000 vs `hybrid_ctrl_fresh`:
+  Winogrande 60.14 vs 60.93, CoQA 50.27 / 63.03 vs 49.73 / 62.07 (+1.0), **SQuAD v2 14.89 vs 13.14 (+1.75), HasAns 28.59
+  vs 25.23 (+3.4)** -- the first 1.7B branch arm with a SQuAD gain beyond noise (all earlier branch placements:
+  <= +0.7). Step 2000 and the decay arm (`dec_hybrid_add_post_attn`, paired with `dec_hybrid_ctrl_fresh`) running.
