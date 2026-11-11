@@ -1,0 +1,27 @@
+# belebele, the 24 languages of ckdab_focus.yaml (5-shot reading comprehension), for the recall-surgery diagnostics (user 2026-11-11).
+count: 24
+tasks:
+- {name: vllm/belebele_por_Latn/5, half: vllm, row: 6, task: belebele_por_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_lvs_Latn/5, half: vllm, row: 22, task: belebele_lvs_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_nld_Latn/5, half: vllm, row: 36, task: belebele_nld_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_ron_Latn/5, half: vllm, row: 59, task: belebele_ron_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_slk_Latn/5, half: vllm, row: 62, task: belebele_slk_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_lit_Latn/5, half: vllm, row: 65, task: belebele_lit_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_nob_Latn/5, half: vllm, row: 69, task: belebele_nob_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_pol_Latn/5, half: vllm, row: 76, task: belebele_pol_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_fin_Latn/5, half: vllm, row: 80, task: belebele_fin_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_hrv_Latn/5, half: vllm, row: 91, task: belebele_hrv_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_slv_Latn/5, half: vllm, row: 115, task: belebele_slv_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_bul_Cyrl/5, half: vllm, row: 131, task: belebele_bul_Cyrl, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_swe_Latn/5, half: vllm, row: 140, task: belebele_swe_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_ell_Grek/5, half: vllm, row: 149, task: belebele_ell_Grek, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_deu_Latn/5, half: vllm, row: 156, task: belebele_deu_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_fra_Latn/5, half: vllm, row: 161, task: belebele_fra_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_mlt_Latn/5, half: vllm, row: 209, task: belebele_mlt_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_est_Latn/5, half: vllm, row: 222, task: belebele_est_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_hun_Latn/5, half: vllm, row: 226, task: belebele_hun_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_ces_Latn/5, half: vllm, row: 266, task: belebele_ces_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_dan_Latn/5, half: vllm, row: 279, task: belebele_dan_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_eng_Latn/5, half: vllm, row: 283, task: belebele_eng_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_spa_Latn/5, half: vllm, row: 310, task: belebele_spa_Latn, n_shot: 5, suite: lm-eval-harness}
+- {name: vllm/belebele_ita_Latn/5, half: vllm, row: 360, task: belebele_ita_Latn, n_shot: 5, suite: lm-eval-harness}
