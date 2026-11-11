@@ -57,22 +57,28 @@ def parse(spec: str | None = None) -> dict:
     return out
 
 
-def layer_set(token: str, num_layers: int, every: int) -> list[int]:
-    """1-based layer numbers of a layers token."""
-    lin = [i for i in range(1, num_layers + 1) if i % every != 0]
+def layer_set(token: str, num_layers: int, every: int | None) -> list[int]:
+    """1-based layer numbers of a layers token. ``every``: the stack's attention period (None: a pure
+    linear stack, every layer is CKDA). Tokens: "lin" (every CKDA layer), "lin_late" (the CKDA layers of
+    the second half), "every<k>" (every k-th layer, counting from 1, as the hybrids place attention),
+    or a comma list."""
+    lin = [i for i in range(1, num_layers + 1) if not every or i % every != 0]
     if token == "lin":
         return lin
     if token == "lin_late":
         return [i for i in lin if i > num_layers // 2]
+    if token.startswith("every"):
+        k = int(token[len("every"):])
+        return [i for i in range(1, num_layers + 1) if i % k == 0]
     return sorted(int(x) for x in token.split(","))
 
 
-def branch_layers(iv: dict, num_layers: int, every: int) -> dict[int, int | None]:
+def branch_layers(iv: dict, num_layers: int, every: int | None) -> dict[int, int | None]:
     """{1-based layer: window or None} of every added branch."""
     out = {}
     for token, window in iv["add"]:
         for layer in layer_set(token, num_layers, every):
-            if layer % every == 0:
+            if every and layer % every == 0:
                 raise ValueError(f"layer {layer} is an attention layer already; add branches to CKDA layers")
             out[layer] = window
     return out
@@ -121,8 +127,15 @@ class RopeAttnMixer(FLAMixer):
         self.layer = cls(**kw)
 
 
-def apply(specs: list, config, hybrid_arm: str, every: int) -> list:
-    """The hybrid's per-layer specs with the SKDA_INTERVENTION changes applied."""
+def active() -> bool:
+    iv = parse()
+    return bool(iv["add"] or iv["attn_rope"])
+
+
+def apply(specs: list, config, hybrid_arm: str, every: int | None) -> list:
+    """The per-layer specs with the SKDA_INTERVENTION changes applied. ``every``: the hybrid's attention
+    period, None for a pure linear stack (then ``hybrid_arm`` is the arm's hybrid sibling, whose attention
+    flavor -- fla's gated NoPE MHA -- the branches take)."""
     iv = parse()
     if not iv["add"] and not iv["attn_rope"]:
         return specs
@@ -137,7 +150,7 @@ def apply(specs: list, config, hybrid_arm: str, every: int) -> list:
                 module=AddBranchMixer,
                 params={**sa.params, "hybrid_arm": hybrid_arm, "window": branches[n], "rope": iv["add_rope"]})
             spec.submodules.self_attention.submodules = None
-        elif n % every == 0 and iv["attn_rope"]:
+        elif every and n % every == 0 and iv["attn_rope"]:
             spec = copy.deepcopy(spec)
             spec.submodules.self_attention = ModuleSpec(module=RopeAttnMixer, params=dict(sa.params))
             spec.submodules.self_attention.submodules = None

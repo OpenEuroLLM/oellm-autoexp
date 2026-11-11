@@ -62,15 +62,20 @@ def main(argv=None) -> int:
 
     os.environ["SKDA_INTERVENTION"] = a.intervention
     from lm_scaling.megatron_ext import interventions as iv_mod  # noqa: E402  (the patched code dir)
-    from lm_scaling.megatron_ext.specs import HYBRID_EVERY  # noqa: E402
+    from lm_scaling.megatron_ext.specs import HYBRID_EVERY, HYBRID_OF  # noqa: E402
 
     iv = iv_mod.parse(a.intervention)
-    branches = iv_mod.branch_layers(iv, cfg.num_layers, HYBRID_EVERY)
-    attn_layers = [n for n in range(1, cfg.num_layers + 1) if n % HYBRID_EVERY == 0]
+    pure = a.arm not in HYBRID_OF  # a pure linear stack: branches take the hybrid sibling's attention flavor
+    every = None if pure else HYBRID_EVERY
+    branch_arm = {v: k for k, v in HYBRID_OF.items()}[a.arm] if pure else a.arm
+    branches = iv_mod.branch_layers(iv, cfg.num_layers, every)
+    attn_layers = [] if pure else [n for n in range(1, cfg.num_layers + 1) if n % HYBRID_EVERY == 0]
+    if pure and a.init == "copy" and branches:
+        raise SystemExit("--init copy needs attention layers to copy from; a pure stack takes --init random")
     torch.manual_seed(a.seed)
     new = {}
     for n, window in sorted(branches.items()):
-        cls, kw = iv_mod.branch_kwargs(a.arm, cfg, n, window, iv["add_rope"])
+        cls, kw = iv_mod.branch_kwargs(branch_arm, cfg, n, window, iv["add_rope"])
         mod = cls(**kw)
         bsd = {k: v.detach().clone() for k, v in mod.state_dict().items()}
         if a.init == "copy":
@@ -84,7 +89,10 @@ def main(argv=None) -> int:
         for k in bsd:
             if k.startswith("o_proj"):
                 bsd[k] = torch.zeros_like(bsd[k])
-        ref = sd.get(f"decoder.layers.{attn_layers[0] - 1}.self_attention.layer.o_proj.weight")
+        # dtype reference: an attention o_proj, or (pure stack) the mixer's output projection
+        ref = (sd.get(f"decoder.layers.{attn_layers[0] - 1}.self_attention.layer.o_proj.weight") if attn_layers
+               else next((v for k, v in sd.items() if k.startswith(f"decoder.layers.{n - 1}.self_attention.layer.")
+                          and k.endswith("o_proj.weight")), None))
         for k, v in bsd.items():
             key = f"decoder.layers.{n - 1}.self_attention.branch.{k}"
             if key in sd:
