@@ -708,9 +708,16 @@ Export: `branch_add` reads the layers from `ckda_branch_layers` and needs 2 KV g
 
 Surgery: `ckda_branch_surgery.sh prod post4` with `IT=23400`, source `main_mhc4/.../ckpt_eval/iter_0023400` (read
 only). Output: `/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn/post4_src/ckpt/iter_0023400` (+
-`ckda_branch_surgery.json`); logs in `ckda_postattn/surgery_logs`. It runs as a 1-node job, enqueued into o134c at
-priority 40 from snapshot `autoexp_nextarm1` (`ckda_branch_surgery_prod_3482fb`, 22:04). One checkpoint serves
-both post4 arms (the lr multiplier is a training argument).
+`ckda_branch_surgery.json`); logs in `ckda_postattn/surgery_logs`. **Done:** o134c.2017, 1 node, priority 40, snapshot
+`autoexp_nextarm1`, rc 0 at 22:09. It read 80 tensors in 197 s and wrote 88 new keys in 241 s, plus
+`latest_checkpointed_iteration.txt` = 23400. The fold ratios g_attn / g_layer are benign: layer 19 0.81-1.45
+(median 0.96), 35 0.92-1.37, 52 0.90-1.21, 68 0.95-1.30. One checkpoint serves both post4 arms (the lr
+multiplier is a training argument).
+
+Eval-only exactness check: arm `s23400post4` of `fixedvalid_eval_kvdup_v4_mn5` (8 nodes, priority 45, o134c,
+snapshot `autoexp_nextarm2`, enqueued 22:1x). It loads the surgery into the branch model and must match `s23400`
+token by token (`duplicate_kv_groups.py compare-dumps`). It is not guaranteed to finish before o134c ends at
+00:25; if it does not, rerun it with `"aux.only=[s23400post4]"` in the next pool.
 
 | config | arm | change vs the main run's 23400 | source checkpoint |
 |---|---|---|---|
@@ -730,24 +737,24 @@ first forward, so 23401 must equal `lr_decay/dec100`'s **1.123511** within bf16 
 `moe_topk/k6`'s 23401, **1.122467**. post4 logs one `[ckda_branch] layer N calibrated` line per layer.
 
 **Recommended order:** kv8_lr4, post4_lr4, kv8_k6, then the kv8 and post4 controls. The paired x1 references for
-the lr4 arms are kv8 / post4 and the main run's own 23500. Launch from snapshot `autoexp_nextarm1`, which holds
-Megatron 31fcf98e0 and these configs. Do not re-sync it while jobs are queued from it. `$POOL` is the next
+the lr4 arms are kv8 / post4 and the main run's own 23500. Launch from snapshot `autoexp_nextarm2` (autoexp 6ca72ad0, Megatron 31fcf98e0, these configs). Never re-sync it
+while jobs are queued from it. `$POOL` is the next
 allocation's pool with a 32-node slot (o134c ends 2026-11-12 00:25):
 
 ```
-cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+cd $R/autoexp_nextarm2 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
     --monitor-state-dir $R/pool_state --pool $POOL \
     --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8_lr4]"
-cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+cd $R/autoexp_nextarm2 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
     --monitor-state-dir $R/pool_state --pool $POOL \
     --config-name experiments/korbi/production/hybrid_v4_postattn_mn5 --yes "aux.only=[post4_lr4]"
-cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+cd $R/autoexp_nextarm2 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
     --monitor-state-dir $R/pool_state --pool $POOL \
     --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8_k6]"
-cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+cd $R/autoexp_nextarm2 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
     --monitor-state-dir $R/pool_state --pool $POOL \
     --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8]"
-cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+cd $R/autoexp_nextarm2 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
     --monitor-state-dir $R/pool_state --pool $POOL \
     --config-name experiments/korbi/production/hybrid_v4_postattn_mn5 --yes "aux.only=[post4]"
 ```
@@ -756,7 +763,7 @@ If the surgery did not finish before the allocation, rerun it first, 1 node, in 
 output:
 
 ```
-cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+cd $R/autoexp_nextarm2 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
     --monitor-state-dir $R/pool_state --pool $POOL \
     --config-name experiments/korbi/production/ckda_branch_surgery_mn5 --yes aux.mode=prod aux.arms=post4 \
     aux.it=23400 aux.root=/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn \
