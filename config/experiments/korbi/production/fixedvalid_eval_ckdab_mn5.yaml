@@ -249,3 +249,45 @@ sweep:
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
           backend.megatron.ckda_branch_alpha_end: 0.0
+        # recall surgery add6 (hybrid_v4_addattn_mn5): attention ADDED next to complex_kda at the six 3:1 positions
+        - aux.arm: add6_23400
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6/ckpt/iter_0023400/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6/ckpt
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.train_iters: 23400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 100000
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+        # recall surgery add6 (hybrid_v4_addattn_mn5): attention ADDED next to complex_kda at the six 3:1 positions
+        - aux.arm: add6_23500
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6/ckpt/iter_0023500/.metadata
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6/ckpt
+          backend.megatron.ckpt_step: 23500
+          backend.megatron.train_iters: 23500
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_start_iteration: 23300
+          backend.megatron.ckda_branch_alpha_hold: 100000
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
