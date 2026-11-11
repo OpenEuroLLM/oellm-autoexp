@@ -123,6 +123,33 @@ Same rows and harness (HF backend, `recall_surgery/ladder17b_evals`), the pi age
   attention need": the decisive small-scale test adds attention branches to the **pure-CKDA** 1.7B model
   (every 4th layer, the hybrid's placement) and tracks how much of the +12 F1 comes back per BT (§8).
 
+### 3.2 q35c on all three rows, and where the closer-mention bias comes from (2026-11-11)
+
+q35c (25 % RoPE-gated attention, same data) at 59.6k / 1.0T: **CoQA 45.70 / 63.13, Winogrande 67.32,
+SQuAD v2 23.41 / 30.05 (HasAns 59.64)** -- vs ambitious at 1.0T (15k): 50.43 / 65.99, 62.59, 23.67 / 29.80
+(58.95). So 25 % attention buys *nothing* on CoQA / SQuAD at this scale (q35c is worse on CoQA); the 1.7B
++12 is the step from *no* attention to some, which ambitious' 12.5 % already has. Only Winogrande separates
+(+4.7), and that is the closer-mention bias (exp 016: ambitious picks the closer entity ~68 %, q35c / 32B ~50 %).
+
+Closer-mention pick rate of the **1.7B** models (lm-eval samples + winogrande validation, `closer_bias` rule):
+
+| 1.7B | acc | picks closer | acc gold=closer | acc gold=farther |
+|---|---:|---:|---:|---:|
+| pure CKDA | 0.628 | 0.509 | 0.639 | 0.618 |
+| CKDA hybrid (NoPE attention) | 0.610 | 0.503 | 0.615 | 0.605 |
+| KDA hybrid | 0.600 | 0.498 | 0.600 | 0.601 |
+| attention (RoPE) | 0.583 | 0.528 | 0.613 | 0.555 |
+
+**No bias at 1.7B** -- neither NoPE attention nor CKDA produces it. What ambitious has that the 1.7B models,
+q35c and the 32B do not: **Engram** (hashed 2/3/4-gram tables, 80B rows, feeding the residual at layers 2 and
+49), present since the earliest checkpoints that already show the bias; also mHC-4 / LDM streams, XSA, MuOwn.
+A local n-gram memory that boosts continuations of the most recent tokens is the natural mechanism for a
+"pick the closer mention" preference. **Test (inference only, zero cost):** the 23500 export evaluated with
+the Engram layers' output scaled by 0 and 0.5 (`OELLM_ENGRAM_OUT_SCALE`, vLLM c518d32e9d; result dirs
+`flag_evals_oellm/ambitious_v4_2ph_hd256_fp8_23500_eng{0,05}`, `ckdab_fast` rows, o134c).
+If the bias and the rows move, the intervention is an Engram *damping / gating* surgery (zero new
+parameters, CKDA untouched), trained over 23300-23500.
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
