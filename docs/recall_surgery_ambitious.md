@@ -518,25 +518,6 @@ scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state
 
   All PASS (tolerance 0.01 mean / 0.05 per sequence; bf16 kernel differences only).
 
-**Step-1000 readout** (0.5 BT at constant lr 5e-4 from the stable end, fresh optimizer, paired controls; SQuAD v2
-= first 4000 docs; belebele = 5 languages, at chance for every 1.7B model, so no signal):
-
-| arm | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 F1 | HasAns F1 |
-|---|---:|---:|---:|---:|---:|
-| `pure_ctrl_fresh` | 62.35 | 37.23 | 49.00 | 9.91 | 18.93 |
-| `pure_add_every4` (6 branches, 25 % attention) | 61.48 | 37.87 | 49.92 | 10.03 | 19.21 |
-| `pure_add_every4_rope` | 61.88 | 37.83 | 49.86 | 9.68 | 18.49 |
-| `hybrid_ctrl_fresh` | 60.93 | 49.73 | 62.07 | 13.14 | 25.23 |
-| `hybrid_add_lin_late` (9 branches) | 60.14 | 49.65 | 62.53 | 13.86 | 26.61 |
-| `hybrid_attn_rope` | 60.14 | 42.63 | 55.43 | 11.67 | 22.36 |
-
-* Attention added *surgically* to the pure CKDA stack recovers **+0.9 CoQA F1 of the +13 the trained-in hybrid
-  has** after 0.5 BT: attention that was not there during pre-training does not become a copy path in a
-  continuation of this length. The hybrid's extra branches are noise too (+0.5).
-* RoPE on NoPE-trained attention costs 6.6 CoQA F1 and does not recover in 1000 steps.
-* Step-2000 readouts (1 BT) running; they decide whether the pure-stack branches are slowly learning or flat.
-
-
 **Arm readouts at step 1000** (0.52 BT after surgery, 2 nodes, gbs 128, mbs 1, fresh Adam + 100-step warmup to 5e-4,
 constant; `ladder17b_evals/<arm>_s1000`; SQuAD v2 = first 4000 docs; Belebele = mean of eng / deu / fra / spa / ita,
 5-shot -- **at chance (25 %) for every 1.7B model**, so it carries no signal at this scale). Delta = arm minus its
