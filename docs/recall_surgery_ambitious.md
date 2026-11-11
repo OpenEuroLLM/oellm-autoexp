@@ -302,11 +302,13 @@ data position, lr 5e-4 -> 1e-5 linearly over 1000 steps = 0.5 BT):
 |---|---:|---:|---:|
 | `hybrid_ctrl_fresh` | 59.64 -> **64.67** | 15.56 -> 18.79 | 58.56 -> 59.75 |
 | `hybrid_add_lin_late` | 59.68 -> 64.59 | 13.65 -> 18.98 | 58.17 -> 59.67 |
-| `pure_ctrl_fresh` | (running) | | |
-| `pure_add_every4` | (running) | | |
+| `pure_ctrl_fresh` | 45.46 -> **51.14** | 12.79 -> 11.53 | 60.62 -> 61.88 |
+| `pure_add_every4` | 42.92 -> 49.95 | 13.17 -> 11.41 | 60.77 -> 61.80 |
 
-A 0.5 BT anneal is worth +5 CoQA F1 / +3.2 SQuAD F1 at 1.7B -- more than any surgery arm -- and the added attention
-branches are worth nothing under the decay either.
+A 0.5 BT anneal is worth +5 to +6 CoQA F1 at 1.7B in both stacks (hybrid SQuAD v2 +3.2) -- more than any surgery
+arm -- and the added attention branches are worth nothing under the decay either (pure: -1.2 vs its control,
+hybrid: -0.1). **1.7B verdict: attention added by surgery does not become a copy path in 1.5 BT, with or without
+the anneal; the anneal itself is the large lever.**
 
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
