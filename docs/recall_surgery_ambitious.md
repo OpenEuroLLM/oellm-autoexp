@@ -142,9 +142,20 @@ Smaller scale: the 1.7B ladder's stable-phase-end exports (`wsd50B`) are being c
 to put CoQA and SQuAD v2 on the same attention-fraction axis as Winogrande in §3 — the cheaper setting that
 says whether "more attention" is worth pushing further before it is paid for at 3B-active.
 
-## 7. Status (2026-11-11 01:40)
+## 7. Status (2026-11-11 01:45)
 
 * Surgery: `add6`, `add3`, `add6b` **done** (iter 23300, all three in `production/ckda_addattn/`).
-* `ctrl`, `add6`, `add6_rope` up and loading the 23300 checkpoint; `rope` queued (stopped once to give the
-  additive arms the 18 nodes they need on a host that lost 14 of 72 nodes to the node check).
-* 1.7B export copy running in the background.
+* Running: `add6` at 32 nodes (the flagship) and `add6_rope` at 18 nodes, both loading the 23300 checkpoint;
+  `ctrl` / `rope` / `add3` / `add6b` queued behind them.
+* The host is the limiting factor, not the config: 15-23 of its 72 nodes fail the thorough node check or die
+  during torchrun rendezvous, so the pool spends its retries on bad nodes. Sizing was reduced to one or two
+  arms per round (18-32 nodes) after 18-node arms died 4-6 times in a row at startup.
+* **1.7B three-task eval — blocked by facilities, not by code.** The exports already exist on jupiter
+  (`eval_megatron_ladder/export/<arm>`, 3.2 GB each, `SignedKDAForCausalLM`, `attn.layers [3,7,11,15,19,23]`)
+  and the gpt-neox-20b tokenizer is at `/e/scratch/jureap59/cache/tokenizer/gpt-neox-20b`, but:
+  1. every jupiter job of this account is `PENDING` with `StartTime=N/A` (including 1-node eval jobs
+     submitted hours ago and two 516-node 32B jobs), so its GPUs cannot run the eval;
+  2. the copy cannot be moved instead: jupiter reads at 31 MB/s but this host's uplink to MN5 runs at
+     **~0.2 MB/s** (305 MB in 28 min), i.e. ~4.5 h per 3.2 GB export.
+  What is left of that requirement is the axis that already exists on jupiter: Winogrande for six arms, six
+  budgets and six rungs (§3). CoQA / SQuAD v2 at 1.7B need either a jupiter allocation or a faster route.
