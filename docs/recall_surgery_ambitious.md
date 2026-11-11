@@ -144,6 +144,35 @@ cd $R/autoexp_add1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-m
 No Megatron argument was added, so `config/backend/megatron/*` and `oellm_autoexp/backends/megatron/
 config_schema.py` (the generated artifacts) are unchanged and do not need regenerating.
 
+## 4.1 Corrections and the in-house comparison (2026-11-11 morning, session -98)
+
+**SQuAD v2 extraction is NOT at the reference level.** §1.1 compared against an older number; on the same
+harness the answerable half is far behind every reference, and unanswerable detection is broken for all of
+them (so it cannot be the gap):
+
+| model | CoQA EM / F1 | Winogrande | SQuAD v2 EM / F1 | HasAns F1 |
+|---|---:|---:|---:|---:|
+| v4 hd256 23500 (main) | 50.42 / 66.13 | 62.51 | 21.48 / 26.89 | 52.94 |
+| v4 hd256 24000 (main) | 49.82 / 65.90 | 65.82 | 20.66 / 26.14 | 51.52 |
+| Qwen3-30B-A3B-Base (MoE, ~3B active) | 56.93 / 73.02 | 72.45 | 31.46 / 38.39 | 76.32 |
+| Qwen3-14B-Base | 56.25 / 73.43 | 73.80 | 31.64 / 38.69 | 77.43 |
+| Qwen2.5-32B | 62.25 / 76.57 | 75.85 | 30.23 / 38.22 | 76.49 |
+
+The closest reference, Qwen3-30B-A3B (same active size, but ~36T tokens vs our 1.6T), leads by +7 CoQA F1,
++7-10 Winogrande, +11.5 SQuAD F1 (+23 on the answerable half): a span-extraction / coreference gap.
+
+**All replace-arms, including attention initialized at random, are noise** (23499 readouts):
+bgqa-random (`production/ckda_branch/bgqar`, 256 nodes, own random q/k/v/o) CoQA 50.77 / 65.99, Winogrande
+63.54, SQuAD 21.54 / 27.14 -- the same as `bgqa` (copied init) and `drop`.
+
+**In-house evidence that the layout matters:** the q35c conservative run (Qwen3.5-like: gated DeltaNet 3:1,
+**25 % gated attention**, 16q / 2kv x 256 with output gate -- the *same* attention shape as ours -- but
+**partial RoPE**, no XSA), trained on the same FLAG data, reaches **Winogrande 67.96 at 59.6k steps
+(~1.0T tokens)**, against 62.5-65.8 for ambitious at 1.58T, and shows no closer-mention bias (exp 016).
+Its CoQA / SQuAD v2 rows were never run; the `ckdab_fast` round on `q35c_gqa_59600` is queued (p264).
+The differences to ours are exactly what the additive / RoPE arms of §4 test: attention fraction
+(25 % vs 6.5 %) and position (RoPE vs NoPE); plus XSA and GDN vs CKDA.
+
 ## 5. Operational notes
 
 * The 72-node host `mn5_pool_o134c/host002` is **held** (`pool.json hold_hosts: true`, `control/hold`,
