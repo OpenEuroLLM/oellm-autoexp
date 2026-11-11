@@ -19,7 +19,7 @@ W018=/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018
 TOKENIZER=${TOKENIZER:-$W018/assets/tokenizer}
 fla=$BASE_CODE_DIR; [ -d "$CODE_DIR/fla" ] && fla=$CODE_DIR
 TITAN=$ROOT/submodules/titan-oellm
-export PYTHONPATH="$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$TITAN:$TITAN/torchtitan:$ROOT/experiment/018_ckda_small_retrieval/scripts:$HYBRID_ENV/pylibs_flag:$HYBRID_ENV/pylibs_hfx:$HYBRID_ENV/pylibs_ep"
+export PYTHONPATH="$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$TITAN:$TITAN/torchtitan:$ROOT/experiment/018_ckda_small_retrieval/scripts:$HYBRID_ENV/pylibs_flag:$HYBRID_ENV/pylibs_hfx:$HYBRID_ENV/pylibs_ep:$ROOT/scripts/korbi/recall_surgery/pystubs"
 export SKDA_ARM SKDA_INTERVENTION="${SKDA_INTERVENTION:-}"
 # 018's offline evaluation environment (probe mn5-pool-p264.0665: all six datasets load offline)
 export HF_HOME=/gpfs/projects/ehpc533/users/korbip/data/flag_evals/hf_home

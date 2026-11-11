@@ -89,7 +89,9 @@ def main():
             raise SystemExit('cannot determine the document count for --limit / --shard')
         samples = {a.task: list(range(i, min(upto, total), n))}
     start = time.time()
-    kw = dict(model=lm, tasks=[a.task], num_fewshot=a.shots, bootstrap_iters=0, log_samples=True,
+    # the patched task object itself (lm-eval re-imports a !function task class on every load, so a class patch
+    # would not reach a freshly built instance)
+    kw = dict(model=lm, tasks=[task_obj] if task_obj is not None else [a.task], num_fewshot=a.shots, bootstrap_iters=0, log_samples=True,
               random_seed=2026, numpy_random_seed=2026, torch_random_seed=2026, fewshot_random_seed=2026,
               task_manager=tm)
     try:
