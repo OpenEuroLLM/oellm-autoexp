@@ -1,0 +1,243 @@
+# @package _global_
+#
+# Second Engram allocation scale: same width as the 100M model, 9 blocks instead of 4.
+# Hybrid stack (pretrain_hybrid.py). One node, 4 GH200s, expert parallel 1, data parallel 4.
+#
+# Pure MoE baseline (this file). 72 layers, pattern (LELELE*E) x 9:
+# 27 Gated DeltaNet, 9 attention, 36 MoE. Hidden 640, expert hidden 320, 96 experts, top-4,
+# one shared expert of the same width. Tied embedding, vocab 262144.
+# The token map is on, so the Engram arms hash canonical ids. The 100M runs leave it off.
+#
+# Counted parameters, tied embedding included once:
+#   active backbone 227,387,512
+#   backbone total  2,262,280,312
+#   tied embedding    167,772,160
+#   grand total    2,430,052,472
+#
+# The other five arms keep this backbone and only change num_experts, the pattern, and
+# engram_table_size. Two N layers add 2,630,400 active parameters. The pattern with them is
+# LENLELE*ELELELE*ELELELE*ELELELE*ELELENLE*ELELELE*ELELELE*ELELELE*ELELELE*E
+# engram_table_size is the minimum; each N layer builds 16 tables at the next distinct primes.
+#
+#   rho   experts   engram_table_size   table params      grand total
+#   100%  96        none                0                 2,430,052,472
+#    90%  88        86390               177,122,816       2,432,674,168
+#    80%  76        216120              442,841,856       2,432,695,928
+#    70%  68        302588              619,945,984       2,432,668,536
+#    55%  56        432350              885,646,336       2,432,671,608
+#    40%  40        605324              1,239,930,880     2,432,693,112
+#
+# 21685 steps x global batch 128 x sequence 4096 = 11,369,185,280 tokens.
+# That is 50.00 tokens per the 227,387,512 active parameters, and 1.551e19 FLOPs
+# at 6 x active x tokens (the 1.6e19 figure rounded).
+# Micro-batch is 2. The 100M run peaked near 56 GB at micro-batch 4 and 32 layers;
+# 72 layers at micro-batch 4 would pass 96 GB.
+#
+# A 12 h allocation does not cover 21685 steps. load = save, so resubmitting the same
+# command resumes from the last checkpoint.
+#
+#   uv run python scripts/run_autoexp.py --config-name experiments/swagatam/alps/engram_scaling/230m_2b3 --dry-run
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: clariden
+  - /slurm: clariden
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: rho100
+
+aux:
+  tokens: 11369185280
+  gbs: 128
+  seq: 4096
+  train_iters: ${oc.eval:'${aux.tokens} // (${aux.gbs} * ${aux.seq})'}
+  # Same placeholder as the 100M run. hybrid_main_mn5 uses 8.5e-4 at 3B active.
+  lr: 1.0e-3
+
+job:
+  name: "engram_230m_2b3_E${backend.megatron.num_experts}_${stage}_N${slurm.sbatch.nodes}_clariden"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  launcher_script: ./submodules/Megatron-LM/pretrain_hybrid.py
+  data_integrity_check: false
+  megatron:
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    # 3 Gated DeltaNet + 1 attention, each mixer followed by an MoE. 9 periods, 36 MoE layers.
+    hybrid_layer_pattern: "LELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*E"
+    num_layers: null
+    hidden_size: 640
+    # Unused: every feed-forward is an MoE layer.
+    ffn_hidden_size: 1920
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    layernorm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+    linear_beta_adam: true
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: alltoall
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    overlap_p2p_comm: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    # Engram module. With no N in the pattern these do nothing except the token map path,
+    # which is only read by an N layer.
+    engram_ngram_orders: [2, 3]
+    engram_num_heads: 8
+    engram_embed_dim: 64
+    engram_table_parallel: dp
+    engram_token_map: /capstor/scratch/cscs/swagatam/engram_token_map_256k.npy
+    engram_gate_signed_sqrt: true
+    engram_conv_prenorm: true
+    engram_hash_per_layer: true
+    engram_lr_mult: 5.0
+    engram_table_rowwise_v: true
+    engram_table_momentum_dtype: bf16
+
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    fused_qk_norm_rope: false
+    fused_residual_rmsnorm: true
+    fused_short_conv: true
+    gdn_fused_out_norm: true
+    check_for_nan_in_loss_and_grad: false
+    rerun_mode: disabled
+    manual_gc: true
+    manual_gc_interval: 100
+    recompute_activations: false
+    cuda_graph_impl: none
+    cuda_graph_modules: []
+
+    mock_data: false
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    vocab_size: null
+    padded_vocab_size: 262144
+    data_args_path: null
+    per_split_data_args_path: /capstor/store/cscs/swissai/a0248/users/swagatam/oellm-autoexp/config/experiments/swagatam/alps/engram_scaling/data/datamix4-per-split.json
+    data_path: null
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    split: null
+    data_cache_path: /capstor/scratch/cscs/swagatam/cache/MEGATRON_262k/${job.name}
+    seq_length: ${aux.seq}
+    max_position_embeddings: ${aux.seq}
+    num_workers: 8
+    num_dataset_builder_threads: 32
+    dataloader_type: cyclic
+    create_attention_mask_in_dataloader: false
+
+    micro_batch_size: 2
+    global_batch_size: ${aux.gbs}
+    train_iters: ${aux.train_iters}
+
+    optimizer: muown_classical
+    muon_qkv_headwise: true
+    residual_mixer_lr_mult: 1.0
+    lr: ${aux.lr}
+    min_lr: ${oc.eval:'${aux.lr} / 10'}
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: ${oc.eval:'int(round(0.01 * ${aux.train_iters}))'}
+    lr_wsd_decay_iters: ${oc.eval:'int(round(0.20 * ${aux.train_iters}))'}
+    lr_decay_iters: ${aux.train_iters}
+    weight_decay: 0.0
+    clip_grad: 1.0
+
+    log_throughput: true
+    log_interval: 1
+    log_timers_to_tensorboard: true
+    eval_interval: 1000
+    eval_iters: 20
+
+    wandb_project: engram_scaling_clariden
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    save: ${job.base_output_dir}/ckpt
+    load: ${job.base_output_dir}/ckpt
+    save_interval: 1000
+    ckpt_format: torch_dist
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 60
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    WANDB_MODE: online
+    WANDB_BASE_URL: https://api.forge.coreweave.com
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    PATH: "/opt/venv/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
+    OMP_NUM_THREADS: "1"
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    FLA_TENSOR_CACHE_SIZE: "64"
+    WANDB_TAGS: "clariden,engram,230M,2.3B,hybrid,GDN,muown,rho100,tokenmap"
+
+slurm:
+  sbatch:
+    nodes: 1
+    partition: ${oc.env:SLURM_PARTITION,normal}
+    time: "12:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
