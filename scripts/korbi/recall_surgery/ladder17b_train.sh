@@ -56,8 +56,8 @@ else
 fi
 
 NNODES=${SLURM_NNODES:-1}; NODE_RANK=${SLURM_NODEID:-0}
-MASTER=$(scontrol show hostnames "${SLURM_STEP_NODELIST:-${SLURM_JOB_NODELIST:-localhost}}" 2>/dev/null | head -1)
-MASTER=${MASTER:-localhost}; PORT=$((20000 + ${SLURM_STEP_ID:-0} % 20000))
+# the pool step exports MASTER_ADDR (first host of the step) into the container; no scontrol in the image
+MASTER=${MASTER_ADDR:-localhost}; PORT=$((20000 + ${SLURM_STEP_ID:-0} % 20000))
 echo "[ladder17b] arm=$SKDA_ARM intervention=${SKDA_INTERVENTION:-none} code=$CODE_DIR load_mode=$LOAD_MODE" \
      "nodes=$NNODES rank=$NODE_RANK master=$MASTER:$PORT gbs=$GBS mbs=$MBS lr=$LR iters=$TRAIN_ITERS"
 

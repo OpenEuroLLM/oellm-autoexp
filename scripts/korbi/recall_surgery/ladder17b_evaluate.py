@@ -19,23 +19,28 @@ import time
 from pathlib import Path
 
 
-def _squad_compat():
+def _one_arg_compat(task_obj):
     """lm-eval's core (0.4.13 in the image) calls doc_to_text / doc_to_target(doc, <fewshot cfg field>) in
-    fewshot_context; the old-style SQuAD2 task class takes only (doc): drop the extra argument (the prompt is the
-    class's own either way)."""
-    try:
-        from lm_eval.tasks.squadv2.task import SQuAD2
-    except Exception:  # noqa: BLE001 -- no squadv2 class in this lm-eval
-        return
+    fewshot_context; old-style task classes (SQuAD2) take only (doc). Patch the task's class so the extra
+    argument is dropped (the prompt is the class's own either way). Classes are shared with the instances
+    simple_evaluate builds, so patching the class covers them."""
+    import inspect
+    cls = type(task_obj)
+    patched = []
     for name in ('doc_to_text', 'doc_to_target'):
-        fn = getattr(SQuAD2, name)
-        if getattr(fn, '_ladder17b_compat', False):
+        fn = getattr(cls, name, None)
+        if fn is None or getattr(fn, '_ladder17b_compat', False):
+            continue
+        params = [p for p in inspect.signature(fn).parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        if len(params) != 2:  # (self, doc) only
             continue
 
         def wrapped(self, doc, *_args, _fn=fn, **_kw):
             return _fn(self, doc)
         wrapped._ladder17b_compat = True
-        setattr(SQuAD2, name, wrapped)
+        setattr(cls, name, wrapped)
+        patched.append(f'{cls.__name__}.{name}')
+    return patched
 
 
 def main():
@@ -65,7 +70,6 @@ def main():
     lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda', context_prefix='none')
     import lm_eval
     from lm_eval.tasks import TaskManager
-    _squad_compat()
     tm = TaskManager(include_path=str(a.source / 'lm_scaling/eval_tasks'))
     # the document indices: first `limit`, then every n-th from offset i
     task_obj = tm.load_task_or_group([a.task])[a.task] if hasattr(tm, 'load_task_or_group') else None
@@ -73,6 +77,11 @@ def main():
     if task_obj is not None:
         docs = task_obj.eval_docs
         total = len(docs)
+        patched = _one_arg_compat(task_obj)
+        if patched:
+            print(f'[ladder17b_evaluate] one-argument task API patched: {patched}', flush=True)
+    elif a.task.startswith('squad'):
+        raise SystemExit('cannot load the task object to apply the SQuAD2 task-API patch')
     upto = a.limit if a.limit else total
     samples = None
     if n > 1 or a.limit:
