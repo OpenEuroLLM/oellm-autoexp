@@ -179,7 +179,7 @@ optionally from `OELLM_CKDA_DIAG_FROM_LAYER` on; result dirs `..._23500_ckda_{be
 |---|---:|---:|---:|
 | as trained | 50.42 / 66.13 | 62.51 | 26.89 (52.94) |
 | beta capped at 1 | 44.48 / 59.89 | 58.41 | 23.20 (43.76) |
-| no signed-decay gauge | 51.52 / 66.84 | 61.25 | (running) |
+| no signed-decay gauge | 51.52 / 66.84 | 61.25 | 27.17 (53.38) |
 | both | 41.75 / 57.00 | 58.56 | (running) |
 | Engram x0 (for reference) | 52.55 / 67.99 | 66.61 | 27.36 (53.05) |
 
@@ -204,6 +204,31 @@ optionally from `OELLM_CKDA_DIAG_FROM_LAYER` on; result dirs `..._23500_ckda_{be
 Winogrande for -6 belebele -- a bad trade. The remaining question is whether *training* at x0.5 (`eng05`)
 recovers belebele while keeping the CoQA / Winogrande gain; read out at 23350 / 23400 (belebele first).
 The CKDA sign gauge is neutral everywhere (belebele -0.6); beta > 1 is load-bearing everywhere.
+
+**Which Engram layer** (`OELLM_ENGRAM_SCALE_LAYERS`, vLLM 63b5fcc8fe; the other layer keeps scale 1):
+
+| 23500 export | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) | belebele diff |
+|---|---:|---:|---:|---:|
+| Engram x0, both layers | 52.55 / 67.99 | 66.61 | 27.36 (53.05) | -29.6 |
+| Engram x0, layer 2 only | 50.40 / 65.96 | 64.33 | 26.87 (52.19) | **-30.3** |
+| Engram x0, layer 49 only | (running) | | | |
+
+The early Engram (layer 2) carries **all** of the multilingual-reading benefit (belebele -30 alone) and gives back
+only +1.8 Winogrande, no CoQA. Whatever CoQA gain Engram removal buys has to sit in the deep layer (49).
+
+### 3.4 The constant learning rate: an untested confound (2026-11-11 afternoon)
+
+The main run has never decayed its lr (`hybrid_main_mn5`: lr = min_lr = 8.5e-4, `lr_decay_style: constant`);
+every reference it is held against (Qwen3, Qwen2.5) is annealed. On the 1.7B ladder the 10 BT WSD decay alone
+moves exactly these rows more than any intervention (§8): stable end 40 BT -> decayed 50 BT export, CoQA F1
+60.0 -> 68.4, SQuAD v2 F1 18.0 -> 22.0, Winogrande 59.5 -> 61.0; the surgical attention arms moved CoQA by
+<= 1 F1 in 1000 steps (§8 readout). `hybrid_v4_lr_decay_mn5` (30530b38) measures it on the big run: the main
+run's own batches (train_iters / sampler / gbs unchanged), lr annealed to 0 with WSD's 1-sqrt tail over the last
+100 steps (`dec100`, from 23400) or 200 steps (`dec200`, from 23300) to 23500, `override_opt_param_scheduler`
+(the checkpoint's scheduler is constant-style). `dec100` is paired with the main run's own 23500 (same batches).
+This is not an architecture change, but every surgery arm's readout is confounded by it: an intervention that
+helps a decayed model is what matters for the final model, and if the decay closes much of the gap, the bar for
+the intervention is different.
 
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
@@ -492,3 +517,22 @@ scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state
 | `hybrid_attn_rope` | - (RoPE on 6 attention layers) | 2.612688 | 2.612500 | -1.9e-4 | 6.3e-4 |
 
   All PASS (tolerance 0.01 mean / 0.05 per sequence; bf16 kernel differences only).
+
+**Step-1000 readout** (0.5 BT at constant lr 5e-4 from the stable end, fresh optimizer, paired controls; SQuAD v2
+= first 4000 docs; belebele = 5 languages, at chance for every 1.7B model, so no signal):
+
+| arm | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 F1 | HasAns F1 |
+|---|---:|---:|---:|---:|---:|
+| `pure_ctrl_fresh` | 62.35 | 37.23 | 49.00 | 9.91 | 18.93 |
+| `pure_add_every4` (6 branches, 25 % attention) | 61.48 | 37.87 | 49.92 | 10.03 | 19.21 |
+| `pure_add_every4_rope` | 61.88 | 37.83 | 49.86 | 9.68 | 18.49 |
+| `hybrid_ctrl_fresh` | 60.93 | 49.73 | 62.07 | 13.14 | 25.23 |
+| `hybrid_add_lin_late` (9 branches) | 60.14 | 49.65 | 62.53 | 13.86 | 26.61 |
+| `hybrid_attn_rope` | 60.14 | 42.63 | 55.43 | 11.67 | 22.36 |
+
+* Attention added *surgically* to the pure CKDA stack recovers **+0.9 CoQA F1 of the +13 the trained-in hybrid
+  has** after 0.5 BT: attention that was not there during pre-training does not become a copy path in a
+  continuation of this length. The hybrid's extra branches are noise too (+0.5).
+* RoPE on NoPE-trained attention costs 6.6 CoQA F1 and does not recover in 1000 steps.
+* Step-2000 readouts (1 BT) running; they decide whether the pure-stack branches are slowly learning or flat.
+
