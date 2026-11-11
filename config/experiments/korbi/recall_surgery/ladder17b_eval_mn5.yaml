@@ -11,8 +11,8 @@
 #                   in recall_surgery/ladder17b_hf (the MN5 copies under hf_models/ladder17b have a gpt-neox config
 #                   linked over their config.json by prep_ladder17b_hf_for_flag.sh and must not be used)
 #   native_<arm>    the native stable-phase end iter_0076295 (40 BT)
-# Testbed / intervention runs: aux.only=[...] plus overrides, e.g.
-#   aux.name=ctrl_fresh aux.ckpt=<root>/ladder17b_runs/<model>/ctrl_fresh/ckpt
+# Testbed / intervention runs (the CLI entry): aux.only=[<name>] aux.name=<name> aux.model=<arm> aux.ckpt=<iter dir>
+#   aux.code_dir=<root>/code/v1 aux.intervention=<SKDA_INTERVENTION>
 #
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
 #       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
@@ -97,3 +97,6 @@ sweep:
         - aux.name: native_attn
           aux.model: attn
           aux.ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_native/attn
+        # the CLI entry: sets nothing, so aux.name / model / ckpt / code_dir / intervention come from the command line
+        # (sweep-entry values override CLI overrides). Select it with aux.only=[<the aux.name you pass>].
+        - aux.batch: 4
