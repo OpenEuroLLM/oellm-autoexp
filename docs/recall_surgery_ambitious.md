@@ -274,6 +274,40 @@ The differences to ours are exactly what the additive / RoPE arms of §4 test: a
 At equal tokens (1.0T) q35c's Winogrande is 67.96 vs our 62.59 (+5.4). More tokens alone will not close
 the gap; SQuAD's answerable half even fell 61 -> 53 since 18k.
 
+## 4.2 Additive-branch export (ckda_attn blocks, 2026-11-11)
+
+The additive arms (`crossfade false`, `alpha_end 1`: complex_kda at full weight plus an attention branch)
+were not exportable (`branch_fold` raised). Now:
+
+* HF: a block kind `ckda_attn` (pattern symbol `A`) = the CKDA mixer (`fla_layer`) and an attention of the
+  stack's kind (16q / 2kv x 256, gate, qk norm, XSA, NoPE) on the same normalised input, `ckda(x) + attn(x)`;
+  decoding state `(ckda state, (k, v))`. The exporter (`branch_add`) folds alpha into the CKDA `o_proj` and
+  `m * gamma_scale * gamma * calib` into the branch `o_proj` (autoexp ddb0e425).
+* vLLM: `OellmCkdaAttn` (CKDA state slot + the branch's KV cache), off the decode-graph paths
+  (vllm 2fe52d3c76).
+
+Validation (small model `add6_t`: the add6 layout on the hd256 test model, 1100 -> 1300,
+`hybrid_v4_ckda_branch_test_mn5`):
+
+| check | result |
+|---|---|
+| HF full forward vs cached decoding (local, tiny, fp32) | max |dlogit| 6.5e-5 (scale 32) |
+| HF `ckda_attn` == ckda + attn (separately) | 0.0 |
+| sub64 loss HF vs Megatron | 3.322261 vs 3.321716, **Δ 5.4e-4** (d 5.2e-4, bgqa 4.3e-4) |
+| vLLM vs HF on the add6_t export, tp1 | prefill max 0.133, chunked <= 0.115, 0 positions > 0.5, greedy identical, NLL Δ <= 0.011 |
+| tiny components `ckda_attn` / `ckdab_add_mix`, tp1 and tp4 | greedy identical; one 300-token prompt with a 2.1 / 2.7 spike at 3 positions (210-214), NLL Δ 0.006: the tiny MoE routing flip seen for kvshare too |
+
+**Production export:** `hf_exports/ckdaadd_add6_fp8_23406` (+ `views/identity/ckdaadd_add6_fp8_23406`),
+`ckda_attn` at layers 9 / 25 / 41 / 58 / 74 / 90, check_export clean (0 missing / unexpected / shape),
+`.downstream_ready`. The checkpoint is **23406**, not 23400: the add6 run (o134c.1569) was cancelled at 10:54 and
+its graceful-stop save at 23406 is the only one in `ckda_addattn/add6/ckpt` (no 23400 directory exists).
+Fast round:
+
+```
+cd $R/autoexp_ckaddexp1 && $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/ckdab_fast_mn5.yaml \
+    --export ckdaadd_add6_fp8_23406 --set paths.pool=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c
+```
+
 ## 5. Operational notes
 
 * The 72-node host `mn5_pool_o134c/host002` is **held** (`pool.json hold_hosts: true`, `control/hold`,
