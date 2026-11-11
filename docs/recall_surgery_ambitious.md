@@ -173,6 +173,19 @@ Its CoQA / SQuAD v2 rows were never run; the `ckdab_fast` round on `q35c_gqa_596
 The differences to ours are exactly what the additive / RoPE arms of §4 test: attention fraction
 (25 % vs 6.5 %) and position (RoPE vs NoPE); plus XSA and GDN vs CKDA.
 
+**The main run has stopped improving on these rows since ~13k steps** (FLAG evals, same harness):
+
+| main step (tokens) | CoQA F1 | Winogrande | SQuAD v2 F1 | HasAns F1 |
+|---|---:|---:|---:|---:|
+| 13000 (0.87T) | 68.21 | 64.56 | 30.59 | 59.78 |
+| 15000 (1.0T) | 65.99 | 62.59 | 29.80 | 58.95 |
+| 18000 (1.2T) | 65.10 | 62.12 | 31.42 | 61.26 |
+| 21000 (1.4T) | 62.90 | 63.46 | 29.32 | 57.57 |
+| 23500 (1.58T) | 66.13 | 62.51 | 26.89 | 52.94 |
+
+At equal tokens (1.0T) q35c's Winogrande is 67.96 vs our 62.59 (+5.4). More tokens alone will not close
+the gap; SQuAD's answerable half even fell 61 -> 53 since 18k.
+
 ## 5. Operational notes
 
 * The 72-node host `mn5_pool_o134c/host002` is **held** (`pool.json hold_hosts: true`, `control/hold`,
