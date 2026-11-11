@@ -354,7 +354,17 @@ attention capacity (KV duplication, a second attention step behind a copy layer)
 
 MoE top-k at inference (export config `num_experts_per_tok`; router weights renormalised over the top-k): top-k 6:
 CoQA 52.82 / 68.70, Winogrande 62.90, SQuAD v2 27.58 (54.40); top-k 7: CoQA 52.93 / 68.74, Winogrande 64.48. One
-extra expert per token gives +2.6 CoQA F1 -- per-token capacity also limits these rows.
+extra expert per token gives +2.6 CoQA F1 -- per-token capacity also limits these rows. Belebele at top-k 6: 83.00
+vs 82.90 (+0.09, 12 up / 9 down): **no multilingual cost**, and at insertion in training the loss is *lower*
+(23401: 1.1225 vs 1.1235 on the same batch; 23402: 1.1279 vs 1.1291) -- unlike the attention temperature (+0.007).
+Training arm `moe_topk/k6` (hybrid_v4_moe_topk_mn5: top-k 6 from 23400 to 23425, ~300 s/step, memory 0.52) running.
+
+**Stacked at inference** (23500 export):
+
+| variant | CoQA EM / F1 | Winogrande | SQuAD v2 F1 | belebele diff |
+|---|---:|---:|---:|---:|
+| top-k 6 + attention x1.2 | 54.97 / **71.00** | (running) | (running) | |
+| top-k 6 + attention x1.2 + Engram L49 off | 52.83 / 68.42 | **66.69** | 26.94 | -1.98 (22 / 22 down) |
 
 ### 3.6 Why CKDA hybrids trail KDA hybrids on copy tasks: not attention routing (2026-11-11 evening)
 
