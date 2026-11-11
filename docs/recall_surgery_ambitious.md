@@ -624,7 +624,8 @@ cd $R/autoexp_kvdup1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no
 
 **Exactness at scale (fixed-valid eval, 8 nodes, `fixedvalid_eval_kvdup_v4_mn5`):** source iter 23400 validation-all
 1.274705 / validation-mc 4.231813; kv8 surgery 1.274508 / 4.231813 (|delta| 2e-4, bf16 rounding of the larger
-projection) -- the duplicated model is the same model. kv16: (running).
+projection) -- the duplicated model is the same model. kv16: bit-identical on validation-all (see the agent's per-token table below). **post4** surgery (attention copies on CKDA
+19/35/52/68, gamma 0): validation-all 1.274705 / mc 4.231813 -- bit-identical to the source.
 
 ## 4.4 Next-allocation arms (2026-11-11 night; prepared, not launched)
 
