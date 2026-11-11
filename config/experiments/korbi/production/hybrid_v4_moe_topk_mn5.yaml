@@ -1,0 +1,43 @@
+# @package _global_
+# Recall surgery (docs/recall_surgery_ambitious.md §3.5b): more experts per token. At inference on the 23500 export
+# top-k 6 (from 5) gives CoQA F1 +2.6 (68.70), top-k 7 +2.6 / Winogrande +2.0; unlike the attention temperature
+# (trained away in 50 steps, §3.5) it adds capacity, so training should keep it. These arms train the main run on
+# its own batches with moe_router_topk raised (no new parameters; ~+20 % expert compute per token).
+#   k6   top-k 6 from 23400 to 23425 (save at 23425; the o134c host ends 2026-11-12 00:25)
+# Readout: export with num_experts_per_tok 6 (the export reads the run's args) -- check config.json.
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/hybrid_v4_moe_topk_mn5 --yes "aux.only=[k6]"
+defaults:
+  - hybrid_v4_addattn_mn5
+  - _self_
+
+aux:
+  suite: moe_topk
+  end: 23425
+
+backend:
+  megatron:
+    load: ${aux.main_ckpt}
+    ckpt_step: 23400
+    ckda_branch: null
+    save_interval: 25
+    non_persistent_save_interval: null
+
+job:
+  name: moe_topk_${aux.arm}
+  est_steps: 25
+  est_step_time_s: 290.0
+  metadata:
+    pool_priority: 66
+
+slurm:
+  sbatch:
+    time: "04:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: k6
+          aux.topk: 6
