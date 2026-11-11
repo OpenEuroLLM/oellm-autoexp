@@ -288,6 +288,11 @@ lr mults) is silently ignored without the override flag. A changed `wd_mult` (`e
 `moe_router_wd_mult`) is ignored with or without it. Adam betas / eps are re-applied only for
 `optimizer == adam`, not for `muown_classical`'s Adam groups.
 
+**Verified on the big model (o134c 1862, ckdab39 = Megatron 2c8a1a0f4, 2026-11-11 23:10):** "per-group lr bounds reset to
+the arguments (7 of 8 groups differed in the checkpoint)"; lr 7.650e-4 / 7.298e-4 / 7.028e-4 at 23401-23403 -- the WSD
+1-sqrt values; loss 1.123511 at 23401 as every arm on this batch. That run ends with the o134c host (00:25, no save);
+dec100 is ready for the next allocation.
+
 ### 3.5 Attention temperature (inference, 23500 export; vLLM `OELLM_ATTN_LOGIT_SCALE`)
 
 | attention softmax scale | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) |
