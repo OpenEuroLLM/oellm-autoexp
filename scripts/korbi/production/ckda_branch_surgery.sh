@@ -52,6 +52,18 @@ for arm in "${ARMS[@]}"; do
     e_cal)    args=(--branch kvshare --groups 2 --layers 9,25,41 --kv-sources 0,17,33 --calibrate) ;;
     # bgqa with RANDOM q / gate / k / v / o (user 2026-11-10), row norms of the block's attention layer
     bgqar_cal) args=(--branch attention --groups 2 --layers 9,25,41 --init random --kv-sources 0,17,33 --calibrate) ;;
+    # ADDITIVE parallel attention (goal 2026-11-11): complex_kda is KEPT (alpha 1, ckda_branch_crossfade false)
+    # and the branch is added on top at gamma_init x its calibrated RMS. Every earlier arm faded complex_kda
+    # OUT at the branch layers (alpha_end 0), so "attention instead of the linear mixer" was measured and
+    # "attention in addition to it" never was. The weights start from complex_kda's own projections
+    # (q / k / v / o of the layer) and gamma_init 0.5 puts the branch at half the mixer's output RMS: the
+    # layer's output goes to ~1.5x its RMS, not 2x, so the residual does not jump.
+    add6)  args=(--branch attention --groups 2 --layers 9,25,41,58,74,90 --calibrate --gamma-init 0.5) ;;
+    # the same at the top three positions only (58, 74, 90): attention near the output, where a span has to be
+    # in the residual for the head to copy it
+    add3)  args=(--branch attention --groups 2 --layers 58,74,90 --calibrate --gamma-init 0.5) ;;
+    # the same as add6 at full mixer weight (the upper end of the dose)
+    add6b) args=(--branch attention --groups 2 --layers 9,25,41,58,74,90 --calibrate --gamma-init 1.0) ;;
     *) echo "unknown arm $arm" >&2; exit 2 ;;
   esac
   dst=$ROOT/${arm}_src/ckpt

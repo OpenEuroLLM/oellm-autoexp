@@ -1,0 +1,147 @@
+# @package _global_
+# ADDITIVE attention branches (goal 2026-11-11): the intervention the post-fit arms never tested.
+#
+# Every earlier arm (bgqa / b8 / cgqa / d / drop, 2026-11-09) faded complex_kda OUT at the branch layers
+# (ckda_branch_alpha_end 0.0, crossfade), so what was measured is "attention INSTEAD of the linear mixer",
+# 99-199 steps, and it was neutral on CoQA / Winogrande / SQuAD v2 (docs/ckda_branch_focus.md). Here the
+# linear mixer stays at full weight and the branch is ADDED on top of it:
+#
+#   out = complex_kda(x) + m(t) * (gamma_scale * gamma * calib) * branch(x),   alpha = 1, m = 1
+#
+# (ckda_branch_crossfade false: no 1-alpha weight sharing; alpha_end 1.0 / ramp 0 keeps complex_kda whole, so
+# every complex eigenvalue of every layer survives -- the architecture's feature, not the thing to trade in).
+# `calib` is measured on the first forward (RMS(ckda)/RMS(branch)), gamma starts at 0.5 (surgery --gamma-init
+# 0.5) so the layer's output starts at ~1.5x its RMS; gamma is Adam-trained from there.
+#
+# Hypotheses this separates:
+#   add6       the model has 6 attention layers of 92 (0, 17, 33, 50, 66, 82) and 1.56T tokens: retrieval is
+#              capacity-limited, and the linear mixer already carries what the retrieval path needs, so the
+#              fix is a second, parallel attention path -- not a replacement for the mixer.
+#   add3       the same at the top three positions only (58, 74, 90): attention near the output, where a
+#              span has to sit in the residual for the LM head to copy it.
+#   rope       position_embedding_type rope on the stack's attention layers (NoPE today, and the 1.7B ladder's
+#              winogrande falls monotonically with attention fraction, so the attention path is at least as
+#              likely to be mis-wired as missing). Zero new tensors: the checkpoint loads unchanged.
+#   add6_rope  the two together.
+#   ctrl       the paired control: the same resume on the same batches with nothing changed (the main run's
+#              own 23500+ numbers are at gbs 8192 / 128 nodes too, but not on these exact steps).
+#
+# Launch (two at a time into the 72-node o134c host, 18 nodes each):
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/hybrid_v4_addattn_mn5 --yes "aux.only=[ctrl,add6,rope,add6_rope]"
+# The surgery checkpoints come from ckda_branch_surgery_mn5 aux.mode=prod aux.root=.../ckda_addattn
+# aux.arms="add6 add3 add6b" (1 node); ctrl / rope resume the main run's ckpt_eval directly.
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_128_mn5
+  - _self_
+
+aux:
+  suite: ckda_addattn
+  # 4 arms x 18 nodes on the 72-node o134c host002 (goal 2026-11-11); the reference-layout sampler pins the
+  # batch layout at dp 512 x mbs 8, so gbs stays the main run's 8192 and the step count comes from the clock
+  nodes: 18
+  arm: add6
+  only: []
+  phase: 1
+  seq: 8192
+  gbs: 8192
+  stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
+  # the main run's checkpoint root (the surgery's source is the same iter_0023300)
+  main_ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval
+  add_root: ${aux.main_root}/production/ckda_addattn
+  start: 23300
+  end: 23900
+
+backend:
+  megatron:
+    micro_batch_size: 8
+    load: ${aux.main_ckpt}
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 200
+    # model-only saves (0.34 TB per checkpoint, enough for the HF export): the arms are 300 steps, one
+    # segment, on a held host -- an optimizer-less save costs a restart, not the experiment
+    no_save_optim: true
+    exit_interval: ${aux.end}
+    ckda_branch_start_iteration: ${aux.start}
+    # additive, not crossfade: alpha stays 1 and the branch adds to complex_kda
+    ckda_branch_crossfade: false
+    ckda_branch_alpha_hold: 100000
+    ckda_branch_alpha_ramp: 0
+    ckda_branch_alpha_end: 1.0
+    ckda_branch_m_start: 1.0
+    ckda_branch_m_ramp: 0
+    ckda_branch_gamma_scale: 1.0
+    ckda_branch_calibrate: true
+    ckda_branch_log_interval: 5
+
+job:
+  name: ckda_addattn_${aux.arm}
+  est_steps: 600
+  est_step_time_s: 56.0
+  est_startup_min: 40.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 50
+    pool_use_excluded_nodes: false
+  start_condition: null
+
+slurm:
+  sbatch:
+    time: "10:00:00"
+    account: cns144
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # the paired control: same resume, same batches, nothing changed
+        - aux.arm: ctrl
+          backend.megatron.ckda_branch: null
+        # position only: rope on the stack's own attention layers, no new tensors
+        - aux.arm: rope
+          backend.megatron.ckda_branch: null
+          backend.megatron.position_embedding_type: rope
+        # complex_kda kept, attention added at all six 3:1 positions
+        - aux.arm: add6
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: ${aux.add_root}/add6_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        # the top three positions only
+        - aux.arm: add3
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add3_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: ${aux.add_root}/add3_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        # all six positions at full mixer weight (the upper end of the dose)
+        - aux.arm: add6b
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6b_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: ${aux.add_root}/add6b_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        # the two together
+        - aux.arm: add6_rope
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn/add6_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: ${aux.add_root}/add6_src/ckpt
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.position_embedding_type: rope

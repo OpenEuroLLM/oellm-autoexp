@@ -20,6 +20,9 @@ aux:
   arms: "bgqa b8 cgqa d"
   tests: ""
   bench: ""
+  # an output root of its own (goal 2026-11-11: the additive arms write to .../production/ckda_addattn, so
+  # they cannot be confused with the post-fit arms' crossfade checkpoints). Empty = the script's default.
+  root: ""
 
   # bgqa_mm's per-layer gamma (crossfade: rms_ckda / rms_branch - 1, from the [ckda_branch] lines at insertion);
   # test mode: bgqa_xf's iter 1100 (layer 9 2.928, 25 2.038, 41 1.846)
@@ -30,6 +33,7 @@ aux:
 backend:
   command: bash scripts/korbi/production/ckda_branch_surgery.sh ${aux.mode} ${aux.arms}
   env:
+    ROOT: ${aux.root}
     GAMMA_INIT_BGQA: ${aux.gamma_init_bgqa}
     GAMMA_INIT_D: ${aux.gamma_init_d}
 
