@@ -17,6 +17,7 @@ NATIVE_MEGATRON=${NATIVE_MEGATRON:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_s
 if [ ! -f "$CODE_DIR/lm_scaling/megatron_ext/interventions.py" ]; then
   bash "$HERE/native_patch/make_code_dir.sh" "$CODE_DIR"
 fi
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1  # native checkpoints pickle numpy objects (args, rng)
 export PYTHONPATH="$HERE/notitan:$NATIVE_MEGATRON:$CODE_DIR:$CODE_DIR/lm_scaling:$CODE_DIR"
 status=0
 IFS=',' read -ra items <<< "$ARMS"

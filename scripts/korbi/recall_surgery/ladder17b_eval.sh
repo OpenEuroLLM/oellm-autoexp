@@ -26,6 +26,7 @@ export SKDA_ARM SKDA_INTERVENTION="${SKDA_INTERVENTION:-}"
 export HF_HOME=/gpfs/projects/ehpc533/users/korbip/data/flag_evals/hf_home
 export HF_HUB_CACHE="$HF_HOME/hub" HF_DATASETS_CACHE="$W018/cache/datasets" HF_METRICS_CACHE="$W018/cache/metrics"
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_EVALUATE_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1  # the native exporter torch.loads checkpoints that pickle numpy objects
 export TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=8 NLTK_DATA="$HYBRID_ENV/nltk_data"
 export TRITON_CACHE_DIR="/tmp/recall17b_eval_triton_${SLURM_JOB_ID:-x}_${SLURM_STEP_ID:-0}"
 mkdir -p "$OUT_DIR"

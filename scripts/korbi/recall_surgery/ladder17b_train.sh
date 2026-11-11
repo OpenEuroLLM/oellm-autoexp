@@ -47,6 +47,9 @@ export PYTHONPATH="$NOTITAN:$nm:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$HYBRID_ENV/
 export SKDA_ARM SKDA_INTERVENTION="${SKDA_INTERVENTION:-}"
 export CUDA_DEVICE_MAX_CONNECTIONS=1 OMP_NUM_THREADS=8 TOKENIZERS_PARALLELISM=false TORCHDYNAMO_DISABLE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True HF_HUB_OFFLINE=1
+# the native checkpoints pickle numpy objects (args, rng): torch >= 2.6 defaults to weights_only=True and the
+# native loader then prints "could not load the checkpoint" and EXITS 0 -- our own checkpoints, load them fully
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 export TRITON_CACHE_DIR=/tmp/recall17b_triton_${SLURM_JOB_ID:-x}_${SLURM_STEP_ID:-0}
 mkdir -p "$SAVE_DIR" "$CACHE"
 
@@ -69,7 +72,7 @@ MASTER=${MASTER_ADDR:-localhost}; PORT=$((20000 + ${SLURM_STEP_ID:-0} % 20000))
 echo "[ladder17b] arm=$SKDA_ARM intervention=${SKDA_INTERVENTION:-none} code=$CODE_DIR load_mode=$LOAD_MODE" \
      "nodes=$NNODES rank=$NODE_RANK master=$MASTER:$PORT gbs=$GBS mbs=$MBS lr=$LR iters=$TRAIN_ITERS"
 
-exec python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --nproc-per-node 4 \
+python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --nproc-per-node 4 \
   --master-addr "$MASTER" --master-port "$PORT" \
   "$nm/pretrain_gpt.py" \
   --spec lm_scaling.megatron_ext.specs arm_spec \
@@ -97,3 +100,12 @@ exec python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK"
   --log-interval "$LOG_INTERVAL" --log-throughput --rerun-mode disabled \
   --moe-aux-loss-coeff 0.0 \
   ${EXTRA_ARGS:-}
+status=$?
+# loud: the run must have trained to its last iteration and saved it (Megatron saves at the end of training)
+last=$(cat "$SAVE_DIR/latest_checkpointed_iteration.txt" 2>/dev/null || echo none)
+if [ "$NODE_RANK" = 0 ] && [ "$last" != "$TRAIN_ITERS" ]; then
+  echo "[ladder17b] FAIL: latest saved iteration '$last', expected $TRAIN_ITERS (torchrun exit $status)"
+  exit 1
+fi
+echo "[ladder17b] done: iteration $last saved in $SAVE_DIR (torchrun exit $status)"
+exit $status
