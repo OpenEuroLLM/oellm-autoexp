@@ -17,6 +17,10 @@
 #                                     keep their init (native torch-format loader falls back to strict=False)
 #   STEPS               training steps of this run (resume: on top of the source's iteration; model_only: from 0);
 #                       the lr is constant after the warmup (WSD, no decay phase: lr-decay-iters past the end)
+#   DECAY               > 0: anneal the lr linearly to min-lr over the LAST DECAY steps of this run (WSD tail ending at
+#                       its last iteration) -- the decay probe of an arm's checkpoint (LOAD_MODE resume, SRC_CKPT = the
+#                       arm's own save dir, so optimizer + data position continue)
+#   RESUME_WARMUP       warmup iters a resume declares (2000 = the native ladder's; an arm's checkpoint: its WARMUP)
 #   GBS MBS SAVE_INTERVAL LR WARMUP FFN LOG_INTERVAL   (FFN: the arm's ffn hidden size)
 #   EXTRA_ARGS          appended verbatim
 #   ENTRY / NPROC       another script than pretrain_gpt.py with the same CLI (native_loss.py), processes per node
@@ -29,6 +33,8 @@ GBS=${GBS:-128}; MBS=${MBS:-2}; LR=${LR:-0.0005}; WARMUP=${WARMUP:-100}; FFN=${F
 STEPS=${STEPS:?}; SAVE_INTERVAL=${SAVE_INTERVAL:-1000000}; LOG_INTERVAL=${LOG_INTERVAL:-10}
 SRC_ITER=$(cat "$SRC_CKPT/latest_checkpointed_iteration.txt")
 if [ "$LOAD_MODE" = resume ]; then TRAIN_ITERS=$((SRC_ITER + STEPS)); else TRAIN_ITERS=$STEPS; fi
+DECAY=${DECAY:-0}
+if [ "$DECAY" -gt 0 ]; then DECAY_END=$TRAIN_ITERS; else DECAY_END=$((TRAIN_ITERS + 1000)); fi
 HYBRID_ENV=${HYBRID_ENV:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 DATA=/gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0
 TOKENIZER=${TOKENIZER:-/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer}
@@ -58,9 +64,10 @@ mkdir -p "$SAVE_DIR" "$CACHE"
 if [ -f "$SAVE_DIR/latest_checkpointed_iteration.txt" ]; then
   LOAD=$SAVE_DIR; LOAD_ARGS=()
   [ "$LOAD_MODE" = model_only ] && LOAD_ARGS=(--lr-warmup-iters "$WARMUP")
+  [ "$LOAD_MODE" = resume ] && LOAD_ARGS=(--lr-warmup-iters "${RESUME_WARMUP:-2000}")
   echo "[ladder17b] resuming this run from $SAVE_DIR ($(cat "$SAVE_DIR/latest_checkpointed_iteration.txt"))"
 elif [ "$LOAD_MODE" = resume ]; then
-  LOAD=$SRC_CKPT; LOAD_ARGS=(--lr-warmup-iters 2000)
+  LOAD=$SRC_CKPT; LOAD_ARGS=(--lr-warmup-iters "${RESUME_WARMUP:-2000}")
   echo "[ladder17b] stable continuation from $SRC_CKPT ($(cat "$SRC_CKPT/latest_checkpointed_iteration.txt")), with optimizer"
 else
   LOAD=$SRC_CKPT; LOAD_ARGS=(--finetune --no-load-optim --no-load-rng --lr-warmup-iters "$WARMUP")
@@ -71,7 +78,7 @@ NNODES=${SLURM_NNODES:-1}; NODE_RANK=${SLURM_NODEID:-0}
 # the pool step exports MASTER_ADDR (first host of the step) into the container; no scontrol in the image
 MASTER=${MASTER_ADDR:-localhost}; PORT=$((20000 + ${SLURM_STEP_ID:-0} % 20000))
 echo "[ladder17b] arm=$SKDA_ARM intervention=${SKDA_INTERVENTION:-none} code=$CODE_DIR load_mode=$LOAD_MODE" \
-     "nodes=$NNODES rank=$NODE_RANK master=$MASTER:$PORT gbs=$GBS mbs=$MBS lr=$LR iters=$TRAIN_ITERS"
+     "nodes=$NNODES rank=$NODE_RANK master=$MASTER:$PORT gbs=$GBS mbs=$MBS lr=$LR iters=$TRAIN_ITERS decay=$DECAY"
 
 python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --nproc-per-node "${NPROC:-4}" \
   --master-addr "$MASTER" --master-port "$PORT" \
@@ -89,8 +96,8 @@ python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --np
   --bf16 --accumulate-allreduce-grads-in-fp32 --use-distributed-optimizer --no-align-param-gather \
   --no-gradient-accumulation-fusion --use-flash-attn --transformer-impl transformer_engine \
   --micro-batch-size "$MBS" --global-batch-size "$GBS" --train-iters "$TRAIN_ITERS" \
-  --lr "$LR" --min-lr 1e-05 --lr-decay-style WSD --lr-wsd-decay-iters 0 --lr-wsd-decay-style linear \
-  --lr-decay-iters $((TRAIN_ITERS + 1000)) \
+  --lr "$LR" --min-lr 1e-05 --lr-decay-style WSD --lr-wsd-decay-iters "$DECAY" --lr-wsd-decay-style linear \
+  --lr-decay-iters "$DECAY_END" \
   --override-opt_param-scheduler \
   --adam-beta2 0.95 --weight-decay 0.1 --clip-grad 1.0 --init-method-std 0.02 --seed 1234 \
   --tokenizer-type HuggingFaceTokenizer --tokenizer-model "$TOKENIZER" \

@@ -48,6 +48,9 @@ aux:
   save_interval: 500
   log_interval: 10
   extra_args: ""
+  # decay probe (dec_* arms): anneal over the last `decay` steps; resume_warmup = the source run's warmup
+  decay: 0
+  resume_warmup: 2000
   nodes: 1
   tests: ""
   bench: ""
@@ -71,6 +74,8 @@ backend:
     SAVE_INTERVAL: ${aux.save_interval}
     LOG_INTERVAL: ${aux.log_interval}
     EXTRA_ARGS: ${aux.extra_args}
+    DECAY: ${aux.decay}
+    RESUME_WARMUP: ${aux.resume_warmup}
 
 job:
   name: ladder17b_${aux.model}_${aux.arm}
@@ -139,3 +144,45 @@ sweep:
           aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
           aux.intervention: attn_rope
           aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_attn_rope
+        # decay probe (docs/recall_surgery_ambitious.md §3.4 / §8): each arm's step-2000 save resumed with optimizer and
+        # data position, lr annealed linearly 5e-4 -> 1e-5 over 1000 steps (iteration 3000). Paired among themselves.
+        - aux.arm: dec_pure_ctrl_fresh
+          aux.model: skda-shipped-lowrank
+          aux.ffn: 8064
+          aux.load_mode: resume
+          aux.resume_warmup: 100
+          aux.decay: 1000
+          aux.steps: 1000
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: ""
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-lowrank/pure_ctrl_fresh/ckpt
+        - aux.arm: dec_pure_add_every4
+          aux.model: skda-shipped-lowrank
+          aux.ffn: 8064
+          aux.load_mode: resume
+          aux.resume_warmup: 100
+          aux.decay: 1000
+          aux.steps: 1000
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: "add_attn@every4"
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-lowrank/pure_add_every4/ckpt
+        - aux.arm: dec_hybrid_ctrl_fresh
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ffn: 7936
+          aux.load_mode: resume
+          aux.resume_warmup: 100
+          aux.decay: 1000
+          aux.steps: 1000
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: ""
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_ctrl_fresh/ckpt
+        - aux.arm: dec_hybrid_add_lin_late
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ffn: 7936
+          aux.load_mode: resume
+          aux.resume_warmup: 100
+          aux.decay: 1000
+          aux.steps: 1000
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: "add_attn@lin_late"
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_add_lin_late/ckpt
