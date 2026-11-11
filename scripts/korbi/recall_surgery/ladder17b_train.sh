@@ -32,10 +32,16 @@ DATA=/gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0
 TOKENIZER=${TOKENIZER:-/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer}
 CACHE=${DATA_CACHE:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/data_cache}
 
-# code: an intervention dir shadows lm_scaling; fla and the native Megatron from the base unless the dir has them
-nm=$BASE_CODE_DIR/native_megatron; [ -d "$CODE_DIR/native_megatron" ] && nm=$CODE_DIR/native_megatron
+# code: an intervention dir shadows lm_scaling (+ fla if it has one). The native Megatron: the full tree of the
+# ladder's checkout (oellm-autoexp Megatron-LM bb5febb82 on jupiter, copied whole -- 018's native_megatron holds only
+# megatron/ + pretrain_gpt.py and lacks gpt_builders / model_provider), unless a dir with a complete tree is given.
+NATIVE_MEGATRON=${NATIVE_MEGATRON:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/native_megatron_bb5febb82}
+nm=$NATIVE_MEGATRON; [ -f "$CODE_DIR/native_megatron/gpt_builders.py" ] && nm=$CODE_DIR/native_megatron
 fla=$BASE_CODE_DIR; [ -d "$CODE_DIR/fla" ] && fla=$CODE_DIR
-export PYTHONPATH="$nm:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$HYBRID_ENV/pylibs_ep"
+# notitan first: lm_scaling.titan_ext registers torchtitan train specs at import (titan_oellm, toml, ...) when the
+# image's torchtitan imports; Megatron training does not use them
+NOTITAN=$(cd "$(dirname "$0")" && pwd)/notitan
+export PYTHONPATH="$NOTITAN:$nm:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$HYBRID_ENV/pylibs_ep"
 export SKDA_ARM SKDA_INTERVENTION="${SKDA_INTERVENTION:-}"
 export CUDA_DEVICE_MAX_CONNECTIONS=1 OMP_NUM_THREADS=8 TOKENIZERS_PARALLELISM=false TORCHDYNAMO_DISABLE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True HF_HUB_OFFLINE=1

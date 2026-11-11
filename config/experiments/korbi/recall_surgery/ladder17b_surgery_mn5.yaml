@@ -1,0 +1,50 @@
+# @package _global_
+# Recall-surgery checkpoint surgery for the 1.7B testbed arms (docs/recall_surgery_ambitious.md, section 8), one
+# 1-node pool job, all arms one after another (scripts/korbi/recall_surgery/ladder17b_surgery.sh): builds the patched
+# code dir once (native_patch/make_code_dir.sh; immutable), then per arm a MODEL-ONLY copy of the native stable-end
+# checkpoint (ladder17b_native/<model>/iter_0076295) with the arm's new tensors (native_patch/surgery.py: o_proj zero,
+# the model is the original one at step 0; recall_surgery.json with arguments + sha256 of the source and every new
+# tensor) -> ladder17b_surgery/<name>. Trained by ladder17b_continue_mn5 (aux.load_mode model_only, aux.src =
+# the surgery dir, aux.code_dir + aux.intervention as here).
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/recall_surgery/ladder17b_surgery_mn5 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: ladder17b_surgery
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery
+  code_dir: ${aux.root}/code/v1
+  seed: 1234
+  # name:model:intervention:init, comma separated (shell-safe: passed unquoted through the step command line)
+  arms: >-
+    pure_ctrl_fresh:skda-shipped-lowrank::random,pure_add_every4:skda-shipped-lowrank:add_attn@every4:random,pure_add_every4_rope:skda-shipped-lowrank:add_attn@every4+add_rope:random,hybrid_ctrl_fresh:skda-shipped-hybrid-lowrank::random,hybrid_add_lin_late:skda-shipped-hybrid-lowrank:add_attn@lin_late:random,hybrid_attn_rope:skda-shipped-hybrid-lowrank:attn_rope:random
+  tests: ""
+  bench: ""
+
+backend:
+  command: bash scripts/korbi/recall_surgery/ladder17b_surgery.sh
+  env:
+    CODE_DIR: ${aux.code_dir}
+    ROOT: ${aux.root}
+    SEED: ${aux.seed}
+    ARMS: ${aux.arms}
+
+job:
+  name: ladder17b_surgery
+  base_output_dir: ${aux.root}/ladder17b_surgery/_logs
+  est_steps: 1
+  est_step_time_s: 1800
+  metadata:
+    pool_priority: 80
+    pool_use_excluded_nodes: true
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    account: cns144
+    qos: acc_xehpc

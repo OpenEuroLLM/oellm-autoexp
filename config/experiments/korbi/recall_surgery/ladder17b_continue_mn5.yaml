@@ -10,10 +10,11 @@
 #   ctrl_resume  optimizer + scheduler + iteration from the checkpoint: the stable continuation (loss continuity)
 #   ctrl_fresh   weights only, fresh Adam, linear warmup 100 iters to 5e-4, then constant (iteration 0): the paired
 #                baseline of every intervention arm (same data order, same batch layout as the arms)
-# Intervention arms (added by the main session): aux.load_mode: model_only, aux.intervention: <name> (exported as
-# SKDA_INTERVENTION, read by a patched megatron_ext) and aux.code_dir: a dir whose lm_scaling/ shadows the base
-# (fla / native Megatron still from the base unless the dir has them). New parameters absent from the checkpoint
-# keep their init: the native torch-format loader retries non-strict when a strict load raises.
+# Intervention arms: aux.load_mode: model_only, aux.src: the surgery output (ladder17b_surgery_mn5: a model-only copy
+# WITH the arm's new tensors, so the native strict loader needs no change), aux.intervention (SKDA_INTERVENTION, read
+# by the patched megatron_ext) and aux.code_dir (native_patch/make_code_dir.sh: lm_scaling/ shadows the base; the
+# native Megatron is the full bb5febb82 tree unless the dir has a complete one). Should a checkpoint lack keys the
+# model has, the native torch-format loader retries non-strict when a strict load raises (prints load_return).
 #
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
 #       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
@@ -34,6 +35,8 @@ aux:
   base_code_dir: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/source
   code_dir: ${aux.base_code_dir}
   root: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery
+  # the checkpoint the run starts from: the native stable end (controls) or a surgery output (intervention arms)
+  src: ${aux.root}/ladder17b_native/${aux.model}
   steps: 1000
   gbs: 128
   mbs: 2
@@ -53,7 +56,7 @@ backend:
     SKDA_INTERVENTION: ${aux.intervention}
     BASE_CODE_DIR: ${aux.base_code_dir}
     CODE_DIR: ${aux.code_dir}
-    SRC_CKPT: ${aux.root}/ladder17b_native/${aux.model}
+    SRC_CKPT: ${aux.src}
     SAVE_DIR: ${aux.root}/ladder17b_runs/${aux.model}/${aux.arm}/ckpt
     LOAD_MODE: ${aux.load_mode}
     STEPS: ${aux.steps}
@@ -88,7 +91,47 @@ sweep:
   groups:
     - type: list
       configs:
+        # controls on the hybrid stable end, straight from the native checkpoint
         - aux.arm: ctrl_resume
           aux.load_mode: resume
         - aux.arm: ctrl_fresh
           aux.load_mode: model_only
+        # surgery arms (ladder17b_surgery_mn5 writes ladder17b_surgery/<arm>; literals: sweep entries resolve
+        # interpolations against the base config). Pure CKDA stable end (skda-shipped-lowrank, ffn 8064):
+        - aux.arm: pure_ctrl_fresh
+          aux.model: skda-shipped-lowrank
+          aux.ffn: 8064
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: ""
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/pure_ctrl_fresh
+        - aux.arm: pure_add_every4
+          aux.model: skda-shipped-lowrank
+          aux.ffn: 8064
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: add_attn@every4
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/pure_add_every4
+        - aux.arm: pure_add_every4_rope
+          aux.model: skda-shipped-lowrank
+          aux.ffn: 8064
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: add_attn@every4+add_rope
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/pure_add_every4_rope
+        # hybrid stable end (skda-shipped-hybrid-lowrank, ffn 7936)
+        - aux.arm: hybrid_ctrl_fresh
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: ""
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_ctrl_fresh
+        - aux.arm: hybrid_add_lin_late
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: add_attn@lin_late
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_add_lin_late
+        - aux.arm: hybrid_attn_rope
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
+          aux.intervention: attn_rope
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_attn_rope
