@@ -341,15 +341,15 @@ One attention block's output zeroed at a time (its KV cache still written):
 | attention block zeroed | CoQA EM / F1 | SQuAD v2 F1 (HasAns) | Winogrande |
 |---|---:|---:|---:|
 | none (main 23500) | 50.42 / 66.13 | 26.89 (52.94) | 62.51 |
-| 0 | 51.80 / 66.21 | (running) | 62.83 |
+| 0 | 51.80 / 66.21 | 26.54 (52.29) | 62.83 |
 | 17 | 44.43 / 61.63 | **19.65 (37.17)** | 61.96 |
-| 33 | 32.75 / **45.01** | (running) | 60.62 |
+| 33 | 32.75 / **45.01** | **15.05 (26.51)** | 60.62 |
 | 50 | 39.37 / **53.08** | 24.89 (48.48) | 61.40 |
-| 66 | 40.12 / **54.10** | (running) | (running) |
+| 66 | 40.12 / **54.10** | 23.86 (44.93) | 62.75 |
 | 82 | 49.43 / 65.27 | 28.92 (56.77) | 62.67 |
 
-The copy path is the four middle attention layers: 17 carries SQuAD v2 extraction (-7.2 F1), 33 / 50 / 66 carry CoQA
-(-21 / -13 / -12 F1); the first (0) and last (82) attention layers are dispensable for these rows. Any added
+The copy path is the four middle attention layers: block 33 is the central copy layer (CoQA -21, SQuAD v2 -11.8 F1),
+17 carries SQuAD v2 extraction (-7.2), 50 / 66 carry CoQA (-13 / -12) and some SQuAD (-2 / -3); the first (0) and last (82) attention layers are dispensable for these rows. Any added
 attention capacity (KV duplication, a second attention step behind a copy layer) belongs at 17-66.
 
 MoE top-k at inference (export config `num_experts_per_tok`; router weights renormalised over the top-k): top-k 6:
@@ -363,7 +363,7 @@ Training arm `moe_topk/k6` (hybrid_v4_moe_topk_mn5: top-k 6 from 23400 to 23425,
 
 | variant | CoQA EM / F1 | Winogrande | SQuAD v2 F1 | belebele diff |
 |---|---:|---:|---:|---:|
-| top-k 6 + attention x1.2 | 54.97 / **71.00** | (running) | (running) | |
+| top-k 6 + attention x1.2 | 54.97 / **71.00** | 63.77 | 26.70 | |
 | top-k 6 + attention x1.2 + Engram L49 off | 52.83 / 68.42 | **66.69** | 26.94 | -1.98 (22 / 22 down) |
 
 ### 3.6 Why CKDA hybrids trail KDA hybrids on copy tasks: not attention routing (2026-11-11 evening)
