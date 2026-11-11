@@ -490,6 +490,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "attention_lr_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Learning-rate multiplier (max and min lr) of the softmax-attention parameters: every parameter of a SelfAttention module (linear_qkv incl. output-gate rows and a fused input norm, linear_proj, q / k norm) and of a ckda_branch attention / kvshare branch incl. its gamma. Own param group; a changed value on a Megatron-FSDP resume takes effect without --override-opt-param-scheduler.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "attention_output_gate": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9542,6 +9550,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "attention_logit_scale": MegatronActionSpec(
         option_strings=("--attention-logit-scale",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
+    ),
+    "attention_lr_mult": MegatronActionSpec(
+        option_strings=("--attention-lr-mult",),
         action_type="store",
         nargs=None,
         const=None,

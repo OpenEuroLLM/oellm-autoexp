@@ -2289,6 +2289,13 @@ class MegatronConfig(ConfigInterface):
     # tied embeddings. Conflicts with --decoupled-lr.
     output_layer_lr_mult: float = 1.0
 
+    # Learning-rate multiplier (max and min lr) of the softmax-attention parameters: every
+    # parameter of a SelfAttention module (linear_qkv incl. output-gate rows and a fused input
+    # norm, linear_proj, q / k norm) and of a ckda_branch attention / kvshare branch incl. its
+    # gamma. Own param group; a changed value on a Megatron-FSDP resume takes effect without
+    # --override-opt-param-scheduler.
+    attention_lr_mult: float = 1.0
+
     # Linear lr warmup of the MoE router weights over this many steps, on top of the schedule
     # (0: off).
     moe_router_lr_warmup_iters: int = 0
