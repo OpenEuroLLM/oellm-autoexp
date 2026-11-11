@@ -54,6 +54,8 @@ def layer_set(token: str, num_layers: int, every):
         return lin
     if token == "lin_late":
         return [i for i in lin if i > num_layers // 2]
+    if token == "post_attn":
+        return [i for i in range(2, num_layers + 1) if (i - 1) % every == 0]
     if token.startswith("every"):
         k = int(token[len("every"):])
         return [i for i in range(1, num_layers + 1) if i % k == 0]

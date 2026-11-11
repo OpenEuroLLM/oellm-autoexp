@@ -186,3 +186,10 @@ sweep:
           aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1
           aux.intervention: "add_attn@lin_late"
           aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_add_lin_late/ckpt
+        # a second attention step right behind each attention layer (layers 5, 9, 13, 17, 21; branch q/k/v copied
+        # from the preceding attention layer, o_proj zero): code/v2 (post_attn token)
+        - aux.arm: hybrid_add_post_attn
+          aux.load_mode: model_only
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v2
+          aux.intervention: add_attn@post_attn
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_add_post_attn
