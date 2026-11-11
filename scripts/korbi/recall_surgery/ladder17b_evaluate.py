@@ -54,6 +54,9 @@ def main():
     p.add_argument('--shard', default='0/1', help='i/n: every n-th of the (limited) documents, offset i')
     p.add_argument('--batch-size', type=int, default=4)
     p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--hf-auto', action='store_true',
+                   help='a stock HF model (reference, e.g. Qwen3-1.7B-Base): AutoModelForCausalLM instead of the '
+                        'ladder exporter\'s explicit classes; same lm-eval wrapper, tasks, shots and documents')
     a = p.parse_args()
     i, n = (int(x) for x in a.shard.split('/'))
     a.out.mkdir(parents=True, exist_ok=True)
@@ -69,6 +72,16 @@ def main():
     install()
     import hf_branch  # the recall-surgery intervention arms' branches (export_native.py's recall_branches)
     hf_branch.install()
+    if a.hf_auto:
+        import export_hf
+        import torch
+
+        def _auto(path, dtype='bfloat16'):
+            from transformers import AutoModelForCausalLM
+            m = AutoModelForCausalLM.from_pretrained(str(path), torch_dtype=getattr(torch, dtype))
+            return m.eval(), m.config
+
+        export_hf.load_exported = _auto
     lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda', context_prefix='none')
     import lm_eval
     from lm_eval.tasks import TaskManager

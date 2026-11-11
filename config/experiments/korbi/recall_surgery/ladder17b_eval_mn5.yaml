@@ -34,6 +34,9 @@ aux:
   out: ${aux.root}/ladder17b_evals/${aux.name}
   squad_limit: 4000
   batch: 4
+  # reference models (stock HF, ref_* entries): AutoModelForCausalLM, own tokenizer
+  hf_auto: ""
+  tokenizer: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer
   tests: ""
   bench: ""
 
@@ -49,6 +52,8 @@ backend:
     OUT_DIR: ${aux.out}
     SQUAD_LIMIT: ${aux.squad_limit}
     BATCH: ${aux.batch}
+    HF_AUTO: ${aux.hf_auto}
+    TOKENIZER: ${aux.tokenizer}
 
 job:
   name: ladder17b_eval_${aux.name}
@@ -88,6 +93,19 @@ sweep:
           aux.model: skda-shipped-lowrank
           aux.ckpt: none
           aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-lowrank_1.7B_wsd50B
+        # same-size public references through the same harness (team copies in /gpfs/projects/ehpc533/models)
+        - aux.name: ref_qwen3_1p7b_base
+          aux.model: attn
+          aux.ckpt: none
+          aux.hf_auto: "1"
+          aux.export: /gpfs/projects/ehpc533/models/Qwen3-1.7B-Base
+          aux.tokenizer: /gpfs/projects/ehpc533/models/Qwen3-1.7B-Base
+        - aux.name: ref_qwen25_1p5b
+          aux.model: attn
+          aux.ckpt: none
+          aux.hf_auto: "1"
+          aux.export: /gpfs/projects/ehpc533/models/Qwen2.5-1.5B
+          aux.tokenizer: /gpfs/projects/ehpc533/models/Qwen2.5-1.5B
         - aux.name: native_ckda_hybrid
           aux.model: skda-shipped-hybrid-lowrank
           aux.ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_native/skda-shipped-hybrid-lowrank
