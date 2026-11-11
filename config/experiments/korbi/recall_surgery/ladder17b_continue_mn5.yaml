@@ -1,0 +1,94 @@
+# @package _global_
+# Recall surgery, small-scale testbed (docs/recall_surgery_ambitious.md, section 8): continue a NATIVE 1.7B ladder
+# checkpoint at the stable-phase end (signed_kda's megatron_ladder_medium/ckpt/<model>_1.7B_gbs128/iter_0076295,
+# ~40 BT, WSD lr 5e-4 constant, gbs 128 x 4096) in the original codebase (experiment 018's copy: native Megatron +
+# lm_scaling.megatron_ext.specs.arm_spec + fla), on MN5's NeoX-tokenized Nemotron 318BT sample (a different sample
+# than JUPITER's; tokenizer identical). scripts/korbi/recall_surgery/ladder17b_train.sh does the work, one torchrun
+# per node.
+#
+# Two controls (paired baselines):
+#   ctrl_resume  optimizer + scheduler + iteration from the checkpoint: the stable continuation (loss continuity)
+#   ctrl_fresh   weights only, fresh Adam, linear warmup 100 iters to 5e-4, then constant (iteration 0): the paired
+#                baseline of every intervention arm (same data order, same batch layout as the arms)
+# Intervention arms (added by the main session): aux.load_mode: model_only, aux.intervention: <name> (exported as
+# SKDA_INTERVENTION, read by a patched megatron_ext) and aux.code_dir: a dir whose lm_scaling/ shadows the base
+# (fla / native Megatron still from the base unless the dir has them). New parameters absent from the checkpoint
+# keep their init: the native torch-format loader retries non-strict when a strict load raises.
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/recall_surgery/ladder17b_continue_mn5 --yes "aux.only=[ctrl_resume]" aux.steps=100
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: ladder17b_${aux.model}_${aux.arm}
+  arm: ctrl_resume
+  only: []
+  # the native model and its ffn size (hybrid 7936, pure CKDA 8064, attn 8192, as the ladder's param matching)
+  model: skda-shipped-hybrid-lowrank
+  ffn: 7936
+  load_mode: resume
+  intervention: ""
+  base_code_dir: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/source
+  code_dir: ${aux.base_code_dir}
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery
+  steps: 1000
+  gbs: 128
+  mbs: 2
+  lr: 0.0005
+  warmup: 100
+  save_interval: 500
+  log_interval: 10
+  extra_args: ""
+  nodes: 1
+  tests: ""
+  bench: ""
+
+backend:
+  command: bash scripts/korbi/recall_surgery/ladder17b_train.sh
+  env:
+    SKDA_ARM: ${aux.model}
+    SKDA_INTERVENTION: ${aux.intervention}
+    BASE_CODE_DIR: ${aux.base_code_dir}
+    CODE_DIR: ${aux.code_dir}
+    SRC_CKPT: ${aux.root}/ladder17b_native/${aux.model}
+    SAVE_DIR: ${aux.root}/ladder17b_runs/${aux.model}/${aux.arm}/ckpt
+    LOAD_MODE: ${aux.load_mode}
+    STEPS: ${aux.steps}
+    GBS: ${aux.gbs}
+    MBS: ${aux.mbs}
+    LR: ${aux.lr}
+    WARMUP: ${aux.warmup}
+    FFN: ${aux.ffn}
+    SAVE_INTERVAL: ${aux.save_interval}
+    LOG_INTERVAL: ${aux.log_interval}
+    EXTRA_ARGS: ${aux.extra_args}
+
+job:
+  name: ladder17b_${aux.model}_${aux.arm}
+  base_output_dir: ${aux.root}/ladder17b_runs/${aux.model}/${aux.arm}
+  est_steps: ${aux.steps}
+  est_step_time_s: 6.0
+  metadata:
+    pool_priority: 70
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "04:00:00"
+    # the o134c host: account cns144, qos acc_xehpc
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ctrl_resume
+          aux.load_mode: resume
+        - aux.arm: ctrl_fresh
+          aux.load_mode: model_only

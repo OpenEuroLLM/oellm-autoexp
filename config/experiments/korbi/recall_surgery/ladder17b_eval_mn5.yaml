@@ -1,0 +1,99 @@
+# @package _global_
+# Recall surgery testbed readout (docs/recall_surgery_ambitious.md, section 8): CoQA (0-shot, all docs) /
+# Winogrande (0-shot, all) / SQuAD v2 (10-shot, first aux.squad_limit docs in two shards, HasAns / NoAns F1) on
+# one node per model, through the original codebase's lm-eval wrapper (scripts/korbi/recall_surgery/
+# ladder17b_eval.sh + ladder17b_evaluate.py; 018's offline datasets and CoQA scoring shim, a SQuAD2 task-API shim).
+# A missing row is a non-zero exit.
+#
+# Entries: an existing HF export (aux.ckpt: none, aux.export: its dir) or a native checkpoint (aux.ckpt: a run's
+# ckpt dir / iter_ dir; exported first into aux.export). Default entries:
+#   hf_<arm>        the jupiter ladder exports *_1.7B_wsd50B (the 50 BT WSD run: stable 40 BT + decay), clean copies
+#                   in recall_surgery/ladder17b_hf (the MN5 copies under hf_models/ladder17b have a gpt-neox config
+#                   linked over their config.json by prep_ladder17b_hf_for_flag.sh and must not be used)
+#   native_<arm>    the native stable-phase end iter_0076295 (40 BT)
+# Testbed / intervention runs: aux.only=[...] plus overrides, e.g.
+#   aux.name=ctrl_fresh aux.ckpt=<root>/ladder17b_runs/<model>/ctrl_fresh/ckpt
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/recall_surgery/ladder17b_eval_mn5 --yes "aux.only=[hf_attn,hf_ckda_hybrid]"
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: native_ckda_hybrid
+  only: []
+  model: skda-shipped-hybrid-lowrank
+  intervention: ""
+  base_code_dir: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/source
+  code_dir: ${aux.base_code_dir}
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery
+  ckpt: ${aux.root}/ladder17b_native/${aux.model}
+  export: ${aux.root}/ladder17b_exports/${aux.name}
+  out: ${aux.root}/ladder17b_evals/${aux.name}
+  squad_limit: 4000
+  batch: 4
+  tests: ""
+  bench: ""
+
+backend:
+  command: bash scripts/korbi/recall_surgery/ladder17b_eval.sh
+  env:
+    SKDA_ARM: ${aux.model}
+    SKDA_INTERVENTION: ${aux.intervention}
+    BASE_CODE_DIR: ${aux.base_code_dir}
+    CODE_DIR: ${aux.code_dir}
+    CKPT: ${aux.ckpt}
+    EXPORT_DIR: ${aux.export}
+    OUT_DIR: ${aux.out}
+    SQUAD_LIMIT: ${aux.squad_limit}
+    BATCH: ${aux.batch}
+
+job:
+  name: ladder17b_eval_${aux.name}
+  base_output_dir: ${aux.out}
+  est_steps: 1
+  est_step_time_s: 5400
+  metadata:
+    pool_priority: 75
+    pool_use_excluded_nodes: true   # one node, inference only
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "04:00:00"
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.name}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.name: hf_attn
+          aux.model: attn
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/attn_1.7B_wsd50B
+        - aux.name: hf_ckda_hybrid
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-hybrid-lowrank_1.7B_wsd50B
+        - aux.name: hf_kda_hybrid
+          aux.model: kda-sig-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/kda-sig-hybrid-lowrank_1.7B_wsd50B
+        - aux.name: hf_ckda_pure
+          aux.model: skda-shipped-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-lowrank_1.7B_wsd50B
+        - aux.name: native_ckda_hybrid
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_native/skda-shipped-hybrid-lowrank
+        - aux.name: native_ckda_pure
+          aux.model: skda-shipped-lowrank
+          aux.ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_native/skda-shipped-lowrank
+        - aux.name: native_attn
+          aux.model: attn
+          aux.ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_native/attn
