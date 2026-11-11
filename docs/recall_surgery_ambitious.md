@@ -570,8 +570,25 @@ Deterministic (no randomness): `verify` re-derives every tensor and compares the
 | `export-test` (local GPU) | exporter split of the duplicated layout: q / gate identical, k / v = the 2 heads repeated; tiny HF OellmAmbitious 2 vs 4 KV heads: max \|dlogit\| 4e-5 (scale 38), cached decoding 1.7e-5 |
 | fake fsdp_dtensor checkpoint (local): apply / verify / gpucheck | read-back exact, verify 0 differ, Megatron output identical |
 | production `gpucheck` (o134c.1954: the real 23400 layers, read back from both checkpoints, through Megatron's attention with TE (auto backend), seq 4096) | kv8, all six layers: **fp32 bit-identical (0.0)**; bf16 + fused qk-norm attention-output rel L2 1.2-2.4e-4 (max 3.6e-3; the bf16 GEMMs of a 9216- vs 12288-row projection round differently), logits 1.5-5.9e-4; kv16: fp32 **and** bf16 bit-identical (0.0) in all six layers; `verify` 0 of 36 tensors differ for both, source `.metadata` unchanged |
-| end-to-end, eval-only, token level (`fixedvalid_eval_kvdup_v4_mn5`, 8 nodes, EP 8, sub64 v8ml + Winogrande/WSC273 requests, `MEGATRON_EVAL_TOKEN_DUMP`; `duplicate_kv_groups.py compare-dumps`) | s23400 (o134c.1953, done): validation-all 1.274705, mc 4.231813; s23400kv8 (o134c.1965) and s23400kv16 (o134c.1999) queued behind the host's eval runs |
+| end-to-end, eval-only, token level (`fixedvalid_eval_kvdup_v4_mn5`, 8 nodes, EP 8, sub64 v8ml + Winogrande/WSC273 requests, `MEGATRON_EVAL_TOKEN_DUMP`; `duplicate_kv_groups.py compare-dumps`) | **done** (o134c.1953 / .1965 / .1999; 224 micro-batches, same tokens in all three arms): see the table below -- the full 84B model is unchanged to bf16 kernel noise |
 | end-to-end, training: kv8's first step (23401) vs `lr_decay/dec100`'s 23401 (same 32-node layout, same batch, unchanged model) | reference **1.123511** (dec100, identical in two attempts o134c.1806 / .1855; ls120 at x1.2: 1.130263); kv8 must land within bf16 noise of it when it runs |
+
+End-to-end, eval-only (8 nodes, the same 64 x 4096 v8ml documents and 160 x 512 Winogrande / WSC273 requests,
+per-token losses from `MEGATRON_EVAL_TOKEN_DUMP`, `duplicate_kv_groups.py compare-dumps`):
+
+| arm | KV groups | v8ml sub64 loss (262k tokens) | vs source: mean / per-token rms / max | Winogrande+WSC set loss (82k tokens) | vs source |
+|---|---:|---:|---|---:|---|
+| `s23400` (source) | 2 | 1.274705 | -- | 4.231813 | -- |
+| `s23400kv8` | 8 | 1.274509 | -2.0e-4 / 3.7e-2 / 1.00 | 4.231813 | **bit-identical** |
+| `s23400kv16` | 16 | 1.274705 | **bit-identical** | 4.231875 | +6.2e-5 / 3.5e-2 / 1.58 |
+
+Each surgery arm is **bit-identical** to the source on one of the two sets and differs on the other at bf16 noise
+(kv8: identical at 512 tokens, noisy at 4096; kv16 the other way round) -- the signature of shape-dependent kernel
+selection (the bf16 projection GEMM / attention kernel picked for 9216 vs 12288 vs 16384 rows, GQA ratio 8 vs 2
+vs 1), not of a transform error: a wrong row would move every sequence (the swapped-head control: 0.40 relative
+attention-output error). The noise is the level of the Megatron-vs-HF export check (exp 016, same sub64 set:
+mean |dCE| 0.020 per token): kv8 vs source mean |dCE| 0.017, token correlation 0.99985, no growth along the
+position (rms 2.7e-2 at positions 0-63, 3.6-3.8e-2 beyond), 2.9 % of tokens |dCE| > 0.1, 0.02 % > 0.5.
 
 The HF export (`export_ambitious.py` takes `num_key_value_heads` from the run's `num_query_groups`) and vLLM
 (`oellm_ambitious.py` reads `config.num_key_value_heads`; 8 KV heads at TP 4 = 2 per rank) need no change.
