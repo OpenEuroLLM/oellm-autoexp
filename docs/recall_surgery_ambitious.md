@@ -327,6 +327,13 @@ arm -- and the added attention branches are worth nothing under the decay either
 hybrid: -0.1). **1.7B verdict: attention added by surgery does not become a copy path in 1.5 BT, with or without
 the anneal; the anneal itself is the large lever.**
 
+**Training does not keep the temperature gain.** `attn_temp/ls120` (x1.2 fixed in training from 23400, insertion
+cost +0.007 loss) read out at 23450 *with* x1.2: CoQA 49.87 / 65.82, Winogrande 63.30 -- the +3.2 CoQA F1 of the
+inference-only x1.2 is gone after 50 steps (the network re-flattens its attention, presumably through the q/k-norm
+gains). The loss prefers the trained sharpness; an inference knob whose gain costs loss is trained away. Attention
+temperature is therefore not a main-run candidate; capacity additions (KV groups, a second attention step, experts
+per token) are. 23500 readout pending.
+
 ### 3.5b Which attention layers copy, and MoE top-k (23500 export, inference; vLLM 4d6e51cb4f `OELLM_ATTN_ZERO_LAYERS`)
 
 One attention block's output zeroed at a time (its KV cache still written):
