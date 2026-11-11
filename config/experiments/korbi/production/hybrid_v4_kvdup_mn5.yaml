@@ -1,0 +1,64 @@
+# @package _global_
+# Recall surgery (docs/recall_surgery_ambitious.md §4.3): KV-group duplication. The copy path lives in the six NoPE
+# attention layers (16 query heads x 256, only 2 KV groups: 8 query heads share one key / value head), and a
+# sharper softmax at inference gives +3.2 CoQA F1 on this model but only +0.5 at 1.7B (MHA) -- the attention looks
+# diffuse / KV-starved. kv_dup_surgery_mn5 copies every K/V head of the 23400 checkpoint into 8 (or 16) groups
+# (scripts/korbi/production/duplicate_kv_groups.py: q / gate rows re-ordered, k / v rows copied, muown states
+# moved / copied with the moments split over the copies; exactly the same function at insertion), so the copies
+# can specialise. The rest of the network, the data and the optimizer are the main run's.
+#   kv8   8 KV groups (2 query heads per K/V head) from 23400, 100 steps to 23500 on the main run's batches
+#   kv16  16 KV groups (MHA, as the 1.7B ladder) -- the same
+# Paired with the main run's own 23500 and with lr_decay/dec100 / attn_temp/ls120 (same resume, same batches).
+# Exactness at insertion: the first logged step (23401) must equal lr_decay/dec100's 23401 (same layout, same
+# batch, unchanged model) to bf16 noise; the eval-only token-level check is fixedvalid_eval_kvdup_v4_mn5.
+# There is no attention-only lr multiplier in Megatron (only engram / embedding / output-layer / residual-mixer),
+# so no kv8_lr arm.
+# Same layout as the other recall-surgery arms (hybrid_v4_addattn_mn5): 32 nodes, mbs 2, saves every 50.
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8]"
+defaults:
+  - hybrid_v4_addattn_mn5
+  - _self_
+
+aux:
+  suite: attn_kv
+  arm: kv8
+  end: 23500
+
+backend:
+  megatron:
+    ckpt_step: 23400
+    ckda_branch: null
+    save_interval: 50
+    non_persistent_save_interval: null
+
+job:
+  name: attn_kv_${aux.arm}
+  est_steps: 100
+  est_step_time_s: 254.0
+  metadata:
+    pool_priority: 60
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: kv8
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt
+          backend.megatron.num_query_groups: 8
+        - aux.arm: kv16
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv16_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv16_src/ckpt
+          backend.megatron.num_query_groups: 16

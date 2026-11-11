@@ -1,0 +1,43 @@
+# @package _global_
+# KV-group duplication surgery (docs/recall_surgery_ambitious.md §4.3) as a 1-node pool job:
+# scripts/korbi/production/kv_dup_surgery.sh <G ...> in the training image, from a synced snapshot.
+# The main run's ckpt_eval/iter_0023400 (read only) -> /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/
+# kv<G>_src/ckpt/iter_0023400 (hard links + the 6 attention layers' linear_qkv / muown states / args at G KV
+# groups), kv_dup_surgery.json, then verify + gpucheck (the real layers through Megatron's attention, 1 GPU).
+# Deterministic (no randomness): a rerun reproduces every tensor bit for bit.
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/kv_dup_surgery_mn5 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: kv_dup_surgery
+  groups: "8 16"
+  it: 23400
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv
+  tests: ""
+  bench: ""
+
+backend:
+  command: bash scripts/korbi/production/kv_dup_surgery.sh ${aux.groups}
+  env:
+    ROOT: ${aux.root}
+    IT: ${aux.it}
+    MOMENTS: split
+
+job:
+  name: kv_dup_surgery
+  base_output_dir: ${aux.root}/surgery_logs
+  est_step_time_s: 2400
+  metadata:
+    # low priority (the host's 32-node slot is busy; this needs 1 node)
+    pool_priority: 40
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    account: cns144
+    qos: acc_xehpc
