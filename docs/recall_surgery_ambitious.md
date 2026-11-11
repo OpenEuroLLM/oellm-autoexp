@@ -620,12 +620,160 @@ cd $R/autoexp_kvdup1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no
     --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8]"
 ```
 
-`kv8` = 8 groups, `kv16` = MHA. No `kv8_lr` arm: Megatron has no attention-only lr multiplier (only Engram /
-embedding / output layer / residual mixer), and none was invented for this.
+`kv8` = 8 groups, `kv16` = MHA. The lr-multiplier and top-k variants (`kv8_lr4`, `kv8_k6`) are in §4.4.
 
 **Exactness at scale (fixed-valid eval, 8 nodes, `fixedvalid_eval_kvdup_v4_mn5`):** source iter 23400 validation-all
 1.274705 / validation-mc 4.231813; kv8 surgery 1.274508 / 4.231813 (|delta| 2e-4, bf16 rounding of the larger
 projection) -- the duplicated model is the same model. kv16: (running).
+
+## 4.4 Next-allocation arms (2026-11-11 night; prepared, not launched)
+
+**Hypothesis.** Every intervention has to show its effect in ~100-200 steps of the main run's batches (gbs 8192 x
+8192 tokens), and added attention trained that long never helped (§4.1, §8). New attention capacity may simply
+not move fast enough at the main run's lr (8.5e-4, constant). These arms add capacity exactly where the copy
+path is (§3.5b: attention 17-66) and test a 4x higher lr on the attention parameters only.
+
+**`attention_lr_mult`** (Megatron 31fcf98e0, mirrors regenerated in autoexp 763bbe72). A max_lr / min_lr multiplier
+for every parameter of a `SelfAttention` module -- linear_qkv (incl. the output-gate rows and the TE-fused input
+norm `linear_qkv.layer_norm_weight`), linear_proj, q / k norm; XSA has no parameters of its own -- and for a
+ckda_branch attention / kvshare branch including its `branch_mix.gamma`. The parameters are tagged
+`is_softmax_attention` at construction (`attention.py` `mark_softmax_attention_params`, end of
+`SelfAttention.__init__`; kvshare's rebuilt linear_qkv; `BranchMix` for attention branches), and Megatron-FSDP copies
+the tag to its sharded parameters. `get_standard_config_overrides` (`optimizer/__init__.py` l. 209-223) gives them
+param groups of their own with the key `attention_lr_mult` (`default_config` False, so the logged lr stays the
+default group's). At 1.0 (the default) nothing changes: no new key, no new group. In the tiny-GPT check (local
+impl) the input norm is a separate `input_layernorm` and stays at x1. Only with TE is it fused into linear_qkv and
+scaled.
+
+**Resume with a changed multiplier: the group structure does change, and the load handles it.** Under
+Megatron-FSDP / `fsdp_dtensor` the checkpoint stores group metadata per parameter (`param_to_group_meta`, packed).
+`DistributedOptimizer.load_state_dict` rebuilds the groups from the *current* construction and fills each one with
+its parameters' checkpoint metadata. This is strict: all parameters of a current group must carry identical
+metadata. `torch.optim.Optimizer.load_state_dict` then installs that metadata. Optimizer states are keyed by
+parameter name, so they are not affected. Without help:
+
+* x1 checkpoint -> x4 run: it loads, but the new attention groups get their old groups' metadata, so the x1
+  bounds win silently. Only `--override-opt-param-scheduler` (2c8a1a0f4's by-position reset) would restore x4.
+* x4 checkpoint -> x1 run (e.g. adopting an lr4 arm into the main run): the attention parameters fall back into
+  groups whose checkpoint metadata differs from theirs, and the strict check fails the load.
+
+`reconcile_attention_lr_group_meta` (`distrib_optimizer.py` l. 92-145, called on the Megatron-FSDP load path)
+fixes this. Every parameter whose checkpoint `attention_lr_mult` (absent = 1) differs from its current group's
+gets the checkpoint metadata of a parameter of the same current group that does match. If there is none, it keeps
+its own metadata with `lr` / `max_lr` / `min_lr` / `default_config` / `attention_lr_mult` taken from the current
+group. Nothing changes when the multiplier is unchanged. The structure is the current construction's, so the
+by-position override reset still lines up. Scaling the update inside the existing groups was rejected: it would
+need a per-parameter lr inside muown_classical's batched / row-sharded steps and inside FusedAdam.
+
+Evidence:
+
+* Unit tests `tests/unit_tests/test_attention_lr_mult.py`, 12 pass: tags; groups; 1->4, 4->1, 4->2, 4->4 and
+  1->1 through the real Megatron-FSDP `load_state_dict` branch and torch's load; checkpoint metadata kept when
+  unchanged; both failure modes reproduced with the reconciliation stubbed out.
+* Tiny GPT (Megatron-FSDP, fsdp_dtensor, muown_classical, packed scalars, local, gloo): a x1 checkpoint resumed
+  at x4 has its attention groups at lr 4e-3 from the first step, with and without the override flag. The x4
+  checkpoint resumes at x1 (3 groups again) and at x4. Step 9 has the same loss in both, step 10 differs
+  (6.2974 vs 6.2921).
+* Neighbouring tests (residual_mixer / embedding-output lr mult, override lr bounds, lr warmup) pass.
+
+**post4: a second attention step behind each copy layer.** In `*ENLELELELELELELE*ELE...` attention 17 is followed
+by MoE 18 and CKDA 19, so the CKDA layers right behind 17 / 33 / 50 / 66 (+ MoE) are **19 / 35 / 52 / 68**.
+`ckda_branch_layers` takes 0-based decoder indices (`has_branch`: `layer_number - 1`), the same convention as
+add6's 9 / 25 / 41 / 58 / 74 / 90. Each gets an additive branch in add6's mode (`crossfade false`, alpha 1, m 1,
+calibrate, 2 KV groups).
+
+The branch starts as a **copy** of the attention layer in front of it (new `add_ckda_branch.py --init attn
+--kv-sources 17,33,50,66`): linear_qkv, linear_proj and q / k norm with all their muown / Adam states. The source's
+input-norm gain is folded into the linear_qkv columns, `W' = W diag(g_attn / g_layer)`, because the branch reads the
+CKDA layer's normalised input. So at insertion the branch is attention 17's function of RMSNorm(x) g_attn, on layer
+19's input (mHC-mixed, after the MoE). The muown moments follow the chain rule for the same function: g = the new
+row norms, m_g / v_g x (g / g') / (g / g')^2, m_u columns / r; v_norm is copied.
+
+Exactness comes from **gamma = 0** (`out = ckda + 0 * branch`, bit-exact). Zeroing the o_proj is not possible
+here: muown_classical stores W = g v / ||v|| per row, so a zero row has no direction, and calibrate would divide by
+RMS(branch) = 0. Gamma (Adam) moves at most lr x mult x `ckda_branch_gamma_scale` per step, so after 100 steps the
+branch is at most ~0.085 (post4) or 0.34 (post4_lr4) x RMS(ckda). The branch weights move at the full (x mult) lr
+from step 1, because muown / Adam updates do not scale with gamma. Raise `ckda_branch_gamma_scale` if the share
+should grow faster.
+
+`selftest` checks:
+
+* the folded projection equals the source attention's on RMSNorm(x) (1e-5);
+* linear_proj, norms and their states are copied verbatim;
+* the chain-rule transform of m_u;
+* apply -> verify (0 differ) on a fake DCP checkpoint.
+
+Export: `branch_add` reads the layers from `ckda_branch_layers` and needs 2 KV groups = the stack's, so 19 / 35 /
+52 / 68 export as `ckda_attn` exactly like add6 (§4.2).
+
+Surgery: `ckda_branch_surgery.sh prod post4` with `IT=23400`, source `main_mhc4/.../ckpt_eval/iter_0023400` (read
+only). Output: `/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn/post4_src/ckpt/iter_0023400` (+
+`ckda_branch_surgery.json`); logs in `ckda_postattn/surgery_logs`. It runs as a 1-node job, enqueued into o134c at
+priority 40 from snapshot `autoexp_nextarm1` (`ckda_branch_surgery_prod_3482fb`, 22:04). One checkpoint serves
+both post4 arms (the lr multiplier is a training argument).
+
+| config | arm | change vs the main run's 23400 | source checkpoint |
+|---|---|---|---|
+| `hybrid_v4_kvdup_mn5` | `kv8_lr4` | 8 KV groups + `attention_lr_mult 4` | `attn_kv/kv8_src` (ready) |
+| `hybrid_v4_postattn_mn5` | `post4_lr4` | attention copies on 19/35/52/68 + `attention_lr_mult 4` (stack + branches + gamma) | `ckda_postattn/post4_src` (surgery) |
+| `hybrid_v4_kvdup_mn5` | `kv8_k6` | 8 KV groups + `moe_router_topk 6` | `attn_kv/kv8_src` (ready) |
+| `hybrid_v4_kvdup_mn5` | `kv8` | 8 KV groups (control for the two above) | `attn_kv/kv8_src` (ready) |
+| `hybrid_v4_postattn_mn5` | `post4` | attention copies, x1 lr (control for post4_lr4) | `ckda_postattn/post4_src` (surgery) |
+
+All arms run 23400 -> 23500 (100 steps, `exit_interval 23500`) on the main run's batches at 32 nodes, mbs 2, gbs
+8192. They save every 50 steps (23450, 23500) with `pool_priority 64`. Each arm waits on its source's
+`latest_checkpointed_iteration.txt`. The estimate is ~1,000 GPU-h each (988 for kv, 1,045 for post4 at 254 /
+270 s per step + start-up).
+
+First-step checks: kv8, kv8_lr4, post4 and post4_lr4 are exact at insertion, and the lr does not enter the
+first forward, so 23401 must equal `lr_decay/dec100`'s **1.123511** within bf16 noise. kv8_k6 must equal
+`moe_topk/k6`'s 23401, **1.122467**. post4 logs one `[ckda_branch] layer N calibrated` line per layer.
+
+**Recommended order:** kv8_lr4, post4_lr4, kv8_k6, then the kv8 and post4 controls. The paired x1 references for
+the lr4 arms are kv8 / post4 and the main run's own 23500. Launch from snapshot `autoexp_nextarm1`, which holds
+Megatron 31fcf98e0 and these configs. Do not re-sync it while jobs are queued from it. `$POOL` is the next
+allocation's pool with a 32-node slot (o134c ends 2026-11-12 00:25):
+
+```
+cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool $POOL \
+    --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8_lr4]"
+cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool $POOL \
+    --config-name experiments/korbi/production/hybrid_v4_postattn_mn5 --yes "aux.only=[post4_lr4]"
+cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool $POOL \
+    --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8_k6]"
+cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool $POOL \
+    --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8]"
+cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool $POOL \
+    --config-name experiments/korbi/production/hybrid_v4_postattn_mn5 --yes "aux.only=[post4]"
+```
+
+If the surgery did not finish before the allocation, rerun it first, 1 node, in any pool. It skips an existing
+output:
+
+```
+cd $R/autoexp_nextarm1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool $POOL \
+    --config-name experiments/korbi/production/ckda_branch_surgery_mn5 --yes aux.mode=prod aux.arms=post4 \
+    aux.it=23400 aux.root=/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn \
+    job.base_output_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn/surgery_logs
+```
+
+Readout, per arm and step: HF export, then the `ckdab_fast` round (CoQA / Winogrande / SQuAD v2):
+
+```
+... --config-name experiments/korbi/production/ckda_addattn_export_mn5 --yes aux.arm=post4_lr4 aux.step=23500 \
+    aux.add_root=/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn aux.export_name=postattn_post4_lr4_fp8_23500
+... --config-name experiments/korbi/production/ckda_addattn_export_mn5 --yes aux.arm=kv8_lr4 aux.step=23500 \
+    aux.add_root=/gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv aux.export_name=attnkv_kv8_lr4_fp8_23500
+```
+
+The kv exports take `num_key_value_heads` from the run's `num_query_groups` (§4.3). The k6 exports take
+`num_experts_per_tok` from the run's top-k.
 
 ## 5. Operational notes
 
