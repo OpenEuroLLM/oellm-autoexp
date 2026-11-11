@@ -24,8 +24,7 @@ aux:
 
 backend:
   command: >-
-    bash scripts/korbi/production/ladder17b_lm_eval.sh ${aux.root}/${aux.arm} ${aux.out}/${aux.arm}
-    $(echo ${aux.tasks} | tr ',' ' ')
+    bash scripts/korbi/production/ladder17b_lm_eval.sh ${aux.root}/${aux.arm} ${aux.out}/${aux.arm} ${aux.tasks}
 
 job:
   name: ladder17b_${aux.arm}

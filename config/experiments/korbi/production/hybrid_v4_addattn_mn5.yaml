@@ -38,9 +38,12 @@ defaults:
 
 aux:
   suite: ckda_addattn
-  # 4 arms x 18 nodes on the 72-node o134c host002 (goal 2026-11-11); the reference-layout sampler pins the
-  # batch layout at dp 512 x mbs 8, so gbs stays the main run's 8192 and the step count comes from the clock
-  nodes: 18
+  # Micro-batch 2, not the main run's 8 (2026-11-11 02:20): at the node counts this campaign can get, mbs 8
+  # OOMs on the 63 GiB cards (`torch.OutOfMemoryError ... tried to allocate 1024 MiB, 10.6 GiB free`) -- the
+  # post-fit arms ran at 64 nodes precisely because memory is the binding constraint there. mbs 2 at 32 nodes
+  # keeps the reference-layout sampler's gbs 8192 (dp 128 x mbs 2 x 32 accumulation steps) and fits.
+  # Node counts must satisfy dp = 4 x nodes | gbs / mbs: 8, 16, 32, 64 nodes.
+  nodes: 32
   arm: add6
   only: []
   phase: 1
@@ -55,7 +58,7 @@ aux:
 
 backend:
   megatron:
-    micro_batch_size: 8
+    micro_batch_size: 2
     load: ${aux.main_ckpt}
     save: ${job.base_output_dir}/ckpt
     save_interval: 200
@@ -77,8 +80,8 @@ backend:
 
 job:
   name: ckda_addattn_${aux.arm}
-  est_steps: 600
-  est_step_time_s: 56.0
+  est_steps: 300
+  est_step_time_s: 34.0
   est_startup_min: 40.0
   metadata:
     pool_singleton: null

@@ -5,7 +5,7 @@
 # byte-identical to the release format and load with trust_remote_code=True after
 # scripts/korbi/production/prep_ladder17b_hf_for_flag.sh has renamed the classes.
 #
-#   ladder17b_lm_eval.sh <model dir> <out dir> [coqa winogrande squadv2]
+#   ladder17b_lm_eval.sh <model dir> <out dir> [coqa,winogrande,squadv2]
 #
 # The prompts, the metric and the n-shot values are lm-eval's own CoQA / Winogrande / SQuAD v2 tasks, i.e. the
 # same definitions the FLAG rows use (config/eval_tasks/ckdab_fast.yaml: coqa 0-shot, winogrande 0-shot,
@@ -14,8 +14,7 @@
 set -u
 M=${1:?model dir}
 OUT=${2:?out dir}
-shift 2
-TASKS=${*:-coqa winogrande squadv2}
+TASKS=${3:-coqa,winogrande,squadv2}   # comma separated: the config passes one argument
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 export PYTHONPATH=${PYLIBS_OELLM:-$R/pylibs_oellm}:${PYTHONPATH:-}
 export HF_HOME=${HF_HOME:-$R/cache/hf}
@@ -31,7 +30,7 @@ run() { # run <task> <n_shot>
     --output_path "$OUT/$task.json" 2>&1 | tail -25
 }
 
-for t in $TASKS; do
+for t in $(echo "$TASKS" | tr ',' ' '); do
   case $t in
     coqa)       run coqa 0 8 ;;
     winogrande) run winogrande 0 16 ;;
