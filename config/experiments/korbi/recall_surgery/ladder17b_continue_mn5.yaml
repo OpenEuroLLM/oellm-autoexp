@@ -193,3 +193,13 @@ sweep:
           aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v2
           aux.intervention: add_attn@post_attn
           aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_surgery/hybrid_add_post_attn
+        - aux.arm: dec_hybrid_add_post_attn
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ffn: 7936
+          aux.load_mode: resume
+          aux.resume_warmup: 100
+          aux.decay: 1000
+          aux.steps: 1000
+          aux.code_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v2
+          aux.intervention: "add_attn@post_attn"
+          aux.src: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-hybrid-lowrank/hybrid_add_post_attn/ckpt
