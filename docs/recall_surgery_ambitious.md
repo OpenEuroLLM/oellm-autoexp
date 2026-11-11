@@ -116,11 +116,12 @@ Same rows and harness (HF backend, `recall_surgery/ladder17b_evals`), the pi age
 * CoQA needs *some* attention: pure CKDA -> 25 % hybrid is **+12.4 F1**; more than 25 % does not help.
 * Winogrande goes the other way (-2 at 25 %, -4.5 at 100 %).
 * A 1.7B / 50 BT hybrid (CoQA F1 68.4) **matches the 84B-A2.9B ambitious run at 1.6T (66.1)**. Ambitious has
-  attention in 6 of 92 layers (6.5 %): on this axis it sits near the pure-CKDA end. The direct
-  intervention is to raise the attention fraction toward 25 % *additively* (CKDA kept, the early CKDA
-  layers untouched), and the decisive small-scale test is adding attention branches to the **pure-CKDA**
-  1.7B model (every 4th layer, the hybrid's placement) and checking how much of the +12 F1 short training
-  recovers (§8).
+  48 mixer layers, 6 attention + 42 CKDA (**12.5 %**, 7:1; §1's "86 complex_kda" counts the MoE positions):
+  halfway between the pure stack and the 25 % hybrid. `add6` (branches at 9/25/41/58/74/90) brings it to
+  exactly 25 %; `cgqa` reached 25 % by *replacing* the same six CKDA layers and gained nothing in 200 steps
+  (CoQA F1 64.48). So the open question is less "which dose" than "how many tokens does surgically added
+  attention need": the decisive small-scale test adds attention branches to the **pure-CKDA** 1.7B model
+  (every 4th layer, the hybrid's placement) and tracks how much of the +12 F1 comes back per BT (§8).
 
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
