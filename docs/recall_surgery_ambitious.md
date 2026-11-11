@@ -979,3 +979,26 @@ Noise: Winogrande +-1.4 (n 1267), CoQA +-~1.5 F1 (500 dialogues), SQuAD v2 subse
   jupiter's, and the optimizer is reset). Arms are therefore only comparable to their paired control, as above.
 * The step-2000 readouts (`<arm>_s2000`) are queued in o134c (priority 50) and print with
   `scripts/korbi/recall_surgery/ladder17b_table.py ladder17b_evals/*_s2000`.
+
+## 9. Status and plan (2026-11-11 22:15)
+
+**What is established (big model unless noted):**
+* The CoQA / SQuAD v2 gap is not data alone: the in-house 32B on (nearly) the same data is at CoQA F1 79-82, SQuAD v2
+  35-43 from its earliest checkpoint on (§ OELLM 32B trajectory: oldprod_60k 79.4 / 35.4 / Wino 68.4). Small Qwens
+  (1.5-1.7B, §3.1b) reach CoQA 75-79 too -- so capacity / architecture on our side.
+* The copy path is the softmax attention, blocks 17-66 (block 33 central, §3.5b); at 1.7B both hybrids lose ~40 CoQA F1
+  without attention (§3.6). The big model's 6 attention layers share 2 KV groups.
+* Inference-only knobs: attention x1.2 +3.2 CoQA but **trained away in 50 steps** (ls120, §3.5); deep Engram (L49)
+  off +3.6 Winogrande at no belebele cost; MoE top-k 6 +2.6 CoQA at 23500 but only +0.4 at 30000 (noise-level).
+* Replacing / adding attention for 100-200 steps at the shared lr never moved these rows (§2, §4.1); 1.7B surgical
+  attention flat with and without decay (§8).
+* The lr decay is the largest lever at 1.7B (+5-6 CoQA F1 in 0.5 BT); the big-model probe dec100 is ready (Megatron
+  2c8a1a0f4 fixes the resume no-op, §3.4) but has had no 32-node slot.
+* The main run itself improves Winogrande after the 25000 Engram fix (30000: 67.3), CoQA / SQuAD flat.
+
+**Ready for the next allocation** (configs committed, surgeries done and verified exact, launch commands in §4.4):
+`kv8_lr4`, `post4_lr4`, `kv8_k6`, `kv8`, `post4`, `dec100` -- each 100 steps (23400 -> 23500) at 32 nodes. Order:
+kv8_lr4, post4_lr4, dec100, kv8_k6, controls. A positive arm is a main-run candidate (all are exact at insertion).
+
+**Running overnight:** moe_topk/k6 trained readout (23425); 1.7B post-attention arm (2000 steps + decay, paired with
+dec_hybrid_ctrl_fresh); 1.7B reverse KV test (MHA -> 2 KV groups, §3.7 when done) on host004's spare nodes.
