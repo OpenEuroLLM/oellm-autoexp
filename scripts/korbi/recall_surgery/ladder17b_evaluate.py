@@ -62,10 +62,13 @@ def main():
     if dest.exists():
         print(f'{dest} exists', flush=True)
         return
-    sys.path[:0] = [str(a.source), str(a.source / 'lm_scaling'), str(Path(__file__).resolve().parent / 'compat')]
+    sys.path[:0] = [str(a.source), str(a.source / 'lm_scaling'), str(Path(__file__).resolve().parent / 'compat'),
+                    str(Path(__file__).resolve().parent)]
     from eval_downstream import build_lm
     from metric_compat import install
     install()
+    import hf_branch  # the recall-surgery intervention arms' branches (export_native.py's recall_branches)
+    hf_branch.install()
     lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda', context_prefix='none')
     import lm_eval
     from lm_eval.tasks import TaskManager

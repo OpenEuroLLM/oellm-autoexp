@@ -49,6 +49,14 @@ def row(d: Path):
     if c.exists():
         r = json.loads(c.read_text())['results']
         out['coqa_em'], out['coqa_f1'] = metric(r, 'em'), metric(r, 'f1')
+    bel = []
+    for f in sorted(d.glob('belebele_*.json')):
+        r = json.loads(f.read_text())['results']
+        v = metric(r, 'acc_norm', 'acc')
+        if v is not None:
+            bel.append(v)
+    if bel:
+        out['belebele'], out['belebele_n'] = sum(bel) / len(bel), len(bel)
     s = squad(d)
     if s:
         out.update({f'squadv2_{k}': v for k, v in s.items()})
@@ -63,12 +71,12 @@ def fmt(v, pct=True):
 
 def main(argv):
     rows = [row(Path(a)) for a in argv]
-    print('| run | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 EM | SQuAD v2 F1 | HasAns F1 | NoAns F1 | SQuAD n |')
-    print('|---|---:|---:|---:|---:|---:|---:|---:|---:|')
+    print('| run | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 EM | SQuAD v2 F1 | HasAns F1 | NoAns F1 | SQuAD n | Belebele (n) |')
+    print('|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
     for r in rows:
         print(f"| {Path(r['dir']).name} | {fmt(r.get('winogrande'))} | {fmt(r.get('coqa_em'))} | {fmt(r.get('coqa_f1'))} "
               f"| {fmt(r.get('squadv2_exact'), False)} | {fmt(r.get('squadv2_f1'), False)} "
-              f"| {fmt(r.get('squadv2_HasAns_f1'), False)} | {fmt(r.get('squadv2_NoAns_f1'), False)} | {r.get('squadv2_n', '-')} |")
+              f"| {fmt(r.get('squadv2_HasAns_f1'), False)} | {fmt(r.get('squadv2_NoAns_f1'), False)} | {r.get('squadv2_n', '-')} | {fmt(r.get('belebele'))} ({r.get('belebele_n', 0)}) |")
     for r in rows:
         (Path(r['dir']) / 'summary.json').write_text(json.dumps(r, indent=2) + '\n')
 

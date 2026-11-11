@@ -19,6 +19,7 @@
 #                       the lr is constant after the warmup (WSD, no decay phase: lr-decay-iters past the end)
 #   GBS MBS SAVE_INTERVAL LR WARMUP FFN LOG_INTERVAL   (FFN: the arm's ffn hidden size)
 #   EXTRA_ARGS          appended verbatim
+#   ENTRY / NPROC       another script than pretrain_gpt.py with the same CLI (native_loss.py), processes per node
 set -euo pipefail
 : "${SKDA_ARM:?}" "${SRC_CKPT:?}" "${SAVE_DIR:?}"
 BASE_CODE_DIR=${BASE_CODE_DIR:-/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/source}
@@ -72,9 +73,9 @@ MASTER=${MASTER_ADDR:-localhost}; PORT=$((20000 + ${SLURM_STEP_ID:-0} % 20000))
 echo "[ladder17b] arm=$SKDA_ARM intervention=${SKDA_INTERVENTION:-none} code=$CODE_DIR load_mode=$LOAD_MODE" \
      "nodes=$NNODES rank=$NODE_RANK master=$MASTER:$PORT gbs=$GBS mbs=$MBS lr=$LR iters=$TRAIN_ITERS"
 
-python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --nproc-per-node 4 \
+python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --nproc-per-node "${NPROC:-4}" \
   --master-addr "$MASTER" --master-port "$PORT" \
-  "$nm/pretrain_gpt.py" \
+  "${ENTRY:-$nm/pretrain_gpt.py}" \
   --spec lm_scaling.megatron_ext.specs arm_spec \
   --load "$LOAD" --save "$SAVE_DIR" --ckpt-format torch --exit-on-missing-checkpoint \
   "${LOAD_ARGS[@]}" \
@@ -101,6 +102,7 @@ python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --np
   --moe-aux-loss-coeff 0.0 \
   ${EXTRA_ARGS:-}
 status=$?
+if [ -n "${ENTRY:-}" ]; then echo "[ladder17b] entry $ENTRY exit $status"; exit $status; fi
 # loud: the run must have trained to its last iteration and saved it (Megatron saves at the end of training)
 last=$(cat "$SAVE_DIR/latest_checkpointed_iteration.txt" 2>/dev/null || echo none)
 if [ "$NODE_RANK" = 0 ] && [ "$last" != "$TRAIN_ITERS" ]; then
