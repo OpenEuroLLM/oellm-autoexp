@@ -606,6 +606,10 @@ cd $R/autoexp_kvdup1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no
 `kv8` = 8 groups, `kv16` = MHA. No `kv8_lr` arm: Megatron has no attention-only lr multiplier (only Engram /
 embedding / output layer / residual mixer), and none was invented for this.
 
+**Exactness at scale (fixed-valid eval, 8 nodes, `fixedvalid_eval_kvdup_v4_mn5`):** source iter 23400 validation-all
+1.274705 / validation-mc 4.231813; kv8 surgery 1.274508 / 4.231813 (|delta| 2e-4, bf16 rounding of the larger
+projection) -- the duplicated model is the same model. kv16: (running).
+
 ## 5. Operational notes
 
 * The 72-node host `mn5_pool_o134c/host002` is **held** (`pool.json hold_hosts: true`, `control/hold`,
