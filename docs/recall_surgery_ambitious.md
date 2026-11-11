@@ -173,6 +173,23 @@ off): `OELLM_CKDA_BETA_CAP1` (beta <= 1 -- logits clamped at 0 under allow_neg_e
 `OELLM_CKDA_NO_SIGN` (no signed-decay gauge: no negative / rotating eigenvalues), alone and together,
 optionally from `OELLM_CKDA_DIAG_FROM_LAYER` on; result dirs `..._23500_ckda_{betacap1,nosign,both}`.
 
+**Result of the CKDA inference diagnostics (23500 export, no training):**
+
+| 23500 export | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) |
+|---|---:|---:|---:|
+| as trained | 50.42 / 66.13 | 62.51 | 26.89 (52.94) |
+| beta capped at 1 | 44.48 / 59.89 | 58.41 | 23.20 (43.76) |
+| no signed-decay gauge | 51.52 / 66.84 | 61.25 | (running) |
+| both | 41.75 / 57.00 | 58.56 | (running) |
+| Engram x0 (for reference) | 52.55 / 67.99 | 66.61 | 27.36 (53.05) |
+
+* The **negative / rotating eigenvalues are not the problem**: removing the sign gauge is neutral (+0.7 CoQA,
+  -1.3 Winogrande, inside noise).
+* **beta > 1 is load-bearing** for exactly these rows (capping it costs 4-6 points everywhere), consistent with
+  exp 015 (beta>1 ablation +0.031 loss). CKDA's delta-rule strength is *helping* retrieval.
+* So CKDA is not what holds these rows back; Engram is the one component whose damping improves them (CoQA /
+  Winogrande; SQuAD unchanged, +0.5).
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
