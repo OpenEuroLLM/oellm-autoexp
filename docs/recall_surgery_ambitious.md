@@ -190,6 +190,21 @@ optionally from `OELLM_CKDA_DIAG_FROM_LAYER` on; result dirs `..._23500_ckda_{be
 * So CKDA is not what holds these rows back; Engram is the one component whose damping improves them (CoQA /
   Winogrande; SQuAD unchanged, +0.5).
 
+**Belebele (24 languages, 5-shot) of the same inference variants** vs the main run on the same languages:
+
+| 23500 export | belebele | diff | languages down |
+|---|---:|---:|---:|
+| Engram x0.5 | 76.84 | **-5.95** | 22 / 23 |
+| Engram x0 | 53.14 | **-29.6** | 21 / 22 |
+| CKDA beta cap 1 | 72.99 | -9.8 | 23 / 23 |
+| CKDA no sign gauge | 82.27 | -0.6 | 18 / 24 |
+| CKDA both | 72.37 | -10.9 | 21 / 21 |
+
+**Engram carries multilingual reading** (user's caution confirmed): at inference, x0.5 trades +3 CoQA / +2.6
+Winogrande for -6 belebele -- a bad trade. The remaining question is whether *training* at x0.5 (`eng05`)
+recovers belebele while keeping the CoQA / Winogrande gain; read out at 23350 / 23400 (belebele first).
+The CKDA sign gauge is neutral everywhere (belebele -0.6); beta > 1 is load-bearing everywhere.
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
