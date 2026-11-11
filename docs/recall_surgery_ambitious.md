@@ -123,6 +123,23 @@ Same rows and harness (HF backend, `recall_surgery/ladder17b_evals`), the pi age
   attention need": the decisive small-scale test adds attention branches to the **pure-CKDA** 1.7B model
   (every 4th layer, the hybrid's placement) and tracks how much of the +12 F1 comes back per BT (§8).
 
+### 3.1b Same-size public reference on the 1.7B harness (2026-11-11 evening)
+
+`ladder17b_eval_mn5` entries `ref_*` (stock HF through `--hf-auto`, same lm-eval wrapper, tasks, shots and SQuAD
+v2 first-4000 subset as §3.1):
+
+| model | Winogrande | CoQA EM / F1 | SQuAD v2 EM / F1 | HasAns F1 | belebele (5) |
+|---|---:|---:|---:|---:|---:|
+| Qwen2.5-1.5B (~18T tokens) | 63.14 | **61.92 / 75.33** | **36.05 / 40.34** | **77.47** | 75.20 |
+| Qwen3-1.7B-Base | (running) | | | | |
+| 1.7B CKDA hybrid, 50 BT | 61.01 | 55.72 / 68.40 | 17.50 / 21.96 | 42.13 | ~27 |
+
+A 1.5B Qwen is at its own 32B sibling's level on CoQA / SQuAD v2 (FLAG harness: 76.57 / 38.22) and well above the
+84B-A2.9B ambitious run (66.13 / 26.89; harnesses differ, SQuAD subset here), while its Winogrande (63.1) is at
+ours and far below the 32B (75.9). **CoQA and SQuAD v2 behave like data / recipe properties (reading-comprehension
+content + annealing), not capacity or architecture**; Winogrande is the row that scales -- and the one our levers
+(Engram fix, deep Engram off) move.
+
 ### 3.2 q35c on all three rows, and where the closer-mention bias comes from (2026-11-11)
 
 q35c (25 % RoPE-gated attention, same data) at 59.6k / 1.0T: **CoQA 45.70 / 63.13, Winogrande 67.32,
