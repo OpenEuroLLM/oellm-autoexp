@@ -1,0 +1,58 @@
+# @package _global_
+# Recall surgery (docs/recall_surgery_ambitious.md §3.4): how much of the CoQA / SQuAD v2 / Winogrande gap is the
+# constant learning rate? The main run is stable-only (lr 8.5e-4, `lr_decay_style: constant`, never decayed), while
+# every reference it is compared with (Qwen3 / Qwen2.5) is annealed. On the 1.7B ladder the 10 BT decay alone
+# (stable end 40 BT -> 50 BT export) is worth CoQA F1 +8.4, SQuAD v2 F1 +4.0, Winogrande +1.5 (§8), and the
+# intervention arms there move far less. These arms continue the main run on its own batches (train_iters,
+# sampler and gbs unchanged) and anneal the lr to 0 with WSD's 1-sqrt tail; nothing else changes.
+#   dec100   from 23400, anneal over 100 steps (lr 0 at 23500): paired with the main run's own 23500
+#   dec200   from 23300, anneal over 200 steps (lr 0 at 23500)
+# Megatron counts the schedule in samples (iterations x gbs; gbs 8192 over the whole run, consumed samples =
+# 8192 x iteration), so lr_decay_iters 23500 + lr_wsd_decay_iters N anneals exactly over the last N steps.
+# override_opt_param_scheduler: the checkpoint's scheduler is constant-style; without the override the load asserts.
+# Same layout as the other recall-surgery arms (hybrid_v4_addattn_mn5): 32 nodes, mbs 2, saves every 50.
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/hybrid_v4_lr_decay_mn5 --yes "aux.only=[dec100]"
+defaults:
+  - hybrid_v4_addattn_mn5
+  - _self_
+
+aux:
+  suite: lr_decay
+  end: 23500
+
+backend:
+  megatron:
+    load: ${aux.main_ckpt}
+    ckda_branch: null
+    save_interval: 50
+    non_persistent_save_interval: null
+    lr_decay_style: WSD
+    lr_wsd_decay_style: minus_sqrt
+    lr_decay_iters: 23500
+    min_lr: 0.0
+    override_opt_param_scheduler: true
+    use_checkpoint_opt_param_scheduler: false
+
+job:
+  name: lr_decay_${aux.arm}
+  est_steps: 200
+  est_step_time_s: 254.0
+  metadata:
+    pool_priority: 65
+
+slurm:
+  sbatch:
+    time: "16:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dec100
+          backend.megatron.ckpt_step: 23400
+          backend.megatron.lr_wsd_decay_iters: 100
+        - aux.arm: dec200
+          backend.megatron.ckpt_step: 23300
+          backend.megatron.lr_wsd_decay_iters: 200
