@@ -1,0 +1,43 @@
+# @package _global_
+# HF export of one ckda_addattn arm (docs/recall_surgery_ambitious.md) on one node, gated on the arm's
+# checkpoint: scripts/korbi/hf_export/export_run.sh <run dir> <step> <export dir> + check_export.
+# The FLAG evaluation of the export is flag_eval_fast_mn5 with aux.export=<name> and
+# aux.flag_names="vllm/coqa/0 vllm/winogrande/0 vllm/squadv2/10" (config/eval_tasks/ckdab_fast.yaml).
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/ckda_addattn_export_mn5 --yes aux.arm=add6 aux.step=23900
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  arm: add6            # ctrl | add6 | add6_rope | add3 | add6b | rope
+  step: 23900
+  add_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_addattn
+  export_root: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  # the export name the FLAG eval takes as aux.export
+  export_name: ckdaadd_${aux.arm}_fp8_${aux.step}
+  name: ckda_addattn_export_${aux.arm}_${aux.step}
+  bench: >-
+    bash scripts/korbi/hf_export/export_run.sh ${aux.add_root}/${aux.arm} ${aux.step}
+    ${aux.export_root}/${aux.export_name} && python -m oellm_autoexp.hf_export.check_export
+    ${aux.export_root}/${aux.export_name}
+
+job:
+  name: ckda_addattn_export_${aux.arm}_${aux.step}
+  base_output_dir: ${aux.export_root}/logs/${aux.name}
+  est_step_time_s: 5400
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.add_root}/../ckda_addattn/${aux.arm}/ckpt/iter_00${aux.step}/.metadata
+    persistent_pass: true
+  metadata:
+    pool_priority: 45
+    pool_use_excluded_nodes: true  # one node, no training: a slow GPU only slows the export
+
+slurm:
+  sbatch:
+    time: "02:30:00"
+    account: cns144
+    qos: acc_xehpc
