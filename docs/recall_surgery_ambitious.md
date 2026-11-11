@@ -33,6 +33,33 @@ The same suite on the other rows is *at or above* the 32B (HellaSwag 79.84 vs 79
 BoolQ 87.06 vs 87.03). So the deficit is not "the model is worse at commonsense"; it is concentrated in
 **span copy (CoQA, SQuAD v2)** and **pronoun/coreference (Winogrande, WSC273 75.46 vs 86.81)**.
 
+## 1.1 Where inside SQuAD v2 the loss sits (measured, 2026-11-11)
+
+The FLAG SQuAD v2 row is 10-shot extractive QA over 11,873 documents, **half of which are unanswerable**. The
+per-subset numbers in the result JSONs (flagship `results/squadv2_10/*/results_*.json`) separate the two halves:
+
+| checkpoint | SQuAD v2 F1 | HasAns F1 | **NoAns F1** | best_f1 (threshold-calibrated) |
+|---|---:|---:|---:|---:|
+| v4_2ph 6000 | 29.32 | 58.31 | **0.40** | 50.50 |
+| v4 hd256 10000 | 30.03 | 59.57 | **0.57** | 50.43 |
+| v4 hd256 11000 | 30.83 | 61.24 | **0.51** | 52.51 |
+| v4 hd256 23500 | 26.89 | — | — | — |
+
+Span extraction is not the problem: **HasAns F1 is 58-61 %**, close to the reference model's. What fails is the
+label-following half: the model answers a passage-only question even when the prompt's ten demonstrations show
+the "unanswerable" reply, and detects unanswerability **0.4-0.6 % of the time** (it is right about 17 % of the
+time on that subset only because some of those answers miss). Two consequences:
+
+* the SQuAD v2 gap to the 32B (F1 42.90) is almost entirely a **10-shot in-context label-following** gap, the
+  capability an induction/copy path supplies — which is what the additive attention branch is aimed at, and why
+  `add6` is the first arm rather than a capacity-only change;
+* `best_f1` (the harness's threshold-calibrated variant) is 50-52, i.e. the model's own confidence *does*
+  separate the halves. It is a readout/decision failure, not missing knowledge.
+
+The readout for every arm therefore tracks `HasAns_f1` **and** `NoAns_f1` separately, not just the aggregate —
+an arm that lifts `NoAns_f1` from 0.5 to 20 moves the aggregate by ~10 pp with no change in extraction.
+
+
 ## 2. What was already tried, and why it could not have worked
 
 `production/ckda_branch/*` (2026-11-09/10), read out at 23450 / 23499 against `drop`:
