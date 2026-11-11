@@ -505,6 +505,13 @@ class MegatronConfig(ConfigInterface):
     # wide; not trained, not checkpointed: a function of a fixed seed).
     engram_sign_table_size: int = 8192
 
+    # Factor on the softmax scale of the softmax-attention layers (``softmax_scale`` becomes
+    # ``attention_logit_scale / sqrt(kv_channels)``, or the factor times an explicit / MuP
+    # ``softmax_scale``): a sharper (> 1) or flatter (< 1) attention distribution. Recall
+    # surgery: the ambitious v4 NoPE attention at x1.25 (inference) reads spans better (CoQA
+    # F1 +3.1). 1 = unchanged.
+    attention_logit_scale: float = 1.0
+
     # Factor on every Engram layer's output (recall surgery: damping the hashed n-gram path,
     # which drives a closer-mention bias). 1 = unchanged; reached linearly over
     # ``engram_output_scale_ramp`` steps from ``engram_output_scale_start``

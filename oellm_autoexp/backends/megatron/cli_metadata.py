@@ -482,6 +482,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "attention_logit_scale": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Factor on the softmax scale of the softmax-attention layers (``softmax_scale`` becomes ``attention_logit_scale / sqrt(kv_channels)``, or the factor times an explicit / MuP ``softmax_scale``): a sharper (> 1) or flatter (< 1) attention distribution. Recall surgery: the ambitious v4 NoPE attention at x1.25 (inference) reads spans better (CoQA F1 +3.1). 1 = unchanged.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "attention_output_gate": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9531,6 +9539,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=8192,
+    ),
+    "attention_logit_scale": MegatronActionSpec(
+        option_strings=("--attention-logit-scale",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "attention_output_gate": MegatronActionSpec(
         option_strings=("--attention-output-gate",),
