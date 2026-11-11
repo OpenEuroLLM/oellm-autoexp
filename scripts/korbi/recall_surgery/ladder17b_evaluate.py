@@ -43,6 +43,63 @@ def _one_arg_compat(task_obj):
     return patched
 
 
+def _scale_attention_logits(model, x: float) -> dict:
+    """Multiply the softmax scale of every fla Attention layer by `x` (DIAGNOSTIC: attention temperature).
+
+    fla's Attention (fla/layers/attn.py) calls the module-level flash_attn_func / flash_attn_varlen_func without a
+    softmax_scale (flash-attn's default 1/sqrt(head_dim)) or, without flash-attn, the module-level sdpa_causal
+    (torch SDPA, default scale). All three are resolved from the module's globals at call time, so they are wrapped
+    there: flash-attn gets softmax_scale = x / sqrt(head_dim), the SDPA fallback gets q * x (the same logits). Every
+    Attention module in the model (hybrid layers and recall branches) gets a forward hook that FAILS unless its
+    forward went through a wrapped kernel; `state['verified']` collects the modules that did."""
+    import fla.layers.attn as fattn
+    from fla.layers.attn import Attention
+
+    mods = [(n, m) for n, m in model.named_modules() if isinstance(m, Attention)]
+    if not mods:
+        raise SystemExit('--attn-logit-scale on a model with no fla Attention layers: nothing to scale')
+    state = {'calls': 0, 'verified': set(), 'names': [n for n, _ in mods]}
+
+    def _flash(fn):
+        def wrapped(q, k, v, *args, **kw):
+            if kw.get('softmax_scale') is not None or args:
+                raise SystemExit(f'{fn.__name__}: unexpected softmax_scale / positional args, cannot rescale')
+            state['calls'] += 1
+            return fn(q, k, v, softmax_scale=x * q.shape[-1] ** -0.5, **kw)
+        wrapped._ladder17b_scaled = True
+        return wrapped
+
+    patched = []
+    for name in ('flash_attn_func', 'flash_attn_varlen_func'):
+        fn = getattr(fattn, name, None)
+        if fn is not None and not getattr(fn, '_ladder17b_scaled', False):
+            setattr(fattn, name, _flash(fn))
+            patched.append(name)
+    sdpa = fattn.sdpa_causal
+    if not getattr(sdpa, '_ladder17b_scaled', False):
+        def sdpa_scaled(q, k, v, window_size):
+            state['calls'] += 1
+            return sdpa(q * x, k, v, window_size)
+        sdpa_scaled._ladder17b_scaled = True
+        fattn.sdpa_causal = sdpa_scaled
+        patched.append('sdpa_causal')
+
+    def pre(mod, _args, _kw=None):
+        mod._ladder17b_calls0 = state['calls']
+
+    def post(mod, _args, _out, _name=None):
+        if state['calls'] <= mod._ladder17b_calls0:
+            raise SystemExit(f'--attn-logit-scale: attention module {_name} ran without a scaled kernel call')
+        state['verified'].add(_name)
+
+    for n, m in mods:
+        m.register_forward_pre_hook(pre)
+        m.register_forward_hook(lambda mod, a, o, _n=n: post(mod, a, o, _name=_n))
+    print(f'  ATTENTION LOGIT SCALE x{x} on {len(mods)} fla Attention modules {state["names"]} '
+          f'(wrapped {patched}) -- DIAGNOSTIC ONLY, this is not the model that trained', flush=True)
+    return state
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--source', type=Path, required=True)
@@ -57,6 +114,11 @@ def main():
     p.add_argument('--hf-auto', action='store_true',
                    help='a stock HF model (reference, e.g. Qwen3-1.7B-Base): AutoModelForCausalLM instead of the '
                         'ladder exporter\'s explicit classes; same lm-eval wrapper, tasks, shots and documents')
+    p.add_argument('--ablate-attn', action='store_true',
+                   help='DIAGNOSTIC: zero every fla Attention sublayer (build_lm(ablate_attn=True), the original '
+                        'codebase\'s eval_downstream.ablate_attention; the block\'s residual + MLP stay)')
+    p.add_argument('--attn-logit-scale', type=float, default=None,
+                   help='DIAGNOSTIC: multiply every fla Attention layer\'s softmax scale by this factor')
     a = p.parse_args()
     i, n = (int(x) for x in a.shard.split('/'))
     a.out.mkdir(parents=True, exist_ok=True)
@@ -82,7 +144,24 @@ def main():
             return m.eval(), m.config
 
         export_hf.load_exported = _auto
-    lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda', context_prefix='none')
+    diag = {}
+    if a.ablate_attn:
+        # ablate_attention leaves the zeroed layers' cache slots empty; only the per-layer, lazily extended
+        # FLACache keeps the other layers' indices (LegacyFLACache would append a later layer into the gap)
+        from fla.models.utils import Cache, FLACache
+        if not issubclass(Cache, FLACache):
+            raise SystemExit('--ablate-attn needs the per-layer FLACache (transformers > 4.53.3)')
+        diag['ablate_attn'] = True
+        lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda', context_prefix='none',
+                      ablate_attn=True)
+    else:
+        lm = build_lm(str(a.model), str(a.tokenizer), a.batch_size, 4096, 'cuda', context_prefix='none')
+    scale_state = None
+    if a.attn_logit_scale is not None and a.attn_logit_scale != 1.0:
+        if a.ablate_attn:
+            raise SystemExit('--attn-logit-scale with --ablate-attn: nothing left to scale')
+        scale_state = _scale_attention_logits(lm.model, a.attn_logit_scale)
+        diag['attn_logit_scale'] = a.attn_logit_scale
     import lm_eval
     from lm_eval.tasks import TaskManager
     tm = TaskManager(include_path=str(a.source / 'lm_scaling/eval_tasks'))
@@ -115,6 +194,11 @@ def main():
         if 'samples' not in str(exc) or n > 1:
             raise
         result = lm_eval.simple_evaluate(limit=a.limit or None, **kw)
+    if scale_state is not None:
+        missed = sorted(set(scale_state['names']) - scale_state['verified'])
+        if missed:
+            raise SystemExit(f'--attn-logit-scale: attention modules never ran through a scaled kernel: {missed}')
+        diag['attn_scaled_modules'] = len(scale_state['verified'])
     rows = result.get('samples', {}).get(a.task, [])
     extra = {'n_docs': len(rows)}
     if a.task.startswith('squad'):
@@ -129,7 +213,7 @@ def main():
                               'limit': a.limit, 'shard': a.shard, 'seed': 2026, 'context': 4096,
                               'model_config_sha256': hashlib.sha256((a.model / 'config.json').read_bytes()).hexdigest(),
                               'intervention': os.getenv('SKDA_INTERVENTION', ''),
-                              'elapsed_s': round(time.time() - start, 1)}}
+                              'elapsed_s': round(time.time() - start, 1), **diag}}
     tmp = dest.with_suffix('.tmp')
     tmp.write_text(json.dumps(payload, indent=2, default=str) + '\n')
     tmp.replace(dest)

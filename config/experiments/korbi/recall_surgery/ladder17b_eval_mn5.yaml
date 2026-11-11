@@ -37,6 +37,10 @@ aux:
   # reference models (stock HF, ref_* entries): AutoModelForCausalLM, own tokenizer
   hf_auto: ""
   tokenizer: /gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer
+  # DIAGNOSTICS (diag_* entries; not the model that trained): ablate_attn "1" zeroes every attention sublayer,
+  # attn_logit_scale X multiplies every attention layer's softmax scale by X; "" = off
+  ablate_attn: ""
+  attn_logit_scale: ""
   tests: ""
   bench: ""
 
@@ -54,6 +58,8 @@ backend:
     BATCH: ${aux.batch}
     HF_AUTO: ${aux.hf_auto}
     TOKENIZER: ${aux.tokenizer}
+    ABLATE_ATTN: ${aux.ablate_attn}
+    ATTN_LOGIT_SCALE: ${aux.attn_logit_scale}
 
 job:
   name: ladder17b_eval_${aux.name}
@@ -93,6 +99,48 @@ sweep:
           aux.model: skda-shipped-lowrank
           aux.ckpt: none
           aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-lowrank_1.7B_wsd50B
+        # attention-routing diagnostics on the two 1.7B hybrids (docs/recall_surgery_ambitious.md, section 3.6):
+        # attention zeroed (noattn) / softmax scale x1.1, x1.2, x1.3 (lsNNN); the hf_* exports, own out dirs
+        - aux.name: diag_kda_hybrid_noattn
+          aux.model: kda-sig-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/kda-sig-hybrid-lowrank_1.7B_wsd50B
+          aux.ablate_attn: "1"
+        - aux.name: diag_kda_hybrid_ls110
+          aux.model: kda-sig-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/kda-sig-hybrid-lowrank_1.7B_wsd50B
+          aux.attn_logit_scale: "1.1"
+        - aux.name: diag_kda_hybrid_ls120
+          aux.model: kda-sig-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/kda-sig-hybrid-lowrank_1.7B_wsd50B
+          aux.attn_logit_scale: "1.2"
+        - aux.name: diag_kda_hybrid_ls130
+          aux.model: kda-sig-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/kda-sig-hybrid-lowrank_1.7B_wsd50B
+          aux.attn_logit_scale: "1.3"
+        - aux.name: diag_ckda_hybrid_noattn
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-hybrid-lowrank_1.7B_wsd50B
+          aux.ablate_attn: "1"
+        - aux.name: diag_ckda_hybrid_ls110
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-hybrid-lowrank_1.7B_wsd50B
+          aux.attn_logit_scale: "1.1"
+        - aux.name: diag_ckda_hybrid_ls120
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-hybrid-lowrank_1.7B_wsd50B
+          aux.attn_logit_scale: "1.2"
+        - aux.name: diag_ckda_hybrid_ls130
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: none
+          aux.export: /gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_hf/skda-shipped-hybrid-lowrank_1.7B_wsd50B
+          aux.attn_logit_scale: "1.3"
         # same-size public references through the same harness (team copies in /gpfs/projects/ehpc533/models)
         - aux.name: ref_qwen3_1p7b_base
           aux.model: attn

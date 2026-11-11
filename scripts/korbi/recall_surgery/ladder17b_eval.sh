@@ -10,6 +10,8 @@
 #   HF_AUTO=1: EXPORT_DIR is a stock HF model (reference; CKPT=none, TOKENIZER = its own dir)
 #   EXPORT_DIR, OUT_DIR, CODE_DIR / BASE_CODE_DIR (as ladder17b_train.sh; SKDA_INTERVENTION passes through),
 #   SQUAD_LIMIT (default 4000; 0 = all 11873), BATCH (default 4)
+#   DIAGNOSTICS (not the model that trained; default off): ABLATE_ATTN=1 zeroes every attention sublayer
+#   (--ablate-attn), ATTN_LOGIT_SCALE=X multiplies every attention layer's softmax scale by X (--attn-logit-scale)
 set -uo pipefail
 : "${SKDA_ARM:?}" "${CKPT:?}" "${EXPORT_DIR:?}" "${OUT_DIR:?}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -51,7 +53,11 @@ if [ "$CKPT" != none ] && [ ! -f "$EXPORT_DIR/.native_export_done" ]; then
   echo "$pt" > "$EXPORT_DIR/.native_export_done"
 fi
 
-E="python $ROOT/scripts/korbi/recall_surgery/ladder17b_evaluate.py --source $CODE_DIR --model $EXPORT_DIR --tokenizer $TOKENIZER --out $OUT_DIR --batch-size $BATCH ${HF_AUTO:+--hf-auto}"
+DIAG=""
+[ "${ABLATE_ATTN:-}" = 1 ] && DIAG="$DIAG --ablate-attn"
+[ -n "${ATTN_LOGIT_SCALE:-}" ] && DIAG="$DIAG --attn-logit-scale $ATTN_LOGIT_SCALE"
+[ -n "$DIAG" ] && echo "[ladder17b_eval] DIAGNOSTIC:$DIAG"
+E="python $ROOT/scripts/korbi/recall_surgery/ladder17b_evaluate.py --source $CODE_DIR --model $EXPORT_DIR --tokenizer $TOKENIZER --out $OUT_DIR --batch-size $BATCH ${HF_AUTO:+--hf-auto}$DIAG"
 BELEBELE=${BELEBELE:-belebele_eng_Latn belebele_deu_Latn belebele_fra_Latn belebele_spa_Latn belebele_ita_Latn}
 ( CUDA_VISIBLE_DEVICES=0 $E --task winogrande --shots 0 > "$OUT_DIR/winogrande.log" 2>&1
   for b in $BELEBELE; do CUDA_VISIBLE_DEVICES=0 $E --task "$b" --shots 5 > "$OUT_DIR/$b.log" 2>&1 || exit 1; done ) &
