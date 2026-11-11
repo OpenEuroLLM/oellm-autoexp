@@ -13,7 +13,7 @@
 set -euo pipefail
 : "${CODE_DIR:?}" "${ROOT:?}" "${ARMS:?}"
 HERE=$(cd "$(dirname "$0")" && pwd)
-NATIVE_MEGATRON=${NATIVE_MEGATRON:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/native_megatron_bb5febb82}
+NATIVE_MEGATRON=${NATIVE_MEGATRON:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/native_megatron_ladder}
 if [ ! -f "$CODE_DIR/lm_scaling/megatron_ext/interventions.py" ]; then
   bash "$HERE/native_patch/make_code_dir.sh" "$CODE_DIR"
 fi

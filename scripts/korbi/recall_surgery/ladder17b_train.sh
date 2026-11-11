@@ -33,9 +33,10 @@ TOKENIZER=${TOKENIZER:-/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/as
 CACHE=${DATA_CACHE:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/data_cache}
 
 # code: an intervention dir shadows lm_scaling (+ fla if it has one). The native Megatron: the full tree of the
-# ladder's checkout (oellm-autoexp Megatron-LM bb5febb82 on jupiter, copied whole -- 018's native_megatron holds only
-# megatron/ + pretrain_gpt.py and lacks gpt_builders / model_provider), unless a dir with a complete tree is given.
-NATIVE_MEGATRON=${NATIVE_MEGATRON:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/native_megatron_bb5febb82}
+# ladder's checkout (jupiter signed_kda/external/oellm-autoexp/submodules/Megatron-LM, 514b31b -- the path in the
+# 1.7B runs' logs; 018's native_megatron is its megatron/ + pretrain_gpt.py only, without gpt_builders /
+# model_provider), copied whole, unless the code dir has a complete tree.
+NATIVE_MEGATRON=${NATIVE_MEGATRON:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/native_megatron_ladder}
 nm=$NATIVE_MEGATRON; [ -f "$CODE_DIR/native_megatron/gpt_builders.py" ] && nm=$CODE_DIR/native_megatron
 fla=$BASE_CODE_DIR; [ -d "$CODE_DIR/fla" ] && fla=$CODE_DIR
 # notitan first: lm_scaling.titan_ext registers torchtitan train specs at import (titan_oellm, toml, ...) when the

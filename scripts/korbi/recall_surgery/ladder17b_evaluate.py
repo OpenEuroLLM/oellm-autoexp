@@ -62,8 +62,7 @@ def main():
     if dest.exists():
         print(f'{dest} exists', flush=True)
         return
-    sys.path[:0] = [str(a.source), str(a.source / 'lm_scaling'), str(Path(__file__).resolve().parents[3]
-                                                                       / 'experiment/018_ckda_small_retrieval/scripts')]
+    sys.path[:0] = [str(a.source), str(a.source / 'lm_scaling'), str(Path(__file__).resolve().parent / 'compat')]
     from eval_downstream import build_lm
     from metric_compat import install
     install()

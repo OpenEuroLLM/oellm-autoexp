@@ -20,7 +20,7 @@ TOKENIZER=${TOKENIZER:-$W018/assets/tokenizer}
 fla=$BASE_CODE_DIR; [ -d "$CODE_DIR/fla" ] && fla=$CODE_DIR
 # notitan first: the image ships torchtitan, and titan_ext would register train specs (titan_oellm, toml, ...) on
 # import; the exporter only needs titan_ext.hybrid_layers
-export PYTHONPATH="$ROOT/scripts/korbi/recall_surgery/notitan:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$ROOT/experiment/018_ckda_small_retrieval/scripts:$HYBRID_ENV/pylibs_flag:$HYBRID_ENV/pylibs_hfx:$HYBRID_ENV/pylibs_ep"
+export PYTHONPATH="$ROOT/scripts/korbi/recall_surgery/notitan:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$ROOT/scripts/korbi/recall_surgery/compat:$HYBRID_ENV/pylibs_flag:$HYBRID_ENV/pylibs_hfx:$HYBRID_ENV/pylibs_ep"
 export SKDA_ARM SKDA_INTERVENTION="${SKDA_INTERVENTION:-}"
 # 018's offline evaluation environment (probe mn5-pool-p264.0665: all six datasets load offline)
 export HF_HOME=/gpfs/projects/ehpc533/users/korbip/data/flag_evals/hf_home
