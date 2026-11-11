@@ -24,7 +24,8 @@ root, code = sys.argv[1], sys.argv[2]
 for name in sorted(os.listdir(root)):
     d = os.path.join(root, name)
     cfg = os.path.join(d, "config.json")
-    if not os.path.isfile(cfg):
+    # only weights dirs: the tokenizer dir carries a config.json too and must be left alone
+    if not (os.path.isfile(cfg) and os.path.isfile(os.path.join(d, "model.safetensors"))):
         continue
     orig = os.path.join(d, "config.json.orig")
     if not os.path.exists(orig):
@@ -52,7 +53,7 @@ PY
 TOK=$ROOT/tokenizer_gpt_neox_20b
 if [ -d "$TOK" ]; then
   for d in "$ROOT"/*/; do
-    [ -f "$d/config.json" ] || continue
+    [ -f "$d/model.safetensors" ] || continue
     for f in "$TOK"/*; do ln -sf "$f" "$d/$(basename "$f")"; done
   done
   echo "tokenizer linked into every export from $TOK"

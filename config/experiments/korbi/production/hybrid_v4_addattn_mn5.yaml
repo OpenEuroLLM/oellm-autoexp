@@ -100,9 +100,13 @@ sweep:
         # the paired control: same resume, same batches, nothing changed
         - aux.arm: ctrl
           backend.megatron.ckda_branch: null
+          # ckpt_eval is a frozen evaluation copy of the main run (iter_0023300, no latest_checkpointed_
+          # iteration.txt): name the step, or Megatron fails the load
+          backend.megatron.ckpt_step: 23300
         # position only: rope on the stack's own attention layers, no new tensors
         - aux.arm: rope
           backend.megatron.ckda_branch: null
+          backend.megatron.ckpt_step: 23300
           backend.megatron.position_embedding_type: rope
         # complex_kda kept, attention added at all six 3:1 positions
         - aux.arm: add6
