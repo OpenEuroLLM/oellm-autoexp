@@ -2,7 +2,8 @@
 Depth Memory).
 
 Unlike ``oellm_hybrid`` (one HF layer = mixer + MLP), the layers here are Megatron's own: one per
-pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram", "kronlstm", "kvshare"} (not ``layer_types``:
+pattern symbol, ``block_types`` in {"attention", "ckda", "moe", "engram", "kronlstm", "kvshare", "ckda_attn"}
+(not ``layer_types``:
 transformers validates that name against its own attention kinds), each wrapped by its residual
 read / write: mHC over ``mhc_expansion_rate`` streams (``residual="mhc"``) or the Linear Depth
 Memory (``residual="ldm"``).
@@ -13,7 +14,9 @@ from transformers import PretrainedConfig
 # kronlstm: a ckda_branch KronLSTM past its hand-over (the FLA layer of fla_layer_kronlstm)
 # kvshare: a ckda_branch kvshare attention past its hand-over (its own q / gate / o, the keys / values of the
 # attention layer kv_share_sources[str(index)])
-LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm", "kvshare")
+# ckda_attn: an ADDITIVE ckda_branch layer -- the CKDA mixer plus a parallel attention branch of the stack's kind
+# on the same normalised input, out = ckda(x) + attention(x) (the branch's weight folded into its o_proj)
+LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm", "kvshare", "ckda_attn")
 
 
 class OellmAmbitiousConfig(PretrainedConfig):

@@ -19,6 +19,9 @@
   - "kvshare": a ckda_branch kvshare attention past its hand-over: the attention above with its own q / gate /
     o / q norm over the keys / values of an earlier attention layer (``kv_share_sources``; XSA against that
     layer's value of the token), no KV of its own;
+  - "ckda_attn": an ADDITIVE ckda_branch layer: the CKDA mixer (``fla_layer``) plus a parallel attention branch
+    of the stack's kind on the same normalised input, ``ckda(x) + attention(x)`` (the branch's weight
+    ``m * gamma_scale * gamma * calib`` folded into its o_proj); decoding state (ckda state, (k, v));
   - "moe" ``E``: Megatron's sigmoid router, balanced by an expert bias (top-k on scores + bias) or
     quantile balancing (top-k on logits - qb_beta); weights = the unbiased scores normalised to 1.
     SwiGLU experts with the gpt-oss / DeepSeek-V4.1 clamp and optionally the bounded
@@ -339,6 +342,25 @@ class OellmXSAAttention(nn.Module):
         elif self.gate_proj is not None:
             o = (o.float() * torch.sigmoid(self.gate_proj(x).view(b, s, self.nh, self.d).float())).to(x.dtype)
         return self.o_proj(o.reshape(b, s, self.nh * self.d)), new_state
+
+
+class OellmCkdaAttn(nn.Module):
+    """An additive ckda_branch layer (Megatron ``ckda_branch_crossfade: false``, ``alpha_end: 1``): the CKDA
+    mixer and a parallel attention branch of the stack's kind on the same normalised input; the output is
+    their sum (the branch's scale is folded into ``attn.o_proj`` by the exporter). State: (ckda, (k, v))."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        self.ckda = OellmFLALayer(config.fla_layer)
+        self.attn = OellmXSAAttention(config)
+
+    def forward(self, x: torch.Tensor, state=None, attention_mask=None, keep_state: bool = True):
+        s_ckda, s_attn = state if state is not None else (None, None)
+        stateless = not keep_state and s_ckda is None and _fast(x)
+        y, n_ckda = self.ckda(x, s_ckda, attention_mask, not stateless)
+        b, n_attn = self.attn(x, s_attn, keep_state)
+        new = (n_ckda, n_attn) if keep_state else None
+        return y + b, new
 
 
 class OellmKVShareAttention(nn.Module):
@@ -747,6 +769,9 @@ class OellmAmbitiousLayer(nn.Module):
         elif self.kind == "kronlstm":  # a ckda_branch KronLSTM (the FLA layer, as Megatron built it)
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer_kronlstm)
+        elif self.kind == "ckda_attn":  # an additive ckda_branch layer: CKDA + a parallel attention branch
+            self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
+            self.mixer = OellmCkdaAttn(config)
         elif self.kind == "moe":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmMoE(config)
@@ -762,6 +787,8 @@ class OellmAmbitiousLayer(nn.Module):
             # stateless (scoring, fast path): FLA's fused input projections, no final state
             stateless = not keep_state and state is None and _fast(xin)
             out, new_state = self.mixer(xin, state, attention_mask, not stateless)
+        elif self.kind == "ckda_attn":
+            out, new_state = self.mixer(xin, state, attention_mask, keep_state)
         elif self.kind == "moe":
             out = self.mixer(xin)
         else:

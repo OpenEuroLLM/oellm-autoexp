@@ -12,6 +12,7 @@ defaults:
 aux:
   name: ckdab_export_check_${aux.arm}
   arm: d_cal_full
+  only: []
   test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch
   step: 1300
   tests: ""
@@ -37,6 +38,7 @@ slurm:
 
 sweep:
   type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
   groups:
     - type: list
       configs:
@@ -44,3 +46,5 @@ sweep:
         - aux.arm: bgqa_cal_full
         - aux.arm: e_cal  # option E (kvshare blocks): its final save at 1260 (past the hand-over at 1250)
           aux.step: 1260
+        - aux.arm: add6_t  # an ADDITIVE branch (ckda_attn blocks: complex_kda + attention), its save at 1300
+          aux.step: 1300

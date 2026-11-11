@@ -311,3 +311,27 @@ sweep:
           backend.megatron.ckda_branch_calibrate: true
           backend.megatron.ckda_branch_alpha_hold: 0
           backend.megatron.ckda_branch_alpha_ramp: 150
+        # ADDITIVE ckda_branch (recall surgery 2026-11-11, the add6 arm of hybrid_v4_addattn_mn5 on the small
+        # model): complex_kda at full weight, an attention branch added on top at 6 positions (gamma 0.5 x its
+        # calibrated RMS at insertion), 1100 -> 1300, saved at 1300 -- the checkpoint for the ckda_attn HF / vLLM
+        # export check (ckda_branch_export_check_mn5 add6_t, fixedvalid_eval_ckdabsub64_add6t_mn5)
+        - aux.arm: add6_t
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/add6_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: ${aux.test_root}/add6_src/ckpt
+          backend.megatron.save: ${aux.test_root}/add6_t/ckpt
+          backend.megatron.save_interval: 1300
+          backend.megatron.exit_interval: 1300
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_calibrate: true
+          backend.megatron.ckda_branch_alpha_hold: 100000
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0

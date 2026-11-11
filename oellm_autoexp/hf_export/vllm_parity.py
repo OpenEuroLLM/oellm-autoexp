@@ -312,6 +312,11 @@ def main() -> None:
                  "ckdab_kvshare_mix": dict(base, quantile=False, head_dim=128,
                                            blocks=["attention", "engram", "ckda", "moe", "kvshare", "moe",
                                                    "attention", "moe", "engram", "kvshare", "moe"], router_std=1.0),
+                 # an additive ckda_branch layer (CKDA + a parallel attention branch), alone and in the v4 mix
+                 "ckda_attn": dict(base, blocks=["attention", "ckda_attn", "moe", "ckda_attn"]),
+                 "ckdab_add_mix": dict(base, quantile=False, head_dim=128,
+                                       blocks=["attention", "engram", "ckda", "moe", "ckda_attn", "moe",
+                                               "attention", "moe", "engram", "ckda_attn", "moe"], router_std=1.0),
                  "ckdab_kronlstm_mix": dict(base, quantile=False, head_dim=128,
                                             blocks=["attention", "engram", "ckda", "moe", "kronlstm", "moe",
                                                     "attention", "moe", "engram", "ckda", "moe"], router_std=1.0),
