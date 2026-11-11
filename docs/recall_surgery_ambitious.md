@@ -536,3 +536,31 @@ scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state
 * RoPE on NoPE-trained attention costs 6.6 CoQA F1 and does not recover in 1000 steps.
 * Step-2000 readouts (1 BT) running; they decide whether the pure-stack branches are slowly learning or flat.
 
+
+**Arm readouts at step 1000** (0.52 BT after surgery, 2 nodes, gbs 128, mbs 1, fresh Adam + 100-step warmup to 5e-4,
+constant; `ladder17b_evals/<arm>_s1000`; SQuAD v2 = first 4000 docs; Belebele = mean of eng / deu / fra / spa / ita,
+5-shot -- **at chance (25 %) for every 1.7B model**, so it carries no signal at this scale). Delta = arm minus its
+paired fresh control at the same step:
+
+| arm | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 EM | SQuAD v2 F1 | HasAns F1 | NoAns F1 | Belebele |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `pure_ctrl_fresh` | 62.35 | 37.23 | 49.00 | 6.65 | 9.91 | 18.93 | 0.10 | 24.58 |
+| `pure_add_every4` | 61.48 (-0.87) | 37.87 (+0.64) | 49.92 (+0.92) | 6.70 (+0.05) | 10.03 (+0.12) | 19.21 | 0.05 | 24.60 |
+| `pure_add_every4_rope` | 61.88 (-0.47) | 37.83 (+0.60) | 49.86 (+0.86) | 6.42 (-0.23) | 9.68 (-0.23) | 18.49 | 0.10 | 24.80 |
+| `hybrid_ctrl_fresh` | 60.93 | 49.73 | 62.07 | 9.60 | 13.14 | 25.23 | 0.00 | 26.89 |
+| `hybrid_add_lin_late` | 60.14 (-0.79) | 49.65 (-0.08) | 62.53 (+0.46) | 10.32 (+0.72) | 13.86 (+0.72) | 26.61 | 0.00 | 27.09 |
+| `hybrid_attn_rope` | 60.14 (-0.79) | 42.63 (-7.10) | 55.43 (-6.64) | 8.12 (-1.48) | 11.67 (-1.47) | 22.36 | 0.05 | 26.98 |
+
+Noise: Winogrande +-1.4 (n 1267), CoQA +-~1.5 F1 (500 dialogues), SQuAD v2 subset +-~0.6 F1.
+
+* **Adding attention branches to the PURE CKDA stack does not recover the hybrid's copy ability in 0.5 BT.** `pure_add_every4`
+  is +0.9 CoQA F1 / +0.1 SQuAD F1 over its control (within noise); the hybrid trained with attention from the start is at
+  62.1 / 13.1 -- a 12-point CoQA gap that the branch arms do not move. RoPE on the branches changes nothing.
+* **More attention on the hybrid (`add_lin_late`, 9 branches) is within noise** (+0.5 CoQA F1, +0.7 SQuAD F1, -0.8 Winogrande).
+* **RoPE on the hybrid's existing NoPE-trained attention hurts** (-6.6 CoQA F1, -1.5 SQuAD F1) and has not recovered after
+  1000 steps (insertion cost +0.13 loss).
+* **The fresh-optimizer continuation itself moves the copy rows**: `hybrid_ctrl_fresh` at 1000 steps vs the native stable end
+  (`native_ckda_hybrid`, 40 BT): CoQA F1 62.1 vs 60.0, SQuAD v2 F1 13.1 vs 18.0 (MN5's Nemotron sample differs from
+  jupiter's, and the optimizer is reset). Arms are therefore only comparable to their paired control, as above.
+* The step-2000 readouts (`<arm>_s2000`) are queued in o134c (priority 50) and print with
+  `scripts/korbi/recall_surgery/ladder17b_table.py ladder17b_evals/*_s2000`.
