@@ -363,12 +363,45 @@ the copy, so the load is strict and complete. (`--dist-ckpt-strictness` applies 
 
 **Baseline readout** (`ladder17b_evals/`, SQuAD v2 = first 4000 docs):
 
-| model (attention share) | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 F1 | HasAns F1 | NoAns F1 |
-|---|---:|---:|---:|---:|---:|---:|
-| `hf_attn` 50 BT (100 %) | 58.33 | 52.97 | 65.04 | 14.04 | 26.92 | 0.05 |
-| `hf_kda_hybrid` 50 BT (25 %) | 59.91 | 56.82 | 70.70 | (running) | | |
-| `hf_ckda_hybrid` 50 BT (25 %) | 61.01 | 55.72 | 68.40 | (running) | | |
-| `hf_ckda_pure` 50 BT (0 %) | 62.83 | 43.33 | 55.95 | (running) | | |
-| `native_ckda_hybrid` 40 BT stable end | (running) | | | | | |
+| model (attention share) | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 EM | SQuAD v2 F1 | HasAns F1 | NoAns F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `hf_attn` 50 BT (100 %) | 58.33 | 52.97 | 65.04 | 11.20 | 14.04 | 26.92 | 0.05 |
+| `hf_kda_hybrid` 50 BT (25 %) | 59.91 | 56.82 | 70.70 | 17.05 | 21.57 | 41.42 | 0.00 |
+| `hf_ckda_hybrid` 50 BT (25 %) | 61.01 | 55.72 | 68.40 | 17.50 | 21.96 | 42.13 | 0.05 |
+| `hf_ckda_pure` 50 BT (0 %) | 62.83 | 43.33 | 55.95 | (running) | | | |
+| **`native_ckda_hybrid` 40 BT stable end** (the testbed's start) | 59.51 | 47.37 | 60.03 | 13.50 | 17.98 | 34.44 | 0.10 |
 
-Winogrande agrees with the jupiter ladder within 1 pt (58.80 / 60.06 / 60.85 / 63.14).
+Winogrande agrees with the jupiter ladder within 1 pt (58.80 / 60.06 / 60.85 / 63.14). **The stable-phase end is well
+below the 50 BT (decayed) export on the copy tasks**: CoQA F1 60.0 vs 68.4, SQuAD v2 F1 18.0 vs 22.0 (Winogrande 59.5
+vs 61.0) -- the 10 BT lr decay alone is worth +8 CoQA F1. Arms continued at constant lr from the stable end must be
+compared with `ctrl_fresh` / `pure_ctrl_fresh` at the same step, never with the decayed exports.
+
+**Surgery + patched-code smokes** (3 steps, model-only load, identical batches; `ladder17b_smoke/`):
+
+| arm | new tensors | step 1 loss | step 2 | step 3 | note |
+|---|---:|---:|---:|---:|---|
+| `hybrid_ctrl_fresh` | 0 | 2.275560 | 2.270438 | 2.236034 | = native model-only load (2.275551) |
+| `hybrid_add_lin_late` | 45 (9 branches) | 2.275560 | 2.270438 | 2.236037 | exact start, moves after the first update |
+| `pure_ctrl_fresh` | 0 | 2.284275 | 2.277529 | 2.242382 | |
+| `pure_add_every4` (mbs 1) | 30 (6 branches) | 2.284283 | 2.277525 | 2.242393 | exact start; mbs 2 OOMs at the loss |
+| `pure_add_every4_rope` (mbs 1) | 30 | 2.284283 | 2.277525 | 2.242368 | exact start |
+| `hybrid_attn_rope` (mbs 1) | 0 | 2.404005 | 2.396817 | 2.357385 | +0.13 at insertion: RoPE on NoPE-trained attention |
+
+Step time at mbs 1 (1 node, gbs 128): branch arms 6.9 s, hybrid 6.05 s (5.7 s at mbs 2). 1 BT (1907 steps) ~ 3.7 h on
+1 node; on 2 nodes ~ 1.9 h (data-parallel, same global batch).
+
+**Launch** (from a current snapshot; e.g. 2 nodes per arm, ~1 BT):
+
+```
+scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+    --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c --yes \
+    --config-name experiments/korbi/recall_surgery/ladder17b_continue_mn5 \
+    "aux.only=[pure_ctrl_fresh,pure_add_every4,pure_add_every4_rope]" aux.steps=2000 aux.nodes=2 aux.save_interval=500
+# readout of a run's checkpoint (exports it first):
+... --config-name experiments/korbi/recall_surgery/ladder17b_eval_mn5 "aux.only=[native_ckda_pure]" \
+    aux.name=pure_add_every4_s2000 aux.model=skda-shipped-lowrank \
+    aux.ckpt=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-lowrank/pure_add_every4/ckpt \
+    aux.code_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1 aux.intervention=add_attn@every4
+```
+(An intervention arm's export needs the patched code dir and SKDA_INTERVENTION, as above: the exporter builds the
+model from the spec.)
