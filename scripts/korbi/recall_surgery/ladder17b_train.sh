@@ -15,7 +15,8 @@
 #                       model_only  = weights only (--finetune --no-load-optim --no-load-rng): iteration 0, fresh Adam,
 #                                     linear warmup WARMUP iters; keys absent from the checkpoint (new parameters)
 #                                     keep their init (native torch-format loader falls back to strict=False)
-#   STEPS               training steps of this run (resume: on top of the source's iteration; model_only: from 0)
+#   STEPS               training steps of this run (resume: on top of the source's iteration; model_only: from 0);
+#                       the lr is constant after the warmup (WSD, no decay phase: lr-decay-iters past the end)
 #   GBS MBS SAVE_INTERVAL LR WARMUP FFN LOG_INTERVAL   (FFN: the arm's ffn hidden size)
 #   EXTRA_ARGS          appended verbatim
 set -euo pipefail
@@ -85,6 +86,7 @@ exec python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK"
   --no-gradient-accumulation-fusion --use-flash-attn --transformer-impl transformer_engine \
   --micro-batch-size "$MBS" --global-batch-size "$GBS" --train-iters "$TRAIN_ITERS" \
   --lr "$LR" --min-lr 1e-05 --lr-decay-style WSD --lr-wsd-decay-iters 0 --lr-wsd-decay-style linear \
+  --lr-decay-iters $((TRAIN_ITERS + 1000)) \
   --override-opt_param-scheduler \
   --adam-beta2 0.95 --weight-decay 0.1 --clip-grad 1.0 --init-method-std 0.02 --seed 1234 \
   --tokenizer-type HuggingFaceTokenizer --tokenizer-model "$TOKENIZER" \
