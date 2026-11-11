@@ -1,0 +1,45 @@
+# @package _global_
+# Recall surgery (docs/recall_surgery_ambitious.md §3.5): attention temperature. At inference on the 23500 export a
+# sharper softmax in the six NoPE attention layers reads spans better: CoQA F1 66.13 (x1) -> 66.75 (x1.1) -> 69.36
+# (x1.2) -> 69.25 (x1.25) -> 66.89 (x1.5), Winogrande flat. These arms train the main run on its own batches with
+# the attention softmax scale multiplied (Megatron 35f74ae9c attention_logit_scale; zero new parameters, every
+# CKDA layer untouched), so the rest of the network adapts to the sharper attention.
+#   ls120   x1.2 from 23400, 100 steps (paired with the main run's own 23500 and with lr_decay/dec100)
+# Readout: the HF export does not carry the factor -- evaluate with runtime.env.OELLM_ATTN_LOGIT_SCALE="1.2".
+# Same layout as the other recall-surgery arms (hybrid_v4_addattn_mn5): 32 nodes, mbs 2, saves every 50.
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/hybrid_v4_attn_temp_mn5 --yes "aux.only=[ls120]"
+defaults:
+  - hybrid_v4_addattn_mn5
+  - _self_
+
+aux:
+  suite: attn_temp
+  end: 23500
+
+backend:
+  megatron:
+    load: ${aux.main_ckpt}
+    ckpt_step: 23400
+    ckda_branch: null
+    save_interval: 50
+    non_persistent_save_interval: null
+
+job:
+  name: attn_temp_${aux.arm}
+  est_steps: 100
+  est_step_time_s: 254.0
+  metadata:
+    pool_priority: 64
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ls120
+          backend.megatron.attention_logit_scale: 1.2
