@@ -10,6 +10,11 @@
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
 #       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
 #       --config-name experiments/korbi/production/ckda_branch_surgery_mn5 --yes aux.mode=prod
+# recall surgery §4.4 (post4: attention copies behind the copy layers, from 23400), 1 node on o134c at priority 40:
+#   ... --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/ckda_branch_surgery_mn5 --yes aux.mode=prod aux.arms=post4 \
+#       aux.it=23400 aux.root=/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn \
+#       job.metadata.pool_priority=40
 defaults:
   - ../hybrid_speed/kernel_tests_mn5
   - _self_
@@ -23,6 +28,8 @@ aux:
   # an output root of its own (goal 2026-11-11: the additive arms write to .../production/ckda_addattn, so
   # they cannot be confused with the post-fit arms' crossfade checkpoints). Empty = the script's default.
   root: ""
+  # the source iteration (empty: the script's default, 23300 in prod mode; the post4 surgery of §4.4 uses 23400)
+  it: ""
 
   # bgqa_mm's per-layer gamma (crossfade: rms_ckda / rms_branch - 1, from the [ckda_branch] lines at insertion);
   # test mode: bgqa_xf's iter 1100 (layer 9 2.928, 25 2.038, 41 1.846)
@@ -34,6 +41,7 @@ backend:
   command: bash scripts/korbi/production/ckda_branch_surgery.sh ${aux.mode} ${aux.arms}
   env:
     ROOT: ${aux.root}
+    IT: ${aux.it}
     GAMMA_INIT_BGQA: ${aux.gamma_init_bgqa}
     GAMMA_INIT_D: ${aux.gamma_init_d}
 

@@ -64,6 +64,11 @@ for arm in "${ARMS[@]}"; do
     add3)  args=(--branch attention --groups 2 --layers 58,74,90 --calibrate --gamma-init 0.5) ;;
     # the same as add6 at full mixer weight (the upper end of the dose)
     add6b) args=(--branch attention --groups 2 --layers 9,25,41,58,74,90 --calibrate --gamma-init 1.0) ;;
+    # a SECOND attention step behind each copy layer (recall surgery §4.4): an additive branch on the complex_kda
+    # layer right after attention 17 / 33 / 50 / 66 (+ their MoE), a COPY of that attention layer (weights and
+    # optimizer states; its input-norm gain folded into linear_qkv), gamma 0 = exact at insertion. Run with
+    # IT=23400 ROOT=.../production/ckda_postattn (the post4 / post4_lr4 arms of hybrid_v4_kvdup_mn5).
+    post4) args=(--branch attention --groups 2 --layers 19,35,52,68 --init attn --kv-sources 17,33,50,66 --calibrate) ;;
     *) echo "unknown arm $arm" >&2; exit 2 ;;
   esac
   dst=$ROOT/${arm}_src/ckpt

@@ -26,6 +26,17 @@ stack's attention head dim, 16 query heads, ``G`` KV groups; ``q_layernorm`` / `
 ``linear_proj``; the keys / values are an earlier attention layer's at run time, ``--kv-sources``): random
 q / gate / o rows at the source attention layer's row norms (gate x eps), its q norm gains (kvshare_branch).
 
+**attention, --init attn** (copy of a stack attention layer, ``--kv-sources``: one source per layer): the branch
+is the source attention layer itself -- ``linear_qkv`` (same KV groups), ``linear_proj``, q / k norm and all
+their optimizer states copied -- so a second attention step of the copy layer's kind runs on the branch
+layer's input. The source's input-norm gain (``linear_qkv.layer_norm_weight``; the branch reads the
+complex_kda layer's normalized input instead) is folded into the ``linear_qkv`` columns,
+``W' = W diag(g_attn / g_layer)``: branch(x) = the source attention of RMSNorm(x) g_attn (``--no-fold-norm``
+keeps ``W``). With the fold the MuOwn states follow the chain rule for the same function: ``g`` = the new row
+norms, ``m_g`` / ``v_g`` x (g / g') / (g / g')^2, ``m_u`` columns / (g_attn / g_layer); ``v_norm`` copied.
+gamma 0 (exact at insertion; an o_proj at 0 would leave MuOwn without row directions and calibrate without
+a branch RMS). Recall surgery post4: layers 19 / 35 / 52 / 68 from 17 / 33 / 50 / 66.
+
 **kronlstm** (``self_attention.branch.layer.*``): qkv_proj / qkv_conv1d = complex_kda's q / k / v
 projections and convolution kernels stacked (exact: depthwise), f_proj / A_log / dt_bias / g_proj /
 o_norm / o_proj copied, b_proj copied (erase s sigmoid(b), s = 2 as complex_kda's linear_beta_max 2; no bias:
@@ -36,6 +47,8 @@ s c v, the update s sigmoid(b) (v - S k) -- complex_kda's delta rule, on the nor
     PYTHONPATH=<fla fork> python add_ckda_branch.py gpucheck
     python add_ckda_branch.py apply --src <ckpt>/iter_0023300 --dst <new>/iter_0023300 \\
         --branch attention --groups 2 --layers 9,25,41 [--eps 1e-3] [--seed 1234]
+    python add_ckda_branch.py apply --src <ckpt>/iter_0023400 --dst <new>/iter_0023400 \\
+        --branch attention --groups 2 --layers 19,35,52,68 --init attn --kv-sources 17,33,50,66 --calibrate
     python add_ckda_branch.py verify --dst <new>/iter_0023300   (re-derive, compare the manifest's hashes)
 
 apply writes <dst>/ckda_branch_surgery.json: arguments + seed, the source and its .metadata SHA-256, the code
@@ -257,11 +270,54 @@ def attention_branch_random(att: dict, *, heads: int, d: int, groups: int, eps: 
     return out
 
 
+def attention_branch_attn_copy(att: dict, layer_norm: torch.Tensor | None) -> tuple[dict, dict]:
+    """New tensors of an attention branch that is a COPY of a stack attention layer (``--init attn``), names
+    relative to ``self_attention.``, and fold statistics. ``att``: the source layer's ATTN_COPY_SRC tensors;
+    ``layer_norm``: the branch layer's input-norm gain (None: no fold)."""
+    qkv, st = att["linear_qkv.weight"].clone(), {s: att[f"linear_qkv.weight.{s}"].clone() for s in MUOWN}
+    stats = {}
+    if layer_norm is not None:
+        g_attn = att["linear_qkv.layer_norm_weight"].float()
+        g_layer = layer_norm.float()
+        tiny = g_layer.abs() < 1e-6 * g_layer.abs().max()
+        if tiny.any():
+            raise SystemExit(f"--init attn: {int(tiny.sum())} input-norm gains of the branch layer are ~0: cannot "
+                             "fold the source's norm (use --no-fold-norm)")
+        r = g_attn / g_layer
+        old = qkv.norm(dim=1, keepdim=True)
+        qkv = qkv * r[None, :]
+        new = qkv.norm(dim=1, keepdim=True)
+        ratio = old / new.clamp_min(1e-30)  # g / g'
+        st["g"] = st["g"] * (new / old.clamp_min(1e-30))
+        st["m_g"] = st["m_g"] * ratio
+        st["v_g"] = st["v_g"] * ratio.pow(2)
+        st["m_u"] = st["m_u"] / r[None, :]
+        stats = {"norm_ratio_min": r.min().item(), "norm_ratio_median": r.median().item(),
+                 "norm_ratio_max": r.max().item(), "row_norm_scale_median": (1 / ratio).median().item()}
+    out = {"branch.linear_qkv.weight": qkv, "branch.linear_proj.weight": att["linear_proj.weight"].clone()}
+    out.update({f"branch.linear_qkv.weight.{s}": t for s, t in st.items()})
+    out.update({f"branch.linear_proj.weight.{s}": att[f"linear_proj.weight.{s}"].clone() for s in MUOWN})
+    for n in ("q_layernorm", "k_layernorm"):
+        out[f"branch.{n}.weight"] = att[f"{n}.weight"].clone()
+        for s in ADAM:
+            out[f"branch.{n}.weight.{s}"] = att[f"{n}.weight.{s}"].clone()
+    out.update(_gamma())
+    return out, stats
+
+
 KVSHARE_SRC = (["linear_qkv.weight"] + [f"linear_qkv.weight.{s}" for s in MUOWN] + ["linear_proj.weight"]
                + [f"linear_proj.weight.{s}" for s in MUOWN] + ["q_layernorm.weight", "q_layernorm.weight.exp_avg_sq"])
 
 
 RANDOM_ATTN_SRC = KVSHARE_SRC + ["k_layernorm.weight", "k_layernorm.weight.exp_avg_sq"]
+
+
+# --init attn: everything of the source attention layer the branch copies, and its input-norm gain
+ATTN_COPY_SRC = (["linear_qkv.weight"] + [f"linear_qkv.weight.{s}" for s in MUOWN] + ["linear_proj.weight"]
+                 + [f"linear_proj.weight.{s}" for s in MUOWN]
+                 + [f"{n}.weight{x}" for n in ("q_layernorm", "k_layernorm") for x in ("", ".exp_avg", ".exp_avg_sq")]
+                 + ["linear_qkv.layer_norm_weight"])
+LAYER_NORM = "model.module.decoder.layers.{l}.input_layernorm.weight"  # a complex_kda layer's input norm
 
 
 KRON_COPY_MUOWN = ("f_proj.0.weight", "f_proj.1.weight", "g_proj.0.weight", "g_proj.1.weight", "o_proj.weight")
@@ -485,6 +541,32 @@ def selftest() -> int:
         assert torch.equal(ra["branch.k_layernorm.weight"], att["k_layernorm.weight"])
         assert ra["branch.linear_proj.weight"].shape == (hidden, heads * d)
         assert not ra["branch.linear_qkv.weight.m_u"].any()
+    # --init attn: a copy of the attention layer, its input-norm gain folded into linear_qkv's columns
+    att = _fake_attention(heads, d, hidden, 2, gen)
+    att["k_layernorm.weight"] = torch.rand(d, generator=gen) + 0.5
+    for n in ("q_layernorm", "k_layernorm"):
+        att[f"{n}.weight.exp_avg"] = torch.randn(d, generator=gen) * 1e-4
+        att[f"{n}.weight.exp_avg_sq"] = torch.rand(d, generator=gen) * 1e-6
+    att["linear_qkv.layer_norm_weight"] = torch.rand(hidden, generator=gen) + 0.5
+    g_layer = torch.rand(hidden, generator=gen) + 0.2
+    cp, stats = attention_branch_attn_copy(att, g_layer)
+    xn = x / x.pow(2).mean(dim=1, keepdim=True).add(1e-6).sqrt()  # RMSNorm without gain
+    want_qkv = (xn * att["linear_qkv.layer_norm_weight"]) @ att["linear_qkv.weight"].T
+    got_qkv = (xn * g_layer) @ cp["branch.linear_qkv.weight"].T
+    assert torch.allclose(got_qkv, want_qkv, rtol=1e-5, atol=1e-5), (got_qkv - want_qkv).abs().max()
+    assert torch.allclose(cp["branch.linear_qkv.weight.g"], cp["branch.linear_qkv.weight"].norm(dim=1, keepdim=True),
+                          rtol=1e-5)
+    assert torch.equal(cp["branch.linear_qkv.weight.v_norm"], att["linear_qkv.weight.v_norm"])
+    for n in ("linear_proj.weight", "q_layernorm.weight", "k_layernorm.weight", "k_layernorm.weight.exp_avg_sq",
+              "linear_proj.weight.m_u", "linear_proj.weight.v_norm", "q_layernorm.weight.exp_avg"):
+        assert torch.equal(cp[f"branch.{n}"], att[n]), n
+    assert cp["branch_mix.gamma"].item() == 0.0 and stats["norm_ratio_min"] > 0
+    # the moments follow the chain rule of the same function: dL/dW' = dL/dW / r (columns), dL/dg' = dL/dg g / g'
+    r = att["linear_qkv.layer_norm_weight"] / g_layer
+    assert torch.allclose(cp["branch.linear_qkv.weight.m_u"] * r, att["linear_qkv.weight.m_u"], rtol=1e-5, atol=1e-6)
+    nofold, st0 = attention_branch_attn_copy(att, None)
+    assert torch.equal(nofold["branch.linear_qkv.weight"], att["linear_qkv.weight"]) and not st0
+    assert torch.equal(nofold["branch.linear_qkv.weight.m_g"], att["linear_qkv.weight.m_g"])
     assert gamma_init(None, 9) == 0.0 and gamma_init("-1", 25) == -1.0
     assert gamma_init("9:1.5,25:0.5", 25) == 0.5 and gamma_init("9:1.5", 41) == 0.0
     # keys
@@ -514,13 +596,19 @@ def _selftest_apply(src, heads, dc, hidden):
         for n in ("q_layernorm", "k_layernorm"):
             sd[_key(layer, f"{n}.weight")] = torch.full((d,), 0.5 + layer / 100)
             sd[_key(layer, f"{n}.weight.exp_avg_sq")] = torch.full((d,), 1e-6)
+            sd[_key(layer, f"{n}.weight.exp_avg")] = torch.full((d,), 1e-5)
+        sd[_key(layer, "linear_qkv.layer_norm_weight")] = torch.linspace(0.5, 1.5, hidden).to(torch.bfloat16)
+    for layer in (9, 25):
+        sd[LAYER_NORM.format(l=layer)] = torch.linspace(1.5, 0.5, hidden).to(torch.bfloat16)
     sd["iteration"] = 1100
     with tempfile.TemporaryDirectory() as tmp:
         dcp.save(sd, storage_writer=FileSystemWriter(f"{tmp}/src"), no_dist=True)
         for branch, extra in (("attention", ["--groups", "2"]), ("kronlstm", []),
                               ("kvshare", ["--groups", "2", "--kv-sources", "0,17"]),
-                              ("attention", ["--groups", "2", "--init", "random", "--kv-sources", "0,17"])):
-            dst = f"{tmp}/dst_{branch}" + ("_random" if "random" in extra else "")
+                              ("attention", ["--groups", "2", "--init", "random", "--kv-sources", "0,17"]),
+                              ("attention", ["--groups", "2", "--init", "attn", "--kv-sources", "0,17",
+                                             "--calibrate"])):
+            dst = f"{tmp}/dst_{branch}" + ("_random" if "random" in extra else "_attn" if "attn" in extra else "")
             rc = main(["apply", "--src", f"{tmp}/src", "--dst", dst, "--branch", branch, "--layers", "9,25"] + extra)
             assert rc == 0
             smd = FileSystemReader(dst).read_metadata().state_dict_metadata
@@ -533,7 +621,7 @@ def _selftest_apply(src, heads, dc, hidden):
                 assert smd[_key(9, "branch_mix.gamma")].properties.dtype == torch.bfloat16
                 back = {_key(9, "branch.q_layernorm.weight"): torch.empty(d, dtype=torch.bfloat16)}
                 dcp.load(back, storage_reader=FileSystemReader(dst), no_dist=True)
-                if "random" in extra:  # the reference layer's (0 for layer 9) gains
+                if "random" in extra or "attn" in extra:  # the reference / source layer's (0 for layer 9) gains
                     want = sd[_key(0, "q_layernorm.weight")].float()
                 else:  # the median gain of the stack's attention layers
                     want = torch.tensor([0.5 + x / 100 for x in ATTN_LAYERS]).median().expand(d)
@@ -630,22 +718,31 @@ def derive(a, md=None) -> dict:
     want = {}
     kv_sources = [int(x) for x in a.kv_sources.split(",")] if getattr(a, "kv_sources", None) else []
     random_init = getattr(a, "init", "copy") == "random"
-    if random_init and a.branch != "attention":
-        raise SystemExit("--init random: attention branches only")
-    if a.branch == "kvshare" or random_init:
+    attn_copy = getattr(a, "init", "copy") == "attn"
+    fold = attn_copy and not getattr(a, "no_fold_norm", False)
+    if (random_init or attn_copy) and a.branch != "attention":
+        raise SystemExit(f"--init {a.init}: attention branches only")
+    if a.branch == "kvshare" or random_init or attn_copy:
         if len(kv_sources) != len(layers) or any(s not in ATTN_LAYERS or s >= l for s, l in zip(kv_sources, layers)):
             raise SystemExit(f"--kv-sources {kv_sources}: one earlier attention layer {ATTN_LAYERS} per layer {layers}")
+        names = ATTN_COPY_SRC if attn_copy else RANDOM_ATTN_SRC if random_init else KVSHARE_SRC
         for src_layer in kv_sources:
-            for rel in (RANDOM_ATTN_SRC if random_init else KVSHARE_SRC):
+            for rel in names:
                 key = _key(src_layer, rel)
                 want[key] = torch.empty(tuple(smd[key].size), dtype=smd[key].properties.dtype)
-    for layer in (layers if a.branch != "kvshare" and not random_init else []):
+    if attn_copy:
+        for layer in layers:
+            key = LAYER_NORM.format(l=layer)
+            if key not in smd or _key(layer, "layer.q_proj.weight") not in smd:
+                raise SystemExit(f"layer {layer}: no complex_kda layer with an input norm ({key}) in {a.src}")
+            want[key] = torch.empty(tuple(smd[key].size), dtype=smd[key].properties.dtype)
+    for layer in (layers if a.branch != "kvshare" and not random_init and not attn_copy else []):
         for rel in _src_names(a.branch):
             key = _key(layer, rel)
             if key not in smd:
                 raise SystemExit(f"{key}: not in {a.src} (is layer {layer} a complex_kda layer?)")
             want[key] = torch.empty(tuple(smd[key].size), dtype=smd[key].properties.dtype)
-    if a.branch == "attention":
+    if a.branch == "attention" and not attn_copy:
         for layer in ATTN_LAYERS:
             for n in ("q_layernorm", "k_layernorm"):
                 for rel in (f"{n}.weight", f"{n}.weight.exp_avg_sq"):
@@ -654,7 +751,7 @@ def derive(a, md=None) -> dict:
     print(f"read {len(want)} tensors in {time.time() - t0:.0f} s", flush=True)
     replace = {}
     for i, layer in enumerate(layers):
-        src = ({} if a.branch == "kvshare" or random_init else
+        src = ({} if a.branch == "kvshare" or random_init or attn_copy else
                {rel: want[_key(layer, rel)].float() for rel in _src_names(a.branch)})
         g0 = gamma_init(getattr(a, "gamma_init", None), layer)
         if a.branch == "kvshare":
@@ -662,6 +759,15 @@ def derive(a, md=None) -> dict:
             heads = smd[_key(ATTN_LAYERS[0], "linear_proj.weight")].size[1] // d
             att = {rel: want[_key(kv_sources[i], rel)].float() for rel in KVSHARE_SRC}
             new = kvshare_branch(att, heads=heads, d=d, groups=a.groups, eps=a.eps, gen=gen)
+        elif attn_copy:
+            att = {rel: want[_key(kv_sources[i], rel)].float() for rel in ATTN_COPY_SRC}
+            if a.groups * (2 * (att["linear_proj.weight"].shape[1] // att["q_layernorm.weight"].shape[0]) // a.groups
+                           + 2) * att["q_layernorm.weight"].shape[0] != att["linear_qkv.weight"].shape[0]:
+                raise SystemExit(f"--init attn: --groups {a.groups} is not the source's KV groups "
+                                 f"(linear_qkv {tuple(att['linear_qkv.weight'].shape)})")
+            new, stats = attention_branch_attn_copy(att, want[LAYER_NORM.format(l=layer)] if fold else None)
+            print(f"layer {layer} <- attention layer {kv_sources[i]}" + (f": norm fold {stats}" if stats else ""),
+                  flush=True)
         elif random_init:
             d = smd[_key(ATTN_LAYERS[0], "q_layernorm.weight")].size[0]
             heads = smd[_key(ATTN_LAYERS[0], "linear_proj.weight")].size[1] // d
@@ -801,9 +907,12 @@ def main(argv=None) -> int:
     p.add_argument("--branch", choices=["attention", "kronlstm", "kvshare"], required=True)
     p.add_argument("--groups", type=int, default=2,
                    help="attention: KV groups (8 = merged pairs, 2 = GQA); kvshare: the stack's (the source's)")
-    p.add_argument("--init", choices=["copy", "random"], default="copy",
+    p.add_argument("--init", choices=["copy", "random", "attn"], default="copy",
                    help="attention: copy = from complex_kda's projections; random = random rows at the reference "
-                        "attention layers' (--kv-sources) row norms")
+                        "attention layers' (--kv-sources) row norms; attn = a copy of the attention layer "
+                        "(--kv-sources) with all its optimizer states, its input-norm gain folded in")
+    p.add_argument("--no-fold-norm", action="store_true",
+                   help="--init attn: copy linear_qkv as is (do not fold g_attn / g_layer into its columns)")
     p.add_argument("--kv-sources", default=None,
                    help="kvshare: per --layers entry, the attention layer whose keys / values it reads (e.g. 0,17,33)")
     p.add_argument("--layers", required=True, help="comma-separated decoder layer indices (complex_kda layers)")

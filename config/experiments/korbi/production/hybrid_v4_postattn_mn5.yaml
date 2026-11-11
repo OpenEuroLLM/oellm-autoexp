@@ -1,0 +1,69 @@
+# @package _global_
+# Recall surgery (docs/recall_surgery_ambitious.md §4.4): a SECOND attention step behind each copy layer. The copy
+# path is attention 17 / 33 / 50 / 66 (§3.5b: zeroing them costs 7 SQuAD F1 / 21 / 13 / 12 CoQA F1); attention added
+# elsewhere for 100-200 steps never helped. Here the complex_kda layer right after each copy layer and its MoE
+# (layers 19 / 35 / 52 / 68 in "*ENLE...": attention 17, MoE 18, CKDA 19, ...) gets an ADDITIVE attention branch
+# (the add6 mode of hybrid_v4_addattn_mn5: crossfade false, alpha 1, m 1, calibrate) that starts as a COPY of that
+# attention layer -- linear_qkv / linear_proj / q,k norm and all optimizer states, the source's input-norm gain
+# folded into linear_qkv (add_ckda_branch.py --init attn) -- with gamma 0, so the model is exact at insertion and the
+# branch is a working attention of the copy layer's kind on the next layer's input from the first step.
+#   post4      the branches at the main run's lr
+#   post4_lr4  + attention_lr_mult 4 (Megatron 31fcf98e0): every SelfAttention parameter (the stack's six layers and
+#              the four branches) and the branches' gamma at 4x max_lr / min_lr -- does new attention capacity
+#              need a higher lr to move within ~100 steps?
+# gamma (Adam) moves <= lr * attention_lr_mult * ckda_branch_gamma_scale per step: after 100 steps the branch is
+# at most ~0.085 (post4) / 0.34 (post4_lr4) x RMS(complex_kda) (calibrated); the weights move at the full lr from
+# step 1 (MuOwn / Adam updates do not scale with gamma).
+# Surgery (1 node, from the main run's ckpt_eval/iter_0023400, read only) -> .../production/ckda_postattn/post4_src:
+#   ckda_branch_surgery_mn5 aux.mode=prod aux.arms=post4 aux.it=23400 aux.root=.../production/ckda_postattn
+# Same layout as the other recall-surgery arms: 32 nodes, mbs 2, gbs 8192, 23400 -> 23500 on the main run's
+# batches, saves every 50. Exactness check: the first step (23401) must equal lr_decay/dec100's 1.123511.
+# Export: the additive branch layers export as ckda_attn (§4.2; branch_add takes the layers from
+# ckda_branch_layers, 2 KV groups = the stack's).
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+#       --config-name experiments/korbi/production/hybrid_v4_postattn_mn5 --yes "aux.only=[post4_lr4]"
+defaults:
+  - hybrid_v4_addattn_mn5
+  - _self_
+
+aux:
+  suite: ckda_postattn
+  arm: post4
+  start: 23400
+  end: 23500
+  post_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn
+
+backend:
+  megatron:
+    load: ${aux.post_root}/post4_src/ckpt
+    ckpt_step: 23400
+    ckda_branch: attention
+    ckda_branch_layers: [19, 35, 52, 68]
+    ckda_branch_num_query_groups: 2
+    save_interval: 50
+    non_persistent_save_interval: null
+
+job:
+  name: ckda_postattn_${aux.arm}
+  est_steps: 100
+  est_step_time_s: 270.0
+  start_condition:
+    class_name: FileExistsCondition
+    path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_postattn/post4_src/ckpt/latest_checkpointed_iteration.txt
+    persistent_pass: true
+  metadata:
+    # next-allocation arms (§4.4)
+    pool_priority: 64
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: post4
+        - aux.arm: post4_lr4
+          backend.megatron.attention_lr_mult: 4.0

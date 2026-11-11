@@ -11,12 +11,16 @@
 # Paired with the main run's own 23500 and with lr_decay/dec100 / attn_temp/ls120 (same resume, same batches).
 # Exactness at insertion: the first logged step (23401) must equal lr_decay/dec100's 23401 (same layout, same
 # batch, unchanged model) to bf16 noise; the eval-only token-level check is fixedvalid_eval_kvdup_v4_mn5.
-# There is no attention-only lr multiplier in Megatron (only engram / embedding / output-layer / residual-mixer),
-# so no kv8_lr arm.
+#   kv8_lr4  kv8 + attention_lr_mult 4 (Megatron 31fcf98e0: max_lr / min_lr x4 for every SelfAttention parameter,
+#            i.e. all six attention layers' linear_qkv incl. the duplicated K/V rows, linear_proj, q / k norm and the
+#            fused input norm): new KV capacity has to specialise within the ~100 steps a main-run batch allows.
+#            The x1 checkpoint loads into the x4 groups without --override-opt-param-scheduler (the load takes the
+#            changed multiplier's bounds from the arguments; docs/recall_surgery_ambitious.md §4.4).
+#   kv8_k6   kv8 + moe_router_topk 6 (the inference top-k 6 gain, §3.5b, on top of the extra KV heads)
 # Same layout as the other recall-surgery arms (hybrid_v4_addattn_mn5): 32 nodes, mbs 2, saves every 50.
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
 #       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
-#       --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8]"
+#       --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8_lr4]"
 defaults:
   - hybrid_v4_addattn_mn5
   - _self_
@@ -38,7 +42,8 @@ job:
   est_steps: 100
   est_step_time_s: 254.0
   metadata:
-    pool_priority: 60
+    # next-allocation arms (§4.4): 64, above the eval rounds, below the main-run-critical jobs
+    pool_priority: 64
 
 slurm:
   sbatch:
@@ -55,6 +60,22 @@ sweep:
             persistent_pass: true
           backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt
           backend.megatron.num_query_groups: 8
+        - aux.arm: kv8_lr4
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt
+          backend.megatron.num_query_groups: 8
+          backend.megatron.attention_lr_mult: 4.0
+        - aux.arm: kv8_k6
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv8_src/ckpt
+          backend.megatron.num_query_groups: 8
+          aux.topk: 6
         - aux.arm: kv16
           job.start_condition:
             class_name: FileExistsCondition
