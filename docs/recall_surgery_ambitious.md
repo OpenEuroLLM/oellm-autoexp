@@ -403,5 +403,6 @@ scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state
     aux.ckpt=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/ladder17b_runs/skda-shipped-lowrank/pure_add_every4/ckpt \
     aux.code_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/code/v1 aux.intervention=add_attn@every4
 ```
-(An intervention arm's export needs the patched code dir and SKDA_INTERVENTION, as above: the exporter builds the
-model from the spec.)
+**Open:** exporting an INTERVENTION arm is untested. `export_megatron.py` maps native keys to the HF
+`signed_kda` layout by arm name; the branch tensors (`*.branch.*`) have no HF counterpart yet, so the exporter will
+either reject or drop them -- dropping would silently evaluate the control. The control arms export as before.
