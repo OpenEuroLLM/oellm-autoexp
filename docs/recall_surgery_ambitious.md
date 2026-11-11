@@ -131,7 +131,7 @@ v2 first-4000 subset as §3.1):
 | model | Winogrande | CoQA EM / F1 | SQuAD v2 EM / F1 | HasAns F1 | belebele (5) |
 |---|---:|---:|---:|---:|---:|
 | Qwen2.5-1.5B (~18T tokens) | 63.14 | **61.92 / 75.33** | **36.05 / 40.34** | **77.47** | 75.20 |
-| Qwen3-1.7B-Base | (running) | | | | |
+| Qwen3-1.7B-Base (~36T tokens) | 63.77 | **64.62 / 79.10** | 34.30 / 38.07 | 73.11 | 79.89 |
 | 1.7B CKDA hybrid, 50 BT | 61.01 | 55.72 / 68.40 | 17.50 / 21.96 | 42.13 | ~27 |
 
 A 1.5B Qwen is at its own 32B sibling's level on CoQA / SQuAD v2 (FLAG harness: 76.57 / 38.22) and well above the
