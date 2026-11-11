@@ -486,6 +486,87 @@ cd $R/autoexp_ckaddexp1 && $R/autoexp_env/bin/python scripts/evals/launch.py con
     --export ckdaadd_add6_fp8_23406 --set paths.pool=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c
 ```
 
+## 4.3 KV-group duplication (2 -> 8 / 16 KV groups, function-preserving; 2026-11-11 evening)
+
+**Why.** The copy path lives in the six NoPE attention layers, which run 16 query heads x 256 on only **2 KV
+groups** (8 query heads share one key / value head). A sharper softmax at inference buys +3.2 CoQA F1 here (§3.5)
+but only +0.5 at 1.7B, where attention is MHA (§3.6): the big model's attention looks diffuse / KV-starved. The
+surgery gives every pair (kv8) or every single query head (kv16 = MHA) its own K/V head, starting as an exact copy
+of the shared one, so the model is unchanged at insertion and the copies can specialise in a continuation. No
+new mechanism: the same attention, more KV heads.
+
+**Layout** (Megatron `attention.py`): `SelfAttention.get_query_key_value_tensors` (l. 2119-2259) views the fused
+`linear_qkv` output as `[sq, b, ng, (2 np/ng + 2) hn]` and splits each group into `[q heads | gate heads | k | v]`
+(gate = `attention_output_gate`; `linear_qkv_out_dim` l. 1948-1950, the fused qk-norm path `_mixed_qkv_for_fusion`
+l. 885-896 uses the same layout). Query head h reads KV group h // (np/ng) everywhere: flash / TE GQA, Megatron's
+fused XSA (`fused_xsa.py` l. 37-38 `repeat_interleave`, l. 60-62), the HF export's `split_gated_qkv`
+(`export_q35.py` l. 106-117) / HF modeling (`modeling_oellm_ambitious.py` `repeat_interleave`) and vLLM
+(`OellmXSAAttention`, `num_kv_heads=config.num_key_value_heads`). Nothing else depends on `num_query_groups`:
+q/k_layernorm are `[256]` (shared over heads), `linear_proj`'s input is 16 x 256 in query-head order, XSA projects
+each query head on its own group's value, no value embeddings / Canon / qk-clip / sinks in the run.
+`muon_qkv_headwise` (`optimizer/__init__.py` l. 938-950, `_get_qkv_split_shapes` in `emerging_optimizers.py`
+l. 161-177) orthogonalizes every 256-row head block alone, so block shapes and the Newton-Schulz scale do not
+change.
+
+**Transform** (`scripts/korbi/production/duplicate_kv_groups.py`, per attention layer 0 / 17 / 33 / 50 / 66 / 82):
+`linear_qkv.weight` [9216, 2048] -> [12288, 2048] (kv8) / [16384, 2048] (kv16): new group j holds q / gate heads
+j·h' .. (j+1)·h'-1 (h' = 16 / G', re-ordered, values unchanged) and k / v of old group j // r (copied r = G'/2
+times). Optimizer state (`muown_classical`, checkpoint keys `...linear_qkv.weight.{g, v_norm, m_u, m_g, v_g}`,
+`[rows, 1]` except `m_u` `[rows, 2048]`): q / gate rows move with their weights; on the k / v copies `g` and
+`v_norm` are copied and the moments **split** over the copies, `m_u`, `m_g`, `v_g` / r: dL/dk_old = the sum of
+its copies' gradients (selftest, exact), the copies are exchangeable at insertion (first moments / r exact in
+expectation) and each copy's gradient is nearly uncorrelated with the others' (|grad copy| ≈ |grad| / sqrt(r),
+measured 0.48-0.56 at r = 4), so Adam's second moment / r too. `--moments copy` keeps everything verbatim
+(momentum r x too strong for ~1/(1-beta) steps). `args.num_query_groups` = G'. Every other key (317,973 in total)
+is untouched: the new tree hard-links the source's 1024 `.distcp` shards (`dcp_surgery.write_surgery`, source-
+sized row chunks) and adds files with the 36 rewritten tensors; the main run's directory is only read.
+Deterministic (no randomness): `verify` re-derives every tensor and compares the manifest's SHA-256.
+
+**Exactness evidence.**
+
+| check | result |
+|---|---|
+| `selftest` (CPU, fp64 hand-written gated GQA + qk RMSNorm + XSA + NoPE reference), 2 -> 4 / 8 / 16 groups | max \|out - ref\| / max \|ref\| <= 3.7e-16; every q / gate / k / v block where Megatron reads it; states as specified; copies' gradients sum to the original's (4e-15) |
+| `megatron-test` (local GPU: Megatron `HybridModel` '*' layer, TE linear_qkv with fused input norm, unfused core attention, fused XSA, output gate; random layer 16 x 128) | 2 -> 8 and 2 -> 16, fp32 and bf16, also `fused_qk_norm_rope`: attention output and logits **bit-identical (0.0)**; negative control (two q heads swapped) 0.40 rel L2 |
+| `export-test` (local GPU) | exporter split of the duplicated layout: q / gate identical, k / v = the 2 heads repeated; tiny HF OellmAmbitious 2 vs 4 KV heads: max \|dlogit\| 4e-5 (scale 38), cached decoding 1.7e-5 |
+| fake fsdp_dtensor checkpoint (local): apply / verify / gpucheck | read-back exact, verify 0 differ, Megatron output identical |
+| production `gpucheck` (the real 23400 layers through Megatron's attention, TE flash, fp32 + bf16, seq 4096) | in the surgery job, pool run o134c.1954 (queued 20:10) |
+| end-to-end, eval-only, token level (`fixedvalid_eval_kvdup_v4_mn5`, 8 nodes, EP 8, sub64 v8ml + Winogrande/WSC273 requests, `MEGATRON_EVAL_TOKEN_DUMP`; `duplicate_kv_groups.py compare-dumps`) | queued: s23400 = o134c.1953, s23400kv8 enqueued (starts when kv8_src exists) |
+| end-to-end, training: kv8's first step (23401) vs `lr_decay/dec100`'s 23401 (same 32-node layout, same batch, unchanged model) | reference **1.123511** (dec100, identical in two attempts o134c.1806 / .1855; ls120 at x1.2: 1.130263); kv8 must land within bf16 noise of it when it runs |
+
+The HF export (`export_ambitious.py` takes `num_key_value_heads` from the run's `num_query_groups`) and vLLM
+(`oellm_ambitious.py` reads `config.num_key_value_heads`; 8 KV heads at TP 4 = 2 per rank) need no change.
+
+**Paths.** Source `production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval/iter_0023400` (read only);
+outputs `/gpfs/scratch/ehpc533/hybrid_nucleus/production/attn_kv/kv{8,16}_src/ckpt/iter_0023400` (+
+`latest_checkpointed_iteration.txt`, `kv_dup_surgery.json`: source path + `.metadata` SHA-256, arguments, code
+stamp, old / new shapes, SHA-256 of every rewritten tensor); surgery logs `attn_kv/surgery_logs`.
+
+**Launch.** Surgery (1 node, priority 40) and the eval-only check (8 nodes, priority 45, kv arms gated on the
+surgery's `latest_checkpointed_iteration.txt`) from snapshot `autoexp_kvdup1`:
+
+```
+cd $R/autoexp_kvdup1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+    --config-name experiments/korbi/production/kv_dup_surgery_mn5 --yes
+cd $R/autoexp_kvdup1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+    --config-name experiments/korbi/production/fixedvalid_eval_kvdup_v4_mn5 --yes "aux.only=[s23400,s23400kv8]"
+```
+
+Training arms (`config/experiments/korbi/production/hybrid_v4_kvdup_mn5.yaml`, 32 nodes, mbs 2, gbs 8192, 23400
+-> 23500 on the main run's batches, saves every 50; **not enqueued** -- the 32-node slot is busy with
+attn_temp/ls120 and lr_decay/dec100):
+
+```
+cd $R/autoexp_kvdup1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_o134c \
+    --config-name experiments/korbi/production/hybrid_v4_kvdup_mn5 --yes "aux.only=[kv8]"
+```
+
+`kv8` = 8 groups, `kv16` = MHA. No `kv8_lr` arm: Megatron has no attention-only lr multiplier (only Engram /
+embedding / output layer / residual mixer), and none was invented for this.
+
 ## 5. Operational notes
 
 * The 72-node host `mn5_pool_o134c/host002` is **held** (`pool.json hold_hosts: true`, `control/hold`,
