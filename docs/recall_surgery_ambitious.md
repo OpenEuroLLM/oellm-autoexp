@@ -327,6 +327,28 @@ arm -- and the added attention branches are worth nothing under the decay either
 hybrid: -0.1). **1.7B verdict: attention added by surgery does not become a copy path in 1.5 BT, with or without
 the anneal; the anneal itself is the large lever.**
 
+### 3.5b Which attention layers copy, and MoE top-k (23500 export, inference; vLLM 4d6e51cb4f `OELLM_ATTN_ZERO_LAYERS`)
+
+One attention block's output zeroed at a time (its KV cache still written):
+
+| attention block zeroed | CoQA EM / F1 | SQuAD v2 F1 (HasAns) | Winogrande |
+|---|---:|---:|---:|
+| none (main 23500) | 50.42 / 66.13 | 26.89 (52.94) | 62.51 |
+| 0 | 51.80 / 66.21 | (running) | 62.83 |
+| 17 | 44.43 / 61.63 | **19.65 (37.17)** | 61.96 |
+| 33 | 32.75 / **45.01** | (running) | 60.62 |
+| 50 | 39.37 / **53.08** | 24.89 (48.48) | 61.40 |
+| 66 | 40.12 / **54.10** | (running) | (running) |
+| 82 | 49.43 / 65.27 | 28.92 (56.77) | 62.67 |
+
+The copy path is the four middle attention layers: 17 carries SQuAD v2 extraction (-7.2 F1), 33 / 50 / 66 carry CoQA
+(-21 / -13 / -12 F1); the first (0) and last (82) attention layers are dispensable for these rows. Any added
+attention capacity (KV duplication, a second attention step behind a copy layer) belongs at 17-66.
+
+MoE top-k at inference (export config `num_experts_per_tok`; router weights renormalised over the top-k): top-k 6:
+CoQA 52.82 / 68.70, Winogrande 62.90, SQuAD v2 27.58 (54.40); top-k 7: CoQA 52.93 / 68.74, Winogrande 64.48. One
+extra expert per token gives +2.6 CoQA F1 -- per-token capacity also limits these rows.
+
 ### 3.6 Why CKDA hybrids trail KDA hybrids on copy tasks: not attention routing (2026-11-11 evening)
 
 Hypothesis: in the KDA hybrid the six NoPE attention layers carry the copy job (bounded decay cannot hold content),
