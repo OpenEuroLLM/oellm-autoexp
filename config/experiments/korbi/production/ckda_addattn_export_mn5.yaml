@@ -30,7 +30,7 @@ job:
   est_step_time_s: 5400
   start_condition:
     class_name: FileExistsCondition
-    path: ${aux.add_root}/../ckda_addattn/${aux.arm}/ckpt/iter_00${aux.step}/.metadata
+    path: ${aux.add_root}/${aux.arm}/ckpt/iter_00${aux.step}/.metadata
     persistent_pass: true
   metadata:
     pool_priority: 45
