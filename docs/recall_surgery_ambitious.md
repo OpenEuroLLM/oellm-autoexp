@@ -150,6 +150,29 @@ the Engram layers' output scaled by 0 and 0.5 (`OELLM_ENGRAM_OUT_SCALE`, vLLM c5
 If the bias and the rows move, the intervention is an Engram *damping / gating* surgery (zero new
 parameters, CKDA untouched), trained over 23300-23500.
 
+### 3.3 Engram scaled at inference (23500 export, no training) and the CKDA diagnostics
+
+| 23500 export | CoQA EM / F1 | Winogrande | picks closer | acc gold=farther |
+|---|---:|---:|---:|---:|
+| as trained | 50.42 / 66.13 | 62.51 | 0.668 | 0.458 |
+| Engram output x0.5 | **53.32 / 69.09** | 65.11 | 0.662 | 0.491 |
+| Engram output x0 | 52.55 / 67.99 | **66.61** | **0.613** | **0.553** |
+
+Engram carries part of the closer-mention bias and costs CoQA / Winogrande points; the rest of the bias sits
+in weights that trained around Engram. User (2026-11-11): Engram helps most other tasks -- removal is not the
+goal. Consequences: the full-removal training arm `eng0` was stopped before it trained (its step had to be
+`scancel`ed: o134c host002's supervisor ignores the pool's `stop` marker -- cancels there need the run's step
+ended); **`eng05`** (Engram output 1 -> 0.5 over 50 steps from 23300, `hybrid_v4_engram_damp_mn5`, Megatron
+ea309b639) trains on the 32-node slot, readouts every 50 steps; its cost on the other tasks has to be
+measured before it is a candidate.
+
+**Is CKDA itself the problem?** The 1.7B evidence says not much (CKDA vs bounded KDA: Winogrande level,
+CoQA -2.3 within noise; no closer-mention bias at 1.7B; GDN q35c worse on CoQA), but its distinctive pieces
+were never ablated *inside the big run*. Inference diagnostics on the 23500 export (vLLM 802137570c, default
+off): `OELLM_CKDA_BETA_CAP1` (beta <= 1 -- logits clamped at 0 under allow_neg_eigval) and
+`OELLM_CKDA_NO_SIGN` (no signed-decay gauge: no negative / rotating eigenvalues), alone and together,
+optionally from `OELLM_CKDA_DIAG_FROM_LAYER` on; result dirs `..._23500_ckda_{betacap1,nosign,both}`.
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
