@@ -327,6 +327,47 @@ arm -- and the added attention branches are worth nothing under the decay either
 hybrid: -0.1). **1.7B verdict: attention added by surgery does not become a copy path in 1.5 BT, with or without
 the anneal; the anneal itself is the large lever.**
 
+### 3.6 Why CKDA hybrids trail KDA hybrids on copy tasks: not attention routing (2026-11-11 evening)
+
+Hypothesis: in the KDA hybrid the six NoPE attention layers carry the copy job (bounded decay cannot hold content),
+while the CKDA hybrid (signed / complex eigenvalues, beta > 1) keeps more of it in the recurrent state and its
+attention is less sharp. Predictions: (1) zeroing attention hurts the KDA hybrid's CoQA / SQuAD much more;
+(2) sharpening attention helps the CKDA hybrid more. Test: the 1.7B 50 BT hf exports, same harness as §3.1
+(`ladder17b_eval_mn5` entries `diag_{kda,ckda}_hybrid_{noattn,ls110,ls120,ls130}`; `--ablate-attn` = the
+original codebase's `ablate_attention`, every attention sublayer's output zeroed, residual + MLP kept;
+`--attn-logit-scale X` = flash-attn `softmax_scale` x X in all six layers, hit-checked per layer).
+
+| 1.7B hybrid | variant | Winogrande | CoQA EM / F1 | SQuAD v2 F1 | HasAns F1 |
+|---|---|---:|---:|---:|---:|
+| KDA (`kda-sig-hybrid-lowrank`) | as trained | 59.91 | 56.82 / 70.70 | 21.57 | 41.42 |
+| | attention zeroed | 57.93 | 19.05 / 28.22 | 9.76 | 18.54 |
+| | scale x1.1 | 60.30 | 57.20 / 70.34 | 22.35 | 42.91 |
+| | scale x1.2 | 59.83 | 57.95 / **71.18** | 22.58 | 43.35 |
+| | scale x1.3 | 59.75 | 57.63 / 70.88 | **22.77** | **43.69** |
+| CKDA (`skda-shipped-hybrid-lowrank`) | as trained | 61.01 | 55.72 / 68.40 | 21.96 | 42.13 |
+| | attention zeroed | 59.75 | 19.65 / 28.76 | 10.05 | 18.86 |
+| | scale x1.1 | 61.17 | 56.63 / 68.90 | 22.40 | 42.97 |
+| | scale x1.2 | 61.17 | 56.87 / **69.07** | 22.77 | 43.73 |
+| | scale x1.3 | 61.09 | 56.70 / 68.73 | **22.89** | **43.96** |
+
+(SQuAD v2: first 4000 docs, 10-shot. Belebele 5-shot is at chance at 1.7B, 25.5-28.6 in every variant, not read.)
+
+* **Prediction (1) fails.** Zeroing attention drops CoQA F1 by 42.5 (KDA) vs 39.6 (CKDA) to the *same floor*
+  (28.2 vs 28.8), and SQuAD v2 F1 by 11.8 vs 11.9 (9.8 vs 10.1). Both hybrids route the copy job through attention
+  to the same degree; the CKDA state does not carry measurably more of it. The floor is far below the pure CKDA
+  model (CoQA F1 55.95, §3.1): a hybrid trained with attention never learns the recurrent copy path the pure stack
+  has. Winogrande drops only 2.0 / 1.3, so the ablated networks still work (the collapse is specific to copying).
+* **Prediction (2) fails.** Sharpening helps both about equally and only a little: CoQA F1 +0.5 (KDA) vs +0.7
+  (CKDA) at x1.2; SQuAD v2 F1 +1.2 vs +0.9 and HasAns F1 +2.3 vs +1.8 at x1.3, monotone up to x1.3 in both;
+  Winogrande flat. The CoQA gap stays (71.18 vs 69.07 at x1.2), so the CKDA hybrid's attention is not
+  under-sharp relative to KDA's. The 1.7B temperature gain is much smaller than the ambitious one (+3.2 CoQA F1 at
+  x1.2, §3.5).
+* The premise holds only for CoQA: at 1.7B the CKDA hybrid is *not* behind on SQuAD v2 (21.96 vs 21.57, HasAns
+  42.13 vs 41.42); the gap is CoQA F1 -2.3 (EM -1.1), with Winogrande +1.1 the other way. Whatever causes it,
+  it is not a difference in how much the model leans on attention or how sharp that attention is; the remaining
+  candidates are the recurrent part's contribution *with* attention present (conversation-history tracking
+  in CoQA's multi-turn questions) or single-seed noise.
+
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
 `config/experiments/korbi/production/hybrid_v4_addattn_mn5.yaml`, checkpoint surgery from iter 23300.
