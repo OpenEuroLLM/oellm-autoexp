@@ -211,10 +211,11 @@ The CKDA sign gauge is neutral everywhere (belebele -0.6); beta > 1 is load-bear
 |---|---:|---:|---:|---:|
 | Engram x0, both layers | 52.55 / 67.99 | 66.61 | 27.36 (53.05) | -29.6 |
 | Engram x0, layer 2 only | 50.40 / 65.96 | 64.33 | 26.87 (52.19) | **-30.3** |
-| Engram x0, layer 49 only | (running) | | | |
+| Engram x0, layer 49 only | 50.88 / 66.25 | **66.06** | 26.66 (52.44) | **-0.05** |
 
 The early Engram (layer 2) carries **all** of the multilingual-reading benefit (belebele -30 alone) and gives back
-only +1.8 Winogrande, no CoQA. Whatever CoQA gain Engram removal buys has to sit in the deep layer (49).
+only +1.8 Winogrande. The **deep Engram (layer 49) is free to remove**: Winogrande +3.6, belebele -0.05 (8 up / 10
+down), CoQA / SQuAD unchanged. The CoQA gain of removing both (+1.9) needs both layers off.
 
 ### 3.4 The constant learning rate: an untested confound (2026-11-11 afternoon)
 
@@ -275,19 +276,37 @@ lr mults) is silently ignored without the override flag. A changed `wd_mult` (`e
 | attention softmax scale | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) |
 |---|---:|---:|---:|
 | x1 (as trained) | 50.42 / 66.13 | 62.51 | 26.89 (52.94) |
-| x1.1 | (running) | | |
-| x1.2 | (running) | | |
-| x1.25 | 53.85 / **69.25** | 62.19 | (running) |
+| x1.1 | 50.57 / 66.75 | 62.43 | (running) |
+| x1.2 | 53.38 / **69.36** | 62.83 | (running) |
+| x1.25 | 53.85 / **69.25** | 62.19 | 25.98 (50.92) |
 | x1.5 | 51.85 / 66.89 | 62.35 | 25.38 (50.03) |
 | XSA off | 29.85 / 43.95 | 65.04 | -- |
 
-A sharper softmax in the six NoPE attention layers reads spans better at x1.25 (CoQA F1 +3.1, ~2 sigma at
-n = 500) and overshoots at x1.5; the curve (x1.1 / x1.2) and belebele at x1.25 decide whether it is a candidate.
+A sharper softmax in the six NoPE attention layers reads conversational spans better: CoQA F1 +3.2 at x1.2 and
+x1.25 (two neighbouring points agree), overshooting at x1.5; Winogrande flat, SQuAD v2 -0.9, belebele -2.1 at x1.25
+(22 / 23 languages down). Training arm `attn_temp/ls120` (hybrid_v4_attn_temp_mn5: x1.2 from 23400 to 23500, the
+main run's batches; insertion cost +0.007 / +0.005 loss at 23401 / 23402) measures whether the network keeps the
+CoQA gain and recovers belebele; combined inference variant `combo_L49off_ls120` (deep Engram off + x1.2) running.
 Megatron 35f74ae9c adds `attention_logit_scale` (factor on the softmax scale) for a training arm. XSA is
 load-bearing for CoQA (the model was trained with it); removing it is not an option.
 
 **The main run after the Engram fix (25000 restart: Engram Adam lr x1 instead of x5, own clip, row-norm cap 13 -> 7):**
-26000 CoQA 50.30 / 66.61, Winogrande 65.82 (24000: 49.82 / 65.90, 65.82); 30000 running.
+26000 CoQA 50.30 / 66.61, Winogrande 65.82, SQuAD v2 28.07 (HasAns 55.74); **30000 CoQA 50.75 / 67.05, Winogrande
+67.32** (24000: 49.82 / 65.90, 65.82, 26.14). Winogrande at 30000 is q35c's level (67.32) -- the run improves on its
+own after the Engram fix, which is the baseline every 23.4k-23.5k intervention has to be read against.
+
+**1.7B decay probe** (`dec_*` arms, ladder17b_continue_mn5: each arm's step-2000 save resumed with optimizer and
+data position, lr 5e-4 -> 1e-5 linearly over 1000 steps = 0.5 BT):
+
+| arm | CoQA F1 s2000 -> s3000 | SQuAD v2 F1 | Winogrande |
+|---|---:|---:|---:|
+| `hybrid_ctrl_fresh` | 59.64 -> **64.67** | 15.56 -> 18.79 | 58.56 -> 59.75 |
+| `hybrid_add_lin_late` | 59.68 -> 64.59 | 13.65 -> 18.98 | 58.17 -> 59.67 |
+| `pure_ctrl_fresh` | (running) | | |
+| `pure_add_every4` | (running) | | |
+
+A 0.5 BT anneal is worth +5 CoQA F1 / +3.2 SQuAD F1 at 1.7B -- more than any surgery arm -- and the added attention
+branches are worth nothing under the decay either.
 
 ## 4. The intervention: additive parallel attention (+ optional RoPE)
 
