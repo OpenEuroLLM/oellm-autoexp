@@ -23,6 +23,8 @@ from pathlib import Path
 
 HYBRID_OF = {"skda-shipped-lowrank": "skda-shipped-hybrid-lowrank", "kda-sig-lowrank": "kda-sig-hybrid-lowrank"}
 HYBRID_EVERY = 4
+# tokenizer paths the recall-surgery runs trained with that ARE gpt-neox-20b (experiment 018 checked vocab + merges equal)
+NEOX_EQUIVALENT = ("/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer",)
 
 
 def parse_intervention(spec: str) -> dict:
@@ -96,6 +98,8 @@ def main(argv=None) -> int:
     cfg["vocab_size"] = int(args.padded_vocab_size)
     cfg["max_position_embeddings"] = int(args.seq_length)
     cfg["tie_word_embeddings"] = not bool(args.untie_embeddings_and_output_weights)
+    if getattr(args, "tokenizer_model", None) in NEOX_EQUIVALENT and a.tokenizer == "EleutherAI/gpt-neox-20b":
+        args.tokenizer_model = a.tokenizer  # the local copy of the same tokenizer
     em._check_args(args, a.arm, a.geometry, cfg, a.tokenizer)
     n_layers = cfg["num_hidden_layers"]
     if cfg.get("attn"):
