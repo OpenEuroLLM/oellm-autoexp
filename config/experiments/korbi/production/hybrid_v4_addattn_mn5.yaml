@@ -62,9 +62,10 @@ backend:
     load: ${aux.main_ckpt}
     save: ${job.base_output_dir}/ckpt
     save_interval: 200
-    # model-only saves (0.34 TB per checkpoint, enough for the HF export): the arms are 300 steps, one
-    # segment, on a held host -- an optimizer-less save costs a restart, not the experiment
-    no_save_optim: true
+    # FULL saves: `no_save_optim: true` also drops the optimizer from the load template, and the load then
+    # dies with `KeyError: 'optimizer'` in checkpointing.py (rank 31, 2026-11-11 03:00) -- it is not just a
+    # save-size flag. 2 saves x 1.1 TB per arm, and the optimizer state is what lets a 300-step arm adapt.
+    no_save_optim: false
     exit_interval: ${aux.end}
     ckda_branch_start_iteration: ${aux.start}
     # additive, not crossfade: alpha stays 1 and the branch adds to complex_kda

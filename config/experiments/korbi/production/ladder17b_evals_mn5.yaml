@@ -18,7 +18,7 @@ defaults:
 aux:
   root: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/hf_models/ladder17b
   arm: skda-shipped-hybrid-lowrank_1.7B_wsd50B
-  tasks: coqa,winogrande,squadv2   # comma separated; coqa+winogrande first (squadv2 generates 11,873 times)
+  tasks: coqa,squadv2   # comma separated; winogrande comes from the jupiter ladder (6 arms x 6 budgets)
   out: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/ladder17b_evals
   name: ladder17b_${aux.arm}
 

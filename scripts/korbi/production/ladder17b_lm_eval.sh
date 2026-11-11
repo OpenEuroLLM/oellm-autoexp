@@ -14,7 +14,7 @@
 set -u
 M=${1:?model dir}
 OUT=${2:?out dir}
-TASKS=${3:-coqa,winogrande,squadv2}   # comma separated: the config passes one argument
+TASKS=${3:-coqa,squadv2}   # comma separated: the config passes one argument
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 export PYTHONPATH=${PYLIBS_OELLM:-$R/pylibs_oellm}:${PYTHONPATH:-}
 export HF_HOME=${HF_HOME:-$R/cache/hf}
@@ -24,7 +24,7 @@ mkdir -p "$OUT"
 run() { # run <task> <n_shot>
   local task=$1 shot=$2 bs=${3:-8}
   echo "[ladder17b] $task ${shot}-shot, $M"
-  python -m lm_eval --model hf \
+  python scripts/korbi/production/lm_eval_shim.py --model hf \
     --model_args "pretrained=$M,trust_remote_code=True,dtype=bfloat16" \
     --tasks "$task" --num_fewshot "$shot" --batch_size "$bs" \
     --output_path "$OUT/$task.json" 2>&1 | tail -25
