@@ -276,3 +276,76 @@ says whether "more attention" is worth pushing further before it is paid for at 
      **~0.2 MB/s** (305 MB in 28 min), i.e. ~4.5 h per 3.2 GB export.
   What is left of that requirement is the axis that already exists on jupiter: Winogrande for six arms, six
   budgets and six rungs (§3). CoQA / SQuAD v2 at 1.7B need either a jupiter allocation or a faster route.
+
+## 8. 1.7B continuation testbed (2026-11-11, session -98 fork)
+
+The small-scale testbed for the surgery arms: the native 1.7B ladder checkpoints at the **stable-phase end**
+(signed_kda `megatron_ladder_medium/ckpt/<model>_1.7B_gbs128/iter_0076295`, ~40 BT, WSD lr 5e-4 constant,
+gbs 128 x 4096, 24 layers, hidden 2048, NeoX tokenizer), continued in the **ladder's own code** on MN5.
+
+**Assets on MN5** (`/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/`):
+* `ladder17b_native/{skda-shipped-hybrid-lowrank,skda-shipped-lowrank,attn}/iter_0076295` -- native torch-format
+  checkpoints with optimizer (23 GB each), copied with hpctransfer (`--split-size 1G`: 7.5 min per checkpoint).
+* `native_megatron_ladder/` -- the ladder's exact Megatron tree (jupiter `signed_kda/external/oellm-autoexp/
+  submodules/Megatron-LM`, 514b31b, the path in the 1.7B logs). 018's `native_megatron` is only its `megatron/` +
+  `pretrain_gpt.py` (no `gpt_builders` / `model_provider`); `native_megatron_bb5febb82` (the other oellm-autoexp
+  checkout on jupiter) is the WRONG revision: no `_import_mcore_async`, and the checkpoints' pickled args need
+  `InferenceCudaGraphScope` which it lacks.
+* `ladder17b_hf/<arm>_1.7B_wsd50B` -- clean copies of the jupiter HF exports (config.json from jupiter, weights
+  linked from `hf_models/ladder17b`, whose config.json had been overwritten by a gpt-neox config link).
+* lm_scaling / fla: experiment 018's copy (`/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/source`);
+  intervention arms use an immutable patched code dir (`code/v1`, `native_patch/make_code_dir.sh`).
+* Data: MN5's NeoX-tokenized Nemotron 318BT sample (train) and its valid prefix -- a different sample than
+  jupiter's; tokenizer identical (018).
+
+**Configs** (`config/experiments/korbi/recall_surgery/`):
+
+| config | what |
+|---|---|
+| `ladder17b_continue_mn5` | continuation (`scripts/korbi/recall_surgery/ladder17b_train.sh`): `aux.arm` sweep; `aux.load_mode` resume (optimizer + scheduler + iteration) or model_only (`--finetune --no-load-optim --no-load-rng`, fresh Adam, linear warmup `aux.warmup`=100 to 5e-4, then constant); `aux.steps` relative to the start; `aux.gbs` / `aux.nodes` / `aux.save_interval`; `aux.code_dir` + `aux.intervention` (-> SKDA_INTERVENTION) + `aux.src` (start checkpoint) per arm. A pool restart resumes from the run's own saves. Loud: exits 1 unless the last saved iteration equals the target. |
+| `ladder17b_surgery_mn5` | 1-node job, all surgery arms in sequence: builds `code/v1` once, then `native_patch/surgery.py` -> `ladder17b_surgery/<arm>` (model-only copy with the new tensors, o_proj zero, `recall_surgery.json`) |
+| `ladder17b_eval_mn5` | readout: export (`export_megatron.py`, skipped for `aux.ckpt: none`) -> Winogrande (0-shot, 1267) / CoQA (0-shot, 500) / SQuAD v2 (10-shot, first 4000 docs, 2 shards, HasAns/NoAns F1) on one node, one task per GPU, through the original `eval_downstream.build_lm` + `lm_scaling/eval_tasks`. Loud: missing result file -> exit 1. `ladder17b_table.py <dirs>` prints the table. |
+
+Arms wired in `ladder17b_continue_mn5`: `ctrl_resume`, `ctrl_fresh` (hybrid, from the native checkpoint);
+`pure_ctrl_fresh`, `pure_add_every4`, `pure_add_every4_rope` (pure CKDA, ffn 8064); `hybrid_ctrl_fresh`,
+`hybrid_add_lin_late`, `hybrid_attn_rope` -- the surgery arms start from `ladder17b_surgery/<arm>`.
+
+**Validation (1 node, gbs 128):**
+* `ctrl_resume` from 76295: loss 2.226 / 2.240 / 2.230 / 2.251 / 2.233 (steps 76296-76300), grad norm 0.10-0.15,
+  lr 5e-4 -- continuous with the original run's end (jupiter log: mean of the last 30 logged losses 2.245, grad norm
+  0.11-0.16). The data sample differs; the loss level does not.
+* `ctrl_fresh` (model only): warmup 5e-6/step as configured, loss 2.21-2.28 over the first steps.
+* Speed: **5.7 s/step on 4 GPUs** (524k tokens/step, ~23k tok/s/GPU, = jupiter's 22k); the first two steps take
+  ~10 min (fla Triton autotuning). 1 BT = 1907 steps at gbs 128 ~ 3.0 h per node.
+
+**Gotchas fixed on the way (all would have failed silently or late):**
+* torch >= 2.6 `weights_only` default: the native loader prints "could not load the checkpoint" and exits **0**;
+  `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` (train / surgery / eval).
+* `scontrol` is not in the image (exit 127 with `set -e`); the pool step exports `MASTER_ADDR`.
+* `lr-decay-iters` past the end (warmup must be < decay steps; WSD with no decay phase = constant lr).
+* lm_scaling.titan_ext registers torchtitan train specs on import (titan_oellm, toml, tomli_w ...) when the image's
+  torchtitan imports: shadowed by `scripts/korbi/recall_surgery/notitan/` (the exporter only needs
+  `titan_ext.hybrid_layers`).
+* lm-eval 0.4.13 calls `doc_to_text(doc, cfg)`; the SQuAD2 class takes `(doc)`: patched on the loaded task class and
+  the patched task object passed to `simple_evaluate`.
+* 018's `scripts/` dir holds an `evaluate.py` that shadows the `evaluate` library (SQuAD metric):
+  `metric_compat.py` vendored to `scripts/korbi/recall_surgery/compat/`.
+* The pi agent's `ladder17b_evals` (o134c 1571-1574) ended rc 0 with no results (CoQA scoring / SQuAD2 API).
+
+**Load strictness:** the native checkpoints are **torch format** (`mp_rank_00/model_optim_rng.pt`, distributed
+optimizer in `distrib_optim.pt`), not torch_dist. Its loader (`checkpointing.load_model_state_dict`) retries with
+`strict=False` when a strict load raises (and prints `load_return`), so a checkpoint lacking new keys would load with
+the new parameters at their init -- but the surgery arms do not rely on it: `surgery.py` writes the new tensors into
+the copy, so the load is strict and complete. (`--dist-ckpt-strictness` applies only to torch_dist.)
+
+**Baseline readout** (`ladder17b_evals/`, SQuAD v2 = first 4000 docs):
+
+| model (attention share) | Winogrande | CoQA EM | CoQA F1 | SQuAD v2 F1 | HasAns F1 | NoAns F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| `hf_attn` 50 BT (100 %) | 58.33 | 52.97 | 65.04 | 14.04 | 26.92 | 0.05 |
+| `hf_kda_hybrid` 50 BT (25 %) | 59.91 | 56.82 | 70.70 | (running) | | |
+| `hf_ckda_hybrid` 50 BT (25 %) | 61.01 | 55.72 | 68.40 | (running) | | |
+| `hf_ckda_pure` 50 BT (0 %) | 62.83 | 43.33 | 55.95 | (running) | | |
+| `native_ckda_hybrid` 40 BT stable end | (running) | | | | | |
+
+Winogrande agrees with the jupiter ladder within 1 pt (58.80 / 60.06 / 60.85 / 63.14).
