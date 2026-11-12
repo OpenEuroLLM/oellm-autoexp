@@ -1543,3 +1543,24 @@ run going and evaluate the critical four every 2000 steps (SQuAD moved +2.6 at 3
 still wanted: a minimal 2-arm session (`ctrl` + `kv8_post4_lr4`, 2 x 64 nodes) -- either a ~6 h pause or, with the
 reference-layout sampler, the main run continuing on the other 128 nodes (main-run decision). The larger levers are
 likely the end-of-training anneal (+5-6 CoQA F1 at 1.7B) and data.
+
+### 10.6 Session log (2026-11-12)
+
+* 15:49 surgeries (snapshot `autoexp_v4b23k1`): kv8 36 / kv8post4 88 / cgqa 132 tensors, all `verify` 0 differ; cgqa
+  132 / 132 identical to the first round's `cgqa_cal_src`; kv8 gpucheck fp32 bit-identical, bf16 rel L2 <= 8e-4.
+* 16:04 main run at 35600; `stop_grace_s=900`; 16:05 graceful stop -> final saves `ckpt/iter_0035603` (persistent)
+  and `ckpt_rolling/iter_0035600`; pool run p264.0737 ended rc 0 (cancelled); `stop_grace_s` back to 120.
+  `as07r5b06` added to the pool exclude list (slow container start).
+* 16:06 seeded; the four arms launched in one launch (p264.0752-0755), running 16:08.
+* First steps: identical 23301 loss **1.146125** in all four arms; data position 190873600 / phase start 0 / scheduler
+  190873600 -> 23859200; per-group lr bounds reset (7 of 8 / 10); attention x4 groups reconciled; lr 3.005e-4, gbs
+  1024; memory 0.40; cgqa calibration 2.2028 / 2.1331 / 2.5610 / 1.1344 / 11.6299 / 3.2687 (first round 2.2015 /
+  2.1337 / 2.5650 / 1.1345 / 10.7592 / 3.1000); kv8_post4 branches 2.98 / 1.48 / 0.86 / 1.13. Steady **10.6-11.0
+  s/step** (planned 13): +400 ~17:40, +800 ~18:50, +1500 ~21:00, decay copies + main-run resume ~22:00.
+* Automation: `session_driver.sh` (readouts at +400 / +800 / +1500, decay seed + launch, the main-run resume from
+  `autoexp_v4hd256p2rowcap` / `hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5` at priority 1000 once the decay
+  copies run, decayed readouts). W&B: `flag_hybrid_experimental`, ids `x_v4b23k__<arm>` / `x_v4b23k__dec_<arm>`.
+* Main-run checkpoints: 31000 and 33000-35000 had been rotated out (the marks list stopped at 30000). Marks now
+  every 1k step from 36000 to 236000 plus 35603 (773a89f0); the MN5 marks loop restarted from `autoexp_marks1`
+  (pid 3439838) and pinned 35603. Disk: ~1.16 TB per kept step, ~6 TB/day; scratch 169.5 / 195.3 TB.
+* Side readout: main 35603 (fast + belebele, 2 workers on the excluded nodes).
