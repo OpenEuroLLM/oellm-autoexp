@@ -1585,3 +1585,57 @@ likely the end-of-training anneal (+5-6 CoQA F1 at 1.7B) and data.
   the session's readouts drain (~1-1.5 h).
 * Fastest-first rows (CoQA + Winogrande only, `ckdab_cw`, alias exports `<export>_cw`, priority 70):
   `fastfirst.sh`; a fast row takes ~15-25 min after the export instead of 1-2 h for the full readout.
+* 23:59 the main run (p264.0921, priority 1000) still waited: 10 of 14 eval workers had hung for 0.5-6 h. One dp
+  rank of each died in squad_v2's HF `evaluate` finalize ("another evaluation module instance is already using the
+  local cache file": a lock in the shared HF_HOME/metrics), and the other ranks sat in a gloo barrier that never
+  exited. Cancelled through pool_ctl (pool runs, no Slurm change); **main run started 00:01 (11-13)** from
+  `ckpt/iter_0035603`. Fix: oellm-eval 7851072 (per-process node-local `HF_METRICS_CACHE`, verified in the MN5
+  container), submodule b055b712, snapshot `autoexp_evalfix1`. This bug also produced the SQuAD v2 cells that kept
+  going missing in earlier readouts.
+
+### 10.7 Result of the broad session (2026-11-13 00:15): decision rule NOT met, no main-run change
+
+CoQA F1 is noisy per launch: the same export scored up to 2.9 F1 apart in the fast (`_cw`, 2 workers) and full
+(8 workers) rounds. The suites are identical (row 113, 0-shot, same engine), so this is batch-composition noise
+(FP8, dp 4). CoQA below = the mean of both rounds. Winogrande agreed within 0.3 between rounds.
+
+| CoQA F1 (mean fast/full) | ctrl | kv8_lr4 | cgqa_lr4 | kv8_post4_lr4 |
+|---|---|---|---|---|
+| 24800 (+1500, lr 3e-4 const) | 65.05 | 64.85 (-0.2) | 66.19 (+1.1) | 64.90 (-0.2) |
+| 24900 decayed | 65.92 | 66.41 (+0.5) | 66.60 (+0.7) | 66.15 (+0.2) |
+
+| full readout | SQuAD v2 F1 (HasAns) | Winogrande | belebele vs same-step ctrl |
+|---|---|---|---|
+| ctrl 24800 / dec 24900 | pending / 27.08 (52.92) | 62.43 / 62.67 | -- |
+| kv8_lr4 24800 / dec | 25.95 (50.92) / pending | 62.59 / 62.43 | -0.0 / -0.4 |
+| cgqa_lr4 24800 / dec | 26.48 (51.93) / pending | 62.67 / 62.12 | **-2.2 / -2.6 (0 of 24 up)** |
+| kv8_post4_lr4 24800 / dec | 27.13 (52.87) / 26.96 (52.65) | 62.51 / 62.75 | +0.0 / +0.1 |
+| main 23500 (gbs 8192, same data) | 26.89 (52.94) | 62.51 | -- |
+
+Earlier readouts (+300 / +700 / +1100) show no trend either (§10.6 fast rows).
+
+* **Primary arm `kv8_post4_lr4`:** decayed CoQA +0.2, SQuAD -0.1, Winogrande +0.1. The rule needs >= +2.0 / >= +1.5,
+  so it fails. Training loss +0.0015-0.0024 over ctrl throughout.
+* **KV duplication (`kv8_lr4`):** +0.5 decayed CoQA, i.e. noise. Together with §3.7 (1.7B: cutting KV capacity costs
+  nothing after training), KV capacity is not the bottleneck.
+* **25 % attention by replacement (`cgqa_lr4`)**, with 8x the first round's updates and attention lr x4: +0.7 CoQA,
+  i.e. noise, and a real multilingual cost (belebele -2.2 to -2.6, every language down, as in the first round's
+  cgqa at -2.3).
+* **Batch size / decay alone:** dec_ctrl (1600 updates at gbs 1024 plus a 100-step anneal) vs main 23500 (200 updates
+  at gbs 8192, same samples) gives CoQA -0.2, Winogrande +0.2, SQuAD +0.2. More, smaller updates and an anneal do
+  nothing for these rows at this scale. That matches 1.7B, where the decay was the largest lever but small (§9.4).
+* **For comparison, phase 2 (64k context, +12k steps):** main 35603 has CoQA F1 69.68, Winogrande 66.93, SQuAD v2
+  27.86 (fast row, §10.6). That is +3.5 / +4.4 / +1.0 over 23500, more than any intervention tried here. The CoQA and
+  Winogrande gap to the 32B is shrinking with ordinary training. SQuAD v2 is not moving.
+
+**Conclusion.** None of the surgery families tried, at 1.7B or on the big model, moved the three rows beyond noise
+at a budget of ~1500 small-batch steps:
+* attention replacing CKDA (first round and cgqa_lr4);
+* additive attention / CKLSTM branches (bgqa / b8 / d / e, post4);
+* KV-group duplication (kv8, kv16 at 1.7B);
+* attention temperature and top-k at inference;
+* an lr anneal.
+
+The +8 pp target is therefore not reachable by "brain surgery" with the evidence at hand. What is left either
+changes pretraining itself (more attention from the start, as in the 32B; not a surgery) or needs far longer
+adaptation than the free nodes allow. No candidate is proven, so the main run continues unchanged from 35603.
