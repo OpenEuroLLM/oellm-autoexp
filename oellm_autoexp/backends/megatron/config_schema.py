@@ -524,6 +524,13 @@ class MegatronConfig(ConfigInterface):
     # Steps of the linear ramp from 1 to ``engram_output_scale`` (0: at once).
     engram_output_scale_ramp: int = 0
 
+    # The Engram layers ``engram_output_scale`` applies to, as 0-based indices in the
+    # decoder's layer list (``hybrid_layer_pattern`` positions, as the checkpoint keys
+    # ``decoder.layers.<i>`` and ``ckda_branch_layers``; the ambitious v4 Engram layers are 2
+    # and 49). None = every Engram layer; the others keep factor 1 (recall surgery: the deep
+    # Engram off, the early one -- which carries the multilingual reading -- unchanged).
+    engram_output_scale_layers: list[int] | None = None
+
     # Hash multipliers of their own for every Engram layer (the reference code seeds them per
     # layer), so two Engram layers do not share their n-gram collisions. False: one set of
     # multipliers for all Engram layers.
@@ -3646,6 +3653,15 @@ class MegatronConfig(ConfigInterface):
     # --override-opt-param-scheduler). Requires --phase-transition-iterations.
     phase_transition_variable_batch: bool = False
 
+    # --phase-transition-variable-batch: consumed_train_samples at the start of the current
+    # phase (e.g. 23691 x 8192 for a phase entered at iteration 23691 from a phase at global
+    # batch 8192). The data position inside the phase is then consumed_train_samples (from the
+    # checkpoint) minus this, instead of (iteration - phase start) x the current global batch
+    # size -- which is wrong once the global batch size changes inside a phase (it would
+    # replay or skip samples). Required with a --data-sampler-reference-global-batch-size
+    # other than --global-batch-size.
+    phase_start_consumed_samples: int | None = None
+
     # Comma-separated list of proportions for training, validation, and test split. For
     # example the split `90,5,5` will use 90%% of data for training, 5%% for validation and
     # 5%% for test.
@@ -3994,6 +4010,14 @@ class MegatronConfig(ConfigInterface):
     # the reference layout's micro-batch size (default: the actual one); see --data-sampler-
     # reference-dp-size
     data_sampler_reference_micro_batch_size: int | None = None
+
+    # the reference run's global batch size (default: the actual one); see --data-sampler-
+    # reference-dp-size. Another (e.g. smaller) --global-batch-size then trains, step by step,
+    # on consecutive slices of the reference run's sample stream (k steps at 1/k of the batch
+    # = one reference step), and the training dataset (its index and cache entry) is sized as
+    # the reference run's (train iterations x this). With phases: also --phase-start-consumed-
+    # samples.
+    data_sampler_reference_global_batch_size: int | None = None
 
     # learning rate multiplier for head during finetuning
     head_lr_mult: float = 1.0

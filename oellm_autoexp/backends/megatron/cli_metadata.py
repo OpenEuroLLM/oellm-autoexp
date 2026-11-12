@@ -1149,6 +1149,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "data_sampler_reference_global_batch_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="the reference run's global batch size (default: the actual one); see --data-sampler-reference-dp-size. Another (e.g. smaller) --global-batch-size then trains, step by step, on consecutive slices of the reference run's sample stream (k steps at 1/k of the batch = one reference step), and the training dataset (its index and cache entry) is sized as the reference run's (train iterations x this). With phases: also --phase-start-consumed-samples.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "data_sampler_reference_micro_batch_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -2189,6 +2197,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         choices=None,
         nargs=None,
         element_type=None,
+    ),
+    "engram_output_scale_layers": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="The Engram layers ``engram_output_scale`` applies to, as 0-based indices in the decoder's layer list (``hybrid_layer_pattern`` positions, as the checkpoint keys ``decoder.layers.<i>`` and ``ckda_branch_layers``; the ambitious v4 Engram layers are 2 and 49). None = every Engram layer; the others keep factor 1 (recall surgery: the deep Engram off, the early one -- which carries the multilingual reading -- unchanged).",
+        choices=None,
+        nargs="+",
+        element_type=int,
     ),
     "engram_output_scale_ramp": MegatronArgMetadata(
         arg_type=int,
@@ -7162,6 +7178,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "phase_start_consumed_samples": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="--phase-transition-variable-batch: consumed_train_samples at the start of the current phase (e.g. 23691 x 8192 for a phase entered at iteration 23691 from a phase at global batch 8192). The data position inside the phase is then consumed_train_samples (from the checkpoint) minus this, instead of (iteration - phase start) x the current global batch size -- which is wrong once the global batch size changes inside a phase (it would replay or skip samples). Required with a --data-sampler-reference-global-batch-size other than --global-batch-size.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "phase_transition_iterations": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -10106,6 +10130,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "data_sampler_reference_global_batch_size": MegatronActionSpec(
+        option_strings=("--data-sampler-reference-global-batch-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "data_sampler_reference_micro_batch_size": MegatronActionSpec(
         option_strings=("--data-sampler-reference-micro-batch-size",),
         action_type="store",
@@ -11011,6 +11042,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1.0,
+    ),
+    "engram_output_scale_layers": MegatronActionSpec(
+        option_strings=("--engram-output-scale-layers",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=None,
     ),
     "engram_output_scale_ramp": MegatronActionSpec(
         option_strings=("--engram-output-scale-ramp",),
@@ -15173,6 +15211,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "phase_start_consumed_samples": MegatronActionSpec(
+        option_strings=("--phase-start-consumed-samples",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "phase_transition_iterations": MegatronActionSpec(
         option_strings=("--phase-transition-iterations",),
