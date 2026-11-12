@@ -1589,7 +1589,7 @@ likely the end-of-training anneal (+5-6 CoQA F1 at 1.7B) and data.
   rank of each died in squad_v2's HF `evaluate` finalize ("another evaluation module instance is already using the
   local cache file": a lock in the shared HF_HOME/metrics), and the other ranks sat in a gloo barrier that never
   exited. Cancelled through pool_ctl (pool runs, no Slurm change); **main run started 00:01 (11-13)** from
-  `ckpt/iter_0035603`. Fix: oellm-eval 7851072 (per-process node-local `HF_METRICS_CACHE`, verified in the MN5
+  `ckpt/iter_0035603`, training 00:20 (35611: 17.4 s/step, lm loss 1.086, lr 8.5e-4, gbs 1024). Fix: oellm-eval 7851072 (per-process node-local `HF_METRICS_CACHE`, verified in the MN5
   container), submodule b055b712, snapshot `autoexp_evalfix1`. This bug also produced the SQuAD v2 cells that kept
   going missing in earlier readouts.
 
