@@ -573,8 +573,89 @@ def selftest() -> int:
     assert _key(9, "branch.linear_qkv.weight.m_u") == OPT.format(l=9, n="branch.linear_qkv.weight", s="m_u")
     assert _key(9, "branch_mix.gamma") == MODEL.format(l=9, n="branch_mix.gamma")
     _selftest_apply(src, heads, dc, hidden)
+    _selftest_kvdup_chain(src, heads, dc, hidden)
     print("selftest ok")
     return 0
+
+
+def _selftest_kvdup_chain(src, heads, dc, hidden):
+    """kv8post4 (broad session): duplicate_kv_groups.py apply (2 -> 4 KV groups) on a tiny DCP checkpoint, then
+    --init attn branches from the duplicated stack layers at the stack's new KV groups. The branch must be the
+    duplicated source layer (verbatim + norm fold, its split moments), compute the 2-group source attention of
+    RMSNorm(x) g_attn exactly (fp64 reference with gate, qk norm, XSA), and --groups 2 must be refused."""
+    import tempfile
+
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import duplicate_kv_groups as kvd
+
+    d, g_new, branch_layers, sources = 2 * dc, 4, (9, 25), (0, 17)
+    sd = {}
+    for layer in branch_layers:  # complex_kda layers: fp32 everywhere, so the function check is not bf16-limited
+        for rel, t in src.items():
+            sd[_key(layer, rel)] = t.clone()
+        sd[LAYER_NORM.format(l=layer)] = torch.linspace(1.4, 0.6, hidden) + 0.01 * layer
+    for layer in ATTN_LAYERS:
+        g = torch.Generator().manual_seed(100 + layer)
+        for rel, t in _fake_attention(heads, d, hidden, 2, g).items():
+            sd[_key(layer, rel)] = t * (0.05 if rel == "linear_qkv.weight" else 1.0)
+        sd[_key(layer, "k_layernorm.weight")] = torch.rand(d, generator=g) + 0.5
+        for n in ("q_layernorm", "k_layernorm"):
+            sd[_key(layer, f"{n}.weight.exp_avg")] = torch.randn(d, generator=g) * 1e-4
+            sd[_key(layer, f"{n}.weight.exp_avg_sq")] = torch.rand(d, generator=g) * 1e-6
+        sd[_key(layer, "linear_qkv.layer_norm_weight")] = torch.rand(hidden, generator=g) + 0.5
+    sd["args"] = argparse.Namespace(num_attention_heads=heads, kv_channels=d, num_query_groups=2,
+                                    group_query_attention=True, attention_output_gate=True)
+    sd["iteration"] = 33200
+    with tempfile.TemporaryDirectory() as tmp:
+        dcp.save(sd, storage_writer=FileSystemWriter(f"{tmp}/src"), no_dist=True)
+        assert kvd.main(["apply", "--src", f"{tmp}/src", "--dst", f"{tmp}/kv", "--groups", str(g_new)]) == 0
+        assert kvd.main(["verify", "--dst", f"{tmp}/kv"]) == 0
+        common = ["apply", "--src", f"{tmp}/kv", "--branch", "attention", "--layers", ",".join(map(str, branch_layers)),
+                  "--init", "attn", "--kv-sources", ",".join(map(str, sources)), "--calibrate"]
+        try:  # the source's KV groups only: 2 is the pre-duplication layout
+            main(common[:3] + ["--dst", f"{tmp}/bad"] + common[3:] + ["--groups", "2"])
+            raise AssertionError("--groups 2 on a 4-group stack was accepted")
+        except SystemExit as e:
+            assert "is not the source's KV groups" in str(e), e
+        assert main(common[:3] + ["--dst", f"{tmp}/chain"] + common[3:] + ["--groups", str(g_new)]) == 0
+        assert main(["verify", "--dst", f"{tmp}/chain"]) == 0
+        smd = FileSystemReader(f"{tmp}/chain").read_metadata().state_dict_metadata
+        kv_smd = FileSystemReader(f"{tmp}/kv").read_metadata().state_dict_metadata
+        assert set(kv_smd) <= set(smd)
+        for layer, s in zip(branch_layers, sources):
+            names = [rel for rel in ATTN_COPY_SRC]
+            dup = {rel: torch.empty(tuple(kv_smd[_key(s, rel)].size)) for rel in names}
+            dcp.load({_key(s, r): t for r, t in dup.items()}, storage_reader=FileSystemReader(f"{tmp}/kv"), no_dist=True)
+            new_rel = list(attention_branch_attn_copy(dup, sd[LAYER_NORM.format(l=layer)])[0])
+            back = {rel: torch.empty(tuple(smd[_key(layer, rel)].size)) for rel in new_rel + ["branch_mix.calib"]}
+            dcp.load({_key(layer, r): t for r, t in back.items()}, storage_reader=FileSystemReader(f"{tmp}/chain"),
+                     no_dist=True)
+            want, _ = attention_branch_attn_copy(dup, sd[LAYER_NORM.format(l=layer)])
+            for rel in new_rel:
+                assert torch.equal(back[rel], want[rel].to(back[rel].dtype)), (layer, rel)
+            assert back["branch.linear_qkv.weight"].shape[0] == g_new * (2 * heads // g_new + 2) * d
+            assert back["branch_mix.gamma"].item() == 0.0 and back["branch_mix.calib"].item() == 0.0
+            # the moments of the K/V copies are the stack's split moments (kv8's), carried through the fold
+            r = (sd[_key(s, "linear_qkv.layer_norm_weight")] / sd[LAYER_NORM.format(l=layer)])[None, :]
+            torch.testing.assert_close(back["branch.linear_qkv.weight.m_u"] * r, dup["linear_qkv.weight.m_u"],
+                                       rtol=1e-5, atol=1e-6)
+            # function: branch(RMSNorm(x) g_layer) at 4 groups == source attention(RMSNorm(x) g_attn) at 2 groups
+            x = torch.randn(7, hidden, dtype=torch.float64, generator=torch.Generator().manual_seed(layer))
+            xn = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+            ref = kvd.reference_attention(
+                xn * sd[_key(s, "linear_qkv.layer_norm_weight")].double(), sd[_key(s, "linear_qkv.weight")].double(),
+                sd[_key(s, "q_layernorm.weight")].double(), sd[_key(s, "k_layernorm.weight")].double(),
+                sd[_key(s, "linear_proj.weight")].double(), heads=heads, groups=2, d=d)
+            got = kvd.reference_attention(
+                xn * sd[LAYER_NORM.format(l=layer)].double(), back["branch.linear_qkv.weight"].double(),
+                back["branch.q_layernorm.weight"].double(), back["branch.k_layernorm.weight"].double(),
+                back["branch.linear_proj.weight"].double(), heads=heads, groups=g_new, d=d)
+            rel_err = ((got - ref).abs().max() / ref.abs().max()).item()
+            assert rel_err < 1e-5, (layer, rel_err)  # fp32 storage of the folded weights
+            print(f"kv-dup chain: branch {layer} (4 groups) <- attention {s} (2 groups): rel err {rel_err:.1e}")
 
 
 def _selftest_apply(src, heads, dc, hidden):
