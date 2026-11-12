@@ -2,7 +2,7 @@
 """Readouts of the v4 broad session (docs/recall_surgery_ambitious.md §10): HF export + ckdab_fast (CoQA /
 Winogrande / SQuAD v2) + ckdab_belebele (24 languages) for every arm x step, and the table of the results.
 
-Arms (run dirs <root>/<arm>, saves <root>/<arm>/ckpt/iter_N; decay copies <root>/dec_<arm>):
+Arms (run dirs <root>/<arm>, saves <root>/<arm>/{ckpt_eval,ckpt,ckpt_rolling}/iter_N; decay copies <root>/dec_<arm>):
   ctrl, kv8_lr4, post4_lr4, kv8_post4_lr4, conv_lr4, kv16_lr8, k6_L49
 
     # what would be launched (DRY by default: prints the commands, writes / submits nothing)
@@ -88,13 +88,41 @@ def export_name(prefix: str, arm: str, step: int, dec: bool) -> str:
     return f"{prefix}_{run_name(arm, dec)}_fp8_{step}"
 
 
+# where a save can sit, in export_run.sh's search order: the arms write rolling saves (+200 / +600, latest only,
+# ckpt_rolling) and persistent ones (+400 / +800, ckpt); a rolling save is hard-linked into ckpt_eval before its
+# export (protect_rolling), so the next rolling save cannot delete it under the export
+SAVE_DIRS = ("ckpt_eval", "ckpt", "ckpt_rolling")
+
+
+def find_save(run_dir: str, step: int) -> str | None:
+    for sub in SAVE_DIRS:
+        d = os.path.join(run_dir, sub, f"iter_{step:07d}")
+        if os.path.isfile(os.path.join(d, ".metadata")):
+            return d
+    return None
+
+
 def saved_steps(run_dir: str) -> list[int]:
-    out = []
-    for p in glob.glob(os.path.join(run_dir, "ckpt", "iter_*")):
-        m = re.fullmatch(r"iter_(\d+)", os.path.basename(p))
-        if m and os.path.isfile(os.path.join(p, ".metadata")):
-            out.append(int(m.group(1)))
+    out = set()
+    for sub in SAVE_DIRS:
+        for p in glob.glob(os.path.join(run_dir, sub, "iter_*")):
+            m = re.fullmatch(r"iter_(\d+)", os.path.basename(p))
+            if m and os.path.isfile(os.path.join(p, ".metadata")):
+                out.add(int(m.group(1)))
     return sorted(out)
+
+
+def protect_rolling(run_dir: str, step: int, execute: bool) -> None:
+    """A save found only in ckpt_rolling: hard-link it into ckpt_eval/iter_N (no data copied; free it after
+    the export with rm -r <run>/ckpt_eval/iter_N)."""
+    src = find_save(run_dir, step)
+    if src is None or os.path.basename(os.path.dirname(src)) != "ckpt_rolling":
+        return
+    dst = os.path.join(run_dir, "ckpt_eval", f"iter_{step:07d}")
+    print(f"mkdir -p {shlex.quote(os.path.dirname(dst))} && cp -al {shlex.quote(src)} {shlex.quote(dst)}")
+    if execute:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        subprocess.check_call(["cp", "-al", src, dst])
 
 
 def resolve_steps(a, run_dir: str) -> list[int]:
@@ -183,8 +211,8 @@ def cmd_launch(a) -> int:
             name = export_name(a.export_prefix, arm, step, a.dec)
             tag = f"[{run_name(arm, a.dec)} {step}]"
             if on_cluster and not a.no_check:
-                if not os.path.isfile(f"{run_dir}/ckpt/iter_{step:07d}/.metadata"):
-                    print(f"# {tag} skipped: {run_dir}/ckpt/iter_{step:07d} not saved (yet)")
+                if find_save(run_dir, step) is None:
+                    print(f"# {tag} skipped: iter_{step:07d} not saved (yet) in {run_dir}/{{{','.join(SAVE_DIRS)}}}")
                     continue
             if arm == "conv_lr4" and not a.dec:  # a decay copy starts past the hand-over
                 ok, why = conv_exportable(run_dir, step, a.it)
@@ -197,6 +225,8 @@ def cmd_launch(a) -> int:
                 if ready and done >= N_ROWS[a.rounds]:
                     print(f"# {tag} skipped: export ready, {done} rows done")
                     continue
+            if on_cluster:
+                protect_rolling(run_dir, step, a.execute)
             cmd = launch_cmd(a, arm, step)
             print(f"cd {snap} && " + " ".join(shlex.quote(c) for c in cmd))
             if a.execute:
@@ -384,7 +414,7 @@ def main(argv=None) -> int:
         p.add_argument("--it", type=int, help="the start iteration IT (the main run's checkpoint)")
         p.add_argument("--steps", help="comma list relative to --it, e.g. 200,400,800")
         p.add_argument("--abs-steps", help="comma list of absolute steps")
-        p.add_argument("--discover", action="store_true", help="the saves present in <run>/ckpt after --it")
+        p.add_argument("--discover", action="store_true", help="the saves present in <run>/ckpt* after --it")
         p.add_argument("--dec", action="store_true", help="the decay copies dec_<arm>")
         p.add_argument("--root", default=ROOT)
         p.add_argument("--export-prefix", default="v4broad")

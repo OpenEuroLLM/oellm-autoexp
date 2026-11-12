@@ -96,10 +96,15 @@ backend:
     save: ${job.base_output_dir}/ckpt
     ckpt_step: null
     exit_interval: ${aux.end}
-    # readouts at +200 / +400 / +800 (32 nodes; +100 / +200 / +400 at 64) when aux.it is a multiple of the interval
-    # (runbook); the exit saves too
-    save_interval: "${oc.eval:'${aux.arm_steps} // 4'}"
-    non_persistent_save_interval: null
+    # Disk (gpfs_scratch 37 TB free on 11-12; a full save is 1.16 TB): rolling saves every quarter of the arm
+    # (+200 / +400 / +600 at 32 nodes, latest only, <run>/ckpt_rolling) and one persistent save at the exit
+    # (+800) -> at most ~2 saves per arm. broad_readout.py hard-links a rolling save into <run>/ckpt_eval before
+    # its export (rm -r it once exported). Readouts at +200 / +400 / +800 when aux.it is a multiple of 200.
+    # A restart resumes from the newest of ckpt (seeded start) and ckpt_rolling, as the main run does.
+    save_interval: 1000000
+    non_persistent_save_interval: "${oc.eval:'${aux.arm_steps} // 4'}"
+    # the exit step persistent (it is also a rolling-save step, and Megatron saves once per step: persistent wins)
+    save_extra_steps: ["${aux.end}"]
     # no in-run validation: a full pass of the fixed sets takes ~25-30 min at 32 nodes (3.6 min at 256); the paired
     # loss readout is the training loss on identical batches, the task readout broad_readout.py
     eval_interval: 1000000
