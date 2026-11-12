@@ -3662,6 +3662,18 @@ class MegatronConfig(ConfigInterface):
     # other than --global-batch-size.
     phase_start_consumed_samples: int | None = None
 
+    # With --phase-start-consumed-samples: the REFERENCE run's iteration at which the current
+    # phase starts (0 or one of --phase-transition-iterations). The phase -- its training
+    # dataset (size), the data position in it and its end (the exit at the next phase
+    # transition) -- is then located from the data position, reference iteration = this +
+    # (consumed_train_samples - --phase-start-consumed-samples) / reference global batch size,
+    # instead of from this run's iteration counter, which advances faster at a smaller global
+    # batch size (an arm at 1/8 of the batch from iteration 23300 of a phase that ends at
+    # 23691 reaches iteration 23691 after 391 steps, the phase's data end only after 3128).
+    # Required with a --data-sampler-reference-global-batch-size other than --global-batch-
+    # size inside a phase.
+    phase_start_iteration: int | None = None
+
     # Comma-separated list of proportions for training, validation, and test split. For
     # example the split `90,5,5` will use 90%% of data for training, 5%% for validation and
     # 5%% for test.
