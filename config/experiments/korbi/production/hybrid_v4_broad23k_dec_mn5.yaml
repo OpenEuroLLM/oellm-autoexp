@@ -1,0 +1,38 @@
+# @package _global_
+# Decay copies of the 23300 broad session (docs/recall_surgery_ambitious.md §10; PREPARED, NOT LAUNCHED): EVERY arm
+# of hybrid_v4_broad23k_mn5 continued from its persistent exit save (23300 + 1500 = 24800) for 100 more steps with
+# the lr annealed to 0 by WSD's 1-sqrt tail over those 100 steps (the dec100 recipe of hybrid_v4_lr_decay_mn5,
+# verified on the big model: Megatron 2c8a1a0f4 resets the per-group bounds the optimizer load restores; the
+# attention groups' min_lr = 0 x 4 = 0 too). Same arm settings (KV groups, branches, attention multiplier); the
+# branch schedules keep the arm's start (23300: cgqa_lr4 is at alpha 0 throughout). The next 100 x 1024 samples of
+# the main run's phase-1 stream, identical for every copy (paired: dec_ctrl); the copies end at 24900 = 1600 arm
+# steps = the main run's 23300 -> 23500 samples, the data of the first round's arms (cgqa: 23300 -> 23499).
+# Question: does an arm's gain survive an anneal (the largest lever at 1.7B, §3.4)? Seeded from
+# <arm>/ckpt/iter_0024800 by v4_broad_seed.sh --dec 23300 (its defaults: production/v4_broad23k, +1500, all four).
+#   cd $R/autoexp_v4b23k1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/hybrid_v4_broad23k_dec_mn5 --yes
+defaults:
+  - hybrid_v4_broad23k_mn5
+  - _self_
+
+aux:
+  dec_from: 1500
+  start: "${oc.eval:'${aux.it} + ${aux.dec_from}'}"
+  steps: 100
+  dir: dec_${aux.arm}
+
+backend:
+  megatron:
+    lr_decay_style: WSD
+    lr_wsd_decay_style: minus_sqrt
+    lr_wsd_decay_iters: ${aux.steps}
+    lr_decay_iters: ${aux.end}
+    min_lr: 0.0
+    # only the exit save (aux.end, persistent): 100 steps ~ 25 min
+    non_persistent_save_interval: null
+
+job:
+  metadata:
+    # after the arms they come from
+    pool_priority: 78

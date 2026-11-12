@@ -1,0 +1,51 @@
+# @package _global_
+# Checkpoint surgeries of the 23300 broad session (docs/recall_surgery_ambitious.md §10; hybrid_v4_broad23k_mn5), one
+# 1-node pool job each: scripts/korbi/production/v4_broad_surgery.sh <name> in the training image, from a synced
+# snapshot. Source: the main run's frozen ckpt_eval/iter_0023300 (read only; the source of every first-round arm).
+# Outputs: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/src/<name>/ckpt/iter_0023300 (hard links + the
+# new / rewritten tensors + manifest) and its latest_checkpointed_iteration.txt (= 23300, written after `verify`
+# re-derived every tensor); logs .../v4_broad23k/surgery_logs/<name>.
+#   kv8       6 attention layers 2 -> 8 KV groups (duplicate_kv_groups.py, moments split) + verify + gpucheck
+#             (the 23400 kv8 of attn_kv/kv8_src is the same transform one checkpoint later)
+#   kv8post4  attention copies (17/33/50/66 -> CKDA 19/35/52/68) on kv8's output at 8 KV groups, gamma 0
+#             (waits for kv8's tracker = 23300)
+#   cgqa      the first round's cgqa_cal (attention at 9/25/41/58/74/90, 2 KV groups, from complex_kda's
+#             projections, seed 1234, calib 0) + verify + a hash comparison with the first round's manifest
+#             (production/ckda_branch/cgqa_cal_src: identical = the same start bit for bit)
+# Deterministic; an output whose tracker holds 23300 is skipped (checks rerun). Measured on the 23400 surgeries:
+# kv8 read 284 s + write 345 s, post4 read 197 s + write 241 s; + verify and gpucheck: ~15-25 min each,
+# kv8post4 ~10-15 min after kv8 (~40 min to the last tracker).
+# Launch (all three at once; priority 90 = before the arms, which wait for these trackers via the seed):
+#   cd $R/autoexp_v4b23k1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/v4_broad23k_surgery_mn5 --yes
+# (one surgery: "aux.only=[kv8]"; dry run: --dry-run --dry-run-root $D)
+defaults:
+  - v4_broad_surgery_mn5
+  - _self_
+
+aux:
+  name: v4_broad23k_surgery
+  it: 23300
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k
+
+job:
+  name: v4b23k_surgery_${aux.surgery}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.surgery}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.surgery: kv8
+        # the branches copy kv8's 8-group stack layers: waits for kv8's tracker (written after its verify)
+        - aux.surgery: kv8post4
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/src/kv8/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*23300\\s*$"
+            mode: regex
+            persistent_pass: true
+        - aux.surgery: cgqa

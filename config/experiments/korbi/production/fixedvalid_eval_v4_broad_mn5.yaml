@@ -1,4 +1,8 @@
 # @package _global_
+# SUPERSEDED (user 2026-11-12): the broad session runs from the main run's 23300 instead -- hybrid_v4_broad23k_mn5
+# / hybrid_v4_broad23k_dec_mn5 / v4_broad23k_surgery_mn5 / fixedvalid_eval_v4_broad23k_mn5
+# (docs/recall_surgery_ambitious.md §10). Kept for reference; the seed script's defaults are the 23300 session's
+# now (this plan: ROOT=.../production/v4_broad DEC_FROM=800 ARMS_ALL=...).
 # Exactness checks of the broad session's surgeries (docs/recall_surgery_ambitious.md §10; v4_broad_surgery_mn5):
 # eval-only on the sub64 v8ml set (64 x 4096) + the Winogrande / WSC273 requests (160 x 512), per-token losses
 # (MEGATRON_EVAL_TOKEN_DUMP), each surgery output against the source checkpoint iter_<IT>:

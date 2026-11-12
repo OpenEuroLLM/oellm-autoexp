@@ -1,0 +1,187 @@
+# @package _global_
+# Broad session from 23300 (docs/recall_surgery_ambitious.md §10, user 2026-11-12; PREPARED, NOT LAUNCHED -- needs
+# the user's go, it pre-empts the main run): four arms x 64 nodes side by side from the main run's iteration 23300
+# (ckpt_eval/iter_0023300, PHASE 1: 8k sequences, gbs 8192), the start of the first recall-surgery round
+# (hybrid_v4_addattn_mn5 / ckda_branch / hybrid_v4_kvdup_mn5 / hybrid_v4_postattn_mn5 / hybrid_v4_attn_temp_mn5:
+# gbs 8192, 100-200 steps), at 1/8 of its token batch: 8x more updates for the same tokens.
+# Supersedes the phase-2 plan (hybrid_v4_broad_mn5: 7 arms x 32 nodes from the latest checkpoint).
+#
+# Geometry. gbs 1024 x 8k (8.4M tokens per update). 64 nodes = dp 256 (EP 4 in-node): 4 samples per rank and step
+# = micro-batch 4, no accumulation (one FSDP gather / reduce-scatter per step). Memory: the first-round cgqa ran
+# at 64 nodes with mbs 8 (4 accumulation steps): max allocated 46.6 GB, mem usages 0.87 (13.2 GB persistent);
+# mbs 4 halves the per-micro-batch activations -> below that. Steps: aux.steps = 1500 (= 187.5 main-run steps of
+# data, 12.6B tokens); the decay copies (hybrid_v4_broad23k_dec_mn5) add 100 -> 1600 arm steps = exactly the
+# main run's 23300 -> 23500 samples, the data the first round trained on.
+#
+# Data. The arms read the main run's phase-1 stream exactly: Megatron fe6615493
+# --data-sampler-reference-global-batch-size 8192 (8 arm steps = one main-run step, same samples, same order; the
+# phase-1 training index sized 23691 x 8192 = the main run's), --phase-start-consumed-samples 0 (phase 1 starts at
+# consumed 0: the position is the checkpoint's consumed samples, 23300 x 8192 = 190,873,600, not (23300 - 0) x 1024
+# = a replay of the phase's first eighth) and Megatron 013763961 --phase-start-iteration 0: the arm's iteration
+# counter passes the main run's phase boundary 23691 after 391 steps (49 main-run steps of data); without the flag
+# the arm would exit there as at a phase transition and a restart past it would build phase 2's dataset. With it
+# the phase is located by the data position (reference iteration 23300 + n / 8); the phase's data end (iteration
+# 26428 of the arm) is far beyond the exit. Every arm trains on the same batches -> the per-step training loss is
+# a paired readout (the first logged step, 23301, must agree between all four arms to bf16 noise: every surgery is
+# exact at insertion and cgqa's alpha is 1 in that step).
+#
+# lr: 8.5e-4 x sqrt(1024 / 8192) = 3.005e-4 (square-root rule for normalized updates -- MuOwn's orthogonalized
+# steps and Adam -- below the critical batch; §10.1). attention_lr_mult 4 (Megatron 31fcf98e0) on every
+# SelfAttention parameter (the stack's six layers, the branches' linear_qkv / linear_proj / q,k norm) and the
+# branches' gamma: 1.202e-3. Constant (min_lr = lr); the override of the per-group bounds is forced by the
+# variable-batch flag (2c8a1a0f4 + reconcile_attention_lr_group_meta). Expert-bias update rate per step x 1/8
+# (1.25e-4: the main run's balancing speed per token). Engram: the current settings (lr x1, own clip, row-norm cap
+# ramp from table step 25000 -- never reached: the arms end at 24800 / 24900), as the 11-11 first-round arms
+# (addattn / dec100 / k6); the first-round cgqa (11-10) still had Engram lr x5 and no cap.
+#
+# Arms (literals in the entries: interpolations inside a sweep entry resolve against the base config):
+#   ctrl           nothing changed (paired baseline)
+#   cgqa_lr4       the first round's cgqa (production/ckda_branch/cgqa, hybrid_ambitious_v4_ckda_branch_mn5): attention
+#                  INSTEAD of complex_kda at the six 3:1 positions 9/25/41/58/74/90, 16q / 2kv (the stack's kind),
+#                  surgery cgqa_cal (q/k/v/o from complex_kda's projections, seed 1234, calibrated on the first
+#                  step), crossfade out = alpha ckda + (1 - alpha)(1 + gamma) calib branch, alpha 1 -> 0 linearly;
+#                  + attention_lr_mult 4. Ramp 400 arm steps (first round: 150 steps at gbs 8192), then branch
+#                  only: (a) all three readouts (+400 / +800 / +1500) see the converted model (alpha 0), as the
+#                  first round's 23450 / 23499, and +400 is exportable (branch_fold needs alpha 0); (b) over the
+#                  ramp the rest of the network gets the first round's lr integral (400 x 3.0e-4 = 0.120 vs
+#                  150 x 8.5e-4 = 0.128) and the new attention 3.8x more (x4); (c) then 1100 branch-only updates
+#                  (first round: 50). The token-matched ramp (1200 steps = the sqrt-rule drift match) would leave
+#                  +400 / +800 mid-crossfade and only 300 branch-only steps before +1500.
+#   kv8_lr4        KV 2 -> 8 duplication of the six attention layers (duplicate_kv_groups.py, moments split; exact)
+#                  + attention_lr_mult 4
+#   kv8_post4_lr4  kv8, then additive attention branches on CKDA 19/35/52/68, COPIES of the (8-group) attention
+#                  17/33/50/66 (add_ckda_branch.py --init attn, gamma 0: exact) + attention_lr_mult 4
+# Sources: aux.root/src/<surgery>/ckpt (v4_broad23k_surgery_mn5) or the main run's ckpt_eval; each arm's own
+# checkpoint directory is seeded with hard links (scripts/korbi/production/v4_broad_seed.sh 23300: its defaults), so
+# load = save and a pool restart resumes from the arm's own latest save, never from 23300.
+#
+#   cd $R/autoexp_v4b23k1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/hybrid_v4_broad23k_mn5 --yes
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_128_mn5
+  - _self_
+
+aux:
+  suite: v4_broad23k
+  arm: ctrl
+  only: []
+  it: 23300
+  start: ${aux.it}
+  nodes: 64
+  phase: 1
+  seq: 8192
+  stage_datamix: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage1_mn5.txt
+  gbs: 1024
+  # the main run's phase-1 stream: its batch, the consumed samples and the iteration at the phase start
+  ref_gbs: 8192
+  phase_start_consumed: 0
+  phase_start_it: 0
+  steps: 1500
+  end: "${oc.eval:'${aux.start} + ${aux.steps}'}"
+  lr: "${oc.eval:'round(8.5e-4 * (${aux.gbs} / ${aux.ref_gbs}) ** 0.5, 7)'}"
+  bias_rate: "${oc.eval:'1e-3 * ${aux.gbs} / ${aux.ref_gbs}'}"
+  # the branch schedules start at the surgery's iteration (the dec copies keep it)
+  branch_start: ${aux.it}
+  root: ${aux.main_root}/production/v4_broad23k
+  main_ckpt: ${aux.main_root}/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval
+  dir: ${aux.arm}
+  # light node check before every (re)start: a bad node costs a 40-minute start-up otherwise
+  node_check: light
+
+backend:
+  megatron:
+    micro_batch_size: 4
+    lr: ${aux.lr}
+    min_lr: ${aux.lr}
+    lr_decay_style: constant
+    data_sampler_reference_global_batch_size: ${aux.ref_gbs}
+    phase_start_consumed_samples: ${aux.phase_start_consumed}
+    phase_start_iteration: ${aux.phase_start_it}
+    moe_router_bias_update_rate: ${aux.bias_rate}
+    load: ${job.base_output_dir}/ckpt
+    save: ${job.base_output_dir}/ckpt
+    ckpt_step: null
+    no_save_optim: false
+    exit_interval: ${aux.end}
+    # Disk (ehpc533 gpfs_scratch quota 2026-11-12 10:00: 168.8 of 195.3 TB used -> 26.5 TB to the quota; a full
+    # save is 1.16 TB): rolling saves every 400 steps (+400 / +800 / +1200, latest only, <run>/ckpt_rolling) and
+    # one persistent save at the exit (+1500, save_extra_steps). broad_readout.py hard-links a rolling save into
+    # <run>/ckpt_eval before its export (launch it within ~1.4 h of the save, before the next rolling save
+    # replaces it; rm -r the copy once exported). Peak per arm ~3 saves (3.5 TB): 4 arms 14 TB + 4 decay copies
+    # 4.6 TB. A restart resumes from the newest of ckpt (seeded start) and ckpt_rolling.
+    save_interval: 1000000
+    save_retain_interval: null
+    non_persistent_save_interval: 400
+    save_extra_steps: ["${aux.end}"]
+    # no in-run validation (the paired loss readout is the training loss on identical batches)
+    eval_interval: 1000000
+    # branch schedules (inert unless an entry turns a branch on)
+    ckda_branch: null
+    ckda_branch_start_iteration: ${aux.branch_start}
+    # additive branch mode (kv8_post4_lr4; cgqa_lr4 overrides with the crossfade): complex_kda at full weight,
+    # the branch added with gamma (0 at insertion)
+    ckda_branch_crossfade: false
+    ckda_branch_alpha_hold: 100000
+    ckda_branch_alpha_ramp: 0
+    ckda_branch_alpha_end: 1.0
+    ckda_branch_m_start: 1.0
+    ckda_branch_m_ramp: 0
+    ckda_branch_gamma_scale: 1.0
+    ckda_branch_calibrate: true
+    ckda_branch_log_interval: 10
+
+job:
+  name: v4b23k_${aux.dir}
+  base_output_dir: ${aux.root}/${aux.dir}
+  log_path_current: ${job.base_output_dir}/current_${job.name}.log
+  config_path_current: ${job.base_output_dir}/current_${job.name}.yaml
+  est_steps: ${aux.steps}
+  # one micro-batch of 4 x 8k per GPU and step at 64 nodes. Measured: first-round cgqa 64n mbs 8 x 4 accumulation
+  # 55 s/step (~13 s per micro-batch), 32n mbs 2 x 32 accumulation 252 s/step (~7.7 s per micro-batch), main run
+  # 256n mbs 8 x 1 14.9 s/step -> ~9-10 s per mbs-4 micro-batch + optimizer / reduce-scatter ~3 s
+  est_step_time_s: 13.0
+  est_startup_min: 40.0
+  # the seed script writes the tracker (v4_broad_seed.sh); a surgery arm is seeded only once its surgery is done
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt
+    persistent_pass: true
+  metadata:
+    # NOT the main run's singleton (ambitious_main_v4): the arms run side by side
+    pool_singleton: null
+    # above the eval units (60) and exports (50), below the surgeries (90) and the main run (1000)
+    pool_priority: 80
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    account: cns144
+    time: "12:00:00"
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ctrl
+        # the first round's cgqa (crossfade, calibrated, 2 KV groups) at gbs 1024, x4, ramp 400
+        - aux.arm: cgqa_lr4
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 400
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.attention_lr_mult: 4.0
+        - aux.arm: kv8_lr4
+          backend.megatron.num_query_groups: 8
+          backend.megatron.attention_lr_mult: 4.0
+        - aux.arm: kv8_post4_lr4
+          backend.megatron.num_query_groups: 8
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [19, 35, 52, 68]
+          backend.megatron.ckda_branch_num_query_groups: 8
+          backend.megatron.attention_lr_mult: 4.0

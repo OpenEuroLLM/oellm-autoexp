@@ -1,4 +1,8 @@
 # @package _global_
+# SUPERSEDED (user 2026-11-12): the broad session runs from the main run's 23300 instead -- hybrid_v4_broad23k_mn5
+# / hybrid_v4_broad23k_dec_mn5 / v4_broad23k_surgery_mn5 / fixedvalid_eval_v4_broad23k_mn5
+# (docs/recall_surgery_ambitious.md §10). Kept for reference; the seed script's defaults are the 23300 session's
+# now (this plan: ROOT=.../production/v4_broad DEC_FROM=800 ARMS_ALL=...).
 # Broad session (docs/recall_surgery_ambitious.md §10; PREPARED, NOT LAUNCHED -- needs the user's go, it pre-empts the
 # main run): seven arms side by side, all from the main run's LATEST checkpoint (iteration aux.it, the final save of
 # the pre-empted main run, hard-linked into ckpt_eval first), so a winner can continue as the main run.
@@ -89,6 +93,8 @@ backend:
     lr_decay_style: constant
     data_sampler_reference_global_batch_size: ${aux.ref_gbs}
     phase_start_consumed_samples: ${aux.phase_start_consumed}
+    # Megatron 013763961: required with a reference batch other than gbs inside phases (phase 2 starts at 23691)
+    phase_start_iteration: 23691
     moe_router_bias_update_rate: ${aux.bias_rate}
     # each arm's own directory, seeded with hard links to the start (v4_broad_seed.sh): restarts resume from the
     # arm's own latest save

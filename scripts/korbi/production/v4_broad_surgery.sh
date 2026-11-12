@@ -14,6 +14,12 @@
 #   conv       the crossfade conversion: attention branches on CKDA 74 / 90, copies of attention 66 / 82, gamma 0,
 #              calib 0, 2 KV groups; the arm runs ckda_branch_crossfade (weight (1 - alpha)(1 + gamma) calib: exact
 #              at alpha 1, the branch alone at alpha 0)
+#   cgqa       the first round's cgqa_cal surgery (ckda_branch_surgery.sh, production/ckda_branch/cgqa_cal_src):
+#              attention branches at the six 3:1 positions 9 / 25 / 41 / 58 / 74 / 90, 2 KV groups, q / k / v / o
+#              from complex_kda's projections (add_ckda_branch.py --init copy, seed 1234, eps 1e-3), calib 0 (measured
+#              on the arm's first step), for the crossfade arm cgqa_lr4. With CGQA_REF_MANIFEST (default: the first
+#              round's manifest, if it is for the same source) the new tensors' SHA-256 are compared with it:
+#              identical = the first round's start bit for bit (a mismatch is reported, not fatal).
 # Every step is deterministic (no randomness in --init attn / the KV copy): a rerun reproduces every tensor. An
 # output whose tracker holds IT is not redone (its checks still run); a tracker with another iteration is an error
 # (another session's ROOT); a partial attempt (no tracker) is removed and redone. Run from a synced snapshot as the
@@ -26,13 +32,14 @@ SRC=${SRC:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e
 ROOT=${ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad}
 IT=${IT:?IT = the start iteration (the main run checkpoint in SRC/iter_<IT>)}
 GPUCHECK=${GPUCHECK:-1}
+CGQA_REF_MANIFEST=${CGQA_REF_MANIFEST-/gpfs/scratch/ehpc533/hybrid_nucleus/production/ckda_branch/cgqa_cal_src/ckpt/iter_0023300/ckda_branch_surgery.json}
 VERIFY=${VERIFY:-1}
 DRY=${DRY:-0}  # 1: print the commands only
 if [ -n "${SINGULARITY_CONTAINER:-}${APPTAINER_CONTAINER:-}" ]; then PY=(python3); else PY=(singularity exec --nv "$SIF" python3); fi
 [ "$DRY" = 1 ] && PY=(echo python3)
 ITER=iter_$(printf %07d "$IT")
 case $ROOT in */main_mhc4*) echo "refusing to write below the main run ($ROOT)" >&2; exit 2 ;; esac
-[ $# -gt 0 ] || { echo "usage: IT=<it> $0 kv8|kv16|post4|kv8post4|conv ..." >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: IT=<it> $0 kv8|kv16|post4|kv8post4|conv|cgqa ..." >&2; exit 2; }
 
 # done_at <ckpt dir>: 0 if its tracker holds IT, 1 if absent, exit 3 on another iteration
 done_at() {
@@ -54,6 +61,8 @@ for name in "$@"; do
       [ "$DRY" = 1 ] || done_at "$src" || { echo "kv8post4: kv8 is not done ($src/latest_checkpointed_iteration.txt)" >&2; exit 1; }
       args=(--branch attention --groups 8 --layers 19,35,52,68 --init attn --kv-sources 17,33,50,66 --calibrate) ;;
     conv) tool=branch; args=(--branch attention --groups 2 --layers 74,90 --init attn --kv-sources 66,82 --calibrate) ;;
+    # = ckda_branch_surgery.sh's cgqa_cal (the defaults --init copy --seed 1234 --eps 1e-3 spelled out)
+    cgqa) tool=branch; args=(--branch attention --groups 2 --layers 9,25,41,58,74,90 --init copy --seed 1234 --eps 1e-3 --calibrate) ;;
     *) echo "unknown surgery $name" >&2; exit 2 ;;
   esac
   [ "$DRY" = 1 ] || [ -f "$src/$ITER/.metadata" ] || { echo "$name: no $src/$ITER/.metadata" >&2; exit 1; }
@@ -75,5 +84,24 @@ for name in "$@"; do
   fi
   if [ $tool = kv ] && [ "$GPUCHECK" = 1 ]; then
     "${PY[@]}" "$HERE/duplicate_kv_groups.py" gpucheck --src "$src/$ITER" --dst "$dst/$ITER" --fused-qk
+  fi
+  if [ "$name" = cgqa ] && [ "$DRY" != 1 ] && [ -n "$CGQA_REF_MANIFEST" ] && [ -f "$CGQA_REF_MANIFEST" ]; then
+    # the first round's cgqa_cal start vs this one: same source checkpoint, same arguments -> same tensors
+    "${PY[@]}" - "$CGQA_REF_MANIFEST" "$dst/$ITER/ckda_branch_surgery.json" <<'PYEOF' | tee "$dst/compare_first_round.txt"
+import json, sys
+ref, new = (json.load(open(p)) for p in sys.argv[1:3])
+if ref.get("source_metadata_sha256") != new.get("source_metadata_sha256"):
+    print(f"cgqa vs first round: other source ({ref.get('source')} vs {new.get('source')}), not compared")
+    sys.exit(0)
+a, b = ref["new_tensors"], new["new_tensors"]
+same = sorted(k for k in a if k in b and a[k]["sha256"] == b[k]["sha256"])
+diff = sorted(k for k in set(a) | set(b) if k not in same)
+print(f"cgqa vs first round ({sys.argv[1]}): {len(same)} of {len(set(a) | set(b))} new tensors identical")
+for k in diff[:20]:
+    print(f"  DIFFERS: {k}")
+if diff:
+    print("WARNING: the cgqa start is NOT the first round's bit for bit (seed the arm from the first round's "
+          "cgqa_cal_src instead if that matters)")
+PYEOF
   fi
 done

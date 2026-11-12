@@ -1,4 +1,8 @@
 # @package _global_
+# SUPERSEDED (user 2026-11-12): the broad session runs from the main run's 23300 instead -- hybrid_v4_broad23k_mn5
+# / hybrid_v4_broad23k_dec_mn5 / v4_broad23k_surgery_mn5 / fixedvalid_eval_v4_broad23k_mn5
+# (docs/recall_surgery_ambitious.md §10). Kept for reference; the seed script's defaults are the 23300 session's
+# now (this plan: ROOT=.../production/v4_broad DEC_FROM=800 ARMS_ALL=...).
 # Broad session decay copies (docs/recall_surgery_ambitious.md §10): an arm of hybrid_v4_broad_mn5 continued from its
 # last save (aux.it + aux.dec_from, default +800) for aux.steps = 100 more steps with the lr annealed to 0 by WSD's
 # 1-sqrt tail over those 100 steps (the dec100 recipe of hybrid_v4_lr_decay_mn5, verified on the big model: Megatron

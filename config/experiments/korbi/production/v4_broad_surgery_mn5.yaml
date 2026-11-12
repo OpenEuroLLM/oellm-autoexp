@@ -1,4 +1,6 @@
 # @package _global_
+# The phase-2 plan's surgeries (SUPERSEDED by the 23300 session, user 2026-11-12); still the base of
+# v4_broad23k_surgery_mn5 (kv8 / kv8post4 / cgqa from 23300).
 # Checkpoint surgeries of the broad session (docs/recall_surgery_ambitious.md §10), one 1-node pool job per
 # surgery: scripts/korbi/production/v4_broad_surgery.sh <name> in the training image, from a synced snapshot.
 # Source: the pre-empted main run's start checkpoint, hard-linked first into

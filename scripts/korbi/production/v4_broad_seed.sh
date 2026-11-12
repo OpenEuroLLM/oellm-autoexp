@@ -3,10 +3,17 @@
 # their start, so each arm runs with load = save = <root>/<arm>/ckpt: a pool restart resumes from the arm's own latest
 # save instead of re-running from the start (pool restarts re-run from `load`).
 #
-#   v4_broad_seed.sh <IT> [arm ...]           arms default: all seven; start = iteration IT
+#   v4_broad_seed.sh <IT> [arm ...]           arms default: the four of hybrid_v4_broad23k_mn5; start = iteration IT
 #   v4_broad_seed.sh --dec <IT> [arm ...]     decay copies dec_<arm>, from <root>/<arm>/ckpt/iter_<IT + DEC_FROM>
-#                                             (DEC_FROM default 800 = hybrid_v4_broad_mn5's steps at 32 nodes)
+#                                             (DEC_FROM default 1500 = hybrid_v4_broad23k_mn5's steps)
 #   DRY=1 ...                                 print only
+#
+# Defaults = the 23300 session (hybrid_v4_broad23k_mn5; user 2026-11-12):
+#   v4_broad_seed.sh 23300                    ctrl cgqa_lr4 kv8_lr4 kv8_post4_lr4 into production/v4_broad23k
+#   v4_broad_seed.sh --dec 23300              their decay copies from +1500
+# The superseded phase-2 plan (hybrid_v4_broad_mn5, 7 arms, +800):
+#   ROOT=/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad DEC_FROM=800 ARMS_ALL="ctrl kv8_lr4 post4_lr4 \
+#       kv8_post4_lr4 conv_lr4 kv16_lr8 k6_L49" v4_broad_seed.sh <IT>
 #
 # Sources: ctrl / k6_L49 -> the main run's frozen copy ckpt_eval/iter_<IT> (hard-linked there first, runbook §10.3);
 # the surgery arms -> <root>/src/<surgery>/ckpt/iter_<IT> (v4_broad_surgery.sh; only when its tracker = IT, i.e. the
@@ -14,10 +21,10 @@
 # that already has a tracker (an arm's progress is never clobbered).
 set -euo pipefail
 
-ROOT=${ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad}
+ROOT=${ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k}
 MAIN_EVAL=${MAIN_EVAL:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval}
-DEC_FROM=${DEC_FROM:-800}
-ALL_ARMS="ctrl kv8_lr4 post4_lr4 kv8_post4_lr4 conv_lr4 kv16_lr8 k6_L49"
+DEC_FROM=${DEC_FROM:-1500}
+ALL_ARMS=${ARMS_ALL:-"ctrl cgqa_lr4 kv8_lr4 kv8_post4_lr4"}
 
 DEC=0
 if [ "${1:-}" = "--dec" ]; then DEC=1; shift; fi
@@ -36,6 +43,7 @@ surgery_of() {
     post4_lr4) echo post4 ;;
     kv8_post4_lr4) echo kv8post4 ;;
     conv_lr4) echo conv ;;
+    cgqa_lr4) echo cgqa ;;
     *) echo "unknown arm $1" >&2; return 1 ;;
   esac
 }

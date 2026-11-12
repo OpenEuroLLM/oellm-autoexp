@@ -2,17 +2,25 @@
 """Readouts of the v4 broad session (docs/recall_surgery_ambitious.md §10): HF export + ckdab_fast (CoQA /
 Winogrande / SQuAD v2) + ckdab_belebele (24 languages) for every arm x step, and the table of the results.
 
-Arms (run dirs <root>/<arm>, saves <root>/<arm>/{ckpt_eval,ckpt,ckpt_rolling}/iter_N; decay copies <root>/dec_<arm>):
-  ctrl, kv8_lr4, post4_lr4, kv8_post4_lr4, conv_lr4, kv16_lr8, k6_L49
+Sessions (--session; run dirs <root>/<arm>, saves <root>/<arm>/{ckpt_eval,ckpt,ckpt_rolling}/iter_N; decay copies
+<root>/dec_<arm>):
+  23k (default; hybrid_v4_broad23k_mn5, user 2026-11-12): from the main run's 23300, root production/v4_broad23k,
+       exports v4b23k_<arm>_fp8_<step>, --it 23300, --steps 400,800,1500 by default (--dec: 1600 = 24900)
+       ctrl, cgqa_lr4, kv8_lr4, kv8_post4_lr4
+  p2   (superseded phase-2 plan, hybrid_v4_broad_mn5): root production/v4_broad, exports v4broad_*, --it required
+       ctrl, kv8_lr4, post4_lr4, kv8_post4_lr4, conv_lr4, kv16_lr8, k6_L49
 
     # what would be launched (DRY by default: prints the commands, writes / submits nothing)
-    python scripts/korbi/recall_surgery/broad_readout.py launch --it 33200 --steps 200,400,800 \\
-        --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 --snapshot autoexp_v4broad1
+    python scripts/korbi/recall_surgery/broad_readout.py launch --steps 400 \\
+        --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
     # ... the same with --execute (on the MN5 login node; runs scripts/evals/launch.py per export)
     # the saves present instead of a step list:      --discover
     # the decay copies (dec_<arm>, their last save):  --dec --discover
-    python scripts/korbi/recall_surgery/broad_readout.py table --it 33200 --steps 200,400,800
-    python scripts/korbi/recall_surgery/broad_readout.py table --dirs <result dir name> ... --ref <name>
+    python scripts/korbi/recall_surgery/broad_readout.py table                     # +400 / +800 / +1500
+    python scripts/korbi/recall_surgery/broad_readout.py table --dec               # the decay copies' 24900
+    # against the first round / the main run (result dir names under --out):
+    python scripts/korbi/recall_surgery/broad_readout.py table --dirs ckdab_cgqa_fp8_23499 \\
+        v4b23k_cgqa_lr4_fp8_24800 v4b23k_dec_cgqa_lr4_fp8_24900 --ref ambitious_v4_2ph_hd256_fp8_23500
     python scripts/korbi/recall_surgery/broad_readout.py selftest
 
 One launch per export (spec config/evals/ckdab_fast_mn5.yaml with rows.suite_file =
@@ -24,8 +32,10 @@ Per arm:
   * kv8 / kv16: num_key_value_heads from the run's num_query_groups (export_ambitious).
   * post4_lr4 / kv8_post4_lr4: additive branches -> ckda_attn (export_ambitious.branch_add; the branch's KV
     groups must equal the stack's: 2 == 2 / 8 == 8).
-  * conv_lr4: crossfade branches export only past the hand-over (branch_fold: step - start >= hold + ramp,
-    complex_kda weighted 0); earlier saves are skipped with a note.
+  * conv_lr4 / cgqa_lr4: crossfade branches export only past the hand-over (branch_fold: step - start >= hold +
+    ramp, complex_kda weighted 0; cgqa_lr4: 23300 + 400 = 23700 = its first readout); earlier saves are skipped
+    with a note. cgqa_lr4's six branches at 9/25/41/58/74/90 then export as standard attention layers, as the
+    first round's cgqa (ckdab_cgqa_fp8_23499).
   * k6_L49: num_experts_per_tok from the run's top-k; the training-time Engram output scale (Megatron
     engram_output_scale(_layers)) is NOT in the HF export, so the eval sets the vLLM switches
     OELLM_ENGRAM_OUT_SCALE=0.0 / OELLM_ENGRAM_SCALE_LAYERS=49 (vLLM 63b5fcc8fe: the Engram block's layer_idx =
@@ -54,8 +64,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-ARMS = ("ctrl", "kv8_lr4", "post4_lr4", "kv8_post4_lr4", "conv_lr4", "kv16_lr8", "k6_L49")
-ROOT = "/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad"
+SESSIONS = {
+    "23k": {"arms": ("ctrl", "cgqa_lr4", "kv8_lr4", "kv8_post4_lr4"),
+            "root": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k",
+            "prefix": "v4b23k", "snapshot": "autoexp_v4b23k1", "it": 23300, "steps": "400,800,1500",
+            "dec_steps": "1600"},
+    "p2": {"arms": ("ctrl", "kv8_lr4", "post4_lr4", "kv8_post4_lr4", "conv_lr4", "kv16_lr8", "k6_L49"),
+           "root": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad",
+           "prefix": "v4broad", "snapshot": "autoexp_v4broad1", "it": None, "steps": None, "dec_steps": None},
+}
+ARMS = tuple(dict.fromkeys(a for s in SESSIONS.values() for a in s["arms"]))
+ROOT = SESSIONS["p2"]["root"]
+# crossfade arms: exportable only past the hand-over
+CROSSFADE_ARMS = ("conv_lr4", "cgqa_lr4")
 HYBRID_ENV = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019"   # $R
 OUT = "/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm"
 EXPORTS = "/gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports"
@@ -69,7 +90,7 @@ SUITES = {
 N_ROWS = {"all": 27, "fast": 3, "belebele": 24}
 # runtime env per arm (the eval-time switches a training change needs because the export does not carry it)
 ARM_ENV = {"k6_L49": {"OELLM_ENGRAM_OUT_SCALE": "0.0", "OELLM_ENGRAM_SCALE_LAYERS": "49"}}
-# crossfade hand-over of conv_lr4 when the run's config cannot be read (the suite's schedule)
+# crossfade hand-over of conv_lr4 / cgqa_lr4 when the run's config cannot be read (both suites' schedule)
 CONV_DEFAULT = {"hold": 0, "ramp": 400}
 
 FAST_ROWS = (("coqa_0", "coqa", ("em,none", "f1,none")),
@@ -88,9 +109,9 @@ def export_name(prefix: str, arm: str, step: int, dec: bool) -> str:
     return f"{prefix}_{run_name(arm, dec)}_fp8_{step}"
 
 
-# where a save can sit, in export_run.sh's search order: the arms write rolling saves (+200 / +600, latest only,
-# ckpt_rolling) and persistent ones (+400 / +800, ckpt); a rolling save is hard-linked into ckpt_eval before its
-# export (protect_rolling), so the next rolling save cannot delete it under the export
+# where a save can sit, in export_run.sh's search order: the arms write rolling saves (23k: +400 / +800 / +1200,
+# latest only, ckpt_rolling) and a persistent one at the exit (23k: +1500, ckpt); a rolling save is hard-linked into
+# ckpt_eval before its export (protect_rolling), so the next rolling save cannot delete it under the export
 SAVE_DIRS = ("ckpt_eval", "ckpt", "ckpt_rolling")
 
 
@@ -214,7 +235,7 @@ def cmd_launch(a) -> int:
                 if find_save(run_dir, step) is None:
                     print(f"# {tag} skipped: iter_{step:07d} not saved (yet) in {run_dir}/{{{','.join(SAVE_DIRS)}}}")
                     continue
-            if arm == "conv_lr4" and not a.dec:  # a decay copy starts past the hand-over
+            if arm in CROSSFADE_ARMS and not a.dec:  # a decay copy starts past the hand-over
                 ok, why = conv_exportable(run_dir, step, a.it)
                 if not ok:
                     print(f"# {tag} skipped: {why} -- branch_fold cannot export a mid-crossfade checkpoint")
@@ -387,9 +408,22 @@ def cmd_selftest(_a) -> int:
         assert export_name("v4broad", "ctrl", 34100, True) == "v4broad_dec_ctrl_fp8_34100"
         ns = argparse.Namespace(discover=False, it=33200, steps="200,400,800", abs_steps=None)
         assert resolve_steps(ns, tmp) == [33400, 33600, 34000]
-        # conv hand-over (no run config: the suite default, ramp 400)
+        # conv / cgqa hand-over (no run config: the suite default, ramp 400)
         assert conv_exportable(tmp, 33400, 33200)[0] is False
         assert conv_exportable(tmp, 33600, 33200)[0] is True
+        assert conv_exportable(tmp, 23699, 23300)[0] is False and conv_exportable(tmp, 23700, 23300)[0] is True
+        # the 23k session's defaults
+        ns = argparse.Namespace(session="23k", arms=None, it=None, steps=None, abs_steps=None, root=None,
+                                export_prefix=None, snapshot=None, discover=False)
+        apply_session(ns)
+        assert ns.arms == ["ctrl", "cgqa_lr4", "kv8_lr4", "kv8_post4_lr4"] and ns.it == 23300
+        assert resolve_steps(ns, tmp) == [23700, 24100, 24800]
+        assert export_name(ns.export_prefix, "cgqa_lr4", 24900, True) == "v4b23k_dec_cgqa_lr4_fp8_24900"
+        nd = argparse.Namespace(session="23k", arms=None, it=None, steps=None, abs_steps=None, root=None,
+                                export_prefix=None, snapshot=None, discover=False, dec=True)
+        apply_session(nd)
+        assert resolve_steps(nd, tmp) == [24900]
+        assert ns.root.endswith("/v4_broad23k")
         # launch command: k6_L49 carries the Engram switches, every arm its own export
         la = argparse.Namespace(export_prefix="v4broad", dec=False, root=ROOT, pool=POOL, priority=60,
                                 rounds="all", execute=False, plan=False)
@@ -405,24 +439,42 @@ def cmd_selftest(_a) -> int:
 # ---------------------------------------------------------------- main
 
 
+def apply_session(a) -> None:
+    """Fill the arguments left at None from the session preset (arms, root, export prefix, snapshot, start, steps)."""
+    ses = SESSIONS[a.session]
+    a.arms = [x for x in a.arms.split(",") if x] if isinstance(a.arms, str) else list(a.arms or ses["arms"])
+    a.root = a.root or ses["root"]
+    a.export_prefix = a.export_prefix or ses["prefix"]
+    if getattr(a, "snapshot", None) is None and hasattr(a, "snapshot"):
+        a.snapshot = ses["snapshot"]
+    if a.it is None:
+        a.it = ses["it"]
+    if not (a.steps or a.abs_steps or a.discover):
+        a.steps = ses["dec_steps"] if getattr(a, "dec", False) else ses["steps"]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p):
-        p.add_argument("--arms", default=",".join(ARMS), help="comma list (default: all seven)")
-        p.add_argument("--it", type=int, help="the start iteration IT (the main run's checkpoint)")
-        p.add_argument("--steps", help="comma list relative to --it, e.g. 200,400,800")
+        p.add_argument("--session", choices=sorted(SESSIONS), default="23k",
+                       help="23k (default: from 23300, 4 arms) or p2 (superseded phase-2 plan)")
+        p.add_argument("--arms", default=None, help="comma list (default: the session's arms)")
+        p.add_argument("--it", type=int, help="the start iteration IT (default: the session's; p2: required)")
+        p.add_argument("--steps", help="comma list relative to --it (default 23k: 400,800,1500 unless --abs-steps "
+                       "/ --discover)")
         p.add_argument("--abs-steps", help="comma list of absolute steps")
         p.add_argument("--discover", action="store_true", help="the saves present in <run>/ckpt* after --it")
         p.add_argument("--dec", action="store_true", help="the decay copies dec_<arm>")
-        p.add_argument("--root", default=ROOT)
-        p.add_argument("--export-prefix", default="v4broad")
+        p.add_argument("--root", default=None, help="default: the session's")
+        p.add_argument("--export-prefix", default=None, help="default: the session's (v4b23k / v4broad)")
 
     pl = sub.add_parser("launch", help="export + eval launches (DRY unless --execute)")
     common(pl)
     pl.add_argument("--pool", default=POOL)
-    pl.add_argument("--snapshot", default="autoexp_v4broad1", help="$R/<snapshot>: the synced code to launch from")
+    pl.add_argument("--snapshot", default=None, help="$R/<snapshot>: the synced code to launch from (default: "
+                    "the session's, autoexp_v4b23k1 / autoexp_v4broad1)")
     pl.add_argument("--priority", type=int, default=60, help="lm-eval units' pool_priority (export job: 50)")
     pl.add_argument("--rounds", choices=sorted(SUITES), default="all",
                     help="all = fast + belebele in one launch (default); fast / belebele alone (tagged)")
@@ -440,11 +492,12 @@ def main(argv=None) -> int:
 
     sub.add_parser("selftest", help="parser / naming checks on synthetic results")
     a = ap.parse_args(argv)
-    if hasattr(a, "arms"):
-        a.arms = [x for x in a.arms.split(",") if x]
-        bad = [x for x in a.arms if x not in ARMS]
+    if hasattr(a, "session"):
+        apply_session(a)
+        known = SESSIONS[a.session]["arms"]
+        bad = [x for x in a.arms if x not in known]
         if bad:
-            ap.error(f"unknown arms {bad} (known: {ARMS})")
+            ap.error(f"unknown arms {bad} for session {a.session} (known: {known})")
     return {"launch": cmd_launch, "table": cmd_table, "selftest": cmd_selftest}[a.cmd](a)
 
 
