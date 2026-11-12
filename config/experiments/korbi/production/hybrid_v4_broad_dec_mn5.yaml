@@ -1,0 +1,36 @@
+# @package _global_
+# Broad session decay copies (docs/recall_surgery_ambitious.md §10): an arm of hybrid_v4_broad_mn5 continued from its
+# last save (aux.it + aux.dec_from, default +800) for aux.steps = 100 more steps with the lr annealed to 0 by WSD's
+# 1-sqrt tail over those 100 steps (the dec100 recipe of hybrid_v4_lr_decay_mn5, verified on the big model: Megatron
+# 2c8a1a0f4 resets the per-group bounds the optimizer load restores). Same arm settings (KV groups, branches, top-k,
+# Engram scale, attention multiplier); the branch / Engram schedules keep the arm's start (aux.it); the next 100 x 128
+# samples of the main run's stream, identical for every dec copy (paired: dec_ctrl). Question: does an arm's gain
+# survive an anneal (the largest lever at 1.7B, §3.4)? The winner continues as the main run from its UNdecayed save.
+# Seeded from <arm>/ckpt/iter_<it + dec_from> by v4_broad_seed.sh --dec.
+#   cd $R/autoexp_v4broad1 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/hybrid_v4_broad_dec_mn5 --yes aux.it=$IT "aux.only=[ctrl,kv8_lr4]"
+defaults:
+  - hybrid_v4_broad_mn5
+  - _self_
+
+aux:
+  dec_from: ${aux.arm_steps}
+  start: "${oc.eval:'${aux.it} + ${aux.dec_from}'}"
+  steps: 100
+  dir: dec_${aux.arm}
+
+backend:
+  megatron:
+    lr_decay_style: WSD
+    lr_wsd_decay_style: minus_sqrt
+    lr_wsd_decay_iters: ${aux.steps}
+    lr_decay_iters: ${aux.end}
+    min_lr: 0.0
+    # the exit saves (aux.end)
+    save_interval: 1000000
+
+job:
+  metadata:
+    # after the arms they come from
+    pool_priority: 78
