@@ -1519,3 +1519,27 @@ decay alone do.
 
 SQuAD v2 moves for the first time (+2.6 F1, answerable +5.8 since 30000) in phase 2; CoQA flat (EM down, likely answer
 format); Winogrande holds ~67; belebele +3.3. Gap to the 32B now: CoQA -15.3, Winogrande -3.6, SQuAD v2 -13.2.
+
+### 9.4 1.7B decay checks complete (2026-11-12 12:50) -- revised recommendation
+
+| 1.7B arm vs paired control | s1000 CoQA / SQuAD F1 | s2000 | s3000 decayed |
+|---|---|---|---|
+| `hybrid_add_post_attn` (second attention step behind each attention layer) | +1.0 / +1.75 | +1.05 / -1.0 | -0.9 / +1.55 (HasAns +3.0) |
+| `hybrid_kv2` (32 -> 2 KV heads, reverse test) | -5.6 / +0.6 | -2.4 / +1.45 | -1.4 / -0.2 (Wino -1.3) |
+
+Rows (`ladder17b_evals/*`): dec_hybrid_ctrl_fresh_s3000 59.75 / 50.70 / 64.67 / 18.79 (HasAns 36.09);
+dec_hybrid_add_post_attn_s3000 59.27 / 51.13 / 63.77 / 20.34 (39.06); dec_hybrid_kv2_s3000 58.41 / 49.33 / 63.29 /
+18.63 (35.78); hybrid_add_post_attn_s2000 58.80 / 47.98 / 60.69 / 14.55; hybrid_kv2_s2000 57.93 / 44.83 / 57.25 / 17.01.
+
+* The second attention step: a small, noisy SQuAD effect (~+1.5 at two of three readouts), not growing; no CoQA effect.
+* The KV reduction's CoQA penalty mostly vanishes with training + decay (-5.6 -> -2.4 -> -1.4): at 1.7B, 2 KV heads per
+  attention layer are an adaptation cost, not a capacity ceiling -- this weakens the KV-duplication hypothesis.
+* At 1.7B no surgery buys more than ~1-2 points -- far from halving the gap (+7 CoQA, +8 SQuAD). The remaining argument
+  for a big-model test is that the big model differs (attention sharpening +3.2 vs +0.5 at 1.7B; the 32B on the same
+  data far ahead).
+
+**Revised recommendation:** do not spend the full 4-arm session (7.3 h main-run pause, ~7.6k GPU-h) now. Keep the main
+run going and evaluate the critical four every 2000 steps (SQuAD moved +2.6 at 32000). If the big-model question is
+still wanted: a minimal 2-arm session (`ctrl` + `kv8_post4_lr4`, 2 x 64 nodes) -- either a ~6 h pause or, with the
+reference-layout sampler, the main run continuing on the other 128 nodes (main-run decision). The larger levers are
+likely the end-of-training anneal (+5-6 CoQA F1 at 1.7B) and data.
