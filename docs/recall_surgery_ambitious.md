@@ -1295,7 +1295,8 @@ time + one protected readout copy: 7 x ~3.5 TB peak worst case, typically ~16 TB
 1. **Pick IT and stop the main run (T0).** Wait for the main run's rolling save at a multiple of 200 to complete
    (`successfully saved checkpoint from iteration <IT> to $M/ckpt_rolling`, tracker `ckpt_rolling/latest_
    checkpointed_iteration.txt` = IT; every ~56 min). Then `pool_ctl set stop_grace_s=900` (the 120 s default
-   kills a 256-node save) and `pool_ctl cancel <main run id>` (graceful SIGUSR2: its own final save IT_stop =
+   kills a 256-node save; the supervisor re-reads `pool.env` every poll) and `pool_ctl cancel <main run id>`
+   (graceful SIGUSR2: its own final save IT_stop =
    IT + a few steps, the main run's resume point if no arm wins; `preempt` would requeue it at priority 1000 onto
    the freed nodes). Restore `stop_grace_s=120` after it exited. IT % 200 == 0 puts the arms' rolling saves at
    +200 / +400 / +600.
@@ -1336,7 +1337,8 @@ time + one protected readout copy: 7 x ~3.5 TB peak worst case, typically ~16 TB
    --yes aux.it=$IT "aux.only=[ctrl,<a>,<b>]"` (100 steps ~ 30 min + start-up; same next 12,800 samples in all);
    readout `broad_readout.py launch --it $IT --dec --discover ...`.
 9. **Decide (§10.5) and resume the main run (T0 + ~8 h):** no winner -> re-enqueue the main run unchanged (its
-   enqueue command, `hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5` header, priority 1000) from its own IT_stop save. A
+   enqueue command in the `hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5` header, from its own snapshot
+   `autoexp_v4hd256p2rowcap`, priority 1000, `aux.node_check=off`) -- it resumes from its own IT_stop save. A
    winner -> its +800 save hard-linked into `$M/ckpt/iter_<IT+800>` + tracker, a main-run config with the winner's
    flags and the hand-back settings (§10.1), snapshot `autoexp_v4broad1`; first-step check: lr 8.5e-4 (x mult),
    `phase data position ... = (IT + 100 - 23691) x 1024`.
