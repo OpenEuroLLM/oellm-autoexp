@@ -108,7 +108,9 @@ backend:
     # soft); the rolling set is ~2 x 442 GB and rewritten every 125 iterations, so the 30-day
     # fscratch purge never reaches it while the run trains. Persistent checkpoints (every 2000)
     # stay on /e/scratch; a resume without rolling ones falls back to them.
-    non_persistent_global_ckpt_dir: /e/fscratch/e-ext-2025e02-108/oellm_32b_dense_b1/${backend.aux.variant}/checkpoints_rolling
+    # 2026-11-12 04:00-06:40: /e/fscratch degraded, the fscratch rolling dir wedged (rolling 425125 lost shards,
+    # saves took 913 s, then `ls` hung); a FRESH dir on /e/scratch (fast then) so the run can restart at all.
+    non_persistent_global_ckpt_dir: ${aux.run_root}/training_ckpts/checkpoints_rolling_20261112
 
 sweep:
   type: list
