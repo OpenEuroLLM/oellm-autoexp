@@ -1575,3 +1575,13 @@ likely the end-of-training anneal (+5-6 CoQA F1 at 1.7B) and data.
   launches (ctrl + kv8_lr4, then the branch pair); the main-run resume moves to ~00:00.
 * Disk: option A of the first-round cleanup (19 intermediate saves of bgqa / bgqar / cgqa / d / drop / e + 5 `_r`
   copies; each arm keeps 23499) freed ~19.5 TB (scratch 169.88 -> 150.40 TB).
+* 21:02 / 21:07 ctrl / kv8_lr4 exit at 24800 (persistent `ckpt/iter_0024800`); pair A decay copies seeded + launched
+  21:07 (dec_kv8_lr4 done 24900 by 21:35; dec_ctrl started 21:36 when nodes freed). 21:56 branch arms exit at 24800
+  -- their exit save is a rolling save (`ckpt_rolling/iter_0024800`), which `v4_broad_seed.sh --dec` did not look
+  at: fall-back added (703de5c1), seeded by hand from the committed script, pair B launched 21:59.
+  `session_driver2.sh` waited for both copies of a pair RUNNING at once (never true for pair A): now RUNNING or
+  COMPLETED. 21:59-22:26: +1500 readouts of all four arms, decayed readouts, main-run resume enqueued 22:05 (pool run
+  p264.0921, priority 1000). The pool does not hold freed nodes for a queued larger run, so the main run starts once
+  the session's readouts drain (~1-1.5 h).
+* Fastest-first rows (CoQA + Winogrande only, `ckdab_cw`, alias exports `<export>_cw`, priority 70):
+  `fastfirst.sh`; a fast row takes ~15-25 min after the export instead of 1-2 h for the full readout.
