@@ -1507,3 +1507,15 @@ decay alone do.
   loss (8x larger batch). The arm length of 1500 is not a multiple of 8. That is irrelevant here, since no hand-back
   of weights is planned, but a gbs-8192 continuation from +1500 would assert (consumed % 8192 != 0); use +1496 /
   +1504 if that is ever wanted.
+
+### 9.3 Main run at 32000 (phase 2, 64k; 2026-11-12)
+
+| main run | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) | belebele (24) |
+|---|---:|---:|---:|---:|
+| 23500 | 50.42 / 66.13 | 62.51 | 26.89 (52.94) | 82.90 |
+| 30000 | 50.75 / 67.05 | 67.32 | 27.11 (53.19) | -- |
+| **32000** | 47.40 / 66.43 | 66.93 | **29.73 (59.03)** | **86.15 (+3.25, 24 / 24 up)** |
+| OELLM 32B b1consTW_300k | 69.12 / 81.72 | 70.56 | 42.91 (85.95) | -- |
+
+SQuAD v2 moves for the first time (+2.6 F1, answerable +5.8 since 30000) in phase 2; CoQA flat (EM down, likely answer
+format); Winogrande holds ~67; belebele +3.3. Gap to the 32B now: CoQA -15.3, Winogrande -3.6, SQuAD v2 -13.2.
