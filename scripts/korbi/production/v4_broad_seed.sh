@@ -6,6 +6,7 @@
 #   v4_broad_seed.sh <IT> [arm ...]           arms default: the four of hybrid_v4_broad23k_mn5; start = iteration IT
 #   v4_broad_seed.sh --dec <IT> [arm ...]     decay copies dec_<arm>, from <root>/<arm>/ckpt/iter_<IT + DEC_FROM>
 #                                             (DEC_FROM default 1500 = hybrid_v4_broad23k_mn5's steps)
+#                                             (else <root>/<arm>/ckpt_rolling/iter_<IT + DEC_FROM>)
 #   DRY=1 ...                                 print only
 #
 # Defaults = the 23300 session (hybrid_v4_broad23k_mn5; user 2026-11-12):
@@ -70,6 +71,10 @@ for arm in $ARMS; do
   fi
   name=$(printf 'iter_%07d' "$step")
   src=$src_ckpt/$name
+  # relaunched branch arms (§10.6) save their exit step as a rolling save: <arm>/ckpt_rolling/iter_<step>
+  if [ $DEC = 1 ] && [ ! -f "$src/.metadata" ] && [ -f "$ROOT/$arm/ckpt_rolling/$name/.metadata" ]; then
+    src=$ROOT/$arm/ckpt_rolling/$name
+  fi
   if [ ! -f "$src/.metadata" ]; then
     echo "[seed] $arm: no checkpoint $src/.metadata -- skipped"; rc=1; continue
   fi
