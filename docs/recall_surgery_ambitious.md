@@ -1564,3 +1564,14 @@ likely the end-of-training anneal (+5-6 CoQA F1 at 1.7B) and data.
   every 1k step from 36000 to 236000 plus 35603 (773a89f0); the MN5 marks loop restarted from `autoexp_marks1`
   (pid 3439838) and pinned 35603. Disk: ~1.16 TB per kept step, ~6 TB/day; scratch 169.5 / 195.3 TB.
 * Side readout: main 35603 (fast + belebele, 2 workers on the excluded nodes).
+* **17:02 / 17:06: both branch arms crashed at iteration 23500** (`cgqa_lr4` p264.0753, `kv8_post4_lr4` p264.0755):
+  "CUDA error: misaligned address" on many ranks, rc 137; ctrl / kv8_lr4 (same settings, no ckda_branch modules)
+  passed 23500. 23500 is a multiple of `arch_metrics_interval` 500; validation is off in all arms (eval_interval
+  1e6). The first-round branch arms exited at 23500, so the branch layers' arch-metrics pass had never run -> the
+  arch-metrics path on ckda_branch layers is the suspect (to fix in Megatron after the session). The pool's restarts
+  (from the 23300 seeds; no save before 23700) would have crashed again: cancelled and relaunched both in one launch
+  (p264.0761 / 0762, 17:26) with `arch_metrics_interval 1e8`, rolling saves every 200 and `save_extra_steps [23490]`.
+  They now run ~1.3 h behind ctrl / kv8_lr4; `session_driver2.sh` launches readouts per arm and the decay copies in two
+  launches (ctrl + kv8_lr4, then the branch pair); the main-run resume moves to ~00:00.
+* Disk: option A of the first-round cleanup (19 intermediate saves of bgqa / bgqar / cgqa / d / drop / e + 5 `_r`
+  copies; each arm keeps 23499) freed ~19.5 TB (scratch 169.88 -> 150.40 TB).
