@@ -141,3 +141,11 @@ x_ckdabtest__drop	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/drop
 x_ckdabtest__d_xf	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_xf
 x_ckdabtest__d_mm	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_mm
 x_ckdabtest__d_cal	/gpfs/scratch/ehpc533/users/korbip/tmp/ckdabranch/d_cal
+x_v4b23k__ctrl	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/ctrl
+x_v4b23k__dec_ctrl	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/dec_ctrl
+x_v4b23k__cgqa_lr4	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/cgqa_lr4
+x_v4b23k__dec_cgqa_lr4	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/dec_cgqa_lr4
+x_v4b23k__kv8_lr4	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/kv8_lr4
+x_v4b23k__dec_kv8_lr4	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/dec_kv8_lr4
+x_v4b23k__kv8_post4_lr4	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/kv8_post4_lr4
+x_v4b23k__dec_kv8_post4_lr4	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k/dec_kv8_post4_lr4
