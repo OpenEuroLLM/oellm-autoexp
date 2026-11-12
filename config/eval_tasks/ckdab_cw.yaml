@@ -1,0 +1,6 @@
+# ckda_branch "fastest first" round (user 2026-11-12): CoQA + Winogrande only -- the quick rows of ckdab_fast.yaml,
+# for an early read of the broad-session arms while SQuAD v2 / belebele run in the full readout.
+count: 2
+tasks:
+- {name: vllm/coqa/0, half: vllm, row: 113, task: coqa, n_shot: 0, suite: lm-eval-harness}
+- {name: vllm/winogrande/0, half: vllm, row: 181, task: winogrande, n_shot: 0, suite: lm-eval-harness}
