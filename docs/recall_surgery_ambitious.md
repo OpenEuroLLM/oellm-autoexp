@@ -1146,3 +1146,238 @@ dec_hybrid_ctrl_fresh); 1.7B reverse KV test (MHA -> 2 KV groups, §3.7 when don
 verified exact at insertion; first-step loss checks in §4.4). The 1.7B evidence (reverse KV test, post-attention
 SQuAD gain) points at `kv8_lr4` and `post4_lr4` as the two candidates most likely to move CoQA / SQuAD within the
 main run's update budget.
+
+## 10. Broad session runbook (prepared 2026-11-12; NOT launched -- needs the user's go)
+
+One session on the main run's own host (`mn5_pool_p264` host004, 264 nodes) instead of the 100-step 32-node arms of
+§4.4: the main run is pre-empted for ~8-10 h, **seven arms x 32 nodes** (224 nodes) train side by side from its
+**latest** checkpoint at **1/8 of its token batch** (8x more updates for the same tokens, 800 steps = the data of
+100 main-run steps), ~32 nodes stay free for surgeries, exactness checks, exports / evals and node replacement.
+Every arm starts from the main run's state, so a winner can continue as the main run.
+
+| arm | change (all: lr 3.0e-4, gbs 128 x 64k, the main run's batches) | start checkpoint |
+|---|---|---|
+| `ctrl` | nothing -- the paired baseline | main `ckpt_eval/iter_<IT>` |
+| `kv8_lr4` | 8 KV groups (exact duplication, §4.3) + `attention_lr_mult 4` | `v4_broad/src/kv8` |
+| `post4_lr4` | additive attention copies on CKDA 19/35/52/68 (from 17/33/50/66, gamma 0, §4.4) + x4 | `src/post4` |
+| `kv8_post4_lr4` | both; the four copies have 8 KV groups too (kv8 first, then the copies) | `src/kv8post4` |
+| `conv_lr4` | CKDA 74 and 90 -> attention: crossfade from copies of attention 66 / 82 (alpha 1 -> 0 over steps 1-400, then pure attention) + x4 | `src/conv` |
+| `kv16_lr8` | 16 KV groups (MHA) + `attention_lr_mult 8` | `src/kv16` |
+| `k6_L49` | `moe_router_topk 6` + the deep Engram (layer 49) off over 50 steps (`engram_output_scale 0`, `engram_output_scale_layers [49]`) | main `ckpt_eval/iter_<IT>` |
+
+`conv_lr4` blocks: 74 and 90 are the 3:1 midpoints of the last two attention periods (66-82, 82-98), so the late
+network becomes attention at 66 / 74 / 82 / 90 (q35c's 25 % there) while every CKDA layer before 66 (the copy path
+17-66 and its recurrent memory, §3.5b) stays. Two, not three: the ladder's Winogrande falls with the attention
+fraction (§3) and the `drop` control shows the stack absorbs ~3 removed CKDA layers. 74 copies attention 66 (a copy
+layer: CoQA -12 when zeroed), 90 copies 82 (the only attention within 8 layers). Schedule: the crossfade over the
+first half (400 updates = 3.4B tokens, 4x the update count of the earlier 99-199-step replacements at gbs 8192),
+then 400 updates at the final architecture before the +800 readout, so +800 measures the converted model and not the
+transition; +400 is the first exportable save (`branch_fold` needs alpha 0: no +200 readout for this arm).
+
+### 10.1 Small-batch resume from the phase-2 checkpoint (task 1 findings)
+
+**The main run is in phase 2, not phase 1.** Live config `config-mn5-pool-p264.0737.yaml`: `seq_length 65536`,
+`global_batch_size 1024`, `micro_batch_size 1`, `--data-sampler-reference-dp-size 512` / `-micro-batch-size 1`,
+256 nodes, 16.8 s/step, `consumed samples` = 23,691 x 8192 + (it - 23,691) x 1024 (203,535,360 at 32,928). "gbs 1024
+instead of 8192" (8k sequences) is therefore **gbs 128 of 64k sequences** = 8.4M tokens per update. At 32 nodes
+(dp 128, EP 4 in-node) that is **one 64k micro-batch per GPU and no gradient accumulation** (not 4 x mbs 2), i.e.
+the main run's per-GPU work per step: est. **18 s/step** (main 16.8 s at 256 nodes; bgqa at 64 nodes 13.5 s per
+64k-token micro-batch), 800 steps ~ 4 h, ~4.7 h per arm with start-up (dry-run plan: 597 GPU-h per arm).
+
+What a gbs-128 resume did before Megatron fe6615493 (file:line at fe6615493 unless noted):
+
+1. **Crash.** `MegatronPretrainingReferenceLayoutSampler` asserted `global_batch_size % (ref_dp x ref_mbs) == 0`:
+   128 % 512 != 0 (`data_samplers.py` l. 495 before; now l. 507-512 on the reference batch).
+2. **Silent replay.** The data position inside a variable-batch phase was `(iteration - 23691) x global_batch_size`
+   (`training.py`, old `build_train_valid_test_data_loaders`; now `consumed_train_samples_in_phase`, l. 5651): at
+   gbs 128 that is 1/8 of the way into phase 2, samples the model trained on ~8k steps earlier.
+3. **Another dataset.** The phase's training dataset was sized `(train_iters - 23691) x global_batch_size`
+   (`get_train_valid_test_num_samples`, l. 5599 / 5629): a different index (a cold 14-25 min build) with a
+   different sample mapping.
+4. Scheduler: fine. `rescale_scheduler_for_phase` (`checkpointing.py` l. 145, called l. 3204) sets
+   `num_steps = iteration x gbs`; all lengths are in samples of the current gbs (`training.py` l. 2290-2298), so a
+   constant lr is unaffected and the dec copies' WSD tail runs in arm iterations.
+5. No checkpoint-args assertion: the `global_batch_size` comparison is skipped under the variable-batch flag
+   (`checkpointing.py` l. 195-196); 128 / (1 x 128) = 1 micro-batch, no rampup.
+6. **lr: the override is forced, so the new lr takes effect.** `--phase-transition-variable-batch` sets
+   `override_opt_param_scheduler = True` (`arguments.py` l. 883). With 2c8a1a0f4 (`checkpointing.py` l. 2615-2635)
+   the per-group `max_lr` / `min_lr` the optimizer load restores (the checkpoint's 8.5e-4 = min_lr) are reset to
+   the arguments by position -- without it the arms would have silently kept 8.5e-4 (the dec100 no-op of §3.4).
+   31fcf98e0's `reconcile_attention_lr_group_meta` (`distrib_optimizer.py` l. 92) gives the attention parameters
+   their x4 / x8 groups from a x1 checkpoint and takes them back on the hand-back (4 -> 1).
+7. Validation: the fixed sets are evaluated completely, independent of gbs (`fixed_valid.py`); a full pass takes
+   3.6 min at 256 nodes, ~25-30 min at 32, so the arms run no in-run validation (`eval_interval 1000000`). The
+   paired loss readout is the training loss itself: every arm trains on the same batches.
+
+**Fix: Megatron fe6615493** (pushed to `oellm/v0.19-hybrid`; mirrors regenerated, autoexp ab99865b):
+* `--data-sampler-reference-global-batch-size R`: the sampler serves the reference run's stream (reference steps
+  of R samples, each in its (reference rank, micro-batch, position) order, concatenated); a step of another gbs
+  takes the next gbs samples. 8 arm steps = one main-run step, the same samples in the same order. The training
+  dataset is sized at R (the main run's index, warm cache). At R = gbs nothing changes.
+* `--phase-start-consumed-samples N`: the position inside the phase = consumed samples - N (194,076,672 =
+  23,691 x 8192), right before and after a batch change; required when R != gbs inside a phase.
+* Unit tests: `tests/unit_tests/test_phase_small_batch.py` (main-run position unchanged; arm position = the main
+  run's; hand-back exact; dataset size = the main run's), `test_reference_layout_sampler.py` (k small steps = one
+  reference step in order, across epoch ends; resume mid reference step; hand-back), 58 neighbouring tests pass.
+* Tiny GPT, locally (Megatron-FSDP, `fsdp_dtensor`, `muown_classical`, GQA + qk norm, cyclic reference sampler 4 x 1,
+  phase transition at 4 from gbs 16 to 8, sample dumps via `MEGATRON_SAMPLE_DUMP_DIR`):
+
+  | run | result |
+  |---|---|
+  | main continuation, gbs 8, 10 -> 13 | reference samples / losses |
+  | arm, gbs 2, lr / 2, `attention_lr_mult 4`, 10 -> 18 | "scheduler steps 80 -> 20"; "per-group lr bounds reset (3 of 5 groups differed)"; lr 5e-4, attention groups 2e-3; "phase data position from consumed samples: 112 - 64 = 48 (iteration-based: 12)"; train dataset 288 samples = the main run's; its 8 steps' samples = **exactly** the main run's steps 11-12, in order |
+  | hand-back, gbs 8 from the arm's 18 | position 64; lr 1e-3, attention x4 -> x1 reconciled; its samples = **exactly** the main run's step 13 |
+  | arm without the flags | `AssertionError: reference global batch 2 is not a multiple of the reference layout 4 x 1` |
+
+**lr = 8.5e-4 x sqrt(128 / 1024) = 3.0e-4.** For normalized updates (MuOwn's orthogonalized directions, Adam), below
+the critical batch size, the per-step update is ~lr in size and its signal part scales with sqrt(B): per token, drift
+~ lr / sqrt(B) and noise variance ~ lr^2 / B, both kept by lr ~ sqrt(B) (the square-root rule of Adam's SDE). The
+alternatives: the same 8.5e-4 is an ~8x higher noise temperature (a loss jump on every arm and a hand-back to a
+noisier state); linear scaling (1.06e-4) moves 8x less per token than the main run, defeating the purpose. 67M
+tokens per step (the main run) is near or above the critical batch at this loss; 8.4M is below it, where the
+square-root rule holds. Attention multipliers on top: x4 = 1.2e-3, x8 = 2.4e-3 (gamma of the branches included).
+Not rescaled: momenta / betas are per step (Adam betas are not re-applied on load for muown_classical's groups,
+§3.4), so their horizon in tokens is 8x shorter. The expert-bias update rate per step is scaled by gbs / 1024
+(1.25e-4) to keep the balancing speed per token. muown_classical has no step-dependent internal decay (the angular
+u-decay is dropped in `_muown_classical_config_to_kwargs`); the expert spectral cap (15, ramp finished) and the
+Engram row-norm cap (7, ramp finished) are at their end values.
+
+**Hand-back (a winner continues as the main run):** from the arm's persistent +800 save at gbs 1024 with
+`phase_start_consumed_samples: 194076672` (+ `data_sampler_reference_global_batch_size: 1024` = gbs, harmless):
+the position is then (IT + 100 - 23,691) x 1024, the next sample the main run never saw. The iteration counter says
+IT + 800 (100 main-run steps of data): `train_iters` +700 keeps the token budget. Without the flag the main run skips
+700 steps of data (no repetition). Plus the winner's architecture flags (KV groups / branch settings with
+`ckda_branch_start_iteration IT` / top-k + Engram scale) and `attention_lr_mult` x1 or kept.
+
+**Code base.** The arms run on autoexp `feat/hybrid-v0.19` + Megatron `oellm/v0.19-hybrid` >= fe6615493. The main
+run's snapshot `autoexp_v4hd256p2rowcap` is Megatron 3d8071635 + file patches from `oellm/v4main-diag`. Every
+functional v4main-diag commit is in v0.19-hybrid (patch ids: engram clip grad d2081946c = 238343442, row-norm cap
+7c67b1193 / 78f818ef8 = 3447acc90 / f60f5a53e, dataset fix e99ac1e01, diagnostics fb06ef75b / 66dedc96f / 6f907ac31 /
+d0d707a1e / 18facc5e5, load timing fee714154) except 669510a48 (`.metadata` read once per process: load time only,
+~2 x 11 s per load). The rendered ctrl args differ from the live main run only in the intended keys (gbs, lr,
+the two data flags, bias rate, load / save dirs, save / eval intervals, exit, inert branch / Engram schedule keys).
+`ctrl` is the reference of every arm, not the main run.
+
+### 10.2 Files (all committed, nothing enqueued)
+
+| file | what |
+|---|---|
+| `config/experiments/korbi/production/hybrid_v4_broad_mn5.yaml` | the 7 arms; `aux.it` mandatory; `aux.nodes` 32 (64 = fallback: gbs 256, 400 steps, lr 4.25e-4); priority 80; own dirs `production/v4_broad/<arm>` with load = save |
+| `config/experiments/korbi/production/hybrid_v4_broad_dec_mn5.yaml` | decay copies `dec_<arm>`: from `<arm>/ckpt/iter_<IT+800>`, 100 steps, WSD 1-sqrt to 0, priority 78 |
+| `scripts/korbi/production/v4_broad_seed.sh` | seeds `<arm>/ckpt/iter_<IT>` (+ tracker) by hard links from its source (`--dec`: `dec_<arm>` from `<arm>`'s +800); refuses seeded / unfinished targets |
+| `config/experiments/korbi/production/v4_broad_surgery_mn5.yaml`, `scripts/korbi/production/v4_broad_surgery.sh` | the five surgeries (1 node each, priority 90; kv8post4 waits for kv8); tracker only after `verify` |
+| `config/experiments/korbi/production/fixedvalid_eval_v4_broad_mn5.yaml` | eval-only exactness checks (8 nodes, priority 60): `src` vs `kv8` / `kv16` / `post4` / `kv8post4` / `conv` token by token |
+| `scripts/korbi/recall_surgery/broad_readout.py` | `launch` (export + ckdab_fast + belebele per arm x step, DRY unless `--execute`; protects rolling saves by hard links), `table` (CoQA EM / F1, Winogrande, SQuAD v2 F1 / HasAns / NoAns, belebele diff vs ctrl) |
+| `config/eval_tasks/ckdab_fast_belebele.yaml` | the 3 fast rows + 24 belebele rows in one suite (one export job per export) |
+
+Saves (disk: `gpfs_scratch` 37 TB free of 206 TB on 11-12 03:00, a full save 1.16 TB): rolling every 200 steps
+(latest only, `<arm>/ckpt_rolling`), persistent only at the exit (+800, `save_extra_steps`). Per arm <= 2 saves at a
+time + one protected readout copy: 7 x ~3.5 TB peak worst case, typically ~16 TB; decay copies +1.16 TB each.
+
+### 10.3 Pre-conditions
+
+* The user's explicit go: it stops the main run (pool runs only; no SLURM job is created, changed, requeued or
+  cancelled -- host004 stays as it is). Every pool action below is part of that go.
+* A fresh snapshot `autoexp_v4broad1` (`./sync_to_marenostrum.sh v4broad1`) at autoexp >= this commit and Megatron
+  fe6615493; never re-synced while anything of the session is queued (snapshot resync race).
+* host004 healthy, with `as05r2b29 as07r3b17 as07r5b02` excluded and **`as07r5b06`** (slow filesystem / container
+  start, §3.7) excluded too: `pool_ctl exclude ...` (pool-local list, not SLURM). >= 256 usable nodes.
+* Disk: >= 25 TB free on `gpfs_scratch` (`df -h /gpfs/scratch`).
+* `broad_readout.py launch --snapshot autoexp_v4broad1 --pool .../mn5_pool_p264` printed for one arm (dry) and checked.
+
+### 10.4 Order
+
+`R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019`, `P=/gpfs/scratch/ehpc533/hybrid_nucleus/pools`,
+`M=/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256`,
+`B=/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad`, `L="scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py
+--no-monitor --monitor-state-dir $R/pool_state --pool $P/mn5_pool_p264"`, all from `cd $R/autoexp_v4broad1`.
+
+1. **Pick IT and stop the main run (T0).** Wait for the main run's rolling save at a multiple of 200 to complete
+   (`successfully saved checkpoint from iteration <IT> to $M/ckpt_rolling`, tracker `ckpt_rolling/latest_
+   checkpointed_iteration.txt` = IT; every ~56 min). Then `pool_ctl set stop_grace_s=900` (the 120 s default
+   kills a 256-node save) and `pool_ctl cancel <main run id>` (graceful SIGUSR2: its own final save IT_stop =
+   IT + a few steps, the main run's resume point if no arm wins; `preempt` would requeue it at priority 1000 onto
+   the freed nodes). Restore `stop_grace_s=120` after it exited. IT % 200 == 0 puts the arms' rolling saves at
+   +200 / +400 / +600.
+2. **Freeze the start:** `cp -al $M/ckpt_rolling/iter_<IT> $M/ckpt_eval/iter_<IT>` (hard links, as the equal-token
+   marks); check `.metadata` and 1025 files.
+3. **Surgeries + seeding (T0 + 5 min):** `$L --config-name experiments/korbi/production/v4_broad_surgery_mn5 --yes
+   aux.it=$IT` (5 x 1 node, ~15-25 min each in parallel, kv8post4 ~10-15 min after kv8). Seed what needs no surgery
+   at once: `scripts/korbi/production/v4_broad_seed.sh $IT ctrl k6_L49`; the surgery arms once their trackers
+   exist: `until scripts/korbi/production/v4_broad_seed.sh $IT; do sleep 120; done` on the login node (idempotent;
+   seeded arms are left alone).
+4. **Launch all seven arms in ONE launch (T0 + 5 min):** `$L --config-name experiments/korbi/production/hybrid_v4_
+   broad_mn5 --yes aux.it=$IT`. Each waits for its own tracker (the seed), so ctrl / k6_L49 start at once (~40 min
+   start-up) and the surgery arms ~25-40 min later. Never relaunch single arms of the suite staggered (task_0.sh
+   race): wait until a job's log shows its ` save ...` path before any relaunch.
+5. **Optional exactness checks (24 nodes, the spare ones):** `$L --config-name experiments/korbi/production/
+   fixedvalid_eval_v4_broad_mn5 --yes aux.it=$IT "aux.only=[src,kv8post4,conv]"` + `duplicate_kv_groups.py
+   compare-dumps .../fixedvalid_eval/v4_broad_<IT>/src/token_dump .../<arm>/token_dump`. The free check is step 6.
+6. **First steps (T0 + ~45-80 min), per arm:**
+   * memory: `mem usages` and `max allocated` at IT+1 / IT+2 (the probe of the 32-node layout, §10.6);
+   * `phase data position from consumed samples: ... = <(IT - 23691) x 1024>`; `per-group lr bounds reset to the
+     arguments (k of N groups differed)`; `learning rate: 3.005000E-04`; `global batch size: 128`;
+   * **the same batch in every arm:** the IT+1 loss of `kv8_lr4`, `post4_lr4`, `kv8_post4_lr4`, `conv_lr4` and
+     `kv16_lr8` must equal ctrl's IT+1 loss to bf16 noise (|d| <~ 1e-3; kv8 at 23400: 2e-4; the lr does not enter
+     the first forward); `k6_L49` differs by design (top-k 6; Engram scale 0.98 at IT+1);
+   * `[ckda_branch] layer N calibrated` once per branch layer (post4 / kv8_post4: 19 / 35 / 52 / 68, conv: 74 / 90).
+   * **On a GPU OOM at step 1:** `pool_ctl cancel` the seven arms (the pool would retry them) and relaunch the
+     fallback, one launch: `... --yes aux.it=$IT aux.nodes=64 "aux.only=[ctrl,kv8_lr4,post4_lr4,k6_L49]"` (4 x 64
+     = 256 nodes, gbs 256, 400 steps, lr 4.25e-4, rolling saves +100 / +200 / +300, readouts +200 / +400); the
+     seeded directories hold nothing newer than IT, so they are reused as they are.
+7. **Readouts at +200 / +400 / +800 (each ~1-1.5 h after its save, 1-node units on the spare nodes):**
+   `python scripts/korbi/recall_surgery/broad_readout.py launch --it $IT --steps 200 --snapshot autoexp_v4broad1
+   --pool $P/mn5_pool_p264 --skip-existing --execute` (then 400, 800; `conv_lr4` from +400). It hard-links a rolling
+   save into `<arm>/ckpt_eval` first; `rm -r <arm>/ckpt_eval/iter_<N>` once its export is `.downstream_ready`.
+   Table: `broad_readout.py table --it $IT --steps 200,400,800`. The training loss (identical batches) per
+   200-step window vs ctrl is read from the logs at the same time.
+8. **Decay copies (T0 + ~5.5 h):** of the best 2-3 arms by the +400 / +800 readouts plus `ctrl`:
+   `v4_broad_seed.sh --dec $IT ctrl <a> <b>` then `$L --config-name experiments/korbi/production/hybrid_v4_broad_dec_mn5
+   --yes aux.it=$IT "aux.only=[ctrl,<a>,<b>]"` (100 steps ~ 30 min + start-up; same next 12,800 samples in all);
+   readout `broad_readout.py launch --it $IT --dec --discover ...`.
+9. **Decide (§10.5) and resume the main run (T0 + ~8 h):** no winner -> re-enqueue the main run unchanged (its
+   enqueue command, `hybrid_ambitious_v4_2ph_hd256_p2r25k_mn5` header, priority 1000) from its own IT_stop save. A
+   winner -> its +800 save hard-linked into `$M/ckpt/iter_<IT+800>` + tracker, a main-run config with the winner's
+   flags and the hand-back settings (§10.1), snapshot `autoexp_v4broad1`; first-step check: lr 8.5e-4 (x mult),
+   `phase data position ... = (IT + 100 - 23691) x 1024`.
+
+### 10.5 Decision rule
+
+Per arm at +800 vs ctrl at +800 (same harness, same step; noise of one readout: CoQA F1 +-1.5, Winogrande +-1.4,
+SQuAD v2 F1 +-1):
+* **gain**: CoQA F1 >= +2.0, or SQuAD v2 F1 >= +1.5 (HasAns F1 moving with it), or Winogrande >= +2.5 -- with the same
+  sign at +400;
+* **no cost**: belebele diff >= -1.0 (n = 24), the other two rows not below -1.5, the training loss over steps 601-800
+  (identical batches) not above ctrl's by > 0.005;
+* **survives the anneal**: its dec copy keeps >= half of the gain over `dec_ctrl` on the gaining row;
+* several winners: the largest gain; within noise of each other, the smallest change (k6_L49 < kv8 < post4 <
+  kv8_post4 < conv < kv16), and `kv8_post4_lr4` vs its two parts says whether they add.
+None qualifies -> the main run resumes unchanged; the session still gives the paired small-batch ctrl-vs-arm data
+for the next decision.
+
+### 10.6 Budget, wall-clock, risks
+
+* **Nodes:** 264 - 4 flagged = 260; arms 7 x 32 = 224; surgeries 5 x 1 (first ~30 min), exactness checks 3 x 8
+  (optional, first ~1.5 h), then 1-node export / eval units and node replacement on the remaining ~30.
+* **Wall-clock (T0 = main run stopped):** surgery arms seeded T0+30 min; all arms training by ~T0+80 min; +200 at
+  ~T0+2.2 h, +400 ~T0+3.2 h, +800 ~T0+5.3 h; decay copies ~T0+5.5-6.7 h; last readouts ~T0+8 h; main run back
+  ~T0+8-8.5 h (~1,750 main-run steps, ~115B tokens, not trained).
+* **GPU-h:** arms ~4.2k (dry-run plan 4,181 at 18 s/step), decay copies 3-4 x ~150, surgeries + checks ~0.2k,
+  evals ~0.3k: ~5.2k GPU-h of the main run's allocation.
+* **Memory at 32 nodes (main risk):** 64k tokens per micro-batch was never run at 32 nodes. Persistent state 18.6 GB at
+  32n (8.3 at 256n, 13.2 at 64n) + the main run's 64k transient 37.7 GB = ~56 GB if they add up, above the
+  `per_process_memory_fraction 0.80` cap (52.4 GB); NCCL / MoonEP sit outside it. No free knob (recompute_num_layers 1
+  doubles the pinned host copies of the mHC-4 chunk inputs under RECOMPUTE_OFFLOAD: host OOM). Hence the step-1 probe
+  and the 64-node fallback (4 arms; 13.2 + 37.7 = ~51 GB, as bgqa at 64n phase 1: 46.5 GB max allocated).
+* **Bad / slow nodes:** `as05r2b29 as07r3b17 as07r5b02` excluded, `as07r5b06` (> 40 min to copy ~1700 small files)
+  excluded before the launch; `node_check light` before every (re)start; a run that loses a node restarts from its
+  own latest save (load = save), never from IT.
+* **Pool backfill:** 1-node eval units (priority 60) can take nodes a crashed 32-node arm frees, and the arm's restart
+  then waits (pool big-run starvation). Launch readouts in rounds, not all at once; hold them while an arm restarts.
+* **Exports:** `conv_lr4` has no +200 readout (mid-crossfade); `k6_L49` needs `OELLM_ENGRAM_OUT_SCALE=0`,
+  `OELLM_ENGRAM_SCALE_LAYERS=49` at eval (the HF export does not carry the Engram scale; `broad_readout.py` sets it);
+  kv / branch exports need nothing new (branch groups = stack groups in `kv8_post4`).
+* **Surgeries on a phase-2 checkpoint:** the key layout could not be read on MN5 (no singularity on the login node); it
+  is the same architecture and optimizer as 23400, and `apply` fails loudly on a missing key.
+* **Comparability:** an arm's training loss compares with ctrl's (same batches), not with the main run's per-step loss
+  (8x larger batch).
