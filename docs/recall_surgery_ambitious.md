@@ -1804,3 +1804,20 @@ and the recipe is the main run's. Speed: 27.4-28.0 s/step at 128 nodes (main run
 
 So attention layers trained early should fit a late model as long as its CKDA stack stays, which supports a later
 post-merge of a31's new attention layers into the main run.
+
+### 13.x a31 first steps (lead, 2026-11-13 07:02)
+
+ctrl's pool run was cancelled by the lead at 06:43, after step 1012, so a31 got the nodes. ctrl had already
+verified the widening and data position (1001-1005 = main run within 9e-5); the main run's own 1000-2000 is the
+near-equivalent 7:1 baseline, and ctrl can be re-enqueued if a31 shows a gain. a31 started 06:44 (p264.1077,
+128 nodes, 27.5 s/step).
+
+Loss on identical batches, a31 (3:1, 6 random attention layers) vs the main run (7:1):
+
+| step | 1001 | 1002 | 1003 | 1004 | 1005 | 1006 |
+|---|---|---|---|---|---|---|
+| a31 | 1.5669 | 1.5619 | 1.5682 | 1.5387 | 1.5602 | 1.5661 |
+| main | 1.5480 | 1.5444 | 1.5579 | 1.5288 | 1.5505 | 1.5576 |
+| gap | +0.019 | +0.017 | +0.010 | +0.010 | +0.010 | +0.009 |
+
+The hard random insertion at step 1000 costs only +0.02, and about half of it is gone after 5 steps.
