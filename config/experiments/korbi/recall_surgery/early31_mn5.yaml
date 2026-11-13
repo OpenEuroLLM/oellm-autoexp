@@ -81,7 +81,7 @@ sweep:
           job.start_condition:
             class_name: FileContentCondition
             path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/early31/ctrl/ckpt/latest_checkpointed_iteration.txt
-            pattern: "^\\s*1000\\s*$"
+            pattern: "^\\s*[0-9]+\\s*$"  # any tracked step: a relaunch resumes from the latest save
             mode: regex
             persistent_pass: true
         - aux.arm: a31
@@ -94,6 +94,6 @@ sweep:
           job.start_condition:
             class_name: FileContentCondition
             path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/early31/a31/ckpt/latest_checkpointed_iteration.txt
-            pattern: "^\\s*1000\\s*$"
+            pattern: "^\\s*[0-9]+\\s*$"  # any tracked step: a relaunch resumes from the latest save
             mode: regex
             persistent_pass: true
