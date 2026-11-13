@@ -1,7 +1,9 @@
 # @package _global_
-# Second 264-node pool on the NEW MareNostrum 5 group (user 2026-11-13: "submit a chain of 264 node jobs there";
-# hopefully a higher base priority than cns144). A copy of mn5_pool_p264 on the new account, with its own chain
-# (min_hosts) and its own monitor (fresh snapshot: includes the pool fix 2b396496). Work that should take the first
+# 136-node pool on the new MareNostrum 5 group cns143 (user 2026-11-13). cns143 has no acc_xehpc: its QOS cap jobs
+# at 200 nodes (acc_xlarge: node=200, cpu=32000 per user, 5 jobs) or 100 (acc_resa), so no 264-node hosts. User
+# choice: a chain of 5 x 136 nodes on acc_xlarge (a 128-node run + 8 spare; two can run at once under the 32k-CPU
+# per-user limit). Fair-share 0.436 at creation (cns144: 0.275). A copy of mn5_pool_p264 otherwise, with its own
+# monitor (fresh snapshot: includes the pool fix 2b396496). Work that should take the first
 # host of either pool is enqueued in both with the same job.metadata.pool_singleton (the guard spans pools).
 # --- the p264 description follows ---
 # MareNostrum 5 pool, 264-node hosts on cns144 / acc_xehpc (user 2026-10-28: "maybe we are lucky", it
@@ -20,14 +22,14 @@ defaults:
   - _self_
 
 job:
-  name: mn5_pool_n264
+  name: mn5_pool_c136
   base_output_dir: ${oc.env:HYBRID_OUTPUT_DIR,/gpfs/scratch/ehpc533/hybrid_nucleus}/pools/${job.name}
   pool_host:
     # CAPTURE (user 2026-10-31): a host that starts is never released by the pool -- not idle,
     # not without fitting work, not when its monitor is away; a main run's copy queued here takes it
     hold_hosts: true
     # main runs move to cns144 hosts at the same node count (singleton preference)
-    singleton_prefer_accounts: NEW_ACCOUNT
+    singleton_prefer_accounts: cns144
     # node check of every new host before it takes work (user 2026-10-30): GPU count, then the
     # node-health benchmark (oellm_autoexp/node_health); bad nodes excluded, a failing host released
     preflight: true
@@ -37,14 +39,16 @@ job:
     handover_verify: true
     handover_healthy_steps: 20
     handover_verify_timeout_s: 5400
-    max_hosts_running: 1
-    max_own_hosts: 2
+    # two 136-node hosts fit the 32k-CPU per-user limit of acc_xlarge
+    max_hosts_running: 2
+    # the chain of 5 (min_hosts) needs as many own hosts
+    max_own_hosts: 5
     max_runs_per_host: 6
     # one successor, queued a day after the host starts (a staggered ladder of 128+ node hosts)
     keep_pending: 1
     successor_delay_s: 86400
-    # a chain of 4 host jobs submitted at once, all ageing (user 2026-11-13)
-    min_hosts: 4
+    # a chain of 5 host jobs submitted at once, all ageing (user 2026-11-13; acc_xlarge allows 5 per user)
+    min_hosts: 5
     handover: false
     idle_exit_s: 3600
     # 3 days with hold_hosts: hosts queued before the hold fix run a supervisor whose dead-man
@@ -60,10 +64,10 @@ job:
 
 slurm:
   sbatch:
-    nodes: 264
+    nodes: 136
     time: "3-00:00:00"
-    qos: acc_xehpc
-    account: NEW_ACCOUNT
+    qos: acc_xlarge
+    account: cns143
     signal: "B:USR1@900"  # 15 min stop margin (user 2026-11-13; was 2700: released host004 45 min early)
     no_kill: true
 
