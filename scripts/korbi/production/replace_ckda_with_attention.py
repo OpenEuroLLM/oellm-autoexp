@@ -123,11 +123,28 @@ def derive(a, md, stats_md):
         raise SystemExit("--layers and --refs: one reference attention sublayer per replaced sublayer")
     gen = torch.Generator().manual_seed(a.seed)
     replace, alias, info = {}, {}, {}
+    ssmd = stats_md.state_dict_metadata
+    names = (["linear_qkv.weight", "linear_qkv.weight.v_norm", "linear_proj.weight", "linear_proj.weight.v_norm"]
+             + [f"{n}.weight{x}" for n in ("q_layernorm", "k_layernorm") for x in ("", ".exp_avg_sq")])
     for layer, ref in zip(layers, refs):
         if M.format(l=layer) + SA + "layer.A_log" not in smd:
             raise SystemExit(f"sublayer {layer} is not a complex_kda sublayer of {a.src}")
         if M.format(l=ref) + SA + "linear_qkv.weight" not in smd:
             raise SystemExit(f"sublayer {ref} is not an attention sublayer of {a.src}")
+    # ONE read per checkpoint (each dcp.load plans over the whole metadata: ~877k items, the login node's CPU limit)
+    want = {_full_key(ref, n): torch.empty(tuple(ssmd[_full_key(ref, n)].size), dtype=ssmd[_full_key(ref, n)].properties.dtype)
+            for ref in sorted(set(refs)) for n in names}
+    dcp.load(want, storage_reader=FileSystemReader(a.stats_src), no_dist=True)
+    ln_keys = {}
+    for layer in layers:
+        ln_keys[(layer, "")] = M.format(l=layer) + "input_layernorm.weight"
+        for s in ADAM:
+            ln_keys[(layer, s)] = O.format(l=layer) + f"input_layernorm.weight.{s}"
+    ln_keys = {k: v for k, v in ln_keys.items() if v in smd}
+    lnv = {v: torch.empty(tuple(smd[v].size), dtype=smd[v].properties.dtype) for v in ln_keys.values()}
+    dcp.load(lnv, storage_reader=FileSystemReader(a.src), no_dist=True)
+    print(f"read {len(want)} reference + {len(lnv)} norm tensors", flush=True)
+    for layer, ref in zip(layers, refs):
         # every key of the reference attention's self_attention (model, states, group meta, step) -> layer
         for pre in (M, O, G):
             src_pre, dst_pre = pre.format(l=ref) + SA, pre.format(l=layer) + SA
@@ -144,23 +161,15 @@ def derive(a, md, stats_md):
         hidden, heads = qkv_shape[1], proj_shape[1] // d
         groups = (qkv_shape[0] // d - 2 * heads) // 2
         # the reference's trained row statistics (in --stats-src: e.g. before widening, where every row is trained)
-        ssmd = stats_md.state_dict_metadata
-        names = (["linear_qkv.weight", "linear_qkv.weight.v_norm", "linear_proj.weight", "linear_proj.weight.v_norm"]
-                 + [f"{n}.weight{x}" for n in ("q_layernorm", "k_layernorm") for x in ("", ".exp_avg_sq")])
-        want = {_full_key(ref, n): torch.empty(tuple(ssmd[_full_key(ref, n)].size),
-                                                dtype=ssmd[_full_key(ref, n)].properties.dtype) for n in names}
-        dcp.load(want, storage_reader=FileSystemReader(a.stats_src), no_dist=True)
         d_ref = ssmd[_full_key(ref, "q_layernorm.weight")].size[0]
         st = ref_stats({n: want[_full_key(ref, n)] for n in names}, heads=heads, groups=groups, d=d_ref)
         new = random_attention(st, hidden=hidden, heads=heads, groups=groups, d=d, eps=a.eps, gen=gen)
         # the position's own pre-norm gain (complex_kda input_layernorm) and its Adam moments
-        ln = {"": M.format(l=layer) + "input_layernorm.weight"}
-        ln.update({s: O.format(l=layer) + f"input_layernorm.weight.{s}" for s in ADAM})
-        got = {s: torch.empty(tuple(smd[k].size), dtype=smd[k].properties.dtype) for s, k in ln.items() if k in smd}
-        dcp.load({ln[s]: v for s, v in got.items()}, storage_reader=FileSystemReader(a.src), no_dist=True)
-        new["linear_qkv.layer_norm_weight"] = got[""].float()
+        g0 = lnv[ln_keys[(layer, "")]].float()
+        new["linear_qkv.layer_norm_weight"] = g0
         for s in ADAM:
-            new[f"linear_qkv.layer_norm_weight.{s}"] = got[s].float() if s in got else torch.zeros_like(got[""]).float()
+            k = ln_keys.get((layer, s))
+            new[f"linear_qkv.layer_norm_weight.{s}"] = lnv[k].float() if k else torch.zeros_like(g0)
         for rel, t in new.items():
             key = _full_key(layer, rel)
             if key not in alias:
@@ -236,11 +245,9 @@ def apply(a) -> int:
     # the aliased non-tensor items read back as the reference's
     if alias:
         sample = dict(list(alias.items())[:50])
-        objs = {k: None for k in sample}
-        refs = {v: None for v in sample.values()}
+        objs = {k: None for k in list(sample) + list(sample.values())}  # the references are unchanged in dst
         dcp.load(objs, storage_reader=FileSystemReader(a.dst), no_dist=True)
-        dcp.load(refs, storage_reader=FileSystemReader(a.src), no_dist=True)
-        diff = [k for k, r in sample.items() if objs[k] != refs[r]]
+        diff = [k for k, r in sample.items() if objs[k] != objs[r]]
         if diff:
             raise SystemExit(f"aliased items differ from their references: {diff[:5]}")
     manifest = {"src": a.src, "stats_src": a.stats_src, "layers": a.layers, "refs": a.refs, "seed": a.seed,
