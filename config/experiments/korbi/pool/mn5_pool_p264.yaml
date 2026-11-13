@@ -58,7 +58,7 @@ slurm:
     time: "3-00:00:00"
     qos: acc_xehpc
     account: cns144
-    signal: "B:USR1@2700"
+    signal: "B:USR1@900"  # 15 min stop margin (user 2026-11-13; was 2700: released host004 45 min early)
     no_kill: true
 
 index: 0
