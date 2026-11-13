@@ -6,7 +6,7 @@
 #               O(1) gradients; exact)
 #   src/a31     replace_ckda_with_attention.py apply on w256rk: complex_kda 9/25/41/58/74/90 -> random attention
 #               (row statistics of the unwidened checkpoint), the 3:1 pattern in the saved args
-# then the arms' own checkpoint directories (hard links, tracker IT = the training jobs' gate):
+# then the arms' own checkpoint directories (hard links, tracker IT = the training jobs' gate), all below ROOT:
 #   ctrl/ckpt/iter_<IT> <- src/w256rk     a31/ckpt/iter_<IT> <- src/a31
 # Each step skips an output that has its tracker; a partial output (no tracker) is removed and redone. Login node
 # (every step a separate process, < 300 s CPU each; hard links + ~1-3 GB read) or a 1-node job, from a synced snapshot.
@@ -20,7 +20,9 @@ export PYTHONPATH="$REPO/submodules/Megatron-LM:$REPO${PYTHONPATH:+:$PYTHONPATH}
 export SINGULARITYENV_PYTHONPATH="$PYTHONPATH" APPTAINERENV_PYTHONPATH="$PYTHONPATH"
 SIF=${SIF:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif}
 SRC=${SRC:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph/ckpt_eval}
-ROOT=${ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/early31}
+# on /gpfs/projects: the source checkpoint lives there (main_mhc4/... on scratch is a symlink), hard links need
+# the same filesystem
+ROOT=${ROOT:-/gpfs/projects/ehpc533/hybrid_nucleus/production/early31}
 IT=${IT:-1000}
 LAYERS=9,25,41,58,74,90
 REFS=0,17,33,50,66,82
