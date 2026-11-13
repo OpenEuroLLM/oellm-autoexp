@@ -1821,3 +1821,6 @@ Loss on identical batches, a31 (3:1, 6 random attention layers) vs the main run 
 | gap | +0.019 | +0.017 | +0.010 | +0.010 | +0.010 | +0.009 |
 
 The hard random insertion at step 1000 costs only +0.02, and about half of it is gone after 5 steps.
+
+a31 vs main-run loss on identical batches, 25-step means (07:43): 1001-1025 +0.0077, 1026-1050 +0.0043,
+1051-1075 +0.0035, 1076-1100 +0.0032. Within 0.003 of the 7:1 model after 100 steps, still converging.
