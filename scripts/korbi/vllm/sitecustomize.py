@@ -1,5 +1,5 @@
-# Installed into the node-local vLLM tree ($DEST, first on PYTHONPATH) by setup_vllm_uv.sh and
-# build_pylibs_vllm.sh.
+# Copied into the vLLM tree first on PYTHONPATH by setup_vllm_uv.sh ($DEST), setup_vllm_shared.sh (src_<id>) and
+# build_pylibs_vllm.sh ($DEST).
 # $DEST's torch 2.13 replaces the image's, so the image's optional packages built against the
 # image's torch / NVSHMEM / Triton fail to import: moonep/_C (undefined c10::cuda symbol),
 # deep_ep_cpp (undefined nvshmem_selected_device_transport) and triton_kernels (cannot import
@@ -8,11 +8,11 @@
 # importlib.util.find_spec return None and `import` raise ImportError, so vLLM sees them as
 # not installed. OELLM_VLLM_HIDE_MODULES overrides the list (empty: hide nothing).
 #
-# FlashInfer's JIT cache moves from $HOME (GPFS, shared by all jobs) into this tree: every job
-# installs the tree afresh, its sources are newer than any earlier build, so FlashInfer rebuilt
-# sampling.so in the shared cache whenever a job started -- and a job starting at the same time
-# loaded the half-written library ("sampling.so: file too short", flag_fast 9814 s3, 2026-11-05).
-# Per tree: one ~1 min build per node and job, under FlashInfer's lock on node-local /tmp.
+# FlashInfer's JIT cache moves from $HOME (GPFS, shared by all jobs) to a node-local directory:
+# in the shared cache, a job starting while another rebuilt sampling.so loaded the half-written
+# library ("sampling.so: file too short", flag_fast 9814 s3, 2026-11-05). setup_vllm_shared.sh sets
+# FLASHINFER_WORKSPACE_BASE=/tmp/oellm_flashinfer_<base id> (one ~1 min build per node, under
+# FlashInfer's lock); without it, this file's directory (the per-job trees of setup_vllm_uv.sh and build_pylibs_vllm.sh).
 import os
 import sys
 
