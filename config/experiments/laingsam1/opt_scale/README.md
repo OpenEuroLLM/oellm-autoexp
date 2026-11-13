@@ -4,7 +4,7 @@ Optimizer scaling-law study (AdamW, Muon, AngularMuown, muown_classical) on the 
 Gated-DeltaNet MoE (Swagatam's architecture), trained with the team Megatron
 `oellm/v0.19-hybrid` on JUPITER GH200, on the OpenEuroLLM v8ml data mix.
 
-This page gets a new person from zero to a running job. The lab notebook with all smoke-test
+Intended as a guide/setup document, edit if something proves incorrect/incomplete. The lab notebook with all smoke-test
 results and debugging history is `smoke_test/README.md`.
 
 ## What's here
@@ -29,14 +29,52 @@ results and debugging history is `smoke_test/README.md`.
 | Tokenizer | `/e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent` |
 | Launcher | `pretrain_hybrid.py`, pattern `LELELE*E` x 4 (L = Gated DeltaNet, * = gated attention, E = MoE) |
 
-## 0. Access (JuDoor, once)
+## 0. Accounts and access (once; this is the slow part, start early)
 
-- Compute project with booster time (Sam's is `e-aif-2026sc04-211`; if you use another one, set
-  `OPT_SCALE_ACCOUNT`, see step 1).
-- Groups: `e-sta-openeurollm` (container + flag data), `mmlaion` and `datasets` (tokenizer + v8
-  data under `/e/data1/datasets/playground/mmlaion/oellm_testing`), and Container Runtime Engine
-  access (`container` group).
-- New groups only show up in a **fresh** login (`id -Gn` should list them).
+Everything is requested in **JuDoor** (https://judoor.fz-juelich.de). Approvals come from the
+project PIs / JSC and can take a few days.
+
+### 0a. JSC account and login to JUPITER
+1. Create a JuDoor account (institutional e-mail) and set up 2-factor authentication (MFA).
+2. You get a JSC user name like `smith1`. You can only log in to JUPITER once you are member of a
+   project with JUPITER access (0b) and have accepted that system's usage agreement in JuDoor.
+3. Upload an SSH public key in JuDoor (Manage SSH keys). JSC requires a `from=` clause (allowed
+   source IPs/domains), see the JuDoor key page. Then: `ssh <user>@login.jupiter.fz-juelich.de`.
+
+### 0b. Project memberships (JuDoor -> "Join a project", give the project ID)
+
+| Unix group (= JuDoor project) | Why you need it | Who approves | Without it |
+|---|---|---|---|
+| `e-aif-2026sc04-211` | compute time on the booster (Slurm `--account`) + scratch space `/e/scratch/e-aif-2026sc04-211/users/<you>` | PI `klein11` | no jobs, no scratch dir |
+| `e-sta-openeurollm` | the container (`/e/project1/e-sta-openeurollm/container/`) and 81 % of the v8ml mix (flag collection in `/e/fscratch/e-sta-openeurollm/training_v2/`) | PI `jitsev1` | setup script stops: "Cannot read ...sif" |
+| `datasets` | tokenizer + remaining 19 % of the mix (`/e/data1/datasets/playground/mmlaion/oellm_testing/`) | JSC datasets project (request in JuDoor, project `datasets`) | data loading fails at job start |
+
+Not needed for this setup: `mmlaion`, `e-ext-2025e02-108` (only used by the legacy smoke tests 01-04).
+
+If you use a different compute project than `e-aif-2026sc04-211`, set `OPT_SCALE_ACCOUNT` and put
+`OPT_SCALE_BASE` in that project's scratch (step 1). You still need the two data groups.
+
+### 0c. Container access
+JSC only lets members of the `container` group run Apptainer. Request it in JuDoor
+("Software" / "Request access to restricted software" -> **Container Runtime Engine**).
+Without it `apptainer exec` fails with a permission error.
+
+### 0d. GitHub
+Both repos are public (`OpenEuroLLM/oellm-autoexp`, `OpenEuroLLM/NVIDIA-Megatron-LM`), so cloning
+needs no GitHub account. You only need one (with write access to the OpenEuroLLM org + an SSH key
+on JUPITER registered at GitHub) if you want to push your own branch.
+
+### 0e. Check you have everything
+Group changes only apply to **new** logins: log out and back in first.
+```bash
+for g in e-aif-2026sc04-211 e-sta-openeurollm datasets container; do
+  id -Gn | tr ' ' '\n' | grep -qx $g && echo "OK      $g" || echo "MISSING $g"; done
+test -r /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif && echo "OK      container image readable"
+test -r /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent/tokenizer.json && echo "OK      tokenizer readable"
+test -r /e/fscratch/e-sta-openeurollm/training_v2/training/collection/flag && echo "OK      flag data readable"
+test -w /e/scratch/e-aif-2026sc04-211/users && echo "OK      can create your scratch dir"
+```
+All lines must say OK before you continue.
 
 ## 1. Environment variables (add to `~/.bashrc`)
 
@@ -108,9 +146,6 @@ val loss at step 100 roughly adam 6.4, angular_muown 4.9, muown_classical 5.3.
 - **Always** `--dry-run` first, then `--array-subset 0`, then the rest.
 - **Always** `--submit-and-exit`: without it the script keeps monitoring and may auto-resubmit.
 - Keep `slurm.sbatch.time` tight: cost cap = nodes x 4 GPUs x time limit.
-- After a job finishes, check `squeue --me`: we have seen a job hang after training finished
-  (all ranks printed their exit messages). If it's still listed, `scancel <jobid>`.
-- Emergency stop for all your jobs: `scancel -u $USER`.
 - Cost of what you used (live): 
   ```bash
   sacct -u $USER -S 2026-11-01 -X -n -o ElapsedRaw,AllocTRES%60 \
