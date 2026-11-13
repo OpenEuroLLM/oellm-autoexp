@@ -264,10 +264,14 @@ sweep:
     - aux.arm: b35603_base
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval
     - aux.arm: b35603_attn6_zero
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_attn6_zero/ckpt
       job.start_condition:
         class_name: FileContentCondition
@@ -278,6 +282,8 @@ sweep:
     - aux.arm: b35603_attn6_d32000
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_attn6_d32000/ckpt
       job.start_condition:
         class_name: FileContentCondition
@@ -288,6 +294,8 @@ sweep:
     - aux.arm: b35603_mixall_d32000
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_mixall_d32000/ckpt
       job.start_condition:
         class_name: FileContentCondition
@@ -298,6 +306,8 @@ sweep:
     - aux.arm: b35603_attn6_d23500
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_attn6_d23500/ckpt
       job.start_condition:
         class_name: FileContentCondition
@@ -308,6 +318,8 @@ sweep:
     - aux.arm: b35603_mixall_d23500
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_mixall_d23500/ckpt
       job.start_condition:
         class_name: FileContentCondition
@@ -318,6 +330,8 @@ sweep:
     - aux.arm: b35603_attn6_d10000
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_attn6_d10000/ckpt
       job.start_condition:
         class_name: FileContentCondition
@@ -328,6 +342,8 @@ sweep:
     - aux.arm: b35603_mixall_d10000
       backend.megatron.ckpt_step: 35603
       backend.megatron.train_iters: 35603
+      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum
+      backend.megatron.phase_transition_variable_batch: false
       backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap/b35603_mixall_d10000/ckpt
       job.start_condition:
         class_name: FileContentCondition

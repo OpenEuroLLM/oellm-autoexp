@@ -20,6 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 OUT = REPO / "config/experiments/korbi/production"
 ROOT = "/gpfs/scratch/ehpc533/hybrid_nucleus/production/layer_swap"
+PHASE2_FROM = 23691  # the main run's phase transition (8k -> 64k)
 SRC = "/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_eval"
 
 # base step -> (donor steps, layer sets swapped from every donor, layer sets zeroed)
@@ -138,6 +139,9 @@ sweep:
         lines.append(f"    - aux.arm: {r['arm']}")
         lines.append(f"      backend.megatron.ckpt_step: {r['base']}")
         lines.append(f"      backend.megatron.train_iters: {r['base']}")
+        if r["base"] > PHASE2_FROM:  # past the last phase transition: Megatron's phase sample count needs a next one
+            lines.append("      backend.megatron.phase_transition_iterations: null  # eval only: no curriculum")
+            lines.append("      backend.megatron.phase_transition_variable_batch: false")
         if r["donor"] is None:
             lines.append(f"      backend.megatron.load: {SRC}")
             continue
