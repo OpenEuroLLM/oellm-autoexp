@@ -1643,3 +1643,74 @@ at a budget of ~1500 small-batch steps:
 The +8 pp target is therefore not reachable by "brain surgery" with the evidence at hand. What is left either
 changes pretraining itself (more attention from the start, as in the 32B; not a surgery) or needs far longer
 adaptation than the free nodes allow. No candidate is proven, so the main run continues unchanged from 35603.
+
+## 13. Early 3:1 surgery from 1000 (2026-11-13)
+
+**Idea (user, 11-13).** Insert many more attention layers while the model is not settled yet. Train them hard from
+random init, together with the head-dim widening, then compare the critical evals before and after ~500 steps
+against the main run on the same data.
+
+**Arms.** Both start from the main run's `ckpt_eval/iter_0001000` (v4_2ph, head dim 128, 7:1):
+
+* `ctrl`: head dim 128 -> 256 on the 6 attention sublayers, as the 11-05 restart did:
+  `widen_attention_head_dim.py apply` (function-preserving, eps 1e-3) + `reseed-k`. Pattern stays 7:1.
+* `a31`: the same, plus complex_kda sublayers **9 / 25 / 41 / 58 / 74 / 90** turned into plain softmax attention
+  with **random** weights (`replace_ckda_with_attention.py`, new):
+  * q / k / v / proj rows: random directions at the reference attention layer's median row norm of that kind,
+    measured on the unwidened checkpoint; gate rows x 1e-3.
+  * q/k-norm gains: the reference's median.
+  * Pre-norm: the CKDA sublayer's own input-norm gain. mHC parameters: the sublayer's own.
+  * MuOwn states: fresh. Optimizer group items: aliased to the reference layer's.
+  * Result: 12 attention of 48 mixers (3:1). CKDA 3 / 5 / 7 (complex eigenvalues) are kept.
+  * Pattern `*ENLELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELEN*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE`,
+    also written into the checkpoint's args.
+* Recipe: the main run's at 1000-2000 (`config-mn5-pool-p129.0301.yaml`):
+  * opt81 stage 1, seed 1234, `train_iters` 236733, gbs 8192 x 8k, lr 8.5e-4 constant;
+  * no z-loss and no expert cap (both came after 9100); Engram lr x5;
+  * sampler reference layout dp 512 x mbs 8 = the main run's 128-node layout, so the batches are identical.
+
+**Files.**
+* `scripts/korbi/production/replace_ckda_with_attention.py` (selftest on a synthetic DCP checkpoint).
+* `scripts/korbi/production/early31_surgery.sh` (steps w256 -> w256rk -> a31 -> seed).
+* `config/experiments/korbi/recall_surgery/early31_mn5.yaml` (arms ctrl / a31, 128 nodes, pool priority 50, no
+  singleton). Commits 7abe4f75 .. (this section).
+
+**Storage.**
+* The main run's `iter_0001000` lives on `/gpfs/projects` (the scratch path is a symlink), so hard links from
+  scratch fail with EXDEV.
+* Surgery outputs: hard links + a few GB of new tensors in `/gpfs/projects/ehpc533/hybrid_nucleus/production/early31/src/{w256,w256rk,a31}`.
+* Training on scratch (lead: projects is nearly full): load = save = `/gpfs/scratch/.../production/early31/<arm>/ckpt`.
+  Its `iter_0001000` is a symlink into `src`; tracker 1000.
+* Persistent saves at 1500 only (stage 1 exits at 1500); rolling every 250, one kept.
+
+**Surgery log** (login node, 11-13):
+* w256: 338 s.
+* w256rk: 86 s; new q/k rows median g 0.0009, q/k gammas x 2^-1/4 then x 2^1/4.
+* a31: 386 s; 127 tensors new, 432 group items aliased, read-back exact.
+* The first attempts failed, each fixed in the code:
+  * `megatron` was not importable for the args pickle;
+  * EXDEV hard links scratch -> projects;
+  * one `dcp.load` per sublayer over 877k metadata items hit the login node's 300 s CPU limit; it is now one load
+    per checkpoint.
+
+**Reference (main run, same batches).** Training lm loss:
+
+| iteration | 1001 | 1002 | 1003 | 1050 | 1100 | 1250 | 1500 | 2000 |
+|---|---|---|---|---|---|---|---|---|
+| lm loss | 1.5480 | 1.5444 | 1.5579 | 1.5221 | 1.5381 | 1.5218 | 1.4523 | 1.4117 |
+
+Validation at 1000 / 2000:
+
+| | all | web_en | multilingual | code | math | reasoning | long_64k |
+|---|---|---|---|---|---|---|---|
+| 1000 | 1.6071 | 2.3313 | 2.2174 | 0.9514 | 1.1151 | 0.7920 | 1.7932 |
+| 2000 | 1.4752 | 2.1850 | 2.0294 | 0.8986 | 0.9739 | 0.6807 | 1.6137 |
+
+`ctrl`'s first steps must reproduce 1001-1003 to bf16 noise (function-preserving widening); a31's first-step excess
+is the cost of the hard insertion.
+
+**Launch (11-13 05:2x, snapshot `autoexp_early31f`).** Pool runs `early31_ctrl_0_bf918f` (p264.1076, running from
+06:12) and `early31_a31_79374a` (p264.1077, pending). host004 had only 5 usable nodes from 04:00 to 06:05 (lead: old
+pool code marked the allocation dead), and 250 are usable now. Two 128-node arms do not fit next to the other jobs,
+and the allocation ends ~10:12. At ~29 s/step (128 nodes) plus ~70 min load and warm-up, +500 steps need ~5 h, so
+neither arm reaches 1500 on this allocation. Rolling saves (every 250) carry an arm over to the next host.
