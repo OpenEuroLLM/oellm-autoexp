@@ -1887,3 +1887,24 @@ CoQA noise is +-1.5 F1 (up to 2.9 between two launches of one export, §10.7), S
   The base model's CoQA is still moving there (55 -> 59 between 4000 and 5000), and an architecture with more
   attention should show its effect on CoQA already by ~0.3-0.5T, where the main run plateaus. For SQuAD, the window
   to watch is 18000-23000.
+
+### 13.y Quick critical eval of a31 at 1233 (fork, 2026-11-13 09:02)
+
+a31 was gracefully stopped at 08:44 for a 256-node relaunch; its stop save is `ckpt/iter_0001233`, 233 steps after the
+insertion.
+* **Export** (`early31_a31_fp8_1233`, FP8 experts): the eval launcher's export job (`export_run.sh`, a31's resolved
+  config) ran by hand on as07r5b02's CPUs inside the allocation (`srun --overlap`), 2.5 min. Verified: attention at
+  sublayers 0/9/17/25/33/41/50/58/66/74/82/90, head_dim 256.
+* **as07r5b02 has no usable GPU:** GPU0 and GPU3 also fail CUDA init ("CUDA unknown error"; GPU1 unknown, GPU2 needs
+  reset). The CoQA + Winogrande round (`ckdab_cw`) therefore ran as a 1-node pool job, p264.1132, priority 95.
+  Before a31's 256-node relaunch the host had ~250 free nodes.
+
+| model | step | CoQA EM / F1 | Winogrande |
+|---|---|---|---|
+| **a31 (3:1)** | 1233 | 33.45 / 47.37 | 56.91 |
+| main (7:1) | 1000 | pending (§12) | pending |
+| main (7:1) | 2000 | 39.18 / 55.21 | 57.62 |
+
+At 1233 a31 is below the main run's 2000 (767 fewer steps; CoQA still rises fast there: 55 at 2000, 56 at 3000).
+Winogrande is at the 2000 level. No conclusion before the main run's 1000 row (the start point) and a31 at
+1500 / 2000. Noise: CoQA +-1.5-3 F1, Winogrande +-1.4.
