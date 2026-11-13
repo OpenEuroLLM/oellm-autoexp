@@ -53,7 +53,9 @@ backend:
     non_persistent_save_interval: 250
     save_extra_steps: [1500]
     eval_interval: 500
-    exit_interval: 2000
+    # stage 1: +500 steps (user: "measure critical evals before and after e.g. 500 steps"); ctrl vs a31 at 1500 is
+    # the paired comparison (ctrl = the main run + the head-dim widening). Continue to 2000: aux / exit_interval=2000.
+    exit_interval: 1500
 
 job:
   name: early31_${aux.arm}
