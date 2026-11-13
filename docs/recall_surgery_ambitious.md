@@ -1824,3 +1824,61 @@ The hard random insertion at step 1000 costs only +0.02, and about half of it is
 
 a31 vs main-run loss on identical batches, 25-step means (07:43): 1001-1025 +0.0077, 1026-1050 +0.0043,
 1051-1075 +0.0035, 1076-1100 +0.0032. Within 0.003 of the 7:1 model after 100 steps, still converging.
+
+## 12. Where the critical behaviour is learnt (2026-11-13, early checkpoints)
+
+Same harness as §10 (`ckdab_fast_belebele`: CoQA 0-shot, Winogrande 0-shot, SQuAD v2 10-shot, belebele 24 languages;
+vLLM FP8 exports, `scripts/evals/launch.py config/evals/ckdab_fast_mn5.yaml`, 3 workers, from `autoexp_evalfix1`).
+Steps <= 9814 are the pre-hd256 run (`ambitious_e360_eng80_v4_2ph/ckpt_eval`, `export.model=ambitious_v4`, 16x128
+attention); >= 10000 the hd256 run (16x256 since 9815). Tokens per step are 67.1M in both phases (8192 x 8k, then
+1024 x 64k from 23691). The OELLM 32B uses 16.8M tokens per step (4096 x 4096): `b1cons_90k` = 1.5T ~ our step 22.5k.
+
+| step | tokens | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) | belebele |
+|---|---|---|---|---|---|
+| 1000 | 0.07T | STEP1000_COQA | STEP1000_WINO | STEP1000_SQUAD | STEP1000_BELE |
+| 2000 | 0.13T | 39.18 / 55.21 | 57.62 | 23.81 (47.38) | 50.00 |
+| 3000 | 0.20T | 41.17 / 56.32 | 61.64 | 24.86 (49.01) | 62.14 |
+| 3700 | 0.25T | 39.80 / 55.36 | 59.59 | 25.30 (50.07) | 65.49 |
+| 4000 | 0.27T | 43.07 / 56.29 | 61.56 | 25.41 (49.91) | 67.25 |
+| 5000 | 0.34T | 42.58 / 59.36 | 63.06 | 28.92 (57.40) | 71.13 |
+| 5800 | 0.39T | 42.97 / 57.80 | 64.17 | 28.78 (56.85) | 71.19 |
+| 8000 | 0.54T | 46.73 / 63.12 | 63.14 | 29.30 (58.17) | 76.20 |
+| 10000 | 0.67T | 47.97 / 63.42 | 62.98 | 30.03 (59.57) | 77.06 |
+| 11000 | 0.74T | 46.80 / 62.48 | 62.19 | 30.83 (61.24) | 78.32 |
+| 12000 | 0.81T | 48.17 / 62.88 | 63.46 | 29.42 (58.27) | 79.17 |
+| 13000 | 0.87T | 51.48 / 68.21 | 64.56 | 30.59 (59.78) | 79.82 |
+| 14000 | 0.94T | 47.37 / 63.79 | 64.80 | 30.47 (60.34) | 79.49 |
+| 15000 | 1.01T | 50.43 / 65.99 | 62.59 | 29.80 (58.95) | 80.40 |
+| 18000 | 1.21T | 48.85 / 65.10 | 62.12 | 31.42 (61.26) | 80.55 |
+| 21000 | 1.41T | 46.78 / 62.90 | 63.46 | 29.32 (57.57) | 82.15 |
+| 23000 | 1.54T | 49.53 / 66.24 | 64.01 | 26.22 (52.09) | 82.49 |
+| 23500 | 1.58T | 50.42 / 66.13 | 62.51 | 26.89 (52.94) | 82.90 |
+| 24000 (64k) | 1.61T | 49.82 / 65.90 | 65.82 | 26.14 (51.52) | 82.63 |
+| 26000 | 1.74T | 50.30 / 66.61 | 65.82 | 28.07 (55.74) | -- |
+| 30000 | 2.01T | 50.75 / 67.05 | 67.32 | 27.11 (53.19) | -- |
+| 32000 | 2.15T | 47.40 / 66.43 | 66.93 | 29.73 (59.03) | 86.15 |
+| 35603 | 2.39T | 51.87 / 69.68 | 66.93 | 27.86 (55.39) | 86.11 |
+| **32B** `oldprod_60k` (~1.0T) | | -- / 79.4 | 68.4 | 35.4 | |
+| **32B** `b1cons_90k` (1.5T) | | -- / 79.72 | 70.32 | 39.22 | |
+| **32B** `b1consTW_300k` (5T) | | 69.12 / 81.72 | 70.56 | 42.91 (85.95) | |
+
+Not evaluable: 4800 / 4900 (incomplete saves in `ckpt_eval`, no `.metadata`); 9789 (an export from before the
+current exporter: vLLM's weight loader fails a shape assertion; 8000 and 10000 bracket it). One readout per step:
+CoQA noise is +-1.5 F1 (up to 2.9 between two launches of one export, §10.7), SQuAD v2 +-1, Winogrande +-1.4.
+
+**Reading.**
+* **The CoQA gap is there from the start and never closes.** CoQA F1 is 55 at 0.13T, 63 by 0.54T (8000), and then
+  sits at 63-69 for 1.8T more tokens. The 32B is at 79 already at its earliest evaluated checkpoint (~1.0T). The
+  ~15 F1 gap is set in the first ~0.5T and does not depend on later training: CoQA is learnt early or not at all.
+* **SQuAD v2 HasAns improves early (47 -> 61 by 11000-18000) and then degrades** to 52-53 at 23000-24000, with a partial
+  recovery to 55-59 in phase 2. The fall happens between 18000 and 23000 (1.2-1.5T), still in phase 1 at 8k context
+  and constant lr. That is when the model gets worse at extractive copying while the loss and belebele keep
+  improving. The 32B gains throughout (35 -> 43).
+* **Winogrande** climbs from 58 to ~63 by 0.3T, stays flat to 1.5T, and gains +4 in phase 2 / after the Engram fix
+  (§3.3). The remaining gap is ~3.5.
+* **belebele** rises steadily from 50 to 86 and is still climbing. Multilingual reading is not the bottleneck; the
+  extractive / conversational QA format is.
+* **For an early intervention (§11 plan):** if attention is added at 1000-4000, the readout at +500 is meaningful.
+  The base model's CoQA is still moving there (55 -> 59 between 4000 and 5000), and an architecture with more
+  attention should show its effect on CoQA already by ~0.3-0.5T, where the main run plateaus. For SQuAD, the window
+  to watch is 18000-23000.
