@@ -1783,3 +1783,24 @@ of the same layers:
 * **Swapping all mixers stays catastrophic** beyond a few thousand steps (+0.8 to +2.2).
 * **Not tested here:** whether the transplanted attention keeps its retrieval function (losses only), and layers
   grown in a BRANCH (the §13 arms) rather than in the main run itself.
+
+**ctrl verified (06:39).** p264.1076 loaded 1000 in ~15 min. Against the main run on identical data (consumed
+samples 8,200,192 at 1001):
+
+| step | main run | ctrl |
+|---|---|---|
+| 1001 | 1.547995 | 1.547991 (Δ 4e-6) |
+| 1003 | 1.557864 | 1.557941 (Δ 8e-5) |
+| 1005 | 1.550471 | 1.550386 (Δ 9e-5) |
+
+Grad norms are equal (0.220 / 0.239 / 0.225). So the widening is function-preserving, the data position matches,
+and the recipe is the main run's. Speed: 27.4-28.0 s/step at 128 nodes (main run 29.4). +500 steps take ~3.9 h, so
+1500 lands ~10:30, just after host004 ends (~10:12); the rolling save at 1250 (~08:30) carries it over.
+
+**Layer-swap context (lead, §11).** Into base 23500:
+* all 6 attention sublayers from step 10000 cost +0.0115 eval loss (2 % of zeroing them, +0.684);
+* single sublayers cost ~0;
+* swapping all 49 mixers degrades with distance (+0.08 at 5.5k, +0.38 at 13.5k).
+
+So attention layers trained early should fit a late model as long as its CKDA stack stays, which supports a later
+post-merge of a31's new attention layers into the main run.
