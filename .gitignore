@@ -237,6 +237,8 @@ logs/
 output/
 dump/
 
-# uv 
+# uv
 uv.lock
 core
+# Core dumps from crashed jobs on JUPITER nodes (core.jpbo-<node>.<pid>, core.jpbl-...)
+core.jp*

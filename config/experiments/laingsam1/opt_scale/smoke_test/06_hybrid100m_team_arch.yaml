@@ -1,0 +1,264 @@
+# @package _global_
+#
+# Smoke test 06: the team's ~100M-active hybrid MoE (Swagatam's
+# config/experiments/swagatam/alps/engram_scaling/100m_1b.yaml, rho = 100 % arm, i.e. no Engram)
+# ported to JUPITER, with our optimizers swept on it.
+#
+# Model (identical to Swagatam's except where noted):
+#   HybridModel (pretrain_hybrid.py), pattern (LELELE*E) x 4 = 12 Gated DeltaNet + 4 gated
+#   attention mixers, each followed by an MoE layer. Hidden 640, 10 heads GQA (2 KV groups),
+#   GDN 10 key / 20 value heads of dim 64, 96 experts top-4 (width 320) + gated shared expert,
+#   sigmoid router with expert bias + seq aux loss 1e-4, RoPE 25 % base 1e7 interleaved, tied
+#   embedding. ~101M active / ~1.17B total.
+#   Left out: Engram (no N layers in the rho=100 arm anyway), CUDA-graph / fused-kernel speed
+#   flags that only matter for throughput tuning.
+# Differences from Swagatam's run (JUPITER + our study, on purpose):
+#   - data: v8ml mix (same as 04/05), tokenizer-256k-agent (the tokenizer v8ml is encoded with)
+#   - optimizer: swept (adam / muon / angular_muown / muown_classical = his setting)
+#   - 100 iters, no checkpoints, offline wandb, check_for_nan_in_loss_and_grad on
+# Megatron = team branch @ 013763961, container = te218-fa3 (same as 05).
+#
+# Flags our autoexp schema does not know (hybrid_layer_pattern, linear_beta_adam,
+# muon_qkv_headwise, muown_classical) are appended to the launcher command via backend.aux.
+#
+# New global batch (128) -> the train sample index is rebuilt once. Submit job 0 alone first:
+#   python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/opt_scale/smoke_test/06_hybrid100m_team_arch --dry-run
+#   python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/opt_scale/smoke_test/06_hybrid100m_team_arch \
+#     --array-subset 0 --submit-and-exit slurm.sbatch.time=01:00:00
+#   python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/opt_scale/smoke_test/06_hybrid100m_team_arch \
+#     --array-subset 1-3 --submit-and-exit
+# Cost: job 0 <= 4 GPU-h (1 h cap), jobs 1-3 <= 6 GPU-h (30 min cap each).
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: smoke
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "smoke_hyb100m_${backend.aux.opt}_N${slurm.sbatch.nodes}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    # Per-user root for Megatron checkout, pyext, logs, outputs, index cache (default = Sam's).
+    # Others: export OPT_SCALE_BASE=/e/scratch/<project>/users/<you>  (see opt_scale/README.md)
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    opt: adam          # overridden by sweep
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    # Architecture flags missing from our autoexp schema (same for every optimizer).
+    arch_args: >-
+      --hybrid-layer-pattern LELELE*ELELELE*ELELELE*ELELELE*E
+      --linear-beta-adam
+    opt_args: ""       # optimizer flags missing from the schema; set by the sweep
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.opt_args}"
+
+  # MUST stay off (see 01_single_node.yaml).
+  data_integrity_check: false
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: Swagatam's 100m_1b (rho 100 %) ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null              # given by the hybrid pattern
+    hidden_size: 640
+    ffn_hidden_size: 1920         # unused: every feed-forward is an MoE layer
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6          # Swagatam's `layernorm_epsilon` (his autoexp's name for it)
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    # --- parallelism: one node, EP 1, DP 4 (as Swagatam's) ---
+    moe_token_dispatcher_type: alltoall
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120   # rank 0 rebuilds the sample index (new batch size)
+
+    # --- kernels / numerics (as Swagatam's, minus throughput-only extras) ---
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true   # his: false; on for a smoke test
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml (same as 04/05) ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${backend.aux.base}/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 4
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 4
+    global_batch_size: 128     # as Swagatam's; 4 GPUs x mbs 4 -> 8 grad-accumulation steps
+    train_iters: 100
+    exit_interval: 100
+
+    # --- schedule (short smoke version of his WSD) ---
+    lr: 1.e-3                  # overridden per optimizer by the sweep
+    min_lr: 1.e-4
+    lr_warmup_iters: 10
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 20
+    clip_grad: 1.0
+    # Same as 04/05 (they came from qwen3_sparse_0.1B_ne_experts_8; our base default would be
+    # weight decay 0.01 and beta2 0.999). muown_classical overrides weight decay to 0.
+    weight_decay: 0.1
+    adam_beta2: 0.95
+
+    eval_interval: 50
+    eval_iters: 2
+    log_interval: 1
+    log_throughput: true
+
+    save: null
+    load: null
+    save_interval: null
+    save_extra_steps: []
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"   # as Swagatam's
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}   # override: see opt_scale/README.md
+    partition: booster
+    time: "00:30:00"           # job 0: override to 01:00:00 on the command line (see header)
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  # Same structure as 04/05 (top level must be `product` with groups); one group here.
+  type: product
+  groups:
+    - type: list
+      configs:
+        # AdamW (weight decay 0.1 as 04/05)
+        - backend.aux.opt: adam
+          backend.megatron.optimizer: adam
+          backend.megatron.lr: 2.e-3
+          backend.megatron.min_lr: 2.e-4
+        # Muon, same settings as 04/05
+        - backend.aux.opt: muon
+          backend.megatron.optimizer: muon
+          backend.megatron.lr: 5.e-3
+          backend.megatron.min_lr: 5.e-4
+          backend.megatron.muon_momentum: 0.95
+          backend.megatron.muon_nesterov: true
+          backend.megatron.muon_scale_mode: spectral
+          backend.megatron.muon_coefficient_type: polar_express
+          backend.megatron.muon_fp32_matmul_prec: medium
+          backend.megatron.muon_num_ns_steps: 5
+          backend.megatron.muon_tp_mode: blockwise
+          backend.megatron.muon_split_qkv: true
+          backend.megatron.muon_extra_scale_factor: 0.2
+          backend.megatron.muon_scalar_optimizer: adam
+        # AngularMuown, same settings as 04/05
+        - backend.aux.opt: angular_muown
+          backend.megatron.lr: 5.e-3
+          backend.megatron.min_lr: 5.e-4
+          backend.aux.opt_args: >-
+            --optimizer angular_muown
+            --angular-muown-scale-mode spectral
+            --angular-muown-extra-scale-factor 0.2
+            --angular-muown-momentum 0.95
+            --angular-muown-coefficient-type simple
+            --angular-muown-num-ns-steps 5
+            --angular-muown-fp32-matmul-prec medium
+            --angular-muown-u-decay-scale 0.001
+            --angular-muown-u-decay-p 0.0
+        # The team's setting (Swagatam / hybrid_main_mn5): muown_classical, head-wise QKV,
+        # no weight decay, lr = his placeholder 1e-3.
+        - backend.aux.opt: muown_classical
+          backend.megatron.lr: 1.e-3
+          backend.megatron.min_lr: 1.e-4
+          backend.megatron.weight_decay: 0.0
+          backend.megatron.muon_split_qkv: true
+          backend.aux.opt_args: >-
+            --optimizer muown_classical
+            --muon-qkv-headwise

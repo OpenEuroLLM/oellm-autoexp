@@ -1,0 +1,150 @@
+# @package _global_
+#
+# Smoke test 03: Muon diagnostics on ONE node (4x GH200) — the 1-node counterpart of
+# jobs B and D in 02_multi_node.yaml, with the same diagnostics.
+#   gdn       + muon   on 1 node: 3.20 s/step vs 2.28 s/step for gdn + adam (01 results)
+#   full_attn + muon   on 1 node: 1.99 s/step, same as full_attn + adam (no Muon penalty)
+# With 02 this gives the per-phase breakdown at 4 and 8 GPUs for the same configs, i.e.
+# which phase (forward-backward, optimizer step, communication) carries the extra ~0.9 s
+# and how it changes with more GPUs.
+#
+# DIAGNOSTICS: timing_log_level 2 (per-phase timings, min/max across ranks) and
+# TORCH_LOGS=recompiles (torch.compile recompilations). Not clean throughput runs.
+# Job names end in _diag so outputs don't overwrite the 01 runs.
+# Cost: ~1.5 GPU-h expected (hard cap 2 jobs x 4 GPU x 0.5 h = 4 GPU-h).
+#
+#   source /e/scratch/e-aif-2026sc04-211/users/slaing/venvs/autoexp/bin/activate
+#   python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/opt_scale/smoke_test/03_muon_diag_1node --dry-run
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.1B_ne_experts_8
+  - /backend/megatron/opt_scale: qwen35_gdn_attention
+  - _self_
+
+index: 0
+stage: smoke
+
+container:
+  image: /e/project1/e-ext-2025e02-108/container/nemo_26.04.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "smoke_0.1B_${backend.aux.arch}_${backend.aux.opt}_N${slurm.sbatch.nodes}_diag"
+  base_output_dir: "/e/scratch/e-aif-2026sc04-211/users/slaing/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    arch: gdn          # overridden by sweep
+    opt: muon
+    megatron_dir: /e/scratch/e-aif-2026sc04-211/users/slaing/NVIDIA-Megatron-LM-angular
+    pyext_dir: /e/scratch/e-aif-2026sc04-211/users/slaing/pyext
+    data_root: /e/fscratch/e-ext-2025e02-108/training/collection/flag/nemotron-cc-1.0/megatron-lm
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_gpt.py"
+
+  # MUST stay off (see 01_single_node.yaml).
+  data_integrity_check: false
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    TORCH_LOGS: recompiles    # diagnostics, see header
+
+  megatron:
+    data_path:
+      - ${backend.aux.data_root}/high/actual/shard_0000_text_document
+      - ${backend.aux.data_root}/high/actual/shard_0003_text_document
+      - ${backend.aux.data_root}/high/actual/shard_0005_text_document
+      - ${backend.aux.data_root}/medium-high/actual/shard_0000_text_document
+      - ${backend.aux.data_root}/medium-high/actual/shard_0001_text_document
+      - ${backend.aux.data_root}/medium-high/actual/shard_0002_text_document
+      - ${backend.aux.data_root}/medium-high/actual/shard_0003_text_document
+      - ${backend.aux.data_root}/medium-high/actual/shard_0004_text_document
+    split: "99,1,0"
+    data_cache_path: /e/scratch/e-aif-2026sc04-211/users/slaing/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 4
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 2
+    global_batch_size: 64      # 4 GPUs x mbs 2 -> 8 grad-accumulation steps (same as 01)
+    train_iters: 100
+    exit_interval: 100
+
+    # Muon, settings identical to 01_single_node.yaml.
+    optimizer: muon
+    lr: 5.e-3
+    muon_momentum: 0.95
+    muon_nesterov: true
+    muon_scale_mode: spectral
+    muon_coefficient_type: polar_express
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: true
+    muon_extra_scale_factor: 0.2
+    muon_scalar_optimizer: adam
+    lr_warmup_iters: 10
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 20
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 2
+    sequence_parallel: false
+    use_distributed_optimizer: true
+
+    eval_interval: 50
+    eval_iters: 2
+    log_interval: 1
+    log_throughput: true
+    # Diagnostics (see header).
+    timing_log_level: 2
+    timing_log_option: minmax
+
+    save: null
+    load: null
+    save_interval: null
+    save_extra_steps: []       # schema type list[int]; null is rejected
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 1
+    account: e-aif-2026sc04-211
+    partition: booster
+    time: "00:30:00"
+    output: "/e/scratch/e-aif-2026sc04-211/users/slaing/logs/${job.name}-%j.out"
+    error: "/e/scratch/e-aif-2026sc04-211/users/slaing/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - {backend.aux.arch: gdn}
+        # Plain qwen3_sparse attention: undo everything qwen35_gdn_attention sets.
+        - backend.aux.arch: full_attn
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+          backend.megatron.attention_output_gate: false
+          backend.megatron.layernorm_zero_centered_gamma: false
+          backend.megatron.rotary_percent: 1.0

@@ -1,0 +1,29 @@
+# @package backend.megatron
+#
+# Qwen3.5-style attention block, to layer on top of any qwen3_sparse_* model rung.
+# Taken from config/backend/megatron/qwen3.5_moe_35B_A3B.yaml (attention/norm part
+# only); the MoE settings of the underlying rung are left untouched, so the only
+# change versus the plain rung is the attention.
+#
+# Layout: 3 Gated DeltaNet (linear-attention) layers : 1 gated full-attention layer,
+# repeated. Requires num_layers % 4 == 0 (0.1B: 16 ok, 0.4B/0.9B: 28 ok, 0.2B: 22 NOT ok).
+# Requires `fla` (flash-linear-attention) at runtime; nemo_26.04.sif ships fla 0.4.2.
+
+experimental_attention_variant: gated_delta_net
+linear_attention_freq: 4
+linear_conv_kernel_dim: 4
+linear_key_head_dim: 128
+linear_value_head_dim: 128
+# Head counts scale with width, same ratio as Qwen3.5-35B-A3B (hidden 2048 -> 16 key /
+# 32 value heads of dim 128). 0.1B (hidden 512): 4 / 8.
+linear_num_key_heads: "${oc.eval:'${backend.megatron.hidden_size} // 128'}"
+linear_num_value_heads: "${oc.eval:'2 * ${backend.megatron.hidden_size} // 128'}"
+
+# Gated output on the full-attention layers, zero-centred RMSNorm gamma, and partial
+# RoPE (25% of head dim), as in Qwen3.5.
+attention_output_gate: true
+layernorm_zero_centered_gamma: true
+rotary_percent: 0.25
+
+# The MTP model builder does not support experimental attention variants.
+mtp_num_layers: null
