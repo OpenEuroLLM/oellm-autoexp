@@ -813,6 +813,24 @@ def test_a_node_that_refuses_steps_is_marked_dead_and_skipped(pool):
         pool.wait_for(lambda n=name: pool.record(n)["runtime"]["final_state"] == "finished", 120, name)
 
 
+def test_a_refused_large_step_marks_no_node_dead(pool):
+    """A refused step of more than STEP_REFUSED_MAX_NODES nodes says nothing about its nodes (2026-11-13: a 256-node
+    step refused with 'Requested node configuration is not available' after the allocation lost nodes marked all
+    257 nodes of p264 host004 dead)."""
+    pool.create_pool(*FAST, "job.pool_host.max_runs_per_host=1", "slurm.sbatch.nodes=3")
+    (pool.fs / "stuck_nodes").write_text("n1000-0\n")
+    pool.enqueue("big", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=3")
+    pool.enqueue("after", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=1")
+    pool.start_monitor()
+    big = pool.wait_for(lambda: pool.runs_of("dummy_big"), 60, "the big run")[0]
+    pool.wait_for(lambda: (pool.pool_dir / "runs" / big / "rc").exists(), 60, "its refused step")
+    assert len(pool.run_state(big).started["nodes"].split(",")) == 3
+    # the next run starts (the monitor has handled the refused step by then): no node marked dead
+    pool.wait_for(lambda: (r := pool.runs_of("dummy_after")) and pool.run_state(r[0]).started, 60, "the next run")
+    dead = pool.layout.host_dir("host001") / "dead_nodes"
+    assert not dead.exists() or not dead.read_text().strip(), dead.read_text()
+
+
 def test_handover_to_a_successor_allocation(pool):
     pool.create_pool(
         *FAST,

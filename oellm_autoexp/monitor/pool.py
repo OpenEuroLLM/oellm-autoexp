@@ -341,6 +341,10 @@ _REFUSED_CHECKED: dict[str, set[str]] = {}  # pool root -> runs already checked 
 # the node, free again at once, took the next run: 18 runs in 20 min.
 STEP_REFUSED = re.compile(r"srun: error: Unable to create step for job \d+: (?P<why>[^\n]+)")
 STEP_REFUSED_WITHIN_S = 180.0
+# a refused step names its node(s) only when it is small: a refused 256-node step (e.g. "Requested node
+# configuration is not available" after the allocation lost nodes) says nothing about its nodes -- on 2026-11-13
+# it marked all 257 nodes of p264 host004 dead
+STEP_REFUSED_MAX_NODES = 2
 
 
 def dead_nodes(layout: PoolLayout, hid: str) -> list[str]:
@@ -389,7 +393,12 @@ def step_refused(layout: PoolLayout, rid: str) -> tuple[list[str], str] | None:
     m = STEP_REFUSED.search(tail)
     if not m:
         return None
-    return [n for n in state.started["nodes"].split(",") if n], m.group("why").strip()
+    nodes = [n for n in state.started["nodes"].split(",") if n]
+    if len(nodes) > STEP_REFUSED_MAX_NODES:
+        LOGGER.warning("[pool] %s: a %d-node step was refused (%s); its nodes are not marked dead",
+                       rid, len(nodes), m.group("why").strip())
+        return None
+    return nodes, m.group("why").strip()
 
 
 def add_run_exclude(layout: PoolLayout, rid: str, nodes: list[str]) -> list[str]:
