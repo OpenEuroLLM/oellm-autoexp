@@ -1908,3 +1908,24 @@ insertion.
 At 1233 a31 is below the main run's 2000 (767 fewer steps; CoQA still rises fast there: 55 at 2000, 56 at 3000).
 Winogrande is at the 2000 level. No conclusion before the main run's 1000 row (the start point) and a31 at
 1500 / 2000. Noise: CoQA +-1.5-3 F1, Winogrande +-1.4.
+
+### 13.y Status 2026-11-13 09:50 (lead)
+
+* a31 loss gap to the main run on identical batches, 25-step means: +0.0077 (1001-1025) -> +0.0030 (1101-1125)
+  -> +0.0024 (1176-1200) -> +0.0028 (1201-1225).
+* a31 at 1233 (CoQA F1 47.37, Winogrande 56.91): main 1000 for those rows is still missing (its workers stopped at
+  the host release; main 1000 SQuAD v2 F1 17.05, HasAns 33.41); main 2000 is 55.21 / 57.62.
+* a31 on 256 nodes was impossible on host004:
+  * 257 - as07r5b02 = 256 healthy, but the supervisor's batch step holds as01r1b17's GPUs, so 256-node steps were
+    refused with "Insufficient GRES";
+  * every refusal made the old live monitor mark the whole host dead (restored each time).
+  * Back to 128 nodes, trained 1234 -> 1249.
+* Host004 released at 09:30. Its `--signal=B:USR1@2700` stop margin of 45 min triggered at 09:27 and a31 saved
+  `ckpt/iter_0001249`. The margin is now 900 s for future hosts (mn5_pool_p264.yaml + the live
+  host_definition.json); the pending host jobs are unchanged (user: keep their accumulated priority).
+* Next host:
+  * a31 (pool job early31_a31_410544, 128 nodes) resumes from 1249;
+  * the step-1000 main-run rows re-run;
+  * the main run (stopped at 36000, last kept save `ckpt_rolling/iter_0035900`) waits for the user's choice and
+    for the save-time OOM to be understood.
+* A monitor restart onto pool 2b396496 is due at the next host change.
