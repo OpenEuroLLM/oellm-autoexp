@@ -56,6 +56,11 @@ pool_host:
   fallback_lead_s: 0
   # queued insurance hosts per non-first account (they age in that account's queue)
   fallback_hosts: 1
+  # budget cut: every qos_check_s (0 = never) read each account's default QOS; one capped below
+  # the host wall (JUPITER lowcont/nocont, 6 h) gets that wall on new hosts, its queued hosts are
+  # shortened in place, and every account then keeps capped_queued_per_account hosts queued
+  qos_check_s: 0
+  capped_queued_per_account: 0
   # adopted hosts (pool_ctl adopt): stop the runs this long before the job's own end; cancel
   # the job if it runs but the adoption hook has not engaged within adopt_hook_timeout_s
   adopt_stop_margin_s: 1800

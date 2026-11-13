@@ -204,6 +204,17 @@ class PoolHostConfig:
     # queued hosts each non-first host_accounts account holds (its insurance hosts age in that
     # account's queue); raise it to keep several aging there too
     fallback_hosts: int = 1
+    # Budget cut (JUPITER: an account out of budget drops to QOS lowcont/nocont -- 6 h wall,
+    # lower priority). Every qos_check_s (0 = never) the pool reads each host account's
+    # default QOS and its MaxWall (sacctmgr). An account whose QOS caps below the host's wall
+    # time is "capped": its new hosts are submitted with the cap as wall time, and its queued
+    # hosts are shortened in place (scontrol update TimeLimit/QOS -- their queue age is kept,
+    # nothing is cancelled). While any account is capped and capped_queued_per_account > 0,
+    # every host account keeps that many hosts queued (instead of keep_pending,
+    # fallback_hosts and max_own_hosts): at low priority hosts start rarely, so several age
+    # in each queue.
+    qos_check_s: float = 0.0
+    capped_queued_per_account: int = 0
     # ADOPTED hosts (pool_ctl adopt: an ordinary queued job whose own step is held by the
     # adoption hook): stop the runs this long before the job's own end time (it has no
     # B:USR1), and cancel the job when it runs but the hook's start marker has not
@@ -324,6 +335,97 @@ def parse_slurm_time(value: str | None) -> float | None:
         else:
             h, m, s = parts[:3]
     return float(days * 86400 + h * 3600 + m * 60 + s)
+
+
+def format_slurm_time(seconds: float) -> str:
+    """Seconds -> SLURM time string (H:MM:SS, D-HH:MM:SS from a day on)."""
+    total = int(seconds)
+    days, rest = divmod(total, 86400)
+    h, rest = divmod(rest, 3600)
+    m, s = divmod(rest, 60)
+    return f"{days}-{h:02d}:{m:02d}:{s:02d}" if days else f"{h}:{m:02d}:{s:02d}"
+
+
+def read_account_qos(
+    account: str, partition: str | None
+) -> tuple[str, float | None, set[str]] | None:
+    """(default QOS, its MaxWall in seconds or None, the QOSes allowed) of this
+    user's association with ``account`` (the row of ``partition``, else the
+    partition-less one); None when sacctmgr fails or knows no such
+    association."""
+    user = os.environ.get("USER") or ""
+    try:
+        out = subprocess.run(
+            [
+                "sacctmgr",
+                "-n",
+                "-P",
+                "show",
+                "assoc",
+                f"user={user}",
+                f"account={account}",
+                "format=partition,qos,defaultqos",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+        rows = [line.split("|") for line in out.splitlines() if line.count("|") == 2]
+        row = next((r for r in rows if partition and r[0] == partition), None)
+        row = row or next((r for r in rows if not r[0]), None) or (rows[0] if rows else None)
+        if row is None or not row[2]:
+            return None
+        qos = row[2]
+        wall = (
+            subprocess.run(
+                ["sacctmgr", "-n", "-P", "show", "qos", qos, "format=maxwall"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            .stdout.strip()
+            .splitlines()
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        LOGGER.warning("[pool] sacctmgr failed for account %s: %s", account, exc)
+        return None
+    allowed = {q for q in row[1].split(",") if q} | {qos}
+    return qos, (parse_slurm_time(wall[0]) if wall else None), allowed
+
+
+def read_job_qos(job_ids: list[str]) -> dict[str, str]:
+    """Job id -> its QOS (squeue); jobs squeue does not list are left out."""
+    if not job_ids:
+        return {}
+    try:
+        out = subprocess.run(
+            ["squeue", "-h", "-j", ",".join(job_ids), "-o", "%i|%q"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    return dict(line.split("|", 1) for line in out.splitlines() if "|" in line)
+
+
+def update_queued_job(job_id: str, time_limit: str, qos: str | None) -> bool:
+    """Shorten a pending job in place (its queue age is kept); with ``qos``
+    also move it to that QOS.
+
+    True on success.
+    """
+    argv = ["scontrol", "update", f"JobId={job_id}", f"TimeLimit={time_limit}"]
+    if qos:
+        argv.append(f"QOS={qos}")
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        LOGGER.warning("[pool] %s failed: %s", " ".join(argv), exc)
+        return False
+    if out.returncode != 0:
+        LOGGER.warning("[pool] %s failed: %s", " ".join(argv), (out.stderr or out.stdout).strip())
+    return out.returncode == 0
 
 
 def _sanitize(name: str) -> str:
@@ -659,8 +761,9 @@ _TEST_ONLY_START = re.compile(r"to start at (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)")
 
 
 def parse_test_only_start(text: str) -> float | None:
-    """`sbatch --test-only` reports "sbatch: Job 123 to start at 2026-11-08T03:12:00 using ...";
-    the start as an epoch (local time), or None."""
+    """`sbatch --test-only` reports "sbatch: Job 123 to start at
+    2026-11-08T03:12:00 using ..."; the start as an epoch (local time), or
+    None."""
     m = _TEST_ONLY_START.search(text or "")
     if not m:
         return None
@@ -671,8 +774,8 @@ def parse_test_only_start(text: str) -> float | None:
 
 
 def exclude_in_pool(layout: PoolLayout, nodes) -> list[str]:
-    """Append nodes to the pool's exclude_nodes (honoured at every step launch, also in
-    hosts that are already up); returns the ones that were new."""
+    """Append nodes to the pool's exclude_nodes (honoured at every step launch,
+    also in hosts that are already up); returns the ones that were new."""
     existing = set(_read(layout.exclude_nodes).split())
     added = [n for n in dict.fromkeys(nodes) if n and n not in existing]
     if added:
@@ -795,8 +898,11 @@ def pools_have_pending_requests(session_dir: str | Path) -> bool:
 def check_fits_host(
     job: SlurmJobConfig, host: SlurmJobConfig, accounts: list[str] | None = None
 ) -> list[str]:
-    """Reasons a job cannot run inside this pool's hosts (empty = fine). ``accounts``:
-    the pool's ``host_accounts``; a job of any of them fits."""
+    """Reasons a job cannot run inside this pool's hosts (empty = fine).
+
+    ``accounts``:
+    the pool's ``host_accounts``; a job of any of them fits.
+    """
     problems: list[str] = []
     jsb, hsb = job.slurm.sbatch, host.slurm.sbatch
     if int(jsb.nodes or 1) > int(hsb.nodes or 1):
@@ -920,6 +1026,8 @@ class PoolManager:
         self._runs: dict[str, str] = {}
         # hid views of the current poll, by pool dir
         self._hosts: dict[str, dict[str, HostView]] = {}
+        # account -> wall cap (s) of the accounts on a capped QOS (qos_check_s), by pool dir
+        self._caps: dict[str, dict[str, float]] = {}
 
     # --- JobClientProtocol --------------------------------------------------
     def submit(self, job: SlurmJobConfig) -> str:
@@ -1415,8 +1523,19 @@ class PoolManager:
             and (not h.info or h.live(cfg.host_stale_s))
         ]
         accounts = host_accounts(cfg)
+        # budget cut: capped wall times, and a longer queue on every account
+        own_account = sbatch_get(layout.load_host_definition().slurm.sbatch, "account")
+        caps = self._account_caps(
+            loop, layout, cfg, state, accounts or [str(own_account)], current, now
+        )
+        self._caps[str(layout.root)] = caps
+        capped = bool(caps) and cfg.capped_queued_per_account > 0 and desired > 0
         create_account: str | None = None
-        if accounts:
+        if capped:
+            missing, create_account = self._capped_targets(
+                cfg, accounts or [str(own_account)], current
+            )
+        elif accounts:
             missing, create_account = self._account_targets(
                 loop, cfg, accounts, current, running, desired, now
             )
@@ -1462,7 +1581,7 @@ class PoolManager:
         failures = int(state.get("host_failures", 0))
         backoff = 0.0 if failures == 0 else min(600.0, 30.0 * 2 ** (failures - 1))
         waited = now - float(state.get("last_host_created_ts", 0.0))
-        if cfg.max_own_hosts >= 0:
+        if cfg.max_own_hosts >= 0 and not capped:
             own = [h for h in current if not h.adopted]
             missing = min(missing, max(0, cfg.max_own_hosts - len(own)))
         # One host at a time while one is still waiting for its sbatch.
@@ -1480,6 +1599,120 @@ class PoolManager:
                     failures,
                 )
         layout.write_state(state)
+
+    # set by tests; default: read_account_qos, read_job_qos, update_queued_job
+    _qos_probe = None
+    _job_qos = None
+    _queued_update = None
+
+    def _account_caps(
+        self,
+        loop: MonitorLoop,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        state: dict,
+        accounts: list[str],
+        current: list[HostView],
+        now: float,
+    ) -> dict[str, float]:
+        """qos_check_s: the host accounts whose default QOS caps the wall time below the
+        host's (a budget cut) -> that cap in seconds. On each check the queued hosts of a
+        capped account whose QOS it no longer allows are shortened and moved to the default
+        QOS in place (queue age kept, nothing cancelled)."""
+        if cfg.qos_check_s <= 0:
+            return {}
+        qstate = state.setdefault("qos", {})
+        caps = {a: float(c) for a, c in (qstate.get("caps") or {}).items() if a in accounts}
+        if now - float(qstate.get("ts", 0.0)) < cfg.qos_check_s:
+            return caps
+        base = layout.load_host_definition()
+        host_s = parse_slurm_time(getattr(base.slurm.sbatch, "time", None))
+        partition = sbatch_get(base.slurm.sbatch, "partition")
+        known: dict[str, tuple[str, set[str]]] = {}
+        for account in accounts:
+            got = (self._qos_probe or read_account_qos)(account, partition)
+            if got is None:
+                continue  # unknown this time: keep what was known
+            qos, wall, allowed = got
+            known[account] = (qos, allowed)
+            cap = wall if wall is not None and (host_s is None or wall < host_s) else None
+            if cap != caps.get(account):
+                LOGGER.warning(
+                    "[pool %s] account %s: default QOS %s, %s",
+                    cfg.name,
+                    account,
+                    qos,
+                    f"wall time capped at {format_slurm_time(cap)} (budget cut?): new hosts get "
+                    "that, queued ones are shortened"
+                    if cap
+                    else "no wall cap below the host's",
+                )
+            if cap:
+                caps[account] = cap
+            else:
+                caps.pop(account, None)
+        qstate.update(ts=now, caps=caps)
+        queued = [
+            h
+            for h in current
+            if not h.info
+            and not h.retiring
+            and h.record.runtime.runtime_job_id
+            and (h.account or accounts[0]) in caps
+            and (h.account or accounts[0]) in known
+        ]
+        job_qos = (self._job_qos or read_job_qos)(
+            [str(h.record.runtime.runtime_job_id) for h in queued]
+        )
+        for host in queued:
+            account = host.account or accounts[0]
+            cap, (qos, allowed) = caps[account], known[account]
+            jid = str(host.record.runtime.runtime_job_id)
+            sbatch = host.record.definition.slurm.sbatch
+            limit = parse_slurm_time(getattr(sbatch, "time", None))
+            old_qos = job_qos.get(jid)
+            if old_qos is None:
+                continue  # squeue no longer lists it (started or gone)
+            if old_qos in allowed and old_qos != qos:
+                continue  # its QOS is still allowed: it keeps that (and its priority)
+            if old_qos == qos and limit is not None and limit <= cap:
+                continue
+            wall = format_slurm_time(cap)
+            ok = (self._queued_update or update_queued_job)(
+                jid, wall, None if old_qos == qos else qos
+            )
+            LOGGER.log(
+                logging.WARNING if ok else logging.ERROR,
+                "[pool %s] queued host %s (job %s, QOS %s, %s): %s",
+                cfg.name,
+                host.hid,
+                jid,
+                old_qos,
+                getattr(sbatch, "time", None),
+                f"shortened in place to {wall}, QOS {qos}"
+                if ok
+                else f"could NOT be moved to {wall}/QOS {qos}: it may never start; left queued "
+                "(its age), check it by hand",
+            )
+            if ok:
+                sbatch.time = wall
+                host.time_limit_s = cap
+                loop._store.upsert(host.record)
+        return caps
+
+    def _capped_targets(
+        self, cfg: PoolHostConfig, accounts: list[str], current: list[HostView]
+    ) -> tuple[int, str | None]:
+        """Budget cut: every host account keeps capped_queued_per_account hosts queued. Returns
+        (hosts missing, the account to create the next one in: the one with fewest queued)."""
+        per = int(cfg.capped_queued_per_account)
+        counts = {
+            a: len([h for h in current if not h.info and (h.account or accounts[0]) == a])
+            for a in accounts
+        }
+        missing = sum(max(0, per - n) for n in counts.values())
+        short = [a for a in accounts if counts[a] < per]
+        return missing, (min(short, key=lambda a: counts[a]) if short else None)
 
     def _account_targets(
         self,
@@ -1551,7 +1784,8 @@ class PoolManager:
 
     @staticmethod
     def _singleton_holder(d: Path) -> dict | None:
-        """The run that holds the key, while it has not ended (no rc), else None."""
+        """The run that holds the key, while it has not ended (no rc), else
+        None."""
         try:
             holder = json.loads((d / "holder.json").read_text())
         except (OSError, json.JSONDecodeError):
@@ -1563,8 +1797,9 @@ class PoolManager:
 
     @staticmethod
     def _singleton_reservation(d: Path, max_age_s: float = 3 * 3600) -> dict | None:
-        """The run the key is reserved for (it superseded the holder), while that run has not
-        ended and the reservation is younger than max_age_s, else None."""
+        """The run the key is reserved for (it superseded the holder), while
+        that run has not ended and the reservation is younger than max_age_s,
+        else None."""
         try:
             res = json.loads((d / "reserved.json").read_text())
         except (OSError, json.JSONDecodeError):
@@ -1581,7 +1816,8 @@ class PoolManager:
     def _claim_singleton(
         self, layout: PoolLayout, key: str, rid: str, nodes: int, job_id: str, priority: int = 0
     ) -> bool:
-        """May run `rid` (`nodes` nodes) of the singleton job `key` start in this pool now?
+        """May run `rid` (`nodes` nodes) of the singleton job `key` start in
+        this pool now?
 
         One run per key across every pool: the key is free (no holder, or its run ended, and no
         reservation for a larger run), or held by this very run. A holder in ANOTHER pool of
@@ -1589,7 +1825,8 @@ class PoolManager:
         job requeued in that pool) and the key reserved for this run, which starts once the
         holder's run has ended; on as many or more nodes the holder keeps it.
         Checked and claimed under a mkdir lock (atomic on GPFS), so two monitors never both
-        start the job."""
+        start the job.
+        """
         d = self._singleton_dir(layout, key)
         d.mkdir(parents=True, exist_ok=True)
         lock = d / "lock"
@@ -1674,8 +1911,8 @@ class PoolManager:
 
     # --- adopted hosts ------------------------------------------------------
     def _adopt(self, loop: MonitorLoop, layout: PoolLayout, state: dict, request: dict) -> str:
-        """Register a queued SLURM job (its hook already installed by pool_ctl adopt) as a
-        host of this pool."""
+        """Register a queued SLURM job (its hook already installed by pool_ctl
+        adopt) as a host of this pool."""
         from oellm_autoexp.monitor.loop import JobRecord, JobRuntime
 
         jid = str(request["job_id"])
@@ -1927,10 +2164,13 @@ class PoolManager:
     _sbatch_test_start = None
 
     def _successor_held(self, layout, cfg, state, running, busy, account, now) -> bool:
-        """True while a successor should NOT be submitted yet (successor_test_start): a host
+        """True while a successor should NOT be submitted yet
+        (successor_test_start): a host.
+
         trains the run, its block time is not over, and a dry-run submission predicts a start
         before `block end - successor_lead_s`. Fails open (submit) when the estimate is
-        unavailable."""
+        unavailable.
+        """
         if not cfg.successor_test_start or cfg.handover_min_age_s <= 0:
             return False
         run_hosts = [h for h in running if h.hid in busy]
@@ -1986,6 +2226,11 @@ class PoolManager:
         argv = ["sbatch", "--test-only"]
         if account:
             argv.append(f"--account={account}")
+        cap = self._caps.get(str(layout.root), {}).get(
+            account or str(sbatch_get(base.slurm.sbatch, "account"))
+        )
+        if cap:
+            argv.append(f"--time={format_slurm_time(cap)}")
         excluded = self._host_excludes(layout, base)
         if excluded:
             argv.append(f"--exclude={','.join(excluded)}")
@@ -2021,6 +2266,12 @@ class PoolManager:
             sbatch_set(sbatch, "exclude", ",".join(excluded))
         if account:
             sbatch_set(sbatch, "account", account)
+        cap = self._caps.get(str(layout.root), {}).get(
+            account or str(sbatch_get(sbatch, "account"))
+        )
+        host_s = parse_slurm_time(getattr(sbatch, "time", None))
+        if cap and (host_s is None or cap < host_s):
+            sbatch.time = format_slurm_time(cap)  # budget cut: the account's QOS wall
         slurm = replace(
             base.slurm,
             name=name,
@@ -2049,11 +2300,14 @@ class PoolManager:
         )
         loop._store.upsert(record)
         LOGGER.info(
-            "[pool %s] created host %s (%s nodes%s%s)",
+            "[pool %s] created host %s (%s nodes%s%s%s)",
             cfg.name,
             hid,
             sbatch.nodes,
             f", account {account}" if account else "",
+            f", wall {sbatch.time} (capped QOS)"
+            if cap and sbatch.time == format_slurm_time(cap)
+            else "",
             f", {len(excluded)} node(s) excluded" if excluded else "",
         )
         return hid

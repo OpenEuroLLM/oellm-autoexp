@@ -817,8 +817,8 @@ def test_a_completing_allocation_loses_its_run_at_once(env):
 
 
 def _gated_env(env, monkeypatch, estimate, host_age_s):
-    """One host trains the run (started host_age_s ago, block 1 h); keep_pending is then
-    raised to 1 so the pool wants a successor."""
+    """One host trains the run (started host_age_s ago, block 1 h);
+    keep_pending is then raised to 1 so the pool wants a successor."""
     meta = env.layout.load_meta()
     meta["config"].update(
         handover=True,
@@ -1199,3 +1199,108 @@ def test_check_fits_host_accepts_any_of_the_host_accounts(tmp_path):
     assert any("account" in p for p in check_fits_host(job, host))
     assert check_fits_host(job, host, ["cns144", "ehpc533"]) == []
     assert any("account" in p for p in check_fits_host(job, host, ["cns144"]))
+
+
+# ---------------------------------------------------------------- budget cut (qos_check_s)
+def _budget_env(env, monkeypatch, *, update_ok=True):
+    """Two host accounts (host wall 1 h); qos[account] is what sacctmgr
+    reports, jobs[jid] the QOS squeue shows; returns (qos, jobs, updates)."""
+    meta = env.layout.load_meta()
+    meta["config"].update(
+        host_accounts="acc,acc2",
+        keep_pending=1,
+        fallback_hosts=0,
+        max_own_hosts=2,
+        qos_check_s=0.001,
+        capped_queued_per_account=3,
+    )
+    env.layout.write_meta(meta)
+    qos = {"acc": ("normal", 12 * 3600.0, {"normal"}), "acc2": ("normal", 12 * 3600.0, {"normal"})}
+    jobs: dict[str, str] = {}
+    updates = []
+
+    def update(jid, wall, new_qos):
+        updates.append((jid, wall, new_qos))
+        if update_ok and new_qos:
+            jobs[jid] = new_qos
+        return update_ok
+
+    monkeypatch.setattr(PoolManager, "_qos_probe", staticmethod(lambda a, p: qos[a]))
+
+    def job_qos(ids):
+        # a job keeps the QOS it was given at submission: its account's default back then
+        for r in env.hosts():
+            jid = r.runtime.runtime_job_id
+            if jid in ids and jid not in jobs:
+                jobs[jid] = qos[r.definition.metadata.get("pool_host_account")][0]
+        return {i: jobs[i] for i in ids if i in jobs}
+
+    monkeypatch.setattr(PoolManager, "_job_qos", staticmethod(job_qos))
+    monkeypatch.setattr(PoolManager, "_queued_update", staticmethod(update))
+    return qos, jobs, updates
+
+
+def _by_account(env):
+    out: dict[str, list[str]] = {}
+    for r in env.hosts():
+        if r.runtime.final_state:
+            continue
+        acc = r.definition.metadata.get("pool_host_account")
+        out.setdefault(acc, []).append(r.definition.slurm.sbatch.time)
+    return out
+
+
+def test_budget_cut_shortens_queued_hosts_in_place_and_queues_more_on_both_accounts(
+    env, monkeypatch
+):
+    qos, jobs, updates = _budget_env(env, monkeypatch)
+    env.add_run("train")
+    env.poll(4)
+    before = _by_account(env)
+    assert sum(len(v) for v in before.values()) == 2, "max_own_hosts holds while uncapped"
+    assert not updates
+    old = [r for r in env.hosts() if r.definition.metadata.get("pool_host_account") == "acc"]
+    PoolManager._job_qos([r.runtime.runtime_job_id for r in env.hosts()])  # queued as normal
+    qos["acc"] = ("lowcont", 1800.0, {"lowcont"})  # acc out of budget: 30 min < the 1 h host wall
+    env.poll(10)
+    hosts = _by_account(env)
+    assert len(hosts["acc"]) == 3 and len(hosts["acc2"]) == 3, hosts
+    assert hosts["acc"] == ["0:30:00"] * 3, "the queued acc host shortened, new ones capped"
+    assert hosts["acc2"] == ["01:00:00"] * 3, "an uncapped account keeps the host wall"
+    assert [(u[1], u[2]) for u in updates] == [("0:30:00", "lowcont")] * len(old)
+    assert all(not r.runtime.final_state for r in old), "nothing is cancelled"
+    env.poll(3)
+    assert len(updates) == len(old), "a moved host is not updated again"
+
+
+def test_budget_cut_leaves_a_queued_host_whose_qos_is_still_allowed(env, monkeypatch):
+    qos, jobs, updates = _budget_env(env, monkeypatch)
+    env.add_run("train")
+    env.poll(4)
+    PoolManager._job_qos([r.runtime.runtime_job_id for r in env.hosts()])  # queued as normal
+    qos["acc"] = ("lowcont", 1800.0, {"lowcont", "normal"})
+    env.poll(3)
+    assert not updates, "normal is still allowed: the queued host keeps it (and its priority)"
+
+
+def test_budget_cut_failed_update_keeps_the_host_queued(env, monkeypatch, caplog):
+    qos, jobs, updates = _budget_env(env, monkeypatch, update_ok=False)
+    env.add_run("train")
+    env.poll(4)
+    old = [r for r in env.hosts() if r.definition.metadata.get("pool_host_account") == "acc"]
+    PoolManager._job_qos([r.runtime.runtime_job_id for r in env.hosts()])  # queued as normal
+    qos["acc"] = ("lowcont", 1800.0, {"lowcont"})
+    with caplog.at_level("ERROR"):
+        env.poll(2)
+    assert updates and all(not env.rec(r.job_id).runtime.final_state for r in old)
+    assert env.rec(old[0].job_id).definition.slurm.sbatch.time == "01:00:00"
+    assert "could NOT be moved" in caplog.text
+
+
+def test_format_slurm_time():
+    from oellm_autoexp.monitor.pool import format_slurm_time
+
+    assert format_slurm_time(6 * 3600) == "6:00:00"
+    assert format_slurm_time(1800) == "0:30:00"
+    assert format_slurm_time(86400 + 61) == "1-00:01:01"
+    assert parse_slurm_time(format_slurm_time(43200)) == 43200
