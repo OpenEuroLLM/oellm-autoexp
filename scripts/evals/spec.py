@@ -413,8 +413,15 @@ class RuntimeSpec:
     env: dict[str, str] = field(default_factory=dict)
     evalchemy_dir: str = "/opt/evalchemy"  # apptainer: the evalchemy checkout inside the image
     hang_minutes: float = 15.0             # end a command silent this long after vLLM's shutdown
+    # pinned package versions per harness: the worker runs no command of a unit whose runtime has
+    # others (MN5's lm-eval is the image's; JUPITER's oellm-eval-vllm image has 0.4.12)
+    require: dict[str, dict[str, str]] = field(
+        default_factory=lambda: {"lm-eval-harness": {"lm_eval": "0.4.13"}})
 
     def check(self) -> None:
+        unknown = sorted(set(self.require) - set(HARNESSES))
+        if unknown:
+            raise SpecError(f"runtime.require: unknown harness {unknown} (one of {list(HARNESSES)})")
         if self.kind == "apptainer":
             missing = [h for h in HARNESSES if h not in self.images]
             if missing:

@@ -248,6 +248,7 @@ def test_launch_files_plan_runtime_sweep_and_manifest(tmp_path):
     assert "lm-eval-harness" not in rt.harness_pythonpath, "the sessions keep the vLLM install's lm-eval"
     assert rt.cleanup_globs == ["/dev/shm/oellm_engram_*"] and "$DEST/typer" in rt.prune["lighteval"]
     assert rt.hash_files == [f"{stage}/{f}" for f in launch.STAGE_FILES]
+    assert rt.require == {"lm-eval-harness": {"lm_eval": "0.4.13"}}, "the image's lm-eval is pinned"
     m = json.loads((d / "manifest.json").read_text())
     assert {u["kind"]: u["model"] for u in m["units"]} == {"lm_eval_session": plan.model_dir,
                                                            "lighteval": plan.model_dir, "evalchemy": plan.view_dir}
@@ -265,6 +266,11 @@ def test_apptainer_runtime_for_pools_on_other_clusters(tmp_path):
     assert rt.kind == "apptainer" and rt.images == images and rt.dirs == {"evalchemy": "/opt/evalchemy"}
     with pytest.raises(SpecError, match="no image"):
         _spec(tmp_path, {"runtime": {"kind": "apptainer", "images": {"lighteval": "/l.sif"}}})
+    jup = _spec(tmp_path, {"runtime": {"kind": "apptainer", "images": images,
+                                       "require": {"lm-eval-harness": {"lm_eval": "0.4.12"}}}})
+    assert launch.runtime(jup, plan).require == {"lm-eval-harness": {"lm_eval": "0.4.12"}}
+    with pytest.raises(SpecError, match="runtime.require: unknown harness"):
+        _spec(tmp_path, {"runtime": {"require": {"lm_eval": {"lm_eval": "0.4.13"}}}})
 
 
 def test_job_spec_roundtrip(tmp_path):

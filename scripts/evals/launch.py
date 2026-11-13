@@ -189,7 +189,7 @@ def runtime(spec: EvalSpec, plan: oplan.Plan) -> Runtime:
     if rs.kind == "apptainer":
         return Runtime(kind="apptainer", python="python", images=dict(rs.images), apptainer_args=list(rs.apptainer_args),
                        binds=list(rs.binds), env=dict(rs.env), dirs={"evalchemy": rs.evalchemy_dir}, gpus=GPUS_PER_NODE,
-                       hang_minutes=rs.hang_minutes, name="apptainer")
+                       hang_minutes=rs.hang_minutes, require=rs.require, name="apptainer")
     stage = p.oellm_stage
     harness_env = {"STANZA_RESOURCES_DIR": p.stanza, "OELLM_STAGE": stage,
                    "OELLM_INCLUDE": str(OELLM / "oellm/resources/custom_lm_eval_tasks")}
@@ -208,7 +208,7 @@ def runtime(spec: EvalSpec, plan: oplan.Plan) -> Runtime:
         cleanup_globs=["/dev/shm/oellm_engram_*"] if uva else [],
         # the vLLM wheel pins an older typer; lighteval's CLI metadata needs the image's
         prune={"lighteval": ["$DEST/typer", "$DEST/typer-*.dist-info", "$DEST/typer_slim-*.dist-info"]},
-        hash_files=[f"{stage}/{f}" for f in STAGE_FILES], hang_minutes=rs.hang_minutes, name="mn5")
+        hash_files=[f"{stage}/{f}" for f in STAGE_FILES], hang_minutes=rs.hang_minutes, require=rs.require, name="mn5")
 
 
 # ---------------------------------------------------------------- rendering
