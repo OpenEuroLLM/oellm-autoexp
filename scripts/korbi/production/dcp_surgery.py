@@ -145,6 +145,9 @@ def write_surgery(src, dst, md, replace, append_rows=None, *, tag, log=print, ch
     for old_name, name in files.items():
         os.rename(os.path.join(tmp, old_name), os.path.join(dst, name))
     os.remove(os.path.join(tmp, ".metadata"))
+    # a few small tensors leave some of the writer's thread files empty and unreferenced (layer_swap zero arms)
+    for f in os.listdir(tmp):
+        os.remove(os.path.join(tmp, f))
     os.rmdir(tmp)
     n_link = 0
     for f in os.listdir(src):
