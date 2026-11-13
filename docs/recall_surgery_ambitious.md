@@ -1929,3 +1929,13 @@ Winogrande is at the 2000 level. No conclusion before the main run's 1000 row (t
   * the main run (stopped at 36000, last kept save `ckpt_rolling/iter_0035900`) waits for the user's choice and
     for the save-time OOM to be understood.
 * A monitor restart onto pool 2b396496 is due at the next host change.
+
+### 13.z Queue / second pool (2026-11-13 evening, lead)
+
+* The new MN5 group cns143 has no acc_xehpc. Its QOS cap jobs at 200 nodes (acc_xlarge) or 100 (acc_resa). User
+  choice: pool `mn5_pool_c136` (cns143 / acc_xlarge, 5 x 136-node hosts, at most 2 running).
+  * Submitted 20:23-20:25 (49019894 / 904 / 908 / 915 / 917).
+  * Priority 44,465: fair-share 43,809, age 0. The cns144 264-node chain is at 50,694: fair-share 27,623, age
+    22,269.
+* a31 is queued in both pools with `pool_singleton=early31_a31`: p264 at 256 nodes, c136 at 128 (cns143 /
+  acc_xlarge). It runs once, on whichever host starts first, from `ckpt/iter_0001249`.
