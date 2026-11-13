@@ -1742,8 +1742,8 @@ of the same layers:
 |---|---|---|---|---|---|---|
 | attn6 (all 6 attention), seq 4096 | +0.0005 | +0.0011 | +0.0025 | +0.0045 | **+0.0115 (0.02)** | +0.684 |
 | attn6, Winogrande/WSC 512 | +0.0007 | +0.0062 | +0.0047 | +0.0038 | +0.0018 (0.01) | +0.138 |
-| attn1 (attention 17), seq 4096 | -0.0001 | pending | +0.0002 | +0.0000 | +0.0004 (0.02) | +0.021 |
-| ckda1 (CKDA 35), seq 4096 | pending | -0.0001 | -0.0000 | +0.0002 | +0.0005 (0.06) | +0.008 |
+| attn1 (attention 17), seq 4096 | -0.0001 | -0.0001 | +0.0002 | +0.0000 | +0.0004 (0.02) | +0.021 |
+| ckda1 (CKDA 35), seq 4096 | -0.0003 | -0.0001 | -0.0000 | +0.0002 | +0.0005 (0.06) | +0.008 |
 | mixall (all 49 attention + CKDA mixers), seq 4096 | -0.0008 | +0.0125 | +0.084 | +0.300 | +0.376 | -- |
 | mixall, 512 | +0.0093 | +0.080 | +0.234 | +0.396 | +0.309 | -- |
 
@@ -1763,4 +1763,23 @@ of the same layers:
   * they replace late CKDA layers: one CKDA zeroed costs +0.008, so six cost roughly +0.05 before adaptation;
   * a short post-merge adaptation (crossfade as before) would be needed.
 
-  The 35603 series (merge into the phase-2 model; donors 32000 / 23500 / 10000, attn6 / mixall) is still running.
+
+**Result: base 35603** (phase 2, 64k; eval-only without phase transitions):
+
+| swapped into 35603 | donor 32000 (3.6k) | 23500 (12.1k, across the 8k -> 64k switch) | 10000 (25.6k) | zeroed |
+|---|---|---|---|---|
+| attn6, seq 4096 | +0.0007 | +0.0075 (0.01) | **+0.0309 (0.04)** | +0.718 |
+| attn6, Winogrande/WSC 512 | -0.0016 | +0.0129 (0.08) | +0.0330 (0.21) | +0.159 |
+| mixall, seq 4096 | +0.058 | +2.230 | +0.809 | -- |
+| mixall, 512 | +0.183 | +1.270 | +1.014 | -- |
+
+(base mean loss: seq 4096 1.2367, 512 4.1288)
+
+* **Attention-layer compatibility degrades slowly with distance.** Across 25.6k steps (and the context switch), the
+  6 attention layers cost 4 % of their removal on text and 21 % on the Winogrande / WSC requests. Merging layers
+  grown at step ~1-2k into a 35k+ model is about 34k steps apart, plus the 9815 head-dim change. Extrapolated:
+  roughly 5-10 % of removal on text and a third on the requests. A real but recoverable cost: a short post-merge
+  adaptation (crossfade, hundreds of steps) should close it.
+* **Swapping all mixers stays catastrophic** beyond a few thousand steps (+0.8 to +2.2).
+* **Not tested here:** whether the transplanted attention keeps its retrieval function (losses only), and layers
+  grown in a BRANCH (the §13 arms) rather than in the main run itself.

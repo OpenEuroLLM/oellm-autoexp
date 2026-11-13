@@ -51,8 +51,13 @@ def diff(base: dict, arm: dict) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="/gpfs/scratch/ehpc533/hybrid_nucleus/fixedvalid_eval/layer_swap")
+    ap.add_argument("--match", default="", help="only arms matching this regex (and their bases); the login node "
+                    "kills a full table at its CPU limit")
     a = ap.parse_args(argv)
     arms = sorted(os.path.basename(p) for p in glob.glob(os.path.join(a.root, "b*")))
+    if a.match:
+        keep = {x for x in arms if re.search(a.match, x)}
+        arms = [x for x in arms if x in keep or (x.endswith("_base") and any(k.split("_")[0] == x.split("_")[0] for k in keep))]
     bases = {}
     for arm in arms:
         if arm.endswith("_base") and glob.glob(os.path.join(a.root, arm, "token_dump", "r*_*.pt")):
