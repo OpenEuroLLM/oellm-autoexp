@@ -1835,7 +1835,7 @@ attention); >= 10000 the hd256 run (16x256 since 9815). Tokens per step are 67.1
 
 | step | tokens | CoQA EM / F1 | Winogrande | SQuAD v2 F1 (HasAns) | belebele |
 |---|---|---|---|---|---|
-| 1000 | 0.07T | STEP1000_COQA | STEP1000_WINO | STEP1000_SQUAD | STEP1000_BELE |
+| 1000 | 0.07T | pending | pending | pending | 29.9 (15 of 24 languages) |
 | 2000 | 0.13T | 39.18 / 55.21 | 57.62 | 23.81 (47.38) | 50.00 |
 | 3000 | 0.20T | 41.17 / 56.32 | 61.64 | 24.86 (49.01) | 62.14 |
 | 3700 | 0.25T | 39.80 / 55.36 | 59.59 | 25.30 (50.07) | 65.49 |
@@ -1862,6 +1862,11 @@ attention); >= 10000 the hd256 run (16x256 since 9815). Tokens per step are 67.1
 | **32B** `b1cons_90k` (1.5T) | | -- / 79.72 | 70.32 | 39.22 | |
 | **32B** `b1consTW_300k` (5T) | | 69.12 / 81.72 | 70.56 | 42.91 (85.95) | |
 
+Step 1000 is incomplete: its workers were cancelled at 08:10 so host004's 256 healthy nodes could go to a31 (lead), and
+host004 ends 10:12. The missing rows are re-launched at priority 30 only once host004 has left the queue and another
+p264 host runs (scratchpad `step1000_relaunch.sh`; done rows are skipped). Two more eval-worker hangs this session
+had a new cause: `sqlite3.OperationalError: database is locked` in lm-eval's request cache (sqlitedict). This is a
+second shared-cache collision besides the HF metrics one (oellm-eval 7851072) and is not fixed yet.
 Not evaluable: 4800 / 4900 (incomplete saves in `ckpt_eval`, no `.metadata`); 9789 (an export from before the
 current exporter: vLLM's weight loader fails a shape assertion; 8000 and 10000 bracket it). One readout per step:
 CoQA noise is +-1.5 F1 (up to 2.9 between two launches of one export, §10.7), SQuAD v2 +-1, Winogrande +-1.4.
