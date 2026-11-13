@@ -16,6 +16,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # the saved args unpickle into megatron classes: the snapshot's Megatron on the path
 REPO=$(cd "$HERE/../../.." && pwd)
 export PYTHONPATH="$REPO/submodules/Megatron-LM:$REPO${PYTHONPATH:+:$PYTHONPATH}"
+# the image sets its own PYTHONPATH: SINGULARITYENV_ / APPTAINERENV_ override it inside the container
+export SINGULARITYENV_PYTHONPATH="$PYTHONPATH" APPTAINERENV_PYTHONPATH="$PYTHONPATH"
 SIF=${SIF:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif}
 SRC=${SRC:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph/ckpt_eval}
 ROOT=${ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus/production/early31}
