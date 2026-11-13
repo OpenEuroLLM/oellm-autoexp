@@ -1606,13 +1606,14 @@ CoQA F1 is noisy per launch: the same export scored up to 2.9 F1 apart in the fa
 
 | full readout | SQuAD v2 F1 (HasAns) | Winogrande | belebele vs same-step ctrl |
 |---|---|---|---|
-| ctrl 24800 / dec 24900 | pending / 27.08 (52.92) | 62.43 / 62.67 | -- |
-| kv8_lr4 24800 / dec | 25.95 (50.92) / pending | 62.59 / 62.43 | -0.0 / -0.4 |
-| cgqa_lr4 24800 / dec | 26.48 (51.93) / pending | 62.67 / 62.12 | **-2.2 / -2.6 (0 of 24 up)** |
+| ctrl 24800 / dec 24900 | 26.93 (52.86) / 27.08 (52.92) | 62.43 / 62.67 | -- |
+| kv8_lr4 24800 / dec | 25.95 (50.92) / 26.45 (51.73) | 62.59 / 62.43 | -0.0 / -0.4 |
+| cgqa_lr4 24800 / dec | 26.48 (51.93) / 27.12 (52.77) | 62.67 / 62.12 | **-2.2 / -2.6 (0 of 24 up)** |
 | kv8_post4_lr4 24800 / dec | 27.13 (52.87) / 26.96 (52.65) | 62.51 / 62.75 | +0.0 / +0.1 |
 | main 23500 (gbs 8192, same data) | 26.89 (52.94) | 62.51 | -- |
 
-Earlier readouts (+300 / +700 / +1100) show no trend either (§10.6 fast rows).
+Earlier readouts (+300 / +700 / +1100) show no trend either (§10.6 fast rows). The missing SQuAD v2 rows of
+dec_kv8_lr4 / dec_cgqa_lr4 were re-run from `autoexp_evalfix1` (1 worker each, 00:51-01:20); table complete 01:22.
 
 * **Primary arm `kv8_post4_lr4`:** decayed CoQA +0.2, SQuAD -0.1, Winogrande +0.1. The rule needs >= +2.0 / >= +1.5,
   so it fails. Training loss +0.0015-0.0024 over ctrl throughout.
