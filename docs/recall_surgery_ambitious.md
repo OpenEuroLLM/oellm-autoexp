@@ -2347,3 +2347,45 @@ older snapshots, tag `ruler`):
 
 Expected engine time ~0.5-1 h per model, on the next p264 host. Table:
 `python3 scripts/korbi/recall_surgery/ruler_table.py <export> [...]`.
+
+### 14.4 a0 (pure attention), the step-500 crash, budget 1500 (2026-11-14 16:10)
+
+* **a0** (user 2026-11-14): all 24 mixers softmax attention, otherwise identical to b7 / r3 / r3p (MLPs, mHC-4, the
+  two small Engram layers, data order, micro-batch 4, 20 BT, checkpoint grid, readouts).
+  * RoPE, because a pure-attention model needs positions (the hybrids' attention is NoPE since CKDA carries order):
+    theta 500000, full head dim, non-interleaved, unscaled, restarted per document (packed batches).
+  * Therefore `fused_qk_norm_rope: false`: its kernel has no per-document positions and refuses packed batches with
+    RoPE.
+  * Optional, not run: a NoPE pure-attention variant.
+  * The oellm_ambitious exporter and HF model now support plain RoPE (`rope_theta`). Checked on a tiny pure-attention
+    model: forward, incremental decoding consistent, scores offset-invariant. Megatron-vs-HF parity is checked at
+    a0's first readout.
+* **Parameters** (non-embedding, excluding the Engram tables; per mixer: attention 5.57M, CKDA 7.24M; MLP 13.76M per
+  layer; mHC ~0.12M per sublayer; embeddings 671M untied; Engram tables 0.92B):
+
+| arm | attention / CKDA | non-embedding | vs b7 |
+|---|---|---|---|
+| b7 | 3 / 21 | 505M | -- |
+| r3, r3p | 6 / 18 | 500M | -1.0 % |
+| a0 | 24 / 0 | 470M | -6.9 % |
+
+  Under 10 %, so no MLP width change. Megatron's count for b7: 1.242B total parameters on rank 0 of the dp-sharded
+  model (sharded Engram tables).
+* **b7 crashed at iteration 500** ("CUDA error: misaligned address", NCCL watchdog, all ranks).
+  * 500 = `arch_metrics_interval`, as for the ckda_branch arms at 23500 (§10.6); here the dense MLP layers (`-`,
+    unused in production). The persistent 477 save (0.25 BT) was written before; rolling saves are at 500 too.
+  * Arch metrics are off (`arch_metrics_interval: 1e8`). The guard stopped b7 (failed run, no retry left, packing
+    restored).
+  * b7 restarts on the 32B buffer from `ckpt/iter_0000477` (job small31_b7_f3848d, guard pid 1798489).
+  * b7's steps 1-120 ran at micro-batch 2 (a cancelled start saved at 120 after the directory was cleared, and the
+    next start resumed from it). Same global batches, only the gradient accumulation differs; negligible.
+* **Queue:**
+  * small16 pool: r3 / r3p / a0 re-queued with the fixed config (small31_r3_1_9a02ad, small31_r3p_2_99bb95,
+    small31_a0_3_57bd4c). 16 nodes = 4 bases x 4 nodes once b7 returns.
+  * Readouts: the 24 old jobs cancelled, 32 new (b7 / r3 / r3p / a0 x 8 checkpoints) enqueued.
+* **Table:** the SQuAD v2 columns use the uniform abstain rule of squad_uniform.py (empty or containing
+  "unanswerable"): HasAns F1 (abstain = 0), F1 when answering, abstain % on answerable / unanswerable, and the
+  abstention discrimination (unanswerable - answerable).
+* **Budget** (user: 1500 GPU-h for the branch; the 1.7B fine-tuning pair tallied separately):
+  * 4 bases x 20 BT x ~195 GPU-h = ~780; readouts 32 x <= 4 GPU-h = <= 130; Phase 2 ~100-150. Total ~1060.
+  * Spent so far: ~16 GPU-h (b7 starts incl. 0080's 500 steps).
