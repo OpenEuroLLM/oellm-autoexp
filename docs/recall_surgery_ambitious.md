@@ -1939,3 +1939,46 @@ Winogrande is at the 2000 level. No conclusion before the main run's 1000 row (t
     22,269.
 * a31 is queued in both pools with `pool_singleton=early31_a31`: p264 at 256 nodes, c136 at 128 (cns143 /
   acc_xlarge). It runs once, on whichever host starts first, from `ckpt/iter_0001249`.
+
+## 15. Recall suite vs CoQA / SQuAD v2: the deficit is format and abstention, not copying (2026-11-14)
+
+**The CKDA paper's recall suite** (`config/eval_tasks/recall_evals.yaml`: SWDE / FDA / squad_completion, 0-shot,
+"contains" accuracy), on existing runs:
+
+| model | SWDE | FDA | FDA, targets <= 4 words (n=502) | squad_completion |
+|---|---|---|---|---|
+| ambitious 23500 | 82.1 | 31.5 | 42.0 | 56.6 |
+| ambitious 13000 / 21000 | 79.7 / 82.1 | 33.8 / 31.6 | -- | 56.1 / 56.5 |
+| q35c 59600 | 77.7 | 25.1 | 36.1 | 58.0 |
+| Qwen2.5-32B | 85.2 | 28.6 | 43.0 | 56.1 |
+| Qwen3-30B-A3B-Base | 84.6 | 30.3 | 45.0 | 57.7 |
+| Qwen3-14B-Base | 85.7 | 30.8 | 45.8 | 60.7 |
+
+* **FDA is low for every model.** All 1102 prompts contain the answer string (no truncation; ~8k chars). Strict
+  "contains" fails on long-sentence values: "conclusion" 94/94 missed by Qwen2.5-32B, "proposed labeling" 89/97,
+  "type of test" 83/98. Paraphrased names also fail. On short targets (<= 4 words, case/punctuation-insensitive)
+  ambitious is at 42.0 vs Qwen 43-46. The paper's 50-60+ likely uses another FDA variant or scoring.
+* **On plain in-context copying ambitious is within a few points of 14-32B Qwens.** The 7:1 attention budget does not
+  limit extraction.
+
+**SQuAD v2 decomposed** (10-shot, the 5,928 answerable questions; re-scored from the logged samples,
+`scripts/korbi/recall_surgery/rescore_fda_squad.py`):
+
+| model | abstains on answerable | F1 when answering | HasAns F1 |
+|---|---|---|---|
+| ambitious 2000 / 8000 / 12000 | 15.6 / 17.0 / 16.0 % | 56.1 / 70.1 / 69.3 | 47.4 / 58.2 / 58.3 |
+| ambitious 23500 / 30000 / 35603 | 23.6 / 21.2 / 20.9 % | 69.3 / 67.5 / 70.0 | 52.9 / 53.2 / 55.4 |
+| q35c 59600 | 12.6 % | 68.2 | 59.6 |
+| Qwen2.5-32B / Qwen3-30B-A3B / Qwen3-14B | 3.9 / 6.8 / 5.6 % | 79.6 / 81.9 / 82.0 | 76.5 / 76.3 / 77.4 |
+
+* **The HasAns gap to the Qwens (~22 F1) has two parts.**
+  * About two thirds is **over-abstention**: ambitious says "unanswerable" on 21-24 % of answerable questions vs
+    4-7 %. That is roughly 15 F1.
+  * About one third is answer quality: ~10 F1 lower when it does answer, roughly 8 F1.
+* **The 18k -> 23k SQuAD drop (§12) is abstention.** Abstention rises 16 -> 23.6 % while F1-when-answering stays ~69.
+  It coincides with phase-1 data / training, not with any architecture change.
+* **Implication.** The SQuAD v2 deficit is mostly a learned answer/abstain calibration in the 10-shot
+  unanswerable-QA format (data / behaviour), and only partly extraction quality. Architecture surgery cannot
+  directly target the abstention part.
+* For the testbed (§14): track abstention rate and F1-when-answering, not only SQuAD v2 F1. Compare CoQA's
+  conversational format the same way.
