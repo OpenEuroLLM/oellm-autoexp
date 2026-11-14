@@ -24,6 +24,7 @@
 #   GBS MBS SAVE_INTERVAL LR WARMUP FFN LOG_INTERVAL   (FFN: the arm's ffn hidden size)
 #   EXTRA_ARGS          appended verbatim
 #   ENTRY / NPROC       another script than pretrain_gpt.py with the same CLI (native_loss.py), processes per node
+#   TRAIN_DATA / VALID_DATA / DATA_CACHE / TOKENIZER / NATIVE_MEGATRON / HYBRID_ENV   path overrides (JUPITER: §16)
 set -euo pipefail
 : "${SKDA_ARM:?}" "${SRC_CKPT:?}" "${SAVE_DIR:?}"
 BASE_CODE_DIR=${BASE_CODE_DIR:-/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/source}
@@ -39,6 +40,11 @@ HYBRID_ENV=${HYBRID_ENV:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 DATA=/gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0
 TOKENIZER=${TOKENIZER:-/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer}
 CACHE=${DATA_CACHE:-/gpfs/scratch/ehpc533/hybrid_nucleus/recall_surgery/data_cache}
+# TRAIN_DATA / VALID_DATA: another data path or a Megatron blend "w1,prefix1,w2,prefix2,..." -- comma-separated, as the
+# launchers pass env values unquoted (the fine-tuning mixes of ladder17b_ft_jupiter, §16); defaults = MN5's Nemotron
+TRAIN_DATA=${TRAIN_DATA:-$DATA/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all}
+VALID_DATA=${VALID_DATA:-$DATA/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all}
+TRAIN_DATA=${TRAIN_DATA//,/ }; VALID_DATA=${VALID_DATA//,/ }
 
 # code: an intervention dir shadows lm_scaling (+ fla if it has one). The native Megatron: the full tree of the
 # ladder's checkout (jupiter signed_kda/external/oellm-autoexp/submodules/Megatron-LM, 514b31b -- the path in the
@@ -101,8 +107,8 @@ python -m torch.distributed.run --nnodes "$NNODES" --node-rank "$NODE_RANK" --np
   --override-opt_param-scheduler \
   --adam-beta2 0.95 --weight-decay 0.1 --clip-grad 1.0 --init-method-std 0.02 --seed 1234 \
   --tokenizer-type HuggingFaceTokenizer --tokenizer-model "$TOKENIZER" \
-  --train-data-path "$DATA/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all" \
-  --valid-data-path "$DATA/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all" \
+  --train-data-path $TRAIN_DATA \
+  --valid-data-path $VALID_DATA \
   --data-cache-path "$CACHE" --dataloader-type cyclic --num-workers 7 --num-dataset-builder-threads 6 \
   --save-interval "$SAVE_INTERVAL" --eval-interval 1000000 --eval-iters 10 \
   --log-interval "$LOG_INTERVAL" --log-throughput --rerun-mode disabled \

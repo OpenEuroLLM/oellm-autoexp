@@ -1,0 +1,101 @@
+# @package _global_
+# Readout of the fine-tuning recoverability test (docs/recall_surgery_ambitious.md §16): the two untuned 1.7B ladder
+# bases (stable end iter_0076295) and the four fine-tuned arms of ladder17b_ft_jupiter, all through the SAME harness
+# on JUPITER (scripts/korbi/recall_surgery/ladder17b_eval.sh: native export -> CoQA 0-shot all 500 docs / Winogrande
+# 0-shot all 1267 / SQuAD v2 10-shot first 4000 docs in two shards, one node, per-sample logs for the abstention split
+# of scripts/korbi/recall_surgery/rescore_fda_squad.py; Belebele off). Fine-tuned arms wait for their final save.
+# Eval environment: lm-eval 0.4.9.1 (pylibs/lm_eval_049) + a shim of pylibs/lm_eval without its old scipy (numpy 2 in
+# the image), offline datasets + the squad_v2 metric in the e-sta project HF cache (squad_v2 prefetched 2026-11-14).
+#   ssh jupiter 'cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py \
+#       --no-monitor --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/ladder17b_ft_eval_jupiter --yes'
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: jupiter_linattn
+  - /slurm: jupiter
+  - /sweep: none
+  - _self_
+
+aux:
+  name: base_hyb
+  only: []
+  model: skda-shipped-hybrid-lowrank
+  signed_kda: /e/project1/e-sta-openeurollm/poeppel1/signed_kda
+  root: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery
+  ckpt: /e/scratch/e-sta-openeurollm/poeppel1/signed_kda_runs/megatron_ladder_medium/ckpt/skda-shipped-hybrid-lowrank_1.7B_gbs128
+  pylibs: /e/project1/e-sta-openeurollm/poeppel1/pylibs
+  hf_cache: /e/project1/e-sta-openeurollm/poeppel1/cache/hf
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-linattn-mamba_aarch64_202608010917.sif
+  env:
+    HF_HOME: ${aux.hf_cache}
+
+backend:
+  command: bash scripts/korbi/recall_surgery/ladder17b_eval.sh
+  env:
+    SKDA_ARM: ${aux.model}
+    SKDA_INTERVENTION: ""
+    BASE_CODE_DIR: ${aux.signed_kda}
+    CODE_DIR: ${aux.signed_kda}
+    HYBRID_ENV: /nonexistent
+    CKPT: ${aux.ckpt}
+    EXPORT_DIR: ${aux.root}/ft17b_exports/${aux.name}
+    OUT_DIR: ${aux.root}/ft17b_evals/${aux.name}
+    SQUAD_LIMIT: 4000
+    BATCH: 4
+    BELEBELE: "off"
+    TOKENIZER: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b
+    EVAL_PYLIBS: ${aux.pylibs}/lm_eval_049:${aux.root}/pylibs_eval_shim
+    EVAL_HF_HOME: ${aux.hf_cache}
+    EVAL_DATASETS_CACHE: ${aux.hf_cache}
+    EVAL_METRICS_CACHE: ${aux.hf_cache}/metrics
+    NLTK_DATA: ${aux.hf_cache}/nltk_data
+
+job:
+  name: ft17b_eval_${aux.name}
+  base_output_dir: ${aux.root}/ft17b_evals/${aux.name}
+  est_steps: 1
+  est_step_time_s: 5400
+  metadata:
+    pool_priority: 25
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "12:00:00"
+    account: e-ext-2025e02-108
+    partition: booster
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.name}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # untuned bases (stable end 76295), same harness as the arms
+        - aux.name: base_hyb
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: /e/scratch/e-sta-openeurollm/poeppel1/signed_kda_runs/megatron_ladder_medium/ckpt/skda-shipped-hybrid-lowrank_1.7B_gbs128
+        - aux.name: base_attn
+          aux.model: attn
+          aux.ckpt: /e/scratch/e-sta-openeurollm/poeppel1/signed_kda_runs/megatron_ladder_medium/ckpt/attn_1.7B_gbs128
+        # fine-tuned arms: wait for the final save (iteration 1000)
+        - aux.name: hyb_rc
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/hyb_rc/ckpt
+          job.start_condition: {class_name: FileContentCondition, path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/hyb_rc/ckpt/latest_checkpointed_iteration.txt, pattern: "^\\s*1000\\s*$", mode: regex, persistent_pass: true}
+        - aux.name: attn_rc
+          aux.model: attn
+          aux.ckpt: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/attn_rc/ckpt
+          job.start_condition: {class_name: FileContentCondition, path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/attn_rc/ckpt/latest_checkpointed_iteration.txt, pattern: "^\\s*1000\\s*$", mode: regex, persistent_pass: true}
+        - aux.name: hyb_gen
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ckpt: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/hyb_gen/ckpt
+          job.start_condition: {class_name: FileContentCondition, path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/hyb_gen/ckpt/latest_checkpointed_iteration.txt, pattern: "^\\s*1000\\s*$", mode: regex, persistent_pass: true}
+        - aux.name: attn_gen
+          aux.model: attn
+          aux.ckpt: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/attn_gen/ckpt
+          job.start_condition: {class_name: FileContentCondition, path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_runs/attn_gen/ckpt/latest_checkpointed_iteration.txt, pattern: "^\\s*1000\\s*$", mode: regex, persistent_pass: true}

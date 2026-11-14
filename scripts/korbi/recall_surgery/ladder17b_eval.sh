@@ -24,14 +24,17 @@ TOKENIZER=${TOKENIZER:-$W018/assets/tokenizer}
 fla=$BASE_CODE_DIR; [ -d "$CODE_DIR/fla" ] && fla=$CODE_DIR
 # notitan first: the image ships torchtitan, and titan_ext would register train specs (titan_oellm, toml, ...) on
 # import; the exporter only needs titan_ext.hybrid_layers
-export PYTHONPATH="$ROOT/scripts/korbi/recall_surgery/notitan:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$ROOT/scripts/korbi/recall_surgery/compat:$ROOT/scripts/korbi/recall_surgery:$HYBRID_ENV/pylibs_flag:$HYBRID_ENV/pylibs_hfx:$HYBRID_ENV/pylibs_ep"
+# EVAL_PYLIBS: lm-eval + its dependencies (JUPITER, §16: pylibs/lm_eval_049 + a shim of pylibs/lm_eval without its old scipy)
+EVAL_PYLIBS=${EVAL_PYLIBS:-$HYBRID_ENV/pylibs_flag:$HYBRID_ENV/pylibs_hfx:$HYBRID_ENV/pylibs_ep}
+export PYTHONPATH="$ROOT/scripts/korbi/recall_surgery/notitan:$CODE_DIR:$CODE_DIR/lm_scaling:$fla:$ROOT/scripts/korbi/recall_surgery/compat:$ROOT/scripts/korbi/recall_surgery:$EVAL_PYLIBS"
 export SKDA_ARM SKDA_INTERVENTION="${SKDA_INTERVENTION:-}"
 # 018's offline evaluation environment (probe mn5-pool-p264.0665: all six datasets load offline)
-export HF_HOME=/gpfs/projects/ehpc533/users/korbip/data/flag_evals/hf_home
-export HF_HUB_CACHE="$HF_HOME/hub" HF_DATASETS_CACHE="$W018/cache/datasets" HF_METRICS_CACHE="$W018/cache/metrics"
+# EVAL_HF_HOME / EVAL_DATASETS_CACHE / EVAL_METRICS_CACHE: the offline caches (JUPITER: the e-sta project cache, §16)
+export HF_HOME=${EVAL_HF_HOME:-/gpfs/projects/ehpc533/users/korbip/data/flag_evals/hf_home}
+export HF_HUB_CACHE="$HF_HOME/hub" HF_DATASETS_CACHE="${EVAL_DATASETS_CACHE:-$W018/cache/datasets}" HF_METRICS_CACHE="${EVAL_METRICS_CACHE:-$W018/cache/metrics}"
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 HF_EVALUATE_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1  # the native exporter torch.loads checkpoints that pickle numpy objects
-export TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=8 NLTK_DATA="$HYBRID_ENV/nltk_data"
+export TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=8 NLTK_DATA="${NLTK_DATA:-$HYBRID_ENV/nltk_data}"
 export TRITON_CACHE_DIR="/tmp/recall17b_eval_triton_${SLURM_JOB_ID:-x}_${SLURM_STEP_ID:-0}"
 mkdir -p "$OUT_DIR"
 
@@ -59,6 +62,7 @@ DIAG=""
 [ -n "$DIAG" ] && echo "[ladder17b_eval] DIAGNOSTIC:$DIAG"
 E="python $ROOT/scripts/korbi/recall_surgery/ladder17b_evaluate.py --source $CODE_DIR --model $EXPORT_DIR --tokenizer $TOKENIZER --out $OUT_DIR --batch-size $BATCH ${HF_AUTO:+--hf-auto}$DIAG"
 BELEBELE=${BELEBELE:-belebele_eng_Latn belebele_deu_Latn belebele_fra_Latn belebele_spa_Latn belebele_ita_Latn}
+[ "$BELEBELE" = off ] && BELEBELE=""  # BELEBELE=off: CoQA / Winogrande / SQuAD v2 only
 ( CUDA_VISIBLE_DEVICES=0 $E --task winogrande --shots 0 > "$OUT_DIR/winogrande.log" 2>&1
   for b in $BELEBELE; do CUDA_VISIBLE_DEVICES=0 $E --task "$b" --shots 5 > "$OUT_DIR/$b.log" 2>&1 || exit 1; done ) &
 CUDA_VISIBLE_DEVICES=1 $E --task coqa --shots 0 > "$OUT_DIR/coqa.log" 2>&1 &

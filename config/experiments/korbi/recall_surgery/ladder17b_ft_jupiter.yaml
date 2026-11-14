@@ -1,0 +1,121 @@
+# @package _global_
+# Fine-tuning recoverability test (docs/recall_surgery_ambitious.md §16; user 2026-11-14): are the CoQA / SQuAD v2
+# deficits of a CKDA hybrid recoverable by post-training, or structural? The 1.7B signed_kda ladder pair at the
+# stable-phase end (iter_0076295, ~40 BT, same data): the CKDA hybrid skda-shipped-hybrid-lowrank (ffn 7936) and the
+# pure-attention attn (ffn 8192), fine-tuned IDENTICALLY (same blend, seed, steps, lr; model-only load, fresh Adam).
+# The key number: does the hybrid-vs-attention gap on CoQA / SQuAD v2 (+ abstention split) / Winogrande shrink?
+#   *_rc    RC-included: 0.55 Nemotron (the ladder's pretraining data) + 0.30 Tulu-3 SFT (no FLAN) + 0.15 reading
+#           comprehension train splits (SQuAD v2 0.05 in lm-eval's format incl. "unanswerable", CoQA 0.012, RACE 0.05,
+#           DROP 0.038) -- what post-training could do (the eval tasks' train splits, so absolute numbers are inflated)
+#   *_gen   RC-excluded: 0.60 Nemotron + 0.40 Tulu-3 SFT (no FLAN) -- the contamination-fair generalization test
+# Data: scripts/korbi/recall_surgery/build_ft_mix.py (rendered on the JUPITER login node, NeoX tokenizer) ->
+# /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data (manifest.json). 1000 steps x gbs 128 x 4096 =
+# 0.52 BT per run; lr 1e-4 after 100 warmup steps, linear decay to 1e-5 over the last 200 steps.
+# The ladder's own code in its original container (the 1.7B runs' job.sbatch): signed_kda (lm_scaling + fla) and its
+# external/oellm-autoexp/submodules/Megatron-LM (514b31b), via scripts/korbi/recall_surgery/ladder17b_train.sh.
+# One node each, in the 16-node pool jupiter_pool_small16 (low priority: the small31 bases come first):
+#   ./sync_to_jupiter.sh && ssh jupiter 'cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python \
+#       scripts/run_autoexp.py --no-monitor --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/ladder17b_ft_jupiter --yes'
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: jupiter_linattn
+  - /slurm: jupiter
+  - /sweep: none
+  - _self_
+
+aux:
+  name: ft17b_${aux.arm}
+  arm: hyb_rc
+  only: []
+  model: skda-shipped-hybrid-lowrank
+  ffn: 7936
+  signed_kda: /e/project1/e-sta-openeurollm/poeppel1/signed_kda
+  ladder_ckpt: /e/scratch/e-sta-openeurollm/poeppel1/signed_kda_runs/megatron_ladder_medium/ckpt
+  root: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery
+  data: ${aux.root}/ft17b_data/neox
+  nemotron: /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all
+  # the blend "w1,prefix1,w2,prefix2,..." (comma-separated: the launcher passes env values unquoted; literal per arm
+  # below: sweep entries resolve interpolations against the base config)
+  train_data: ""
+  steps: 1000
+  gbs: 128
+  mbs: 2
+  lr: 0.0001
+  warmup: 100
+  decay: 200
+  save_interval: 1000
+  nodes: 1
+
+container:
+  # the 1.7B ladder runs' own image
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-linattn-mamba_aarch64_202608010917.sif
+  env:
+    HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
+
+backend:
+  command: bash scripts/korbi/recall_surgery/ladder17b_train.sh
+  env:
+    SKDA_ARM: ${aux.model}
+    SKDA_INTERVENTION: ""
+    BASE_CODE_DIR: ${aux.signed_kda}
+    CODE_DIR: ${aux.signed_kda}
+    NATIVE_MEGATRON: ${aux.signed_kda}/external/oellm-autoexp/submodules/Megatron-LM
+    HYBRID_ENV: /nonexistent
+    SRC_CKPT: ${aux.ladder_ckpt}/${aux.model}_1.7B_gbs128
+    SAVE_DIR: ${aux.root}/ft17b_runs/${aux.arm}/ckpt
+    LOAD_MODE: model_only
+    STEPS: ${aux.steps}
+    GBS: ${aux.gbs}
+    MBS: ${aux.mbs}
+    LR: ${aux.lr}
+    WARMUP: ${aux.warmup}
+    DECAY: ${aux.decay}
+    FFN: ${aux.ffn}
+    SAVE_INTERVAL: ${aux.save_interval}
+    LOG_INTERVAL: 10
+    TRAIN_DATA: ${aux.train_data}
+    VALID_DATA: /e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    DATA_CACHE: ${aux.root}/ft17b_cache
+    TOKENIZER: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b
+    HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
+
+job:
+  name: ft17b_${aux.arm}
+  base_output_dir: ${aux.root}/ft17b_runs/${aux.arm}
+  est_steps: ${aux.steps}
+  est_step_time_s: 6.0
+  metadata:
+    pool_priority: 20
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "12:00:00"
+    account: e-ext-2025e02-108
+    partition: booster
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: hyb_rc
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ffn: 7936
+          aux.train_data: "0.55,/e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all,0.30,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/tulu_text_document,0.05,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/squadv2_text_document,0.012,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/coqa_text_document,0.05,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/race_text_document,0.038,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/drop_text_document"
+        - aux.arm: attn_rc
+          aux.model: attn
+          aux.ffn: 8192
+          aux.train_data: "0.55,/e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all,0.30,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/tulu_text_document,0.05,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/squadv2_text_document,0.012,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/coqa_text_document,0.05,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/race_text_document,0.038,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/drop_text_document"
+        - aux.arm: hyb_gen
+          aux.model: skda-shipped-hybrid-lowrank
+          aux.ffn: 7936
+          aux.train_data: "0.60,/e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all,0.40,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/tulu_text_document"
+        - aux.arm: attn_gen
+          aux.model: attn
+          aux.ffn: 8192
+          aux.train_data: "0.60,/e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all,0.40,/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/neox/tulu_text_document"
