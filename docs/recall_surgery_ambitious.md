@@ -2540,7 +2540,53 @@ anomalous.
   * Embedding rows of never-seen tokens are legitimately zero and get ramped too; harmless.
   * Unit tests: 4 / 4 pass (intact = exact; whole-shard cold = r x the plain update; partly cold shard = plain update
     on warm rows, 1/N on cold rows; two-optimizer chain).
-  * Verification: rt030 with v2, run 0070, saving to ckpt_out3.
+  * Verification: rt030 with v2, run 0070. **Failed: 1909 34.34, unchanged.** Only 20 parameters (b_proj, (10, 1280))
+    passed the shape check. Every other Adam state has the parameter's GLOBAL shape, while the local parameter
+    shard differs. That gives the mechanism, below.
+* **Mechanism (the save-side cause).** JUPITER's pt2512 image ships torch 2.10.0a0 nv25.12 (not 2.11 as written
+  above) and Transformer Engine 2.10.
+  * TE 2.10's `FusedAdam._initialize_state` allocates `torch.empty(param.shape)`. For a Megatron-FSDP DTensor
+    parameter that is a plain tensor of the GLOBAL shape, not a DTensor.
+  * DCP saves such a plain tensor as a replicated item (one chunk) and keeps rank 0's copy. On load, every rank gets
+    that copy, so beyond the zeros the non-zero entries can belong to other ranks' rows.
+  * MN5's TE 2.19 takes `param._local_tensor` and re-wraps the state "into DTensor to support Torch DCP
+    checkpointing". That is why MN5 checkpoints are complete.
+  * The MuOwn states (our code: DTensors with the parameter's sharding) and the Engram states are complete on both
+    machines.
+* **Mitigation v3** (Megatron b2778807a): an Adam state that is a plain tensor of a sharded parameter's global shape
+  is untrustworthy as a whole. Its exp_avg / exp_avg_sq are zeroed and the whole local shard is ramped in over 100
+  steps. Correct (DTensor) states keep v2's element-wise zero rule. Unit tests 5 / 5. Log line on rank 1:
+  "42 parameters (2 reset: non-DTensor state of a sharded parameter ...)", i.e. output_layer + word_embeddings plus
+  40 all-zero small states.
+  **Verified** (rt030 with v3, run 0072, b7@1907 resumed on 1 node):
+
+| step | b7 (no resume) | v1 / v2 resume | v3 resume | rtnoopt (lr ~1e-5) |
+|---|---|---|---|---|
+| 1908 | 2.881 / 0.370 | 2.434 / 0.355 | 2.434 / 0.355 | 2.434 / 0.355 |
+| 1909 | 2.388 / 0.409 | 34.34 / 311 | **2.456 / 0.367** | 2.456 / 0.388 |
+| 1910 | 2.459 / 0.384 | 57.2 / 236 | **2.494 / 0.503** | 2.499 / 0.584 |
+| 1911 | 2.628 / 0.399 | 48.4 / 187 | **2.597 / 0.410** | 2.598 / 0.379 |
+| 1912 | 2.612 / 0.370 | 38.6 / 172 | **2.312 / 0.356** | 2.317 / 0.371 |
+
+  (loss / grad norm; the 1-node run averages the loss differently, so compare within the resume columns.) The v3
+  resume matches the near-zero-lr control to 0.005, with no shock. The cost: the Adam-handled parameters (embedding,
+  output layer, norms, mHC, CKDA small vectors) re-warm over 100 steps after each resume.
+* **Proper fix (next):** a DTensor-aware state init for TE 2.10's FusedAdam on JUPITER, a backport of TE 2.19's
+  `_initialize_state` / `load_state_dict` re-wrap, so new JUPITER checkpoints are complete and resumes exact; then a
+  1-node save -> load exactness test. Until then every JUPITER resume, small31 or other, relies on the ramp.
+* **E / Ep restarted cleanly (2026-11-15 00:05):**
+  * the shock-affected runs, cancelled at 8133 (E) / ~7.6k (Ep), are archived as `E_20261115_shock1908` /
+    `Ep_20261115_shock1908`;
+  * their readouts (E 2384-5722, Ep 2384-3815; all rows except RULER) are archived in
+    `archive_20261115_shock1908/` as a shock-vs-clean comparison;
+  * the insertions were redone from b7@1907 and E / Ep re-enqueued with v3; their 9 readouts re-enqueued; 9535 /
+    Ep 7629 / 9535 were still pending and fire on the new checkpoints.
+  * Late arms may launch with v3 (b7 at ~10.8k of 38146).
+* **Readout RULER row:** every readout's main rows completed, but the ruler_4096 row failed. lm-eval's
+  ruler_qa_squad fetches SQuAD v2 dev with requests.get, outside the HF cache, and compute nodes are offline. The
+  json is now cached by small31_precache.sh, and small31_eval.py serves it in place of the download (tested with the
+  network disabled). The 21 base readouts so far were re-enqueued; their finished rows are skipped, so only RULER
+  runs.
 
 ### 16.1 Results (2026-11-14 23:00)
 

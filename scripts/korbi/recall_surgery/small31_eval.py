@@ -63,6 +63,29 @@ def task_objects(names: list[str]) -> list:
     return objs
 
 
+# ruler_qa_squad downloads SQuAD v2 dev with requests.get (not via the HF cache): compute nodes are offline, so read
+# the copy fetched on the login node (small31_precache.sh)
+SQUAD_JSON = os.environ.get(
+    "SMALL31_SQUAD_JSON", "/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31/data_cache/ruler/dev-v2.0.json")
+
+
+def _offline_squad() -> None:
+    from lm_eval.tasks.ruler import qa_utils
+
+    if getattr(qa_utils.download_json, "_small31_offline", False) or not os.path.exists(SQUAD_JSON):
+        return
+    online = qa_utils.download_json
+
+    def download_json(url):
+        if url.endswith("/dev-v2.0.json"):
+            with open(SQUAD_JSON) as f:
+                return json.load(f)
+        return online(url)
+
+    download_json._small31_offline = True
+    qa_utils.download_json = download_json
+
+
 def run_rows(a) -> int:
     import lm_eval
     from lm_eval.loggers import EvaluationTracker
@@ -97,6 +120,7 @@ def run_rows(a) -> int:
         t0 = time.time()
         try:
             if task == "ruler":
+                _offline_squad()
                 tasks, shots, meta = RULER_TASKS, 0, {"max_seq_lengths": [int(n)], "pretrained": a.export}
             else:
                 tasks, shots, meta = task_objects([task]), int(n), None
