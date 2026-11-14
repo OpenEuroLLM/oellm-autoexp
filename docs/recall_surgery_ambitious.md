@@ -2492,3 +2492,52 @@ anomalous.
 * **Mitigation candidate** (no code yet): at load, an Adam parameter whose loaded exp_avg_sq is all-zero while
   step > 0 gets step 0, so the bias-corrected first update is ~lr * sign(g), bounded. A proper fix belongs in the
   fsdp_dtensor save path or the JUPITER image's torch.
+
+### 16.1 Results (2026-11-14 23:00)
+
+Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
+93fb24da). The attention arms' export needed the ladder's export_megatron + `--hf-auto`, and the exports had to
+accept the local NeoX tokenizer path (ce70ede5). All four arms trained 1000 steps (final train loss: hyb_rc 1.743,
+hyb_gen 1.785, attn_rc 1.824, attn_gen 1.853; 4.8 / 4.0 s/step on one node).
+
+Same harness for all six models (`ft17b_table.py`; SQuAD v2 first 4000 validation docs, re-scored uniformly with the
+squad_uniform logic, golds joined by doc_id, 0 join mismatches):
+
+| model | CoQA F1 / EM | Winogrande | SQuAD v2 HasAns F1 | abstain on answerable | F1 when answering | NoAnsAcc | discrimination | total F1 |
+|---|---|---|---|---|---|---|---|---|
+| base_hyb | 60.3 / 47.5 | 60.2 | 34.3 | 30.1 % | 49.1 | 31.7 % | 1.5 | 33.0 |
+| hyb_gen | 64.4 / 51.1 | 59.2 | 46.5 | 20.9 % | 58.8 | 26.1 % | 5.2 | 36.7 |
+| hyb_rc | **75.3 / 63.4** | 60.1 | **64.0** | 20.7 % | **80.8** | 66.0 % | 45.3 | **65.0** |
+| base_attn | 55.2 / 43.1 | 55.2 | 42.5 | 15.2 % | 50.1 | 18.6 % | 3.4 | 31.1 |
+| attn_gen | 58.9 / 46.4 | 56.7 | 47.6 | 19.9 % | 59.4 | 23.2 % | 3.3 | 35.9 |
+| attn_rc | 70.1 / 57.8 | 57.4 | 62.8 | 20.2 % | 78.7 | 59.7 % | 39.5 | 61.3 |
+
+Hybrid minus attention, before and after identical fine-tuning:
+
+| | CoQA F1 | Winogrande | SQuAD HasAns F1 | F1 when answering | total F1 |
+|---|---|---|---|---|---|
+| untuned | +5.1 | +5.0 | -8.2 | -1.0 | +1.9 |
+| general mix (gen) | +5.5 | +2.5 | -1.1 | -0.6 | +0.8 |
+| RC mix (rc) | +5.2 | +2.7 | +1.2 | +2.1 | +3.7 |
+
+**Reading.**
+* **At 1.7B, the hybrid's SQuAD v2 deficit vs attention is entirely recoverable.**
+  * Untuned it is -8.2 HasAns F1, all over-abstention (30 % vs 15 %; F1 when answering equal).
+  * A general SFT mix without any RC data (gen) already closes it to -1.1: abstention 30 -> 21 %, and the attention
+    model's rises 15 -> 20 %, so both converge.
+  * With RC data the hybrid is ahead on every SQuAD metric (+1.2 HasAns, +2.1 F1 when answering, +5.8 discrimination).
+* **CoQA:** the hybrid is ahead before (+5.1) and after (+5.5 / +5.2). Fine-tuning lifts both equally (gen +4,
+  rc +15); no structural hybrid deficit.
+* **Winogrande:** unchanged by fine-tuning (hybrid 59-60, attention 55-57).
+* **Caveats.**
+  * 1.7B, 0.52 BT of fine-tuning, one seed. The eval noise of one readout is CoQA +-1.5-3 F1, SQuAD ~1.
+  * The rc arms train on the tasks' train splits (absolute numbers inflated). The gen arms are the
+    contamination-fair test.
+  * At 1.7B, attention vs hybrid are param-matched pretraining siblings, not the 84B setup. The comparison is "does
+    the hybrid's gap close under identical post-training", and it does.
+* **Implication for the main run:** on this evidence the SQuAD v2 / answer-abstain deficit is a post-training-
+  recoverable behaviour, not an architecture limit, consistent with §15 (flat abstention over position and length,
+  recall suite at Qwen level). Next: the same probe on the 84B (a ckpt_eval checkpoint, gen + rc mixes) once an MN5
+  host is up.
+
+Budget: about 4 x 1.3 h (training, 1 node) + 6 x ~1 h (evals, 1 node) ~ 45-50 GPU-h of the ~100.
