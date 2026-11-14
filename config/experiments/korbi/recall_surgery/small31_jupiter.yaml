@@ -1,0 +1,138 @@
+# @package _global_
+# Small-scale testbed of the "early 3:1 attention, merge late" intervention on JUPITER (docs/recall_surgery_ambitious.md
+# §14; user 2026-11-14): three ~0.5B base runs, same data order, production stack scaled down to the campaign_3b s3
+# shape (hidden 1280, 24 mixers + 24 dense SwiGLU MLPs, d_ffn 3584):
+#   b7    7:1 attention-first (attention at mixer 0 / 8 / 16)                      -- the main run's ratio
+#   r3    3:1 from scratch (attention at mixer 0 / 4 / 8 / 12 / 16 / 20)            -- the upper bound
+#   r3p   3:1 as attention PAIRS (attention at mixer 0,1 / 8,9 / 16,17; user: attention circuits)
+# The first CKDA mixers keep their complex eigenvalues in every arm (production CKDA settings). Production mixers and
+# residual: CKDA, NoPE GQA attention (10 heads x 128, 2 KV groups) with output gate + XSA, mHC-4, and a SMALL Engram
+# (two Engram sublayers as in production: after the first block and before the middle attention; 4M rows x 64,
+# 8 heads, orders 2/3/4). Production data (v8ml stage-1 blend, JSC mirror) and tokenizer (256k agent), seq 8192,
+# gbs 64 (0.52M tokens / step), muown_classical, lr 1.8e-3 constant after 1000 warmup steps (the s3 law value).
+# Checkpoints: persistent at the log-spaced token marks 0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 / end BT (save_extra_steps)
+# + every ~2 BT (save_interval), all kept (small); fsdp_dtensor (the surgery tools' format).
+# Inherits the main-run config (a31's chain) and swaps the MareNostrum container / slurm / paths for JUPITER.
+#   ./sync_to_jupiter.sh && ssh jupiter 'cd ~/work/Projects/oellm-autoexp-hybrid && <autoexp env> \
+#       python scripts/run_autoexp.py --config-name experiments/korbi/recall_surgery/small31_jupiter "aux.only=[b7]"'
+defaults:
+  - ../production/hybrid_ambitious_v4_2ph_256_mn5
+  - override /container: jupiter
+  - override /slurm: jupiter
+  - _self_
+
+aux:
+  experiment_group: recall_surgery_small31
+  suite: small31
+  arm: b7
+  only: []
+  nodes: 4
+  node_check: "off"
+  tokens: 25.0e9
+  gbs: 64
+  seq: 8192
+  jsc_data: /e/data1/datasets/playground/mmlaion/oellm_testing
+  stage_datamix: ${aux.jsc_data}/datamix/datamix_v8ml_stage1_jsc.txt
+  out_root: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31
+  # MareNostrum-only keys of the chain, neutralised
+  mn5_exclude_file: null
+
+container:
+  image: /e/project1/e-sta-openeurollm/poeppel1/container_cache/MegatronTraining-JUPITER_pt2512_aarch64_202602231451.sif
+
+backend:
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/home/jusers/poeppel1/jupiter/work/Projects/Liger-Kernel/src"
+    HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
+    NVIDIA_PYTORCH_VERSION: "25.12"
+    TRITON_CACHE_DIR: /e/scratch/e-sta-openeurollm/poeppel1/cache/triton_small31
+    WANDB_RUN_GROUP: small31
+  megatron:
+    # --- model: s3 shape, production mixers ---
+    hidden_size: 1280
+    ffn_hidden_size: 3584
+    num_attention_heads: 10
+    num_query_groups: 2
+    kv_channels: 128
+    linear_num_key_heads: 10
+    linear_num_value_heads: 10
+    hybrid_layer_pattern: "*-NL-L-L-L-L-L-L-*-L-L-L-L-L-L-L-N*-L-L-L-L-L-L-L-"
+    num_experts: null
+    moe_ffn_hidden_size: null
+    moe_shared_expert_intermediate_size: null
+    expert_model_parallel_size: 1
+    engram_table_size: 4000000
+    engram_num_heads: 8
+    engram_embed_dim: 64
+    engram_ngram_orders: [2, 3, 4]
+    # the production token map (1 MB, streamed from MareNostrum to JUPITER scratch)
+    engram_token_map: ${aux.out_root}/engram_token_map_256k.npy
+    # dense model: no MoE layers; the chain's MoonEP flex dispatcher and MoE fusions off
+    moe_token_dispatcher_type: alltoall
+    moe_grouped_gemm: false
+    moe_shared_expert_overlap: false
+    moe_permute_fusion: false
+    moe_router_fusion: false
+    # --- data / tokenizer (JSC mirror of the MareNostrum v8ml tree) ---
+    data_args_path: ${aux.stage_datamix}
+    data_cache_path: ${aux.out_root}/data_cache
+    tokenizer_model: ${aux.jsc_data}/tokenizers/tokenizer-256k-agent
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    validation_set_names: null
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    # --- schedule ---
+    seq_length: ${aux.seq}
+    micro_batch_size: 2
+    global_batch_size: ${aux.gbs}
+    train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
+    exit_interval: null
+    lr: 0.0018
+    min_lr: 0.0018
+    lr_decay_style: constant
+    lr_warmup_iters: 1000
+    eval_interval: 1000
+    eval_iters: 10
+    # log-spaced token marks (0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 BT at 524288 tokens / step) + every ~2 BT
+    save_extra_steps: [477, 954, 1907, 3815, 7629, 15259, 30518]
+    save_interval: 3815
+    non_persistent_save_interval: 500
+    save: ${job.base_output_dir}/ckpt
+    load: ${job.base_output_dir}/ckpt
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    ckda_branch: null
+    ckda_branch_layers: null
+
+slurm:
+  # the chain's node-failure handlers append bad nodes here (MareNostrum's autoexclude file otherwise)
+  exclude_file: ${aux.out_root}/exclude_nodes.txt
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "12:00:00"
+    account: e-sta-openeurollm
+    partition: booster
+    qos: null
+
+job:
+  name: small31_${aux.arm}
+  base_output_dir: ${aux.out_root}/${aux.arm}
+  metadata:
+    pool_priority: 50
+    pool_singleton: null
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: b7
+          backend.megatron.hybrid_layer_pattern: "*-NL-L-L-L-L-L-L-*-L-L-L-L-L-L-L-N*-L-L-L-L-L-L-L-"
+        - aux.arm: r3
+          backend.megatron.hybrid_layer_pattern: "*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"
+        - aux.arm: r3p
+          backend.megatron.hybrid_layer_pattern: "*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"
