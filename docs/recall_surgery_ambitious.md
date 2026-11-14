@@ -2493,6 +2493,55 @@ anomalous.
   step > 0 gets step 0, so the bias-corrected first update is ~lr * sign(g), bounded. A proper fix belongs in the
   fsdp_dtensor save path or the JUPITER image's torch.
 
+**Mitigation v1 and the real extent of the save bug (2026-11-14 23:45).**
+* Mitigation v1 (Megatron 2680dcb77, ChainedOptimizer fix 1ce64bce7): a per-parameter step reset is impossible. The
+  step counter is per param group (TE FusedAdam / the eopt groups), and step 0 would only reproduce Adam's normal
+  cold first update. Instead, `megatron/core/optimizer/cold_adam_warmup.py` runs after an fsdp_dtensor optimizer
+  load:
+  * it finds every parameter whose local exp_avg_sq shard is all zero;
+  * for the next `OELLM_COLD_ADAM_WARMUP` steps (default 100, 0 = off) it scales their applied update by k / N;
+  * their moments warm up normally, and every other parameter steps exactly as before;
+  * it logs one line on every rank. There is no config field.
+* **Verification failed:** rt030 (run 0067), b7@1907 resumed for 5 steps with v1:
+
+| step | b7 | v1 resume |
+|---|---|---|
+| 1909 | 2.39 | 34.34 / gn 311 |
+| 1910 | 2.46 | 57.21 / gn 236 |
+
+  The log line reports 487 parameters ramped, and the ramp works on them: after 4 steps mHC b_post moved 3.7 % vs
+  40 % after one unramped step; g_proj.1.bias 0.4 % vs 14 %. The remaining outliers are **output_layer: 10 % relative
+  change in one step** (28 % after 4) and word_embeddings (2.8 % -> 11 %). Normal MuOwn matrices move ~0.5 % per step.
+* **Root cause, corrected.** In JUPITER checkpoints, every FSDP-sharded Adam state is saved with only data-parallel
+  rank 0's shard (b7@1907; DCP metadata and zero fractions):
+  * output_layer exp_avg / exp_avg_sq: **0.9375 zero (exactly 15/16)**; non-zero only in flat elements
+    [0, 20,972,800), which is rank 0's FSDP shard of 16.
+  * word_embeddings: 0.9455 zero, non-zero only in rows < 16,384.
+  * A save written by 4 ranks (rt030 ckpt_out2): output_layer 0.7500 zero, non-zero only in rank 0's quarter.
+  * Small parameters: whichever lie outside rank 0's shard are entirely zero (the 487). This explains "23 / 24
+    non-zero" above, and the earlier statement that the large tensors are non-zero is wrong: they are 94 % zero.
+  * In the metadata, the model weight output_layer.weight is 16 row chunks (correct). Its exp_avg / exp_avg_sq are
+    **one chunk covering the full tensor**: each rank hands DCP a full-size, non-sharded tensor holding only its
+    shard, and DCP keeps rank 0's copy as a replicated item.
+  * The MuOwn states (g, m_u, m_g, v_g, v_norm) and the Engram tables' sparse-Adam states are complete.
+* **MN5 is truly unaffected** (checked by chunk layout, not only all-zero tensors), torch 2.14.0a0 nv26.09 image:
+  * production/early31/a31/ckpt/iter_0001249: output_layer and word_embeddings exp_avg / exp_avg_sq are saved as
+    **512 row chunks**, the same layout as their weights;
+  * a31@1249 also has 0 of 60 small Adam states all-zero; main-run iter_0035900 has its small states populated.
+  The bug is specific to the JUPITER pt2512 stack (torch 2.11). Any fsdp_dtensor run that resumes on JUPITER from a
+  JUPITER-written checkpoint is affected, not only small31; for example the 1.7B fine-tunes of §16 if they resumed
+  mid-run. Not checked yet.
+* **rtnoopt control** (no_load_optim, fresh optimizer): stable, 2.43 / 2.46 / 2.50 / 2.60 / 2.32 at grad norm ~0.37.
+  But no_load_optim also drops the scheduler state, so lr restarted its warmup at 1.8e-6. The control therefore only
+  confirms that the model weights, data and RNG are fine; the scan above carries the evidence.
+* **Mitigation v2** (Megatron 9853ecc75): the ramp works per element. Every element whose loaded exp_avg_sq is 0 has
+  its update ramped in over 100 steps; warm elements, including the warm part of a partly cold shard, step exactly.
+  * States not shaped like the parameter (the Engram row-wise second moment) are skipped.
+  * Embedding rows of never-seen tokens are legitimately zero and get ramped too; harmless.
+  * Unit tests: 4 / 4 pass (intact = exact; whole-shard cold = r x the plain update; partly cold shard = plain update
+    on warm rows, 1/N on cold rows; two-optimizer chain).
+  * Verification: rt030 with v2, run 0070, saving to ckpt_out3.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
