@@ -1,0 +1,51 @@
+# @package _global_
+# 16-node pool on JUPITER for the small-scale recall-surgery testbed (docs/recall_surgery_ambitious.md §14; user
+# 2026-11-14: "set up a 16-node pool NOW so we have nodes to experiment with later"). Own account e-ext-2025e02-108,
+# booster, 12 h hosts (JUPITER QOS hard limit), a successor always queued so it ages (keep_pending), a started host
+# held until work is put in (hold_hosts). Home of the base runs small31 b7 / r3 / r3p (4-8 nodes each, packed: up to
+# 4 runs side by side). If no run needs a started host, it may be cancelled (user-authorized for this pool's hosts
+# only). Based on jupiter_pool_continuous.yaml.
+#   cd ~/work/Projects/oellm-autoexp-hybrid && .venv/bin/python scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --config-name experiments/korbi/pool/jupiter_pool_small16
+#   then the monitor: .venv/bin/python scripts/monitor_autoexp.py --session-dir <state>/pool_jupiter-pool-small16
+defaults:
+  - /backend: pool_host
+  - /slurm: jupiter_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: jupiter_pool_small16
+  base_output_dir: /e/scratch/e-sta-openeurollm/poeppel1/pools/${job.name}
+  pool_host:
+    hold_hosts: true
+    max_hosts_running: 1
+    keep_pending: 1          # a successor always waits in the queue (ages, no dependency)
+    min_hosts: 1
+    max_runs_per_host: 4     # b7 / r3 / r3p (4 nodes each) + room for an eval
+    handover: true
+    handover_min_age_s: 3600
+    successor_delay_s: 0     # queue the successor at once: maximum age priority
+    idle_exit_s: 1800
+    monitor_dead_exit_s: 86400
+    min_remaining_s: 1800
+    stop_grace_s: 600
+    preempt_grace_s: 1200
+    max_attempts: 20
+    host_stale_s: 1800
+    poll_s: 15
+    keep_monitor: true
+
+slurm:
+  sbatch:
+    nodes: 16
+    time: "12:00:00"
+    account: e-ext-2025e02-108
+    partition: booster
+    # graceful stop (signal checkpoint) 15 min before the wall (user 2026-11-13: 15 min is enough)
+    signal: "B:USR1@900"
+
+index: 0
+stage: ""

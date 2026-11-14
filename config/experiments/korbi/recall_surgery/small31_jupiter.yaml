@@ -46,6 +46,8 @@ backend:
     HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
     NVIDIA_PYTORCH_VERSION: "25.12"
     TRITON_CACHE_DIR: /e/scratch/e-sta-openeurollm/poeppel1/cache/triton_small31
+    # Triton finds no libcuda.so in the JUPITER image otherwise (FLA then falls back to CPU and CKDA fails to import)
+    TRITON_LIBCUDA_PATH: /.singularity.d/libs
     WANDB_RUN_GROUP: small31
   megatron:
     # --- model: s3 shape, production mixers ---
@@ -99,6 +101,10 @@ backend:
     # log-spaced token marks (0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 BT at 524288 tokens / step) + every ~2 BT
     save_extra_steps: [477, 954, 1907, 3815, 7629, 15259, 30518]
     save_interval: 3815
+    # keep every persistent save (the main run's 10000 retain interval would also fail validation: not a multiple)
+    save_retain_interval: null
+    # the JUPITER image has no nvidia-resiliency-ext (async_strategy nvrx); a 0.5B save is quick synchronously
+    async_save: false
     non_persistent_save_interval: 500
     save: ${job.base_output_dir}/ckpt
     load: ${job.base_output_dir}/ckpt
