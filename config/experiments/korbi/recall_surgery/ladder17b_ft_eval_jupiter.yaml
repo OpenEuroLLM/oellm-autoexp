@@ -32,6 +32,9 @@ container:
   image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-linattn-mamba_aarch64_202608010917.sif
   env:
     HF_HOME: ${aux.hf_cache}
+    # the image's libcuda is in /.singularity.d/libs on JUPITER compute nodes; /opt/nvidia/lib (jupiter_linattn's
+    # default) does not exist there, so FLA / signed_kda Triton kernels failed ("libcuda.so cannot found!", 2026-11-14)
+    TRITON_LIBCUDA_PATH: /.singularity.d/libs
 
 backend:
   command: bash scripts/korbi/recall_surgery/ladder17b_eval.sh
@@ -53,6 +56,7 @@ backend:
     EVAL_DATASETS_CACHE: ${aux.hf_cache}
     EVAL_METRICS_CACHE: ${aux.hf_cache}/metrics
     NLTK_DATA: ${aux.hf_cache}/nltk_data
+    TRITON_LIBCUDA_PATH: /.singularity.d/libs
 
 job:
   name: ft17b_eval_${aux.name}
