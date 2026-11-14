@@ -99,7 +99,10 @@ backend:
     data_sampler_reference_micro_batch_size: null
     # --- schedule ---
     seq_length: ${aux.seq}
-    micro_batch_size: 2
+    # 4 x 8192 per GPU, no gradient accumulation at 4 nodes (gbs 64 = 16 GPUs x 4); mbs 2 ran at 20-22k tok/s/GPU
+    # with 20 % of the GPU memory (b7's first start on the 32B buffer, 2026-11-14). The same layout for every arm: the
+    # data order depends on it
+    micro_batch_size: 4
     global_batch_size: ${aux.gbs}
     train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
     exit_interval: null

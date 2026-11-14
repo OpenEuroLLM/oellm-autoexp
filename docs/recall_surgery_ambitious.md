@@ -2118,3 +2118,21 @@ ambitious 35603 / Qwen3-30B-A3B (3B active, full attention) / Qwen2.5-32B:
   full-attention MoE) and about 7 F1 behind dense Qwen2.5-32B. Most of the ~10 F1 to the in-house 32B dense (~80)
   therefore looks like active capacity / data rather than the 7:1 hybrid layout, which costs at most ~3 F1 here.
 * **Open.** Decompose the in-house 32B's samples the same way (they are on JUPITER).
+
+### 14.3 b7 training on the 32B buffer, measured throughput (2026-11-14 14:00)
+
+* **First start (run 0077)** died at start-up: JUPITER's torch 2.11 rejects the main run's allocator key
+  `per_process_memory_fraction`. Now `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. The pool's retry was
+  cancelled by hand and the guard hardened: it cancels the guarded job before leaving and stops on a failed run.
+* **micro-batch 2 (run 0079), 4 nodes:** 20-22k tok/s/GPU, 115 TFLOP/s, 20 % memory, loss 12.2 -> 8.3 by step 81.
+  Stopped before any checkpoint.
+* **micro-batch 4 (run 0080, now the config for all arms, no gradient accumulation at 4 nodes):**
+  * 1.14 s/step, **28.8k tok/s/GPU, 150 TFLOP/s**, 22 % memory;
+  * loss 6.0-6.2 at step 166, grad norm 2.1-2.2, no errors.
+* **Budget at this rate:**
+  * 20 BT per base = 12.1 h on 4 nodes = **~195 GPU-h per base, ~580 for b7 + r3 + r3p**;
+  * Phase-1 readouts (24 x <= 1 node-h) <= ~100 and Phase 2 ~100, ~780 in total;
+  * spent so far ~6 GPU-h (the three b7 starts).
+* **Hosts:** b7 runs on host102 (32B job 2897840, ~10 h left). At its handover the guard yields b7, which resumes in
+  small16 from its rolling (every 500 steps) or persistent saves. r3 / r3p wait in small16 (host jobs 2901100 /
+  2901131 pending, test-only estimate 2026-11-15 05:30).
