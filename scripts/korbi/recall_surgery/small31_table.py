@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Table of the small-scale testbed's Phase-1 readouts (docs/recall_surgery_ambitious.md §14): per arm and checkpoint
-the critical rows (CoQA, Winogrande, SQuAD v2 incl. abstention on answerable questions and F1 when answering, as
-rescore_fda_squad.py), the recall rows (SWDE / FDA / squad_completion), the RULER subset at 4096 and the v8ml-valid
+the critical rows (CoQA, Winogrande, SQuAD v2 re-scored with the uniform abstain rule of squad_uniform.py: HasAns F1,
+F1 when answering, abstain % on answerable / unanswerable and their difference, the abstention discrimination), the recall rows (SWDE / FDA / squad_completion), the RULER subset at 4096 and the v8ml-valid
 loss. Reads <root>/evals/small31_<arm>_<step>/ (small31_eval.py's layout); missing cells print as '-'.
 
     small31_table.py [--root /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31] [--arms b7 r3 r3p]
@@ -57,23 +57,34 @@ def _metric(res, task, names):
     return None
 
 
-def squad_abstention(d):
+def squad_uniform(d):
+    """SQuAD v2 re-scored from the logged samples with the uniform abstain rule of squad_uniform.py (empty output or
+    containing "unanswerable"): HasAns F1 (abstain = 0), abstain % on answerable, F1 when answering, abstain % on
+    unanswerable, and the abstention discrimination = abstain % on unanswerable - abstain % on answerable."""
     fs = glob.glob(os.path.join(d, "results", "squadv2_10", "*", "samples_*.jsonl"))
     if not fs:
-        return None, None
-    ans = []
+        return {}
+    ab = lambda g: g.strip() == "" or "unanswerable" in g.lower()  # noqa: E731
+    has, answered, n_abst, unans = [], [], 0, []
     for f in sorted(fs):
         for line in open(f):
             x = json.loads(line)
-            golds = x["doc"].get("answers", {}).get("text", [])
+            g, golds = _resp(x), x["doc"].get("answers", {}).get("text", [])
             if golds:
-                ans.append((_resp(x), golds))
-    if not ans:
-        return None, None
-    abst = lambda r: _norm(r) in ("", "unanswerable", "no answer") or "unanswerable" in r.lower()  # noqa: E731
-    answered = [(r, g) for r, g in ans if not abst(r)]
-    f1a = sum(max(_f1(r, gg) for gg in g) for r, g in answered) / max(1, len(answered))
-    return 100 * (len(ans) - len(answered)) / len(ans), 100 * f1a
+                v = 0.0 if ab(g) else max(_f1(g, gg) for gg in golds)
+                has.append(v)
+                if ab(g):
+                    n_abst += 1
+                else:
+                    answered.append(v)
+            else:
+                unans.append(1.0 if ab(g) else 0.0)
+    if not has:
+        return {}
+    mean = lambda v: 100 * sum(v) / max(1, len(v))  # noqa: E731
+    a_ans, a_unans = 100 * n_abst / len(has), mean(unans)
+    return {"squad_hasans_u": mean(has), "squad_abst": a_ans, "squad_f1_answered": mean(answered),
+            "squad_abst_unans": a_unans, "squad_discrim": a_unans - a_ans}
 
 
 def row(d):
@@ -84,7 +95,9 @@ def row(d):
     res = _done(d, "squadv2_10")
     out["squad_f1"] = _metric(res, "squadv2", ["f1"])
     out["squad_hasans"] = _metric(res, "squadv2", ["HasAns_f1"])
-    out["squad_abst"], out["squad_f1_answered"] = squad_abstention(d)
+    out.update({k: None for k in ("squad_hasans_u", "squad_abst", "squad_f1_answered", "squad_abst_unans",
+                                  "squad_discrim")})
+    out.update(squad_uniform(d))
     for t in ("swde", "fda", "squad_completion"):
         out[t] = _metric(_done(d, f"{t}_0"), t, ["contains", "acc"])
     res = _done(d, "ruler_4096")
@@ -99,10 +112,11 @@ def row(d):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31")
-    ap.add_argument("--arms", nargs="*", default=["b7", "r3", "r3p"])
+    ap.add_argument("--arms", nargs="*", default=["b7", "r3", "r3p", "a0"])
     a = ap.parse_args()
     cols = [("coqa_f1", "CoQA F1", 100), ("wino", "Wino", 100), ("squad_f1", "SQuAD F1", 1),
-            ("squad_hasans", "HasAns", 1), ("squad_abst", "abst%", 1), ("squad_f1_answered", "F1|ans", 1),
+            ("squad_hasans_u", "HasAnsU", 1), ("squad_f1_answered", "F1|ans", 1), ("squad_abst", "abst@ans", 1),
+            ("squad_abst_unans", "abst@un", 1), ("squad_discrim", "discrim", 1),
             ("swde", "SWDE", 100), ("fda", "FDA", 100), ("squad_completion", "SQcomp", 100), ("ruler", "RULER4k", 1),
             ("valid", "valid", 1)]
     print(f"{'arm':5} {'step':>6} {'BT':>5} | " + " | ".join(f"{c[1]:>8}" for c in cols))

@@ -5,6 +5,7 @@
 #   b7    7:1 attention-first (attention at mixer 0 / 8 / 16)                      -- the main run's ratio
 #   r3    3:1 from scratch (attention at mixer 0 / 4 / 8 / 12 / 16 / 20)            -- the upper bound
 #   r3p   3:1 as attention PAIRS (attention at mixer 0,1 / 8,9 / 16,17; user: attention circuits)
+#   a0    pure attention (all 24 mixers), RoPE theta 500k (user 2026-11-14); optional, not run: a NoPE pure variant
 # The first CKDA mixers keep their complex eigenvalues in every arm (production CKDA settings). Production mixers and
 # residual: CKDA, NoPE GQA attention (10 heads x 128, 2 KV groups) with output gate + XSA, mHC-4, and a SMALL Engram
 # (two Engram sublayers as in production: after the first block and before the middle attention; 300k rows per
@@ -124,6 +125,10 @@ backend:
     load: ${job.base_output_dir}/ckpt
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
     ckda_branch: null
+    # the architecture-metrics pass crashes with "CUDA error: misaligned address" on the dense MLP layers ('-',
+    # unused in production): b7 died at iteration 500 = arch_metrics_interval (2026-11-14), as the ckda_branch arms at
+    # 23500 (§10.6). Off.
+    arch_metrics_interval: 100000000
     ckda_branch_layers: null
 
 slurm:
@@ -157,3 +162,14 @@ sweep:
           backend.megatron.hybrid_layer_pattern: "*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"
         - aux.arm: r3p
           backend.megatron.hybrid_layer_pattern: "*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"
+        # pure attention (user 2026-11-14): every mixer softmax attention, RoPE (a pure-attention model needs
+        # positions; the hybrids' attention is NoPE because CKDA carries order): theta 500000, full head dim,
+        # non-interleaved, unscaled, restarted per document (packed batches) -- so no fused qk-norm+RoPE (its kernel has
+        # no per-document positions). Same MLPs (no width change: -35M non-embedding params vs b7, -7 %, < 10 %)
+        - aux.arm: a0
+          backend.megatron.hybrid_layer_pattern: "*-N*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-N*-*-*-*-*-*-*-*-"
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 500000
+          backend.megatron.rotary_percent: 1.0
+          backend.megatron.rotary_interleaved: false
+          backend.megatron.fused_qk_norm_rope: false

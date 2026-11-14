@@ -61,6 +61,9 @@ class OellmAmbitiousConfig(PretrainedConfig):
         shared_expert_intermediate_size: int = 768,
         # dense SwiGLU MLP layers (block type "mlp", pattern symbol '-'): Megatron's ffn_hidden_size
         mlp_intermediate_size: int = 0,
+        # RoPE on the attention layers (Megatron position_embedding_type rope: non-interleaved, full head dim, after the
+        # qk-norm, positions restart per sequence); None = NoPE (the production hybrids)
+        rope_theta: float | None = None,
         router_scaling_factor: float = 1.0,
         activation_clamp_value: float | None = 10.0,
         # "expert_bias" (top-k on scores + bias) or "quantile" (top-k on logits - qb_beta)
@@ -133,6 +136,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.moe_intermediate_size = moe_intermediate_size
         self.shared_expert_intermediate_size = shared_expert_intermediate_size
         self.mlp_intermediate_size = mlp_intermediate_size
+        self.rope_theta = rope_theta
         self.router_scaling_factor = router_scaling_factor
         self.activation_clamp_value = activation_clamp_value
         if router_balancing not in ("expert_bias", "quantile"):

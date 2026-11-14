@@ -266,6 +266,25 @@ class OellmXSAAttention(nn.Module):
         # a kvshare source (OellmAmbitiousModel sets keep_kv): last_kv = this call's keys / values incl. the
         # past, [b, nkv, S, d] each, for the kvshare layers after it
         self.keep_kv, self.last_kv = False, None
+        self.rope_theta = getattr(config, "rope_theta", None)
+
+    def _rope(self, q: torch.Tensor, k: torch.Tensor, past: int):
+        """RoPE as Megatron applies it (rotate_half, non-interleaved, inv_freq = theta^(-2i/d) over the full head
+        dim, fp32 angles) to q / k [b, s, heads, d] at positions past .. past + s - 1; identity under NoPE."""
+        if self.rope_theta is None:
+            return q, k
+        s, d = q.shape[1], q.shape[-1]
+        inv = 1.0 / (self.rope_theta ** (torch.arange(0, d, 2, device=q.device, dtype=torch.float32) / d))
+        ang = torch.arange(past, past + s, device=q.device, dtype=torch.float32)[:, None] * inv[None, :]
+        emb = torch.cat([ang, ang], dim=-1)[None, :, None, :]  # [1, s, 1, d]
+        cos, sin = emb.cos(), emb.sin()
+
+        def rot(t):
+            tf = t.float()
+            t1, t2 = tf[..., : d // 2], tf[..., d // 2:]
+            return (tf * cos + torch.cat([-t2, t1], dim=-1) * sin).to(t.dtype)
+
+        return rot(q), rot(k)
 
     def _fast_forward(self, x: torch.Tensor, keep_state: bool):
         """No past: one GEMM for q | gate | k | v, the fused qk-norm, GQA inside SDPA, XSA against
@@ -284,6 +303,7 @@ class OellmXSAAttention(nn.Module):
             kern = _kernels()
             q = kern.rms_norm(q, self.q_norm.weight, self.q_norm.variance_epsilon, self.q_norm.zero_centered_gamma)
             k = kern.rms_norm(k, self.k_norm.weight, self.k_norm.variance_epsilon, self.k_norm.zero_centered_gamma)
+        q, k = self._rope(q, k, 0)
         kt, vt = k.transpose(1, 2), v.transpose(1, 2)
         o = F.scaled_dot_product_attention(q.transpose(1, 2), kt, vt, is_causal=True, scale=d**-0.5,
                                            enable_gqa=nh != nkv).transpose(1, 2)
@@ -312,11 +332,11 @@ class OellmXSAAttention(nn.Module):
         v = self.v_proj(x).view(b, s, self.nkv, self.d)
         if self.q_norm is not None:
             q, k = self.q_norm(q), self.k_norm(k)
+        past = 0 if state is None else state[0].shape[2]
+        q, k = self._rope(q, k, past)
         own_v = v
         q, k, v = (t.transpose(1, 2) for t in (q, k, v))
-        past = 0
         if state is not None:
-            past = state[0].shape[2]
             k = torch.cat([state[0], k], dim=2)
             v = torch.cat([state[1], v], dim=2)
         new_state = (k, v)

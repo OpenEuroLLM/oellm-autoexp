@@ -248,8 +248,12 @@ def hf_config(m: dict, vocab: int) -> dict:
     balancing = _balancing(m) if has_moe else "expert_bias"
     if m.get("moe_shared_expert_gate"):
         raise ValueError("gated shared expert not ported")
-    if m.get("position_embedding_type") not in (None, "none"):
-        raise ValueError("expects NoPE attention")
+    pos = m.get("position_embedding_type") or "none"
+    if pos not in ("none", "rope"):
+        raise ValueError(f"position_embedding_type {pos}: only NoPE / plain RoPE ported")
+    if pos == "rope" and (m.get("rotary_interleaved") or float(m.get("rotary_percent") or 1.0) != 1.0
+                          or m.get("rope_scaling") or m.get("rotary_scaling_factor") not in (None, 1, 1.0)):
+        raise ValueError("RoPE: only non-interleaved, full head dim, unscaled is ported")
     if m.get("use_mup"):
         raise ValueError("muP embedding / output scaling not ported")
     if m.get("linear_xsa"):
@@ -284,6 +288,7 @@ def hf_config(m: dict, vocab: int) -> dict:
         "head_dim": m["kv_channels"],
         "qk_layernorm": bool(m.get("qk_layernorm")),
         "attention_output_gate": bool(m.get("attention_output_gate")),
+        "rope_theta": float(m.get("rotary_base") or 10000) if pos == "rope" else None,
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
         "kv_share_sources": kv_sources,
