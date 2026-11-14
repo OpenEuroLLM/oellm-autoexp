@@ -1982,3 +1982,63 @@ Winogrande is at the 2000 level. No conclusion before the main run's 1000 row (t
   directly target the abstention part.
 * For the testbed (§14): track abstention rate and F1-when-answering, not only SQuAD v2 F1. Compare CoQA's
   conversational format the same way.
+
+## 14. Small-scale testbed (JUPITER, 2026-11-14)
+
+**Goal.** Test "early 3:1 attention, merge late" (and attention PAIRS) at ~0.5B, on a budget of <= 1000 GPU-h.
+User decisions: production tokenizer and data, production-like architecture plus a small Engram, a 3:1 upper bound,
+and paired attention (lead addition).
+
+**Base: campaign_3b s3** (hidden 1280 x 24 blocks, d_ffn 3584, dense). The campaign's s-scale screens are dense (MoE
+only as arms), so the testbed is dense. Config `config/experiments/korbi/recall_surgery/small31_jupiter.yaml`
+inherits the main-run chain (as a31 does) and swaps container, slurm and paths for JUPITER:
+* **Mixers / residual:** CKDA (production settings: complex eigenvalues), NoPE GQA attention 10 x 128 with 2 KV
+  groups, output gate + XSA, mHC-4.
+* **Engram (small):** 2 sublayers (after block 0 and before the middle attention, as in production), 4M rows x 64,
+  8 heads, orders 2/3/4, the production token map.
+* **Data:** production tokenizer `tokenizer-256k-agent`; v8ml stage-1 blend (JSC mirror `datamix_v8ml_stage1_jsc.txt`).
+* **Schedule:** seq 8192, gbs 64 (0.52M tokens/step), muown_classical, lr 1.8e-3 constant after 1000 warmup steps,
+  **20 BT** per base (38,146 steps).
+* **Checkpoints:** fsdp_dtensor (the surgery tools' format), persistent at 0.25/0.5/1/2/4/8/16 BT plus every 2 BT and
+  the end, all kept.
+
+| arm | layout (24 mixers) | attention at mixer |
+|---|---|---|
+| b7 | 7:1 attention-first (the main run's ratio) | 0, 8, 16 |
+| r3 | 3:1 from scratch (upper bound) | 0, 4, 8, 12, 16, 20 |
+| r3p | 3:1 as attention PAIRS (circuits) | 0,1 / 8,9 / 16,17 |
+
+**JUPITER port** (the hybrid stack had only run on MareNostrum; container `MegatronTraining-JUPITER_pt2512_aarch64`):
+* Triton finds no `libcuda.so`: FLA then falls back to CPU and CKDA fails to import. Fix:
+  `TRITON_LIBCUDA_PATH=/.singularity.d/libs`.
+* No nvidia-resiliency-ext in the image: `async_save: false`.
+* The main run's `save_retain_interval: 10000` fails validation against save_interval 3815: null (keep all).
+* MoonEP flex dispatcher / MoE fusions off (dense).
+* The JUPITER repo venv needed hydra_fast 0.1.2 (relative `..` defaults); installed from the PyPI wheel with uv.
+* Smoke test on the login GH200 (1 GPU, mock data) gets through argument validation, model config and imports.
+  The last attempt failed only because another user's process holds the login GPU (97 GB). A retry runs when it frees.
+
+**Node supply** (user: own pool; standalone, no 32B-buffer use):
+* Pool `config/experiments/korbi/pool/jupiter_pool_small16.yaml`: e-ext-2025e02-108, booster, 16 nodes, 12 h,
+  hold_hosts, keep_pending 1, max_runs_per_host 4.
+* Pool dir `/e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16`; monitor on the JUPITER login node
+  (log `.../monitor_logs/pool_small16_mon.log`).
+* Host jobs **2901100** + successor **2901131** (16 nodes each), pending; test-only estimate for this account
+  ~2026-11-15 05:30.
+* b7 / r3 / r3p enqueued (4 nodes each, packed on one host): `small31_b7_0_20feca`, `small31_r3_1_db3af6`,
+  `small31_r3p_2_a63ab1`.
+
+**Budget (estimate):** 3 x 20 BT. At an assumed 45k tok/s/GPU: ~120 GPU-h per base, ~370 for three. At 25k: ~670.
+Plus Phase-1 evals (~50-100) and Phase 2 (~100). Throughput is to be measured on the first host; the running total
+is reported per launch.
+
+**Phase 1 (to set up):**
+* Critical evals (CoQA, SQuAD v2, Winogrande) and RULER-style retrieval on every checkpoint, plus validation loss.
+  Needs an HF export of the s3-shaped hybrid and a JUPITER vLLM / oellm-eval setup.
+* Gate: b7 must trail r3 / r3p on retrieval.
+
+**Phase 2 (to prepare):**
+* E / Ep: hard random attention at the 3:1 / paired positions at t_e, chosen after Phase 1.
+* M / Mp: transplant into b7@end with crossfade adaptation.
+* L / Lp: late random insertion; C: b7 continued.
+* Tools: replace_ckda_with_attention.py, layer_swap.py, dcp_surgery.py (fsdp_dtensor).
