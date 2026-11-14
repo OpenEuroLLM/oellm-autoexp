@@ -2471,3 +2471,24 @@ identically, so the cause is elsewhere. Over the 5 test steps every parameter ki
 embedding 11 %, mHC b_post up to 38 %), which is not diagnostic of the first update. Bisect: a 1-step resume (exit
 1908, saved) diffed per tensor against 1907, model and optimizer states, to find which group's first update is
 anomalous.
+
+**Bisect result (23:30): the JUPITER checkpoints hold ZERO Adam moments for almost all small parameters.**
+* A 1-step resume (rt030, exit 1908, saved), diffed against b7@1907: the model and MuOwn states are fine, but the Adam
+  exp_avg of the small parameters changes by factors of 1e6-1e9 in one step. Their saved values are exactly zero.
+* b7@1907:
+  * **487 of 535 Adam exp_avg_sq tensors are all-zero** (6.5M elements): all mHC alpha / b / phi, CKDA conv1d / dt_bias /
+    A_log / b_proj / o_norm / g_proj.1.bias, input / qkv / fc1 layer norms, Engram conv / norms, final norm.
+  * exp_avg is zero for the same tensors. Usually all of a kind; a few per kind are non-zero (e.g. 23 / 24), which
+    looks like the shards of one rank.
+  * Non-zero: the large sharded tensors (embedding, output layer, Engram tables) and the MuOwn matrices' states.
+* Even the 1908 save has exp_avg non-zero but exp_avg_sq still zero for these.
+* On resume they start from v = 0 with step = 1908 (no bias correction), so the first Adam update is ~m / eps on ~490
+  tensors, including every mHC residual coefficient. That is the blow-up. Live training never sees it: the in-memory
+  states are right, only the saved copies are zero.
+* **MN5 is not affected:** the main run's ckpt_rolling/iter_0035900 has the same keys populated
+  (mhc_attn_mixer.alpha_post exp_avg_sq 5.3e-6, q_conv1d 2.3e-11, no zeros).
+* Suspect: a save-side bug of the JUPITER stack (torch 2.11 DCP) for small parameters that live on few ranks of the
+  Megatron-FSDP flat buffer. The writer de-duplicates or chooses a rank whose shard is empty.
+* **Mitigation candidate** (no code yet): at load, an Adam parameter whose loaded exp_avg_sq is all-zero while
+  step > 0 gets step 0, so the bias-corrected first update is ~lr * sign(g), bounded. A proper fix belongs in the
+  fsdp_dtensor save path or the JUPITER image's torch.
