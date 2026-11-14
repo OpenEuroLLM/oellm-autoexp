@@ -2190,3 +2190,27 @@ after identical fine-tuning? Absolute numbers are secondary: the RC mix trains o
 
 max_runs_per_host raised 4 -> 8 so the 1-node runs pack next to small31 r3 / r3p. Budget: estimated ~27 GPU-h
 training + ~36 GPU-h evals; 0 spent so far. Not yet run end to end on a compute node (the login GPU was busy).
+
+**Why FDA is ~30 here but 55-65 in the CKDA paper (signed_kda `lm_scaling/eval_recall.sbatch` results).**
+* **Not a harness or prompt difference.** Same stock lm-eval `fda` task (until "\n", 48 tokens, case-insensitive
+  `contains`), identical prompts and targets on the same 200 documents (signed_kda's LIMIT 200 diag dump). On those
+  200: signed_kda 1.3B hybrid 59.0, Qwen2.5-32B 34.5, ambitious 23500 31.0.
+* **Not truncation.** Answers at the document head (6-8k chars before the prompt end) score ~33 for Qwen2.5-32B like
+  every other bin.
+* **Not the 48-token window.** Cutting the signed_kda generations to target length + 2 words still gives 58.0.
+* **The difference is literal copying of an earlier field.** The prompt is a cut-off document plus "\n<Key>:"; for
+  header fields the value appears verbatim earlier ("2. Classification: Class II ... 4. Panel: Hematology (81)").
+  Per key (200 docs), signed_kda 1.3B / Qwen2.5-32B / ambitious:
+  * classification 100 / 43.8 / 37.5;
+  * panel 94.1 / 29.4 / 23.5;
+  * proprietary names 84.6 / 23.1 / 23.1;
+  * type of test 63.2 / 26.3 / 26.3;
+  * proposed labeling 5.6 / 11.1 / 38.9.
+
+  The fineweb-edu-only 1.3B models copy induction-style. Broad-data models (Qwen and ours alike) continue the
+  document plausibly instead (e.g. "Classification:" -> "864.2112", the regulation number). As run, FDA mostly
+  measures this copying disposition (training-data dependent), not retrieval capacity. The paper's numbers are
+  valid for its models but not comparable with ours or the Qwens.
+* **Ambitious gives empty answers** (an immediate newline) on 29/200 FDA documents (Qwen 4, signed_kda 1),
+  47 % on "conclusion". The same "decline to answer" tendency as the SQuAD v2 over-abstention, in a third task.
+  (`scripts` used: scratchpad fda_depth.py / fda_keys.py / sk_window.py, logic as in rescore_fda_squad.py.)
