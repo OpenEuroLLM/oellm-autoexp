@@ -10,11 +10,14 @@
 # (two Engram sublayers as in production: after the first block and before the middle attention; 4M rows x 64,
 # 8 heads, orders 2/3/4). Production data (v8ml stage-1 blend, JSC mirror) and tokenizer (256k agent), seq 8192,
 # gbs 64 (0.52M tokens / step), muown_classical, lr 1.8e-3 constant after 1000 warmup steps (the s3 law value).
-# Checkpoints: persistent at the log-spaced token marks 0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 / end BT (save_extra_steps)
+# Checkpoints: persistent at the log-spaced token marks 0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 / end (20) BT (save_extra_steps)
 # + every ~2 BT (save_interval), all kept (small); fsdp_dtensor (the surgery tools' format).
 # Inherits the main-run config (a31's chain) and swaps the MareNostrum container / slurm / paths for JUPITER.
-#   ./sync_to_jupiter.sh && ssh jupiter 'cd ~/work/Projects/oellm-autoexp-hybrid && <autoexp env> \
-#       python scripts/run_autoexp.py --config-name experiments/korbi/recall_surgery/small31_jupiter "aux.only=[b7]"'
+# Runs in the 16-node pool jupiter_pool_small16 (all three packed, 4 nodes each):
+#   ./sync_to_jupiter.sh && ssh jupiter 'cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python \
+#       scripts/run_autoexp.py --no-monitor --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/small31_jupiter --yes'
 defaults:
   - ../production/hybrid_ambitious_v4_2ph_256_mn5
   - override /container: jupiter
@@ -28,7 +31,9 @@ aux:
   only: []
   nodes: 4
   node_check: "off"
-  tokens: 25.0e9
+  # 20 BT per base (lead/user: shorten all bases equally to fit B + R3 + R3p + evals + Phase 2 in 1000 GPU-h at an
+  # unmeasured throughput; fixed before the first launch: the data order depends on train_iters)
+  tokens: 20.0e9
   gbs: 64
   seq: 8192
   jsc_data: /e/data1/datasets/playground/mmlaion/oellm_testing
@@ -118,7 +123,8 @@ slurm:
   sbatch:
     nodes: ${aux.nodes}
     time: "12:00:00"
-    account: e-sta-openeurollm
+    # the jupiter_pool_small16 hosts' account (the pool refuses mismatches)
+    account: e-ext-2025e02-108
     partition: booster
     qos: null
 
