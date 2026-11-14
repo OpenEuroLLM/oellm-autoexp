@@ -1,0 +1,50 @@
+# @package _global_
+# Phase 2 of the small-scale testbed (docs/recall_surgery_ambitious.md §14), EARLY insertion: b7 (7:1) at 1 BT
+# (iteration 1907) with random-init softmax attention hard-inserted at more CKDA positions
+# (scripts/korbi/recall_surgery/small31_insert.sh -> <out_root>/<arm>/ckpt/iter_0001907), then trained on b7's exact
+# data order, lr and schedule (same train_iters / seed / blend / micro-batch: resume = optimizer + scheduler + data
+# position) for 4 BT (to iteration 9535), as the a31 arm at 84B (§13):
+#   E    3:1 as r3: new attention at mixers 4 / 12 / 20
+#   Ep   paired as r3p: new attention at mixers 1 / 9 / 17 (attention circuits)
+# The first CKDA mixers keep their complex eigenvalues. Persistent saves 0.25 / 0.5 BT after the insertion (2384 /
+# 2861) and at b7's own marks 3815 / 7629 (paired readouts) + 5722 / 9535; readouts gated like the bases
+# (small31_readout_jupiter). First-step loss vs b7 on the same batches: b7's log at 1908+.
+#   cd ~/work/Projects/oellm-autoexp-hybrid && ARM=E IT=1907 bash scripts/korbi/recall_surgery/small31_insert.sh
+#   PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor --monitor-state-dir \
+#       /e/scratch/e-sta-openeurollm/poeppel1/pool_state --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/small31_phase2_jupiter --yes
+defaults:
+  - small31_jupiter
+  - _self_
+
+aux:
+  arm: E
+  insert_it: 1907
+
+backend:
+  megatron:
+    exit_interval: 9535
+    save_extra_steps: [2384, 2861, 3815, 5722, 7629, 9535]
+    # no regular interval saves beyond the marks (rolling saves every 500 still carry restarts)
+    save_interval: 100000
+    exit_on_missing_checkpoint: true
+
+job:
+  metadata:
+    pool_priority: 40
+  # the arm resumes only from its surgery output (or later saves of its own)
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.out_root}/${aux.arm}/ckpt/latest_checkpointed_iteration.txt
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: E
+          backend.megatron.hybrid_layer_pattern: "*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"
+        - aux.arm: Ep
+          backend.megatron.hybrid_layer_pattern: "*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"
