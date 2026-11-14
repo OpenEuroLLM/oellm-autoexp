@@ -2444,3 +2444,16 @@ Expected engine time ~0.5-1 h per model, on the next p264 host. Table:
   * Second suspect: torch 2.11's DCP handling of the packed non-tensor items.
   * The MN5 0.2.0 package (pure Python, 470 kB) is copied to `/e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt020` for
     a resume test: a copy of b7@1907 resumed for ~5 steps with 0.2.0 on PYTHONPATH, compared with b7's 1908-1910.
+
+**Shock-affected so far** (resume points of the logs; each shock recovers within ~100 steps):
+* b7: 121 (micro-batch change), 478, 10735. Its readout checkpoints 477 / 954 / 1907 come 0-476 steps after a
+  shock: 954 and 1907 are well past the ~100-step recovery; 477 precedes the 478 shock.
+* a0: 501 (the NaN-recovery resume), before its 954 / 1907 checkpoints.
+* r3, r3p: no resume yet (both since iteration 1).
+* E / Ep: the insertion resume at 1908; their checkpoints 2384+ are 476+ steps later.
+The bases will take one shock per 12-h host change until the fix; once fixed they need no restart (they recover in
+~100 steps). E / Ep will be restarted cleanly from b7@1907 once the fix is confirmed, so the insertion comparison is
+free of the shock.
+
+**Resume test (enqueued, priority 90 / 85, 1 node each):** `small31_resumetest_jupiter` (rt020: emerging_optimizers
+0.2.0; rt030: 0.3.0), hard-link copies of b7@1907, 5 steps, against b7's own 1908-1912.
