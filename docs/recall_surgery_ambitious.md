@@ -2389,3 +2389,7 @@ Expected engine time ~0.5-1 h per model, on the next p264 host. Table:
 * **Budget** (user: 1500 GPU-h for the branch; the 1.7B fine-tuning pair tallied separately):
   * 4 bases x 20 BT x ~195 GPU-h = ~780; readouts 32 x <= 4 GPU-h = <= 130; Phase 2 ~100-150. Total ~1060.
   * Spent so far: ~16 GPU-h (b7 starts incl. 0080's 500 steps).
+
+* **16:42:** b7 resumed from 477 with arch metrics off, past iterations 500 / 1000 / 2000, no errors. Validation
+  loss 2.798 (1000) -> 2.416 (2000); 28.6-28.8k tok/s/GPU; persistent saves 954 / 1907 written. Its readouts run in
+  small16 once a host starts.
