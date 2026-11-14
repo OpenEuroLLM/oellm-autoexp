@@ -2581,6 +2581,17 @@ anomalous.
     `archive_20261115_shock1908/` as a shock-vs-clean comparison;
   * the insertions were redone from b7@1907 and E / Ep re-enqueued with v3; their 9 readouts re-enqueued; 9535 /
     Ep 7629 / 9535 were still pending and fire on the new checkpoints.
+  * First steps of the clean restart (4 nodes, same layout as b7; loss / grad norm). E and Ep agree to 1e-4, as
+    they must with the crossfade at alpha ~ 1:
+
+| step | 1908 | 1909 | 1910 | 1911 | 1912 |
+|---|---|---|---|---|---|
+| b7 (no resume) | 2.881 / 0.370 | 2.388 / 0.409 | 2.459 / 0.384 | 2.628 / 0.399 | 2.612 / 0.370 |
+| E, Ep restart (v3) | 2.881 / 0.370 | 2.634 / 0.402 | 2.458 / 0.370 | 2.624 / 0.382 | 2.609 / 0.358 |
+| E before (v0, shock) | 2.881 / 0.370 | 34.0 / 314 | 63.4 | | |
+
+    One +0.25 step at 1909, which is the zeroed Adam momentum of the output layer and embedding plus the ramp. From
+    1910 on, the restart is within 0.005 of b7.
   * Late arms may launch with v3 once b7 reaches 38146 (at 24.7k on 2026-11-15 00:10; r3 14.8k, r3p 14.7k, a0 9.9k).
 * **Readout RULER row:** every readout's main rows completed, but the ruler_4096 row failed. lm-eval's
   ruler_qa_squad fetches SQuAD v2 dev with requests.get, outside the HF cache, and compute nodes are offline. The
