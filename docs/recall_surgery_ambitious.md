@@ -2457,3 +2457,17 @@ free of the shock.
 
 **Resume test (enqueued, priority 90 / 85, 1 node each):** `small31_resumetest_jupiter` (rt020: emerging_optimizers
 0.2.0; rt030: 0.3.0), hard-link copies of b7@1907, 5 steps, against b7's own 1908-1912.
+
+**Resume test result (22:44): emerging_optimizers is NOT the cause.**
+
+| step | b7 (no resume) loss / grad norm | rt020 (0.2.0, resumed) | rt030 (0.3.0, resumed) |
+|---|---|---|---|
+| 1908 | 2.881 / 0.370 | 2.434 / 0.355 | 2.434 / 0.355 |
+| 1909 | 2.388 / 0.409 | 34.30 / 311.0 | 34.30 / 311.1 |
+| 1910 | 2.459 / 0.384 | 56.13 / 232.9 | 56.13 / 232.8 |
+
+(The 1-node run logs a different loss average at 1908, but the same gradient norm.) Both versions blow up
+identically, so the cause is elsewhere. Over the 5 test steps every parameter kind moved a lot (output layer 28 %,
+embedding 11 %, mHC b_post up to 38 %), which is not diagnostic of the first update. Bisect: a 1-step resume (exit
+1908, saved) diffed per tensor against 1907, model and optimizer states, to find which group's first update is
+anomalous.
