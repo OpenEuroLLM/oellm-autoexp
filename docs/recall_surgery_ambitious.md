@@ -2581,7 +2581,7 @@ anomalous.
     `archive_20261115_shock1908/` as a shock-vs-clean comparison;
   * the insertions were redone from b7@1907 and E / Ep re-enqueued with v3; their 9 readouts re-enqueued; 9535 /
     Ep 7629 / 9535 were still pending and fire on the new checkpoints.
-  * Late arms may launch with v3 (b7 at ~10.8k of 38146).
+  * Late arms may launch with v3 once b7 reaches 38146 (at 24.7k on 2026-11-15 00:10; r3 14.8k, r3p 14.7k, a0 9.9k).
 * **Readout RULER row:** every readout's main rows completed, but the ruler_4096 row failed. lm-eval's
   ruler_qa_squad fetches SQuAD v2 dev with requests.get, outside the HF cache, and compute nodes are offline. The
   json is now cached by small31_precache.sh, and small31_eval.py serves it in place of the download (tested with the
