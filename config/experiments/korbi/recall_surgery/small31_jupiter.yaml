@@ -173,3 +173,7 @@ sweep:
           backend.megatron.rotary_percent: 1.0
           backend.megatron.rotary_interleaved: false
           backend.megatron.fused_qk_norm_rope: false
+          # 2026-11-14: run 0017 went from grad norm 0.68 (iteration 880, loss 2.71, z-loss as the hybrids') to a NaN
+          # gradient at 881 with a finite loss, and trained 37 steps on NaN weights (no skip) until the monitor stopped it.
+          # A NaN loss / gradient now raises at once (the pool restarts from the latest save); the math is unchanged
+          backend.megatron.check_for_nan_in_loss_and_grad: true
