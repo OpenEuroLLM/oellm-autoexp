@@ -1,0 +1,50 @@
+# @package _global_
+# Resume test of the small-scale testbed (docs/recall_surgery_ambitious.md §14.6): every small31 resume on JUPITER
+# jumps after its first optimizer update (b7 478: loss 3.5 -> 54). A hard-link copy of b7@1907
+# (<out_root>/<arm>/ckpt/iter_0001907) resumed on ONE node (same global batches; 4 micro-batches per GPU instead of 1)
+# for 5 steps, compared with b7's own log at 1908-1912 (loss 2.8806 / 2.3883 / 2.4590 / 2.6275 / 2.6121, grad norm
+# 0.370 / 0.409 / 0.384 ...):
+#   rt020  emerging_optimizers 0.2.0 (MN5's image; /e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt020)
+#   rt030  emerging_optimizers 0.3.0 (pylibs_eopt, the current small31 setting): the same-layout control
+#   for a in rt020 rt030; do mkdir -p $R/$a/ckpt && cp -al $R/b7/ckpt/iter_0001907 $R/$a/ckpt/ && echo 1907 > \
+#       $R/$a/ckpt/latest_checkpointed_iteration.txt; done      (R=/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31)
+#   PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor --monitor-state-dir \
+#       /e/scratch/e-sta-openeurollm/poeppel1/pool_state --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/small31_resumetest_jupiter --yes
+defaults:
+  - small31_jupiter
+  - _self_
+
+aux:
+  arm: rt020
+  nodes: 1
+
+backend:
+  megatron:
+    exit_interval: 1912
+    # no saves of the test into the copied tree (the exit save goes to a separate directory)
+    save: ${aux.out_root}/${aux.arm}/ckpt_out
+    save_interval: 100000
+    non_persistent_save_interval: 100000
+    save_extra_steps: []
+    eval_interval: 100000
+    exit_on_missing_checkpoint: true
+
+job:
+  metadata:
+    pool_priority: 90
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.out_root}/${aux.arm}/ckpt/latest_checkpointed_iteration.txt
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: rt020
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/project1/e-sta-openeurollm/poeppel1/pylibs_liger084:/e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt020"
+        - aux.arm: rt030
+          job.metadata.pool_priority: 85
