@@ -2136,3 +2136,57 @@ ambitious 35603 / Qwen3-30B-A3B (3B active, full attention) / Qwen2.5-32B:
 * **Hosts:** b7 runs on host102 (32B job 2897840, ~10 h left). At its handover the guard yields b7, which resumes in
   small16 from its rolling (every 500 steps) or persistent saves. r3 / r3p wait in small16 (host jobs 2901100 /
   2901131 pending, test-only estimate 2026-11-15 05:30).
+
+## 16. Fine-tuning recoverability (1.7B, JUPITER; set up 2026-11-14)
+
+**Question (user).** Are the CoQA / SQuAD v2 deficits recoverable by post-training, or structural?
+
+**Design.** The signed_kda 1.7B ladder pair at the stable-phase end (iter_0076295, ~40 BT, same pretraining data),
+fine-tuned IDENTICALLY:
+* the CKDA hybrid skda-shipped-hybrid-lowrank (ffn 7936) and the pure-attention attn (ffn 8192);
+* model-only load, fresh Adam, 1000 steps x gbs 128 x 4096 = 0.52 BT, lr 1e-4 after 100 warmup steps, linear decay
+  to 1e-5 over the last 200;
+* the same blend / seed / steps in both arms.
+
+The key number: does the hybrid-vs-attention gap on CoQA / SQuAD v2 (with the §15 abstention split) / Winogrande shrink
+after identical fine-tuning? Absolute numbers are secondary: the RC mix trains on the tasks' train splits.
+
+| arm | blend |
+|---|---|
+| hyb_rc / attn_rc (RC-included) | 0.55 Nemotron (the ladder's own pretraining data) + 0.30 Tulu-3 SFT w/o FLAN + 0.05 SQuAD v2 + 0.012 CoQA + 0.05 RACE + 0.038 DROP |
+| hyb_gen / attn_gen (RC-excluded, contamination-fair) | 0.60 Nemotron + 0.40 Tulu-3 SFT w/o FLAN |
+
+**Data** (`scripts/korbi/recall_surgery/build_ft_mix.py`; rendered on the JUPITER login node, NeoX tokenizer, EOD;
+`/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/ft17b_data/manifest.json`):
+* SQuAD v2 train: 130,319 docs, 25.3M tokens. One per question in lm-eval's squadv2 format, "unanswerable" for the
+  unanswerable ones, so the answer/abstain behaviour itself is trained.
+* CoQA train: 7,199 docs, 4.6M tokens (lm-eval's Q:/A: turns).
+* RACE (all): 87,866 docs, 36.4M tokens.
+* DROP: 77,400 docs, 23.7M tokens.
+* Tulu-3 SFT mixture without its FLAN subset (FLAN contains SQuAD / CoQA): 849,361 docs, 797.8M tokens.
+* Per run, the RC sources get ~0.7-1.4 epochs, Tulu ~0.2-0.26.
+* QuAC was not used (script-based dataset, not loadable with datasets 4.x).
+
+**Code and configs.**
+* The ladder's own code in its original image (MegatronTraining-JUPITER-linattn-mamba): signed_kda (lm_scaling + fla)
+  + its external/oellm-autoexp/submodules/Megatron-LM (514b31b).
+* `scripts/korbi/recall_surgery/ladder17b_train.sh` gained TRAIN_DATA / VALID_DATA overrides. Blends are
+  comma-separated because the launchers pass env values unquoted.
+* `config/experiments/korbi/recall_surgery/ladder17b_ft_jupiter.yaml`: 4 arms, 1 node each.
+* Readout `ladder17b_ft_eval_jupiter.yaml`: the 2 untuned bases + the 4 arms through the same harness
+  (`ladder17b_eval.sh`: native export -> CoQA 0-shot 500 / Winogrande 0-shot 1267 / SQuAD v2 10-shot first 4000, two
+  shards; per-sample logs for the abstention split). Fine-tuned arms wait for their iteration-1000 save.
+* JUPITER eval environment:
+  * lm-eval 0.4.9.1 (pylibs/lm_eval_049);
+  * a shim of pylibs/lm_eval without its old scipy (`recall_surgery/pylibs_eval_shim`; the image's numpy 2 breaks that
+    scipy);
+  * offline datasets + the squad_v2 metric in the e-sta project HF cache (squad_v2 prefetched; checked offline:
+    winogrande 1267 / squadv2 11873 / coqa 500).
+
+**Status (2026-11-14 ~15:30).** All 10 jobs are queued in `jupiter_pool_small16` (e-ext-2025e02-108; hosts 2901100 /
+2901131 pending, est. ~2026-11-15 05:30):
+* ft17b_{hyb_rc, attn_rc, hyb_gen, attn_gen} at priority 20;
+* ft17b_eval_{base_hyb, base_attn, hyb_rc, attn_rc, hyb_gen, attn_gen} at priority 25.
+
+max_runs_per_host raised 4 -> 8 so the 1-node runs pack next to small31 r3 / r3p. Budget: estimated ~27 GPU-h
+training + ~36 GPU-h evals; 0 spent so far. Not yet run end to end on a compute node (the login GPU was busy).
