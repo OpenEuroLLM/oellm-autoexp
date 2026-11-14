@@ -39,7 +39,17 @@ give_back() {
   ctl cancel "$GUARD_JOB" --wait 600 2>&1 | tail -2
   leave "after give-back"
 }
+# a guarded run that ended non-zero: stop at once (the pool would retry it; the cause needs a look first)
+ended_rc() {
+  for rd in "$P"/runs/*; do
+    [ -f "$rd/rc" ] && grep -qh "^NAME=$GUARD_NAME" "$rd/meta.env" 2>/dev/null && [ "$(stat -c %Y "$rd/rc")" -ge "$T0" ] \
+      && ! grep -qE "^0 " "$rd/rc" && { echo "$(basename "$rd"): $(cat "$rd/rc")"; return; }
+  done
+}
 leave() {
+  # the guarded job out of the pool first: a run that ended non-zero is retried by the pool (max_attempts), and a
+  # queued retry must not wait there for the 32B run's nodes (cancel is idempotent)
+  ctl cancel "$GUARD_JOB" --wait 300 2>&1 | tail -1
   ctl set max_runs_per_host="$OLD_MAX_RUNS" 2>&1 | tail -1
   log "max_runs_per_host restored to $OLD_MAX_RUNS ($1)"
   if [ "${REENQUEUE:-1}" = 1 ]; then
@@ -50,9 +60,11 @@ leave() {
   fi
   exit 0
 }
+T0=$(date +%s)
 log "guarding $GUARD_JOB ($ARM) on $P; old max_runs_per_host $OLD_MAX_RUNS"
 seen=0
 while true; do
+  bad=$(ended_rc); [ -n "$bad" ] && { REENQUEUE=0; leave "the guarded run failed ($bad); not re-enqueued"; }
   R=$(runs)
   mine=$(echo "$R" | awk -v n="$GUARD_NAME" 'index($2, n) == 1')
   big=$(echo "$R" | awk '$2 ~ /^oellm_32b_dense_b1/')

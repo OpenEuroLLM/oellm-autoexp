@@ -51,6 +51,8 @@ backend:
     #   (MuOwn base classes; not in the JUPITER image; MN5 image: 0.2.0)
     PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/project1/e-sta-openeurollm/poeppel1/pylibs_liger084:/e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt"
     HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
+    # JUPITER's torch 2.11 rejects the main run's per_process_memory_fraction key (c10::ValueError at start-up)
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     NVIDIA_PYTORCH_VERSION: "25.12"
     TRITON_CACHE_DIR: /e/scratch/e-sta-openeurollm/poeppel1/cache/triton_small31
     # Triton finds no libcuda.so in the JUPITER image otherwise (FLA then falls back to CPU and CKDA fails to import)
