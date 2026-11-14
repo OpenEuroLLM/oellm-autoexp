@@ -26,7 +26,8 @@ from pathlib import Path
 HYBRID_OF = {"skda-shipped-lowrank": "skda-shipped-hybrid-lowrank", "kda-sig-lowrank": "kda-sig-hybrid-lowrank"}
 HYBRID_EVERY = 4
 # tokenizer paths the recall-surgery runs trained with that ARE gpt-neox-20b (experiment 018 checked vocab + merges equal)
-NEOX_EQUIVALENT = ("/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer",)
+NEOX_EQUIVALENT = ("/gpfs/projects/ehpc533/users/korbip/ckda_retrieval_018/assets/tokenizer",
+                   "/e/scratch/jureap59/cache/tokenizer/gpt-neox-20b")  # JUPITER copy (§16 fine-tuning runs)
 
 
 def parse_intervention(spec: str) -> dict:

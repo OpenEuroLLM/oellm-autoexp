@@ -54,8 +54,14 @@ if [ "$CKPT" != none ] && [ ! -f "$EXPORT_DIR/.native_export_done" ]; then
   if [ -n "$ATTN_ARM" ]; then
     # pure attention: the ladder's own exporter writes a plain Llama / Qwen3 export (export_native.py handles the
     # fla arms only), evaluated as a stock HF model (--hf-auto, same harness otherwise)
-    python "$CODE_DIR/lm_scaling/megatron_ext/export_megatron.py" --run "$pt" --arm "$SKDA_ARM" --geometry 1.7B \
-      --out "$EXPORT_DIR" --tokenizer EleutherAI/gpt-neox-20b --no-load-check || { echo "[ladder17b_eval] FAIL: export"; exit 1; }
+    # its tokenizer check compares with the name the run recorded: the native runs the hub id, our fine-tuning runs the
+    # local copy of the same NeoX tokenizer ($TOKENIZER) -- try both
+    ok=""
+    for tk in "$TOKENIZER" EleutherAI/gpt-neox-20b; do
+      python "$CODE_DIR/lm_scaling/megatron_ext/export_megatron.py" --run "$pt" --arm "$SKDA_ARM" --geometry 1.7B \
+        --out "$EXPORT_DIR" --tokenizer "$tk" --no-load-check && { ok=1; break; }
+    done
+    [ -n "$ok" ] || { echo "[ladder17b_eval] FAIL: export"; exit 1; }
   else
     # export_native.py: export_megatron + the intervention branches / attn_rope, strict key accounting, strict load
     python "$ROOT/scripts/korbi/recall_surgery/export_native.py" --run "$pt" --arm "$SKDA_ARM" --geometry 1.7B \
