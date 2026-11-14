@@ -67,11 +67,25 @@ def run_rows(a) -> int:
     import lm_eval
     from lm_eval.loggers import EvaluationTracker
 
+    from lm_eval.models.huggingface import HFLM
+
     root = Path(a.out) / Path(a.export).name
     done = root / "done"
     done.mkdir(parents=True, exist_ok=True)
-    model_args = (f"pretrained={a.export},trust_remote_code=True,dtype=bfloat16,max_length={a.max_length},"
-                  f"tokenizer={a.export}")
+    todo = [spec for spec in a.rows if not (done / f"{spec.split(':')[0]}_{spec.split(':')[1]}.ok").exists()]
+    if not todo:
+        print(f"[small31_eval] all rows done: {a.rows}", flush=True)
+        return 0
+    # one model for all rows of this process
+    lm = HFLM(pretrained=a.export, tokenizer=a.export, trust_remote_code=True, dtype="bfloat16",
+              max_length=a.max_length, batch_size=a.batch_size)
+    # the production tokenizer's <pad> is id 262144, one past the 262144-row embedding: batched (padded) requests
+    # index out of range. Pad with <eos> (padded positions are masked).
+    vocab = lm.model.config.vocab_size
+    if lm.tokenizer.pad_token_id is None or lm.tokenizer.pad_token_id >= vocab:
+        print(f"[small31_eval] pad id {lm.tokenizer.pad_token_id} >= vocab {vocab}: padding with eos "
+              f"({lm.tokenizer.eos_token_id})", flush=True)
+        lm.tokenizer.pad_token = lm.tokenizer.eos_token
     failed = []
     for spec in a.rows:
         task, n, *lim = spec.split(":")
@@ -88,9 +102,8 @@ def run_rows(a) -> int:
                 tasks, shots, meta = task_objects([task]), int(n), None
             tracker = EvaluationTracker(output_path=str(root / "results" / key))
             res = lm_eval.simple_evaluate(
-                model="hf", model_args=model_args, tasks=tasks, num_fewshot=shots, batch_size=a.batch_size,
-                log_samples=True, evaluation_tracker=tracker, metadata=meta, limit=limit,
-                confirm_run_unsafe_code=True)
+                model=lm, tasks=tasks, num_fewshot=shots, log_samples=True, evaluation_tracker=tracker,
+                metadata=meta, limit=limit, confirm_run_unsafe_code=True)
             samples = res.pop("samples")
             tracker.save_results_aggregated(results=res, samples=samples)
             for t in samples:
