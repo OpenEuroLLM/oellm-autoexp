@@ -2236,3 +2236,72 @@ The ~3-point gap to the Qwens:
 * partial-form and absent answers occur at the Qwens' rate.
 
 Example of a "partial" miss: ambitious "111 min" vs target "111 minutes" (strict `contains` fails).
+
+### 15.x The gap to our own 32B dense (2026-11-14): comprehension quality, not abstention or retrieval distance
+
+**Samples.** The 32B's logged lm-eval samples are on JUPITER:
+`/e/scratch/e-sta-openeurollm/poeppel1/flag-evals/runs/<ckpt>/vllm/<date>/results/samples_{coqa,squadv2}_*.jsonl`,
+for oldprod_60k (~1.0T), b1cons_90k and b1consTW_300k. There are no SWDE/FDA samples (never run on the 32B). A
+symlink layout for our scripts is in `/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/o32_samples`, plus copies
+of the MN5 CoQA samples of ambitious / Qwens. (The MN5 `contamination_split/samples` dumps hold only per-item
+score/F1, no responses.)
+
+**Harness comparability.** The 32B was run with lm-eval 0.4.12 (ours 0.4.13), vLLM dp4, CoQA 0-shot, SQuAD v2
+10-shot, max_length 4096, no chat template. Same docs (500 / 11873), same prompts.
+* **Caveat:** the official SQuAD v2 aggregates are NOT comparable across the two versions. The 32B run reports
+  NoAns F1 0.0 although it answers "unanswerable" on 2547 unanswerable questions, i.e. 0.4.12 gives the literal
+  "unanswerable" no credit.
+* Everything below is re-scored uniformly from the samples (`scripts/korbi/recall_surgery/squad_uniform.py`):
+  abstain = empty output or containing "unanswerable".
+
+**SQuAD v2, uniform scoring:**
+
+| model | HasAns F1 | abstains on answerable | F1 when answering | abstains on unanswerable | total F1 |
+|---|---|---|---|---|---|
+| 32B oldprod_60k (~1.0T) | 71.0 | 20.0 % | **88.7** | 41.6 % | 56.3 |
+| 32B b1cons_90k (1.5T) | 78.6 | 12.9 % | **90.2** | 40.4 % | 59.4 |
+| 32B b1consTW_300k (5T) | 85.9 | 6.6 % | **92.0** | 42.8 % | 64.4 |
+| ambitious 12000 / 23500 / 35603 | 58.3 / 52.9 / 55.3 | 15.9 / 23.5 / 20.9 % | 69.3 / 69.1 / 70.0 | 22.6 / 31.8 / 30.1 % | 40.4 / 42.4 / 42.7 |
+| q35c 59600 | 59.6 | 12.5 % | 68.2 | 16.7 % | 38.1 |
+| Qwen2.5-32B | 76.5 | 3.9 % | 79.6 | 54.7 % | 65.6 |
+| Qwen3-30B-A3B | 76.3 | 6.8 % | 81.9 | 37.6 % | 56.9 |
+| Qwen3-14B | 77.4 | 5.6 % | 82.0 | 51.8 % | 64.6 |
+
+Answerability discrimination, P(abstain | unanswerable) - P(abstain | answerable):
+* 32B: 21.6 (60k), 27.5 (90k), 36.2 (300k);
+* Qwen2.5-32B 50.8, Qwen3-14B 46.2, Qwen3-30B-A3B 30.8;
+* ambitious **6.7 / 8.3 / 9.2**, q35c 4.2.
+
+32B abstention is position-independent like ours (60k: 18-22 % in every position quartile).
+
+**CoQA, paired, F1:**
+
+| slice | 32B 60k | 32B 300k | amb 35603 | Qwen3-30B-A3B | Qwen2.5-32B |
+|---|---|---|---|---|---|
+| all | 79.4 | 81.7 | 69.7 | 73.0 | 76.6 |
+| span answers | 79.7 | 81.4 | 69.2 | 73.0 | 74.5 |
+| yes / no | 87.9 / 76.7 | 87.6 / 85.0 | 80.9 / 69.6 | 81.7 / 70.6 | 91.1 / 81.1 |
+| rationale-position quartiles | 85.7 / 77.5 / 74.7 / 80.6 | 84.3 / 76.9 / 78.1 / 83.6 | 71.7 / 71.0 / 64.7 / 70.1 | 79.4 / 69.7 / 71.1 / 72.4 | 81.4 / 75.1 / 69.0 / 74.4 |
+| story short / mid / long | 79.5 / 79.5 / 79.3 | 82.4 / 81.5 / 81.2 | 67.5 / 69.3 / 72.2 | 71.7 / 71.1 / 76.2 | 75.9 / 76.3 / 77.5 |
+| turns <= 13 / 14-20 | 75.3 / 81.5 | 78.6 / 83.2 | 64.7 / 72.4 | 70.1 / 74.9 | 75.1 / 77.6 |
+
+Behaviour: "unknown" on answerable 0.0-0.2 % for all; span length = gold length for all; yes/no judged correctly
+82.5 / 86.8 % (32B 60k / 300k) vs 71.9 % (ambitious).
+
+**What the gap to the 32B consists of** (revises the "mostly abstention" reading above, which held against the Qwens):
+* **SQuAD v2.**
+  * At equal training tokens the 32B abstains on answerable questions as often as ambitious (20 % at ~1T). Its
+    abstention then falls with training (6.6 % at 5T); ours stays ~21 % from 23.5k to 35.6k.
+  * The persistent difference is answer quality: F1 when answering 89-92 vs 70.
+  * And answerability discrimination: 22-36 points vs 7-9. Ambitious barely tells answerable from unanswerable
+    passages (21 % vs 30 % abstention); the 32B and the Qwens do.
+* **CoQA.** A uniform ~10 F1 comprehension gap in every slice: span answers, yes/no judgements (72 vs 83-87 %),
+  every position, length and turn bin. It is there at the 32B's ~1T checkpoint. No length or distance signature;
+  long stories show the smallest gap.
+* **Reading.** The 32B gap is broad reading-comprehension precision (exact span, yes/no and answerability
+  judgement). It is neither retrieval over distance nor a pure calibration bias.
+  * Poor answerability discrimination is shared by both in-house hybrids (ambitious, q35c). The 3B-active
+    full-attention Qwen3-30B-A3B reaches 31 points, so the hybrid layout, active compute and our data recipe
+    remain the candidate causes.
+  * The pending Qwen3.5-35B-A3B (a 3:1 hybrid at 3B active) separates "hybrid" from "data". So does the 1.7B
+    fine-tuning pair (§16): whether discrimination and F1-when-answering recover under identical fine-tuning.
