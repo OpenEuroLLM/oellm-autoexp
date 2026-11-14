@@ -6,7 +6,9 @@
 # 0.370 / 0.409 / 0.384 ...):
 #   rt020  emerging_optimizers 0.2.0 (MN5's image; /e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt020)
 #   rt030  emerging_optimizers 0.3.0 (pylibs_eopt, the current small31 setting): the same-layout control
-#   for a in rt020 rt030; do mkdir -p $R/$a/ckpt && cp -al $R/b7/ckpt/iter_0001907 $R/$a/ckpt/ && echo 1907 > \
+#   rtnoopt  rt030 with no_load_optim (fresh optimizer state): ~2.4-2.6 at 1909/1910 -> the loaded optimizer state is
+#            the culprit; a jump -> the model / data path
+#   for a in rt020 rt030 rtnoopt; do mkdir -p $R/$a/ckpt && cp -al $R/b7/ckpt/iter_0001907 $R/$a/ckpt/ && echo 1907 > \
 #       $R/$a/ckpt/latest_checkpointed_iteration.txt; done      (R=/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31)
 #   PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor --monitor-state-dir \
 #       /e/scratch/e-sta-openeurollm/poeppel1/pool_state --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
@@ -48,3 +50,6 @@ sweep:
           backend.env.PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/project1/e-sta-openeurollm/poeppel1/pylibs_liger084:/e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt020"
         - aux.arm: rt030
           job.metadata.pool_priority: 85
+        - aux.arm: rtnoopt
+          job.metadata.pool_priority: 85
+          backend.megatron.no_load_optim: true
