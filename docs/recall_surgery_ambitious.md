@@ -2412,3 +2412,35 @@ Expected engine time ~0.5-1 h per model, on the next p264 host. Table:
   hardware event on that node set, not a structural instability of pure attention at this lr. a0 is the pure-attention
   reference with that safeguard. If a NaN recurs, the fallback is an attention-only lr multiplier of 0.5 from the last
   save.
+
+### 14.6 Phase 2 early insertion E / Ep -- and a resume bug that hits EVERY small31 run on JUPITER (2026-11-14 22:40)
+
+* **Insertion** at b7@1907 (sublayers 9 / 25 / 42 for E, 3 / 19 / 36 for Ep; references 0 / 17 / 34; the first CKDA
+  mixers kept):
+  * first as a hard random replacement (replace_ckda_with_attention.py);
+  * then, on the lead's report of a blow-up, function-preserving: random attention crossfade branches
+    (add_ckda_branch.py --init random, alpha 1 -> 0 over 200 steps; the hard runs are archived as `E_hard_blowup_*`).
+* **The blow-up is not the insertion.** Both variants give the same numbers:
+  * 1908: identical to b7 (loss 2.8806, grad norm 0.370);
+  * 1909: 34.0 (b7 2.39); 1910: 63.4; z-loss 199 -> 3496; grad norm 0.37 -> 314;
+  * Ep (different sublayers): the same values to 3 digits.
+  The damage comes from the first optimizer update after the RESUME.
+* **b7 has the same jump at every resume on JUPITER:**
+
+| resume | loss before | first update | second update |
+|---|---|---|---|
+| 121 | 6.85 | 12.2 | 14.0 |
+| 478 | 3.47 | 54.3 | 120.3 |
+| 10735 | 1.96 | 23.2 | 49.1 |
+
+  Each time it recovers within ~100 steps (E: +3.43 over 1908-2007, +0.07 at 2008-2107, +0.007 at 4000). r3 / r3p /
+  a0 resumes are affected too. Every 12-h host change puts this shock into all arms.
+* **The checkpoint content is complete** (b7@1907): Adam moments for 533 parameters; MuOwn g / m_u / m_g / v_g / v_norm
+  for 300; packed per-parameter step = 1908 for the 300 MuOwn parameters; group meta for 809 parameters. So the load
+  or the optimizer's use of the loaded state is wrong.
+* **Leading suspect:** the JUPITER optimizer stack.
+  * muown_classical subclasses emerging_optimizers' OrthogonalizedOptimizer. JUPITER runs emerging_optimizers 0.3.0
+    from pylibs_eopt; MN5's image has 0.2.0, where resumes are exact.
+  * Second suspect: torch 2.11's DCP handling of the packed non-tensor items.
+  * The MN5 0.2.0 package (pure Python, 470 kB) is copied to `/e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt020` for
+    a resume test: a copy of b7@1907 resumed for ~5 steps with 0.2.0 on PYTHONPATH, compared with b7's 1908-1910.
