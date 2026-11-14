@@ -2393,3 +2393,22 @@ Expected engine time ~0.5-1 h per model, on the next p264 host. Table:
 * **16:42:** b7 resumed from 477 with arch metrics off, past iterations 500 / 1000 / 2000, no errors. Validation
   loss 2.798 (1000) -> 2.416 (2000); 28.6-28.8k tok/s/GPU; persistent saves 954 / 1907 written. Its readouts run in
   small16 once a host starts.
+
+### 14.5 a0: one NaN gradient, then stable on resume ("stabilized pure-attention reference")
+
+* **The event (run 0017, nodes jpbo-056-46, jpbo-109-44/45/48):**
+  * Up to iteration 880 a0 tracked the hybrids: loss 2.71 (r3 2.72, b7 2.82), grad norm 0.68, z-loss ~219 (hybrids
+    216-228). qk-layernorm on.
+  * At 881 the loss was finite (2.58) but the gradient NaN. With `check_for_nan_in_loss_and_grad` off (as all arms)
+    and rerun mode disabled, a0 trained 37 steps on NaN weights until the pool monitor stopped it at 918
+    (nonfinite_grad_norm).
+* **Relaunch:**
+  * The NaN checkpoint moved aside (`a0/iter_0000918.nan_after_blowup`), tracker back to 477; resumed from the rolling
+    `iter_0000500`.
+  * The one change, for a0 only: `check_for_nan_in_loss_and_grad: true`, so a NaN step now raises and the pool
+    restarts from the last save. The math, lr and schedule are unchanged; the other arms are untouched.
+* **Result (run 0043):** on the same data, iterations 880-882 passed with finite gradients and a0 is past 1000
+  (loss ~3.0, grad norm 0.72, 29.5-31.3k tok/s/GPU). The NaN was not data-deterministic: a transient numerical or
+  hardware event on that node set, not a structural instability of pure attention at this lr. a0 is the pure-attention
+  reference with that safeguard. If a NaN recurs, the fallback is an attention-only lr multiplier of 0.5 from the last
+  save.
