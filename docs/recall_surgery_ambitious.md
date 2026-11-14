@@ -2085,3 +2085,36 @@ is reported per launch.
   * Giving back means: graceful `pool_ctl cancel` of b7 (SIGUSR2 -> save), restore max_runs_per_host 0, re-enqueue
     b7 in small16 (resume from its own checkpoint dir). The same restore + re-enqueue happens when b7 ends.
   * Never touches the 32B run or any Slurm job.
+
+**Is SQuAD v2 abstention a hidden retrieval failure?** (`squad_abstain_position.py`) No. Abstention on answerable
+questions is flat across answer position and paragraph length:
+* ambitious 35603: 20.4 / 21.2 / 20.3 / 22.2 % by answer-position quartile; 21.8 / 19.7 / 21.3 % for short / mid /
+  long paragraphs.
+* ambitious 23500: 22-24 % throughout. Qwen2.5-32B: 3-5 % throughout.
+
+A uniform bias toward "unanswerable" is calibration, not a failure to find the answer. (SQuAD paragraphs are short,
+~150-200 tokens, so this rules out within-paragraph retrieval failure, not long-context weaknesses.)
+
+**CoQA decomposed** (`coqa_decomp.py`; lm-eval coqa = the last turn of 500 stories with the full dialogue). F1 for
+ambitious 35603 / Qwen3-30B-A3B (3B active, full attention) / Qwen2.5-32B:
+
+| slice | n | amb 35603 | Qwen3-30B-A3B | Qwen2.5-32B |
+|---|---|---|---|---|
+| all | 500 | 69.7 | 73.0 | 76.6 |
+| span answers | 376 | 69.2 | 73.0 | 74.5 |
+| yes / no | 58 / 56 | 80.9 / 69.6 | 81.7 / 70.6 | 91.1 / 81.1 |
+| rationale position quartiles 1-4 | 70/57/90/159 | 71.7 / 71.0 / 64.7 / 70.1 | 79.4 / 69.7 / 71.1 / 72.4 | 81.4 / 75.1 / 69.0 / 74.4 |
+| story short / mid / long | 166 each | 67.5 / 69.3 / 72.2 | 71.7 / 71.1 / 76.2 | 75.9 / 76.3 / 77.5 |
+| turns <= 13 / 14-20 | 170 / 319 | 64.7 / 72.4 | 70.1 / 74.9 | 75.1 / 77.6 |
+
+* **No behavioural cause.** "unknown" on answerable questions is 0.2 % (the Qwens 0.6-0.8 %), span-answer length
+  equals gold length (median ratio 1.00), yes/no accuracy is 72 % vs 75-81 %.
+* **No clear retrieval signature.**
+  * The gap does not grow with story length or dialogue length.
+  * By rationale position it is largest at the story's start (farthest from the question in the prompt: -7.7 vs
+    Qwen3-30B-A3B), but the 3rd quartile is similar (-6.4) and the 2nd is +1.3 (n = 57-159, noise +-4-5 F1). A weak
+    long-distance effect is not excluded, not shown either.
+* **CoQA is a uniform answer-quality gap.** About 3 F1 behind the architecture-closest reference (3B-active,
+  full-attention MoE) and about 7 F1 behind dense Qwen2.5-32B. Most of the ~10 F1 to the in-house 32B dense (~80)
+  therefore looks like active capacity / data rather than the 7:1 hybrid layout, which costs at most ~3 F1 here.
+* **Open.** Decompose the in-house 32B's samples the same way (they are on JUPITER).
