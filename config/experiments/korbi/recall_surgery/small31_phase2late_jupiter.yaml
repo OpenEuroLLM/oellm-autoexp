@@ -4,12 +4,12 @@
 # from b7@late (scripts/korbi/recall_surgery/small31_insert.sh) and train 0.5 BT (954 steps) on the same data
 # (train_iters 40053 for all five: the late data order is shared among them, not with b7's own end):
 #   C    b7 continued (the control)
-#   L    3:1 random attention inserted late (mixers 4 / 12 / 20), hard
-#   Lp   paired random attention inserted late (mixers 1 / 9 / 17), hard
+#   L    3:1 random attention inserted late (mixers 4 / 12 / 20), crossfade as E
+#   Lp   paired random attention inserted late (mixers 1 / 9 / 17), crossfade as Ep
 #   M    E's trained new attention (E@9535) transplanted at mixers 4 / 12 / 20 as crossfade ckda_branch branches
-#        (transplant_attention.py; alpha 1 -> 0 over 477 steps, then the attention alone; exported as plain attention)
+#        (transplant_attention.py; alpha 1 -> 0 over 200 steps, then the attention alone; exported as plain attention)
 #   Mp   Ep's, at mixers 1 / 9 / 17
-# Readouts at +0.25 BT (38623: the crossfade end) and +0.5 BT (39100) against b7@38146.
+# Readouts at +0.25 BT (38623) and +0.5 BT (39100) against b7@38146.
 #   for a in C L Lp; do ARM=$a IT=38146 bash scripts/korbi/recall_surgery/small31_insert.sh; done
 #   for a in M Mp; do ARM=$a IT=38146 DONOR_IT=9535 bash scripts/korbi/recall_surgery/small31_insert.sh; done
 #   PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor --monitor-state-dir \
@@ -46,10 +46,33 @@ sweep:
     - type: list
       configs:
         - aux.arm: C
+        # late random insertion, the same function-preserving recipe as E / Ep (crossfade branches, 200 steps)
         - aux.arm: L
-          backend.megatron.hybrid_layer_pattern: "*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 200
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
         - aux.arm: Lp
-          backend.megatron.hybrid_layer_pattern: "*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [3, 19, 36]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 200
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
         # crossfade branches on b7's complex_kda sublayers (the layer pattern stays b7's)
         - aux.arm: M
           backend.megatron.ckda_branch: attention
@@ -58,7 +81,7 @@ sweep:
           backend.megatron.ckda_branch_start_iteration: 38146
           backend.megatron.ckda_branch_crossfade: true
           backend.megatron.ckda_branch_alpha_hold: 0
-          backend.megatron.ckda_branch_alpha_ramp: 477
+          backend.megatron.ckda_branch_alpha_ramp: 200
           backend.megatron.ckda_branch_alpha_end: 0.0
           backend.megatron.ckda_branch_m_start: 1.0
           backend.megatron.ckda_branch_m_ramp: 0
@@ -71,7 +94,7 @@ sweep:
           backend.megatron.ckda_branch_start_iteration: 38146
           backend.megatron.ckda_branch_crossfade: true
           backend.megatron.ckda_branch_alpha_hold: 0
-          backend.megatron.ckda_branch_alpha_ramp: 477
+          backend.megatron.ckda_branch_alpha_ramp: 200
           backend.megatron.ckda_branch_alpha_end: 0.0
           backend.megatron.ckda_branch_m_start: 1.0
           backend.megatron.ckda_branch_m_ramp: 0

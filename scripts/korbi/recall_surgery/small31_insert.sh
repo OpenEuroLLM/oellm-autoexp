@@ -1,8 +1,12 @@
 #!/bin/bash
-# Phase-2 early insertion of the small-scale testbed (docs/recall_surgery_ambitious.md §14): a b7 (7:1) checkpoint ->
-# a new arm's start checkpoint with random-init softmax attention at more CKDA positions
-# (scripts/korbi/production/replace_ckda_with_attention.py: rows at the reference attention's median row norms, fresh
-# MuOwn / Adam states, the position's own input norm and mHC; the new hybrid_layer_pattern in the saved args).
+# Phase-2 insertion of the small-scale testbed (docs/recall_surgery_ambitious.md §14): a b7 (7:1) checkpoint -> a new
+# arm's start checkpoint with random-init softmax attention at more CKDA positions, FUNCTION-PRESERVING (2026-11-14:
+# the hard insertion -- replace_ckda_with_attention.py, kept as HARD_E / HARD_Ep -- blew up after one update, loss
+# 2.9 -> 34 -> 63): a random attention ckda_branch on each of those CKDA sublayers (add_ckda_branch.py --init random:
+# rows at the reference attention's median row norms, fresh MuOwn / Adam states), run as a crossfade
+# (ckda_branch_crossfade: (alpha) ckda + (1 - alpha) branch, alpha 1 -> 0 over the ramp): step 0 is exactly b7, the
+# branch's gradients and weight grow with (1 - alpha) -- the new parameters' warmup; past the ramp the sublayer is the
+# attention alone (exported as plain attention).
 #   <ROOT>/<ARM>/ckpt/iter_<IT>  (hard links of b7's + the new tensors) and its tracker (= IT, after the read-back)
 # Arms (sublayer indices of the 50-sublayer small31 pattern; mixer m -> sublayer):
 #   E   3:1 as r3:  new attention at mixers 4 / 12 / 20  = sublayers 9 / 25 / 42, references 0 / 17 / 34
@@ -46,8 +50,13 @@ case "$ARM" in
     [ -f "$ROOT/$DONOR/ckpt/$din/.metadata" ] || { echo "no $din of $DONOR" >&2; exit 1; }
     "${X[@]}" python scripts/korbi/production/transplant_attention.py apply --base "$SRC" \
       --donor "$ROOT/$DONOR/ckpt/$din" --dst "$OUT/$it" --layers "$LAYERS" ;;
-  *) "${X[@]}" python scripts/korbi/production/replace_ckda_with_attention.py apply \
+  HARD_E|HARD_Ep) "${X[@]}" python scripts/korbi/production/replace_ckda_with_attention.py apply \
       --src "$SRC" --dst "$OUT/$it" --layers "$LAYERS" --refs "$REFS" --pattern "$PATTERN" --seed 1234 ;;
+  *) # function-preserving: a random attention BRANCH on each CKDA sublayer (crossfade from the CKDA output, branch
+     # weight 0 at the insertion; add_ckda_branch.py --init random, rows at the reference attention's norms)
+     "${X[@]}" env CKDA_BRANCH_ATTN_LAYERS=$REFS python scripts/korbi/production/add_ckda_branch.py apply \
+       --src "$SRC" --dst "$OUT/$it" --branch attention --init random --groups 2 --layers "$LAYERS" \
+       --kv-sources "$REFS" --seed 1234 ;;
 esac
 echo "$IT" > "$OUT/latest_checkpointed_iteration.txt"
 echo "$ARM: $OUT/$it <- $SRC (sublayers ${LAYERS:-none}; pattern ${PATTERN:-unchanged})"

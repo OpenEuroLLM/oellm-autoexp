@@ -1,6 +1,7 @@
 # @package _global_
 # Phase 2 of the small-scale testbed (docs/recall_surgery_ambitious.md §14), EARLY insertion: b7 (7:1) at 1 BT
-# (iteration 1907) with random-init softmax attention hard-inserted at more CKDA positions
+# (iteration 1907) with random-init softmax attention inserted function-preserving (crossfade branches, 200 steps)
+# at more CKDA positions
 # (scripts/korbi/recall_surgery/small31_insert.sh -> <out_root>/<arm>/ckpt/iter_0001907), then trained on b7's exact
 # data order, lr and schedule (same train_iters / seed / blend / micro-batch: resume = optimizer + scheduler + data
 # position) for 4 BT (to iteration 9535), as the a31 arm at 84B (§13):
@@ -28,6 +29,17 @@ backend:
     # no regular interval saves beyond the marks (rolling saves every 500 still carry restarts)
     save_interval: 100000
     exit_on_missing_checkpoint: true
+    ckda_branch: attention
+    ckda_branch_num_query_groups: 2
+    ckda_branch_start_iteration: ${aux.insert_it}
+    ckda_branch_crossfade: true
+    ckda_branch_alpha_hold: 0
+    ckda_branch_alpha_ramp: 200
+    ckda_branch_alpha_end: 0.0
+    ckda_branch_m_start: 1.0
+    ckda_branch_m_ramp: 0
+    ckda_branch_gamma_scale: 1.0
+    ckda_branch_calibrate: false
 
 job:
   metadata:
@@ -44,7 +56,9 @@ sweep:
   groups:
     - type: list
       configs:
+        # function-preserving insertion (2026-11-14: the hard insertion blew up, loss 2.9 -> 34 -> 63 after one update):
+        # random attention crossfade branches on b7's CKDA sublayers (b7's layer pattern), alpha 1 -> 0 over 200 steps
         - aux.arm: E
-          backend.megatron.hybrid_layer_pattern: "*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
         - aux.arm: Ep
-          backend.megatron.hybrid_layer_pattern: "*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"
+          backend.megatron.ckda_branch_layers: [3, 19, 36]

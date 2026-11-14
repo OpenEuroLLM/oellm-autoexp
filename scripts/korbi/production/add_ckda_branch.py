@@ -70,7 +70,9 @@ MODEL = "model.module.decoder.layers.{l}.self_attention.{n}"
 OPT = "optimizer.0.state.module.module.module.decoder.layers.{l}.self_attention.{n}.{s}"
 MUOWN = ("g", "m_g", "v_g", "v_norm", "m_u")
 ADAM = ("exp_avg", "exp_avg_sq")
-ATTN_LAYERS = (0, 17, 33, 50, 66, 82)  # the stack's attention layers (q/k norm gain reference)
+# the stack's attention layers (q/k norm gain reference); CKDA_BRANCH_ATTN_LAYERS overrides them for other layouts
+# (e.g. the small31 testbed: 0,17,34)
+ATTN_LAYERS = tuple(int(x) for x in os.environ.get("CKDA_BRANCH_ATTN_LAYERS", "0,17,33,50,66,82").split(","))
 
 
 # ---------------------------------------------------------------------------------------------
