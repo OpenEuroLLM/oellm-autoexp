@@ -2214,3 +2214,25 @@ training + ~36 GPU-h evals; 0 spent so far. Not yet run end to end on a compute 
 * **Ambitious gives empty answers** (an immediate newline) on 29/200 FDA documents (Qwen 4, signed_kda 1),
   47 % on "conclusion". The same "decline to answer" tendency as the SQuAD v2 over-abstention, in a third task.
   (`scripts` used: scratchpad fda_depth.py / fda_keys.py / sk_window.py, logic as in rescore_fda_squad.py.)
+
+**SWDE, the unambiguous counterpart.** The prompt is a scraped web page (e.g. 2.6k chars of an amctv.com movie page
+with "Run Time: 111 minutes" near the top), then "Summary of information above..." with a few fields already filled
+("country: USA / year: 1970 / category: Feature"), then the open key ("run time:"). The filled fields act as
+in-context examples, so copying from the page is clearly the expected behaviour (unlike FDA's bare "\n<Key>:").
+
+Misses classified (`swde_miss` logic; all 1111 docs), as a share of all documents:
+
+| model | strict | empty | partial (right value, other form) | another value from the page | not in the page |
+|---|---|---|---|---|---|
+| ambitious 23500 | 82.1 % | 2.4 % | 4.6 % | 6.4 % | 4.5 % |
+| q35c 59600 | 77.7 % | 4.1 % | 4.8 % | 7.3 % | 6.2 % |
+| Qwen2.5-32B | 85.2 % | 0.6 % | 5.3 % | 5.0 % | 3.8 % |
+| Qwen3-30B-A3B | 84.6 % | 0.1 % | 5.8 % | 4.5 % | 5.0 % |
+| Qwen3-14B | 85.7 % | 0.1 % | 4.5 % | 5.0 % | 4.8 % |
+
+The ~3-point gap to the Qwens:
+* ~2 points are empty answers (the decline-to-answer tendency, the third task showing it);
+* ~1.5 points are picking another value from the page (genuine selection errors, a small retrieval effect);
+* partial-form and absent answers occur at the Qwens' rate.
+
+Example of a "partial" miss: ambitious "111 min" vs target "111 minutes" (strict `contains` fails).
