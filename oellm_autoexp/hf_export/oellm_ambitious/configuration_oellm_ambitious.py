@@ -16,7 +16,7 @@ from transformers import PretrainedConfig
 # attention layer kv_share_sources[str(index)])
 # ckda_attn: an ADDITIVE ckda_branch layer -- the CKDA mixer plus a parallel attention branch of the stack's kind
 # on the same normalised input, out = ckda(x) + attention(x) (the branch's weight folded into its o_proj)
-LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm", "kvshare", "ckda_attn")
+LAYER_TYPES = ("attention", "ckda", "moe", "engram", "kronlstm", "kvshare", "ckda_attn", "mlp")
 
 
 class OellmAmbitiousConfig(PretrainedConfig):
@@ -59,6 +59,8 @@ class OellmAmbitiousConfig(PretrainedConfig):
         num_experts_per_tok: int = 5,
         moe_intermediate_size: int = 768,
         shared_expert_intermediate_size: int = 768,
+        # dense SwiGLU MLP layers (block type "mlp", pattern symbol '-'): Megatron's ffn_hidden_size
+        mlp_intermediate_size: int = 0,
         router_scaling_factor: float = 1.0,
         activation_clamp_value: float | None = 10.0,
         # "expert_bias" (top-k on scores + bias) or "quantile" (top-k on logits - qb_beta)
@@ -130,6 +132,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.num_experts_per_tok = num_experts_per_tok
         self.moe_intermediate_size = moe_intermediate_size
         self.shared_expert_intermediate_size = shared_expert_intermediate_size
+        self.mlp_intermediate_size = mlp_intermediate_size
         self.router_scaling_factor = router_scaling_factor
         self.activation_clamp_value = activation_clamp_value
         if router_balancing not in ("expert_bias", "quantile"):

@@ -7,8 +7,8 @@
 #   r3p   3:1 as attention PAIRS (attention at mixer 0,1 / 8,9 / 16,17; user: attention circuits)
 # The first CKDA mixers keep their complex eigenvalues in every arm (production CKDA settings). Production mixers and
 # residual: CKDA, NoPE GQA attention (10 heads x 128, 2 KV groups) with output gate + XSA, mHC-4, and a SMALL Engram
-# (two Engram sublayers as in production: after the first block and before the middle attention; 4M rows x 64,
-# 8 heads, orders 2/3/4). Production data (v8ml stage-1 blend, JSC mirror) and tokenizer (256k agent), seq 8192,
+# (two Engram sublayers as in production: after the first block and before the middle attention; 300k rows per
+# sub-table x 24 sub-tables x 64 = 0.46B parameters per Engram layer, 8 heads, orders 2/3/4). Production data (v8ml stage-1 blend, JSC mirror) and tokenizer (256k agent), seq 8192,
 # gbs 64 (0.52M tokens / step), muown_classical, lr 1.8e-3 constant after 1000 warmup steps (the s3 law value).
 # Checkpoints: persistent at the log-spaced token marks 0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 / end (20) BT (save_extra_steps)
 # + every ~2 BT (save_interval), all kept (small); fsdp_dtensor (the surgery tools' format).
@@ -47,7 +47,9 @@ container:
 
 backend:
   env:
-    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/home/jusers/poeppel1/jupiter/work/Projects/Liger-Kernel/src"
+    # + liger_kernel 0.8.4 (MN5 pylibs_ep's; the fused CE passes predicted_tokens_ptr) and emerging_optimizers 0.3.0
+    #   (MuOwn base classes; not in the JUPITER image; MN5 image: 0.2.0)
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/project1/e-sta-openeurollm/poeppel1/pylibs_liger084:/e/project1/e-sta-openeurollm/poeppel1/pylibs_eopt"
     HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
     NVIDIA_PYTORCH_VERSION: "25.12"
     TRITON_CACHE_DIR: /e/scratch/e-sta-openeurollm/poeppel1/cache/triton_small31
@@ -68,7 +70,9 @@ backend:
     moe_ffn_hidden_size: null
     moe_shared_expert_intermediate_size: null
     expert_model_parallel_size: 1
-    engram_table_size: 4000000
+    # rows per sub-table; 24 sub-tables (3 orders x 8 heads) x 64 per Engram layer: 2 x 24 x 300k x 64 = 0.92B
+    # Engram parameters for the ~0.5B body (the production E80B is the same formula at 26M rows; 4M here would be 12B)
+    engram_table_size: 300000
     engram_num_heads: 8
     engram_embed_dim: 64
     engram_ngram_orders: [2, 3, 4]

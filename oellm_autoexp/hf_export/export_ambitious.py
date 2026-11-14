@@ -29,6 +29,7 @@ LOGGER = logging.getLogger(__name__)
 _HERE = Path(__file__).resolve().parent
 _PKG = _HERE / "oellm_ambitious"
 _KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram", "K": "kronlstm",  # K: a ckda_branch KronLSTM
+          "-": "mlp",  # -: a dense SwiGLU MLP (the small-scale testbeds, docs/recall_surgery_ambitious.md §14)
           "S": "kvshare",  # S: a ckda_branch kvshare attention (an earlier attention layer's keys / values)
           "A": "ckda_attn"}  # A: an additive ckda_branch layer (CKDA + a parallel attention branch)
 _MHC = ("phi", "b_pre", "b_post", "b_res", "alpha_pre", "alpha_post", "alpha_res")
@@ -241,9 +242,10 @@ def hf_config(m: dict, vocab: int) -> dict:
             raise ValueError("expects LDM on every sublayer, additive residual (no lerp)")
     elif not m.get("mhc") or m.get("mhc_routed_topk") or m.get("mhc_internal_attention", "none") != "none" or m.get("mhc_lerp"):
         raise ValueError("expects plain mHC (no routed / internal-attention / lerp variants) or LDM")
-    if m.get("moe_router_score_function") != "sigmoid":
+    has_moe = "E" in syms
+    if has_moe and m.get("moe_router_score_function") != "sigmoid":
         raise ValueError("expects the sigmoid router")
-    balancing = _balancing(m)
+    balancing = _balancing(m) if has_moe else "expert_bias"
     if m.get("moe_shared_expert_gate"):
         raise ValueError("gated shared expert not ported")
     if m.get("position_embedding_type") not in (None, "none"):
@@ -287,10 +289,12 @@ def hf_config(m: dict, vocab: int) -> dict:
         "kv_share_sources": kv_sources,
         "fla_layer": _fla_layer_spec(m),
         "fla_layer_kronlstm": _kronlstm_layer_spec(m) if "kronlstm" in types else None,
-        "num_experts": m["num_experts"],
-        "num_experts_per_tok": m["moe_router_topk"],
-        "moe_intermediate_size": m["moe_ffn_hidden_size"],
-        "shared_expert_intermediate_size": m.get("moe_shared_expert_intermediate_size") or 0,
+        "num_experts": m["num_experts"] if has_moe else 0,
+        "num_experts_per_tok": m["moe_router_topk"] if has_moe else 0,
+        "moe_intermediate_size": m["moe_ffn_hidden_size"] if has_moe else 0,
+        "shared_expert_intermediate_size": (m.get("moe_shared_expert_intermediate_size") or 0) if has_moe else 0,
+        # dense MLP layers (kind "mlp"): Megatron's ffn_hidden_size
+        "mlp_intermediate_size": int(m["ffn_hidden_size"]) if "mlp" in types else 0,
         "router_scaling_factor": float(m.get("moe_router_topk_scaling_factor") or 1.0),
         "activation_clamp_value": m.get("activation_func_clamp_value"),
         "router_balancing": balancing,
@@ -401,7 +405,7 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
     g = lambda name: t.pop(p + name)  # noqa: E731
     mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "kronlstm": "mhc_attn_mixer",
-             "kvshare": "mhc_attn_mixer", "ckda_attn": "mhc_attn_mixer", "moe": "mhc_mlp_mixer",
+             "kvshare": "mhc_attn_mixer", "ckda_attn": "mhc_attn_mixer", "moe": "mhc_mlp_mixer", "mlp": "mhc_mlp_mixer",
              "engram": "residual_scheme.mhc_mixer"}[kind]
     if cfg["residual"] == "ldm":  # this layer's write and the next read's query
         for n in _LDM_NET + ("forget_logit",):
@@ -518,6 +522,20 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
             add(hp + "mixer.shared_gate_proj.weight", g("mlp.shared_experts.linear_fc1.weight_w").to(cast))
             add(hp + "mixer.shared_up_proj.weight", g("mlp.shared_experts.linear_fc1.weight_v").to(cast))
             add(hp + "mixer.shared_down_proj.weight", g("mlp.shared_experts.linear_fc2.weight").to(cast))
+    elif kind == "mlp":
+        # a dense SwiGLU MLP (MLPLayer: TELayerNormColumnParallelLinear fc1 with the fused input norm); the
+        # fsdp_dtensor checkpoint stores fc1 split into weight_w (gate) / weight_v (up)
+        if p + "mlp.linear_fc1.layer_norm_weight" in t:
+            add(hp + "input_layernorm.weight", g("mlp.linear_fc1.layer_norm_weight").to(cast))
+        else:
+            add(hp + "input_layernorm.weight", g("pre_mlp_layernorm.weight").to(cast))
+        if p + "mlp.linear_fc1.weight_w" in t:
+            gate, up = g("mlp.linear_fc1.weight_w"), g("mlp.linear_fc1.weight_v")
+        else:
+            gate, up = g("mlp.linear_fc1.weight").chunk(2, dim=0)
+        add(hp + "mixer.gate_proj.weight", gate.to(cast))
+        add(hp + "mixer.up_proj.weight", up.to(cast))
+        add(hp + "mixer.down_proj.weight", g("mlp.linear_fc2.weight").to(cast))
     else:  # engram: drop the 4096-row alignment padding
         if table:
             rows = sum(cfg["engram_table_sizes"])

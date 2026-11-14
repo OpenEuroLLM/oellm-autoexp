@@ -22,6 +22,7 @@
   - "ckda_attn": an ADDITIVE ckda_branch layer: the CKDA mixer (``fla_layer``) plus a parallel attention branch
     of the stack's kind on the same normalised input, ``ckda(x) + attention(x)`` (the branch's weight
     ``m * gamma_scale * gamma * calib`` folded into its o_proj); decoding state (ckda state, (k, v));
+  - "mlp" ``-``: a dense SwiGLU MLP (Megatron's MLPLayer; the small-scale testbeds).
   - "moe" ``E``: Megatron's sigmoid router, balanced by an expert bias (top-k on scores + bias) or
     quantile balancing (top-k on logits - qb_beta); weights = the unbiased scores normalised to 1.
     SwiGLU experts with the gpt-oss / DeepSeek-V4.1 clamp and optionally the bounded
@@ -436,6 +437,24 @@ def _swiglu(gate: torch.Tensor, up: torch.Tensor, limit: float | None, norm=None
     return (act * scale).to(gate.dtype)
 
 
+class OellmDenseMLP(nn.Module):
+    """A dense SwiGLU MLP layer (pattern symbol ``-``, Megatron's MLPLayer): the shared expert's math -- clamp,
+    then the post-activation norm when ``mlp_post_act_norm`` -- at ``mlp_intermediate_size``."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        h, i = config.hidden_size, config.mlp_intermediate_size
+        self.limit = config.activation_clamp_value
+        pab = (config.rms_norm_eps, config.post_act_norm_floor, config.post_act_norm_smooth)
+        self.norm = pab if config.mlp_post_act_norm else None
+        self.gate_proj = nn.Linear(h, i, bias=False)
+        self.up_proj = nn.Linear(h, i, bias=False)
+        self.down_proj = nn.Linear(i, h, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down_proj(_swiglu(self.gate_proj(x), self.up_proj(x), self.limit, self.norm))
+
+
 class OellmMoE(nn.Module):
     def __init__(self, config: OellmAmbitiousConfig) -> None:
         super().__init__()
@@ -775,6 +794,9 @@ class OellmAmbitiousLayer(nn.Module):
         elif self.kind == "moe":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmMoE(config)
+        elif self.kind == "mlp":  # a dense SwiGLU MLP (the small-scale testbeds)
+            self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
+            self.mixer = OellmDenseMLP(config)
         else:  # engram normalises internally
             self.mixer = OellmEngramV2(config, layer_idx)
 
@@ -789,7 +811,7 @@ class OellmAmbitiousLayer(nn.Module):
             out, new_state = self.mixer(xin, state, attention_mask, not stateless)
         elif self.kind == "ckda_attn":
             out, new_state = self.mixer(xin, state, attention_mask, keep_state)
-        elif self.kind == "moe":
+        elif self.kind in ("moe", "mlp"):
             out = self.mixer(xin)
         else:
             out, new_state = self.mixer(xin, input_ids, token_mask, state)
