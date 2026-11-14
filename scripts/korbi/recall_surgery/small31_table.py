@@ -112,7 +112,7 @@ def row(d):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default="/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31")
-    ap.add_argument("--arms", nargs="*", default=["b7", "r3", "r3p", "a0", "E", "Ep"])
+    ap.add_argument("--arms", nargs="*", default=["b7", "r3", "r3p", "a0", "E", "Ep", "C", "L", "Lp", "M", "Mp"])
     a = ap.parse_args()
     cols = [("coqa_f1", "CoQA F1", 100), ("wino", "Wino", 100), ("squad_f1", "SQuAD F1", 1),
             ("squad_hasans_u", "HasAnsU", 1), ("squad_f1_answered", "F1|ans", 1), ("squad_abst", "abst@ans", 1),

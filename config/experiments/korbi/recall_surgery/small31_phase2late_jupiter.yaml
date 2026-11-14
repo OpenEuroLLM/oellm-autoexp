@@ -1,0 +1,79 @@
+# @package _global_
+# Phase 2 of the small-scale testbed (docs/recall_surgery_ambitious.md §14), LATE arms -- PREPARED, launched when b7
+# reaches its late checkpoint (default the end, iteration 38146 = 20 BT) and E / Ep their end (9535). All five start
+# from b7@late (scripts/korbi/recall_surgery/small31_insert.sh) and train 0.5 BT (954 steps) on the same data
+# (train_iters 40053 for all five: the late data order is shared among them, not with b7's own end):
+#   C    b7 continued (the control)
+#   L    3:1 random attention inserted late (mixers 4 / 12 / 20), hard
+#   Lp   paired random attention inserted late (mixers 1 / 9 / 17), hard
+#   M    E's trained new attention (E@9535) transplanted at mixers 4 / 12 / 20 as crossfade ckda_branch branches
+#        (transplant_attention.py; alpha 1 -> 0 over 477 steps, then the attention alone; exported as plain attention)
+#   Mp   Ep's, at mixers 1 / 9 / 17
+# Readouts at +0.25 BT (38623: the crossfade end) and +0.5 BT (39100) against b7@38146.
+#   for a in C L Lp; do ARM=$a IT=38146 bash scripts/korbi/recall_surgery/small31_insert.sh; done
+#   for a in M Mp; do ARM=$a IT=38146 DONOR_IT=9535 bash scripts/korbi/recall_surgery/small31_insert.sh; done
+#   PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor --monitor-state-dir \
+#       /e/scratch/e-sta-openeurollm/poeppel1/pool_state --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/small31_phase2late_jupiter --yes
+defaults:
+  - small31_jupiter
+  - _self_
+
+aux:
+  arm: C
+  late_it: 38146
+
+backend:
+  megatron:
+    train_iters: 40053
+    exit_interval: 39100
+    save_extra_steps: [38623, 39100]
+    save_interval: 100000
+    exit_on_missing_checkpoint: true
+
+job:
+  metadata:
+    pool_priority: 40
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.out_root}/${aux.arm}/ckpt/latest_checkpointed_iteration.txt
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: C
+        - aux.arm: L
+          backend.megatron.hybrid_layer_pattern: "*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"
+        - aux.arm: Lp
+          backend.megatron.hybrid_layer_pattern: "*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"
+        # crossfade branches on b7's complex_kda sublayers (the layer pattern stays b7's)
+        - aux.arm: M
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 477
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+        - aux.arm: Mp
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [3, 19, 36]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 477
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false

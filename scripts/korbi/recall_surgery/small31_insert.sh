@@ -7,8 +7,12 @@
 # Arms (sublayer indices of the 50-sublayer small31 pattern; mixer m -> sublayer):
 #   E   3:1 as r3:  new attention at mixers 4 / 12 / 20  = sublayers 9 / 25 / 42, references 0 / 17 / 34
 #   Ep  paired as r3p: new attention at mixers 1 / 9 / 17 = sublayers 3 / 19 / 36, references 0 / 17 / 34
+#   L / Lp  the same random insertion LATE (IT = b7's late checkpoint)
+#   C   b7's checkpoint as it is (hard links): the late control
+#   M / Mp  E's / Ep's trained new attention (DONOR_IT of E / Ep) transplanted into b7@IT as crossfade ckda_branch
+#           attention branches at the same sublayers (scripts/korbi/production/transplant_attention.py)
 # The first CKDA mixers (complex eigenvalues) stay CKDA in both. Login node (hard links + a few MB of new tensors).
-#   ARM=E IT=1907 small31_insert.sh
+#   ARM=E IT=1907 small31_insert.sh;  ARM=M IT=38146 DONOR_IT=9535 small31_insert.sh;  ARM=C IT=38146 small31_insert.sh
 set -euo pipefail
 : "${ARM:?E | Ep}" "${IT:?b7 iteration}"
 ROOT=${ROOT:-/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31}
@@ -16,8 +20,9 @@ SRC_ARM=${SRC_ARM:-b7}
 SIF=${SIF:-/e/project1/e-sta-openeurollm/poeppel1/container_cache/MegatronTraining-JUPITER_pt2512_aarch64_202602231451.sif}
 B7="*-NL-L-L-L-L-L-L-*-L-L-L-L-L-L-L-N*-L-L-L-L-L-L-L-"
 case "$ARM" in
-  E|L)   LAYERS=9,25,42; PATTERN="*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-" ;;
-  Ep|Lp) LAYERS=3,19,36; PATTERN="*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-" ;;
+  E|L|M)   LAYERS=9,25,42; PATTERN="*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"; DONOR=E ;;
+  Ep|Lp|Mp) LAYERS=3,19,36; PATTERN="*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"; DONOR=Ep ;;
+  C) LAYERS=; PATTERN= ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
 esac
 REFS=0,17,34
@@ -32,8 +37,17 @@ fi
 [ -e "$OUT/$it" ] && { echo "$ARM: removing the partial attempt $OUT/$it"; rm -rf "$OUT/$it"; }
 mkdir -p "$OUT"
 cd "$(dirname "$0")/../../.."
-apptainer exec --bind /e --env PYTHONPATH=.:submodules/Megatron-LM:flash-linear-attention "$SIF" \
-  python scripts/korbi/production/replace_ckda_with_attention.py apply \
-  --src "$SRC" --dst "$OUT/$it" --layers "$LAYERS" --refs "$REFS" --pattern "$PATTERN" --seed 1234
+X=(apptainer exec --bind /e --env PYTHONPATH=.:submodules/Megatron-LM:flash-linear-attention "$SIF")
+case "$ARM" in
+  C) cp -al "$SRC" "$OUT/$it" ;;
+  M|Mp)
+    : "${DONOR_IT:?the donor E / Ep checkpoint iteration}"
+    din=$(printf 'iter_%07d' "$DONOR_IT")
+    [ -f "$ROOT/$DONOR/ckpt/$din/.metadata" ] || { echo "no $din of $DONOR" >&2; exit 1; }
+    "${X[@]}" python scripts/korbi/production/transplant_attention.py apply --base "$SRC" \
+      --donor "$ROOT/$DONOR/ckpt/$din" --dst "$OUT/$it" --layers "$LAYERS" ;;
+  *) "${X[@]}" python scripts/korbi/production/replace_ckda_with_attention.py apply \
+      --src "$SRC" --dst "$OUT/$it" --layers "$LAYERS" --refs "$REFS" --pattern "$PATTERN" --seed 1234 ;;
+esac
 echo "$IT" > "$OUT/latest_checkpointed_iteration.txt"
-echo "$ARM: $OUT/$it <- $SRC (sublayers $LAYERS -> attention; pattern $PATTERN)"
+echo "$ARM: $OUT/$it <- $SRC (sublayers ${LAYERS:-none}; pattern ${PATTERN:-unchanged})"
