@@ -21,7 +21,11 @@
 #           gamma 0 (function-preserving); CKDA stays at full weight
 #   W       (§14.8) every dense MLP widened 3584 -> 4608 (new fc1 rows N(0, 0.02), new fc2 columns 0;
 #           scripts/korbi/production/widen_ffn.py), run with ffn_hidden_size 4608
+#   D1      (§14.8) ADDITIVE attention branches at 9 / 25 / 42, copies of the nearest preceding attention layer
+#           0 / 17 / 34 (add_ckda_branch --init attn, input norm folded), gamma 0; trained with rest dropout
+#   D2      (§14.8) D1's trained branches (DONOR_IT of D1) transplanted into C@IT (SRC_ARM=C), input norm folded
 #   ARM=E IT=1907 small31_insert.sh;  ARM=M IT=38146 DONOR_IT=9535 small31_insert.sh;  ARM=C IT=38146 small31_insert.sh
+#   ARM=D2 SRC_ARM=C IT=39100 DONOR_IT=39100 small31_insert.sh
 set -euo pipefail
 : "${ARM:?E | Ep}" "${IT:?b7 iteration}"
 ROOT=${ROOT:-/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31}
@@ -32,7 +36,8 @@ case "$ARM" in
   E|L|M)   LAYERS=9,25,42; PATTERN="*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"; DONOR=E ;;
   Ep|Lp|Mp) LAYERS=3,19,36; PATTERN="*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"; DONOR=Ep ;;
   C|W) LAYERS=; PATTERN= ;;
-  K) LAYERS=9,25,42; PATTERN= ;;
+  K|D1) LAYERS=9,25,42; PATTERN= ;;
+  D2) LAYERS=9,25,42; PATTERN=; DONOR=D1 ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
 esac
 REFS=0,17,34
@@ -55,8 +60,11 @@ case "$ARM" in
        --kvshare-init copy --seed 1234 ;;
   W) "${X[@]}" python scripts/korbi/production/widen_ffn.py --src "$SRC" --dst "$OUT/$it" --ffn 4608 \
        --init-std 0.02 --seed 1234 ;;
-  M|Mp)
-    : "${DONOR_IT:?the donor E / Ep checkpoint iteration}"
+  D1) "${X[@]}" env CKDA_BRANCH_ATTN_LAYERS=$REFS python scripts/korbi/production/add_ckda_branch.py apply \
+       --src "$SRC" --dst "$OUT/$it" --branch attention --groups 2 --init attn --layers "$LAYERS" \
+       --kv-sources "$REFS" --seed 1234 ;;
+  M|Mp|D2)
+    : "${DONOR_IT:?the donor E / Ep / D1 checkpoint iteration}"
     din=$(printf 'iter_%07d' "$DONOR_IT")
     [ -f "$ROOT/$DONOR/ckpt/$din/.metadata" ] || { echo "no $din of $DONOR" >&2; exit 1; }
     "${X[@]}" python scripts/korbi/production/transplant_attention.py apply --base "$SRC" \

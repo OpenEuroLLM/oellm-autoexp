@@ -129,3 +129,21 @@ sweep:
         - aux.arm: W
           backend.megatron.ffn_hidden_size: 4608
           backend.megatron.check_for_nan_in_loss_and_grad: true
+        # §14.8 arm D1: ADDITIVE attention branches (copies of the preceding attention layers, gamma 0) trained with
+        # HEAVY dropout on the rest (complex_kda terms, attention, complex_kda and MLP sublayer outputs; not the
+        # branches, not Engram): recall has to flow through the new attention
+        - aux.arm: D1
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+          backend.megatron.check_for_nan_in_loss_and_grad: true
+          backend.megatron.ckda_branch_rest_dropout: 0.3
