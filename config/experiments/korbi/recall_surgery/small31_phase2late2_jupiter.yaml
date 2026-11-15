@@ -94,7 +94,7 @@ sweep:
           backend.megatron.ffn_hidden_size: 4608
           backend.megatron.check_for_nan_in_loss_and_grad: true
         # §14.8 arm D2: D1's trained branches stitched into C@39100 (transplant_attention.py, input norm folded),
-        # no dropout; adapted 39100 -> 40053 on C's batches
+        # no dropout; adapted 39100 -> 41961 on C's batches (first leg to 40053, continued 2026-11-15)
         - aux.arm: D2
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 42]
@@ -109,4 +109,19 @@ sweep:
           backend.megatron.ckda_branch_gamma_scale: 1.0
           backend.megatron.ckda_branch_calibrate: false
           backend.megatron.check_for_nan_in_loss_and_grad: true
-          backend.megatron.exit_interval: 40053
+        # §14.8 arm DK2: DK1's trained kvshare branches stitched into C@39100, no dropout; adapted 39100 -> 41961
+        - aux.arm: DK2
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 34]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+          backend.megatron.check_for_nan_in_loss_and_grad: true

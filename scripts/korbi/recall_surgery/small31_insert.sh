@@ -25,6 +25,8 @@
 #           0 / 17 / 34 (add_ckda_branch --init attn, input norm folded), gamma 0; trained with rest dropout
 #   D2      (§14.8) D1's trained branches (DONOR_IT of D1) transplanted into C@IT (SRC_ARM=C), input norm folded
 #   ARM=E IT=1907 small31_insert.sh;  ARM=M IT=38146 DONOR_IT=9535 small31_insert.sh;  ARM=C IT=38146 small31_insert.sh
+#   DK1     (§14.8) K's start (additive kvshare, q / gate / o copied), trained with rest dropout: a hard-link copy of K@IT
+#   DK2     (§14.8) DK1's trained kvshare branches (DONOR_IT of DK1) transplanted into C@IT (SRC_ARM=C)
 #   ARM=D2 SRC_ARM=C IT=39100 DONOR_IT=39100 small31_insert.sh
 set -euo pipefail
 : "${ARM:?E | Ep}" "${IT:?b7 iteration}"
@@ -38,6 +40,8 @@ case "$ARM" in
   C|W) LAYERS=; PATTERN= ;;
   K|D1) LAYERS=9,25,42; PATTERN= ;;
   D2) LAYERS=9,25,42; PATTERN=; DONOR=D1 ;;
+  DK1) LAYERS=9,25,42; PATTERN= ;;
+  DK2) LAYERS=9,25,42; PATTERN=; DONOR=DK1 ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
 esac
 REFS=0,17,34
@@ -63,7 +67,8 @@ case "$ARM" in
   D1) "${X[@]}" env CKDA_BRANCH_ATTN_LAYERS=$REFS python scripts/korbi/production/add_ckda_branch.py apply \
        --src "$SRC" --dst "$OUT/$it" --branch attention --groups 2 --init attn --layers "$LAYERS" \
        --kv-sources "$REFS" --seed 1234 ;;
-  M|Mp|D2)
+  DK1) cp -al "$ROOT/K/ckpt/$it" "$OUT/$it" ;;
+  M|Mp|D2|DK2)
     : "${DONOR_IT:?the donor E / Ep / D1 checkpoint iteration}"
     din=$(printf 'iter_%07d' "$DONOR_IT")
     [ -f "$ROOT/$DONOR/ckpt/$din/.metadata" ] || { echo "no $din of $DONOR" >&2; exit 1; }
