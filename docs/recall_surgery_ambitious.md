@@ -3086,6 +3086,30 @@ Placement: host108 runs only 8-node legs of ours (host109 has 4 free nodes, so n
 (two 8-node runs on 18 nodes), the guard (`host108_guard.log`) alive for all our names until stopped. W's leg 2
 (run 0106) completed on host108.
 
+**§14.8 readouts through +2 BT (17:15): 3-readout means (39100 / 40053 / 41961), paired with C.**
+
+| arm | F1 when answering | HasAns F1 | CoQA F1 | FDA | SWDE | valid - C at 39100 / 40053 / 41961 |
+|---|---|---|---|---|---|---|
+| C (mean) | 58.80 | 49.37 | 55.37 | 73.53 | 75.43 | |
+| K | 58.34 (-0.46) | 49.47 (+0.10) | 55.02 (-0.36) | 75.43 (+1.90) | 75.60 (+0.17) | **-0.0011 / -0.0008 / -0.0043** |
+| W | 58.71 (-0.09) | 50.12 (+0.75) | 54.80 (-0.57) | 71.70 (-1.83) | 75.40 (-0.03) | +0.0030 / +0.0042 / +0.0033 |
+| M | 56.30 (-2.50) | 45.76 (-3.61) | 54.80 (-0.57) | 74.13 (+0.60) | 75.47 | +0.0129 / +0.0108 / +0.0045 |
+| L | 56.96 (-1.84) | 47.01 (-2.36) | 53.93 (-1.44) | 72.17 (-1.36) | 74.47 | +0.0145 / +0.0131 / +0.0060 |
+
+Single values at 41961: C 58.65 / 46.43 / 55.51 / 68.3 / 76.8 (valid 1.8625); K 57.45 / 47.49 / 55.33 / 69.3 / 75.8
+(1.8582); W 57.55 / 49.23 / 54.74 / 66.9 / 75.6 (1.8658).
+
+D2 (D1's dropout-trained branches stitched into C@39100) at 40053, paired with C@40053: valid 1.8620 vs 1.8610
+(+0.0010, from +0.0295 zero-shot); F1 when answering 58.89 vs 59.22, HasAns 49.79 vs 50.32, **CoQA 55.51 vs 53.09
+(+2.4), FDA 77.9 vs 75.0 (+2.9)**, SWDE 75.4 vs 75.0, squad_completion 48.2 vs 49.0.
+
+* **K keeps improving relative to C in loss:** -0.0043 valid at +2 BT. It is the only arm below C, and its
+  training-loss gap stays at 0 to -0.001. Its recall means equal C's within +-0.5, except FDA +1.9.
+* **W:** +0.003 to +0.004 behind C in valid loss throughout, recall mixed. Confounded by the +13 % effective lr;
+  W' (Wp) running.
+* **D2** recovered to C's loss within ~950 steps of the stitch and is ahead on CoQA / FDA at 40053, behind by 0.3-0.5
+  on the two SQuAD columns: one readout, ~2-4 points of noise. Its 41961 / 43868 / 44822 readouts will tell.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
