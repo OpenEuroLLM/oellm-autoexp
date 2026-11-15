@@ -2654,6 +2654,44 @@ anomalous.
 * r3 / r3p / a0 reach 38146 after the current host segment (~07:30 / ~07:35 / ~08:30), so they cross one host change:
   a USR1 save, then a v3 resume a few thousand steps before their 20 BT checkpoint.
 
+**Late-arm crash loop (04:30-05:30) and fix.**
+* All five late arms crash-looped at load: "OptimizerParamScheduler: class input value 2563392 and checkpoint value
+  2441344 for total number of iterations do not match". Their train_iters 40053 > b7's 38146 trips the scheduler's
+  check. C / M / Mp made 16-17 attempts each.
+* My waiter missed it: it matched the wrong error string. The lead reported it at 05:30.
+* Fix:
+  * the five pool jobs cancelled (pool jobs only);
+  * `override_opt_param_scheduler: true` in small31_phase2late_jupiter (965b3d95). lr is constant, so the schedule
+    is unchanged;
+  * relaunched C / M / Mp, then L / Lp, from the start checkpoints built at 04:28 (tracker 38146; not rebuilt).
+* Verified on M: logged lr 1.8e-3 at 38147; "per-group lr bounds reset to the arguments (0 of 7 groups differed in
+  the checkpoint)"; the v3 reset of output_layer + word_embeddings as on every JUPITER resume. train_iters is the
+  same 40053 for all five, so they see identical batches.
+
+**6 BT (11445) readout, matched step** (the bases' RULER cells at 11445 are pending a rerun):
+
+| arm | CoQA F1 | Wino | SQuAD F1 | HasAns F1 (uniform) | F1 when answering | abstain @ answerable | SWDE | FDA | SQ compl. | RULER 4k | valid loss |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| b7 (7:1) | 44.85 | 53.75 | 20.58 | 39.52 | 47.53 | 16.9 | 70.7 | 75.6 | 41.3 | - | 2.0154 |
+| r3 (3:1) | 50.69 | 52.72 | 19.52 | 37.48 | 49.82 | 24.8 | 71.0 | 75.9 | 43.3 | - | 1.9934 |
+| r3p (paired 3:1) | 50.19 | 52.01 | 24.02 | 46.13 | 50.05 | 7.8 | 68.8 | 66.7 | 41.9 | - | 1.9942 |
+| a0 (attention) | 47.61 | 51.07 | 21.03 | 40.38 | 46.91 | 13.9 | 70.8 | 76.0 | 41.8 | - | 2.0203 |
+| **E** (b7 + 3:1 from 1 BT) | 47.55 | 52.72 | 15.32 | 29.43 | 46.79 | 37.1 | 69.9 | 71.3 | 43.0 | 63.6 | 2.0093 |
+| **Ep** (b7 + paired from 1 BT) | 44.56 | 54.70 | 11.04 | 21.15 | 42.57 | 50.3 | 66.3 | 76.8 | 46.3 | 69.5 | 2.0112 |
+
+* **Valid loss:** E / Ep sit between b7 and the from-scratch 3:1 arms. They close 27 % (E, 0.0061 of 0.022) and 19 %
+  (Ep) of the b7 -> r3 / r3p gap after 5 BT of training in the 3:1 layout.
+* **CoQA:** E recovers ~46 % of the b7 -> r3 gap (+2.7 of +5.8); Ep none (-0.3).
+* **SQuAD v2:** E / Ep are below b7, but through abstention, not comprehension:
+  * they abstain on 37 % / 50 % of answerable questions (b7 17 %, r3p 8 %);
+  * when they answer, F1 is close to b7 for E (46.8 vs 47.5), lower for Ep (42.6);
+  * the abstention rate swings a lot between checkpoints of the same arm (b7: 50 / 29 / 24 / 17 / 16 / 23 % from
+    1 to 16 BT), so this cell is noisy.
+* **Winogrande:** within noise (stderr ~1.4) for every arm.
+* **Recall rows:** no consistent difference (SWDE 66-71, FDA 67-77 across arms).
+* **Reading:** at the matched 6 BT, inserting 3:1 attention at 1 BT buys part of the from-scratch 3:1 loss and CoQA
+  advantage (E more than Ep), not all of it. The SQuAD deficit is an abstention habit of the early-inserted arms.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
