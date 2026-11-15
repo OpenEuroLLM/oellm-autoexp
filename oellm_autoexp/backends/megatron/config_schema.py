@@ -1069,6 +1069,15 @@ class MegatronConfig(ConfigInterface):
     # a 200-step hand-over).
     ckda_branch_gamma_scale: float = 1.0
 
+    # Muon-family optimizers scale a matrix's orthogonalized update by a factor of its shape
+    # (sqrt(max(m, n)) for scale_mode spectral). With this set, the dense MLP's linear_fc1 /
+    # linear_fc2 weights get the update scale of the same matrices at this ffn_hidden_size
+    # instead of the actual one: a widened MLP (e.g. 3584 -> 4608 by checkpoint surgery) keeps
+    # the effective learning rate of the model it was widened from (small31 arm W',
+    # docs/recall_surgery_ambitious.md §14.8). Parameter groups are unchanged (a per-parameter
+    # factor in the optimizer's orthogonalization).
+    muon_scale_reference_ffn_hidden_size: int | None = None
+
     # Dropout on everything but the ckda_branch branches ("the rest"), in training only: the
     # complex_kda term of the branch layers (inside the branch mix, before the branch is
     # added) and the outputs of every other attention, complex_kda and MLP sublayer (at the

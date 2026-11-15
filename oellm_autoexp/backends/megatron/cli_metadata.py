@@ -6054,6 +6054,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "muon_scale_reference_ffn_hidden_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Muon-family optimizers scale a matrix's orthogonalized update by a factor of its shape (sqrt(max(m, n)) for scale_mode spectral). With this set, the dense MLP's linear_fc1 / linear_fc2 weights get the update scale of the same matrices at this ffn_hidden_size instead of the actual one: a widened MLP (e.g. 3584 -> 4608 by checkpoint surgery) keeps the effective learning rate of the model it was widened from (small31 arm W', docs/recall_surgery_ambitious.md §14.8). Parameter groups are unchanged (a per-parameter factor in the optimizer's orthogonalization).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "muon_split_qkv": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -14290,6 +14298,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="spectral",
+    ),
+    "muon_scale_reference_ffn_hidden_size": MegatronActionSpec(
+        option_strings=("--muon-scale-reference-ffn-hidden-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "muon_split_qkv": MegatronActionSpec(
         option_strings=("--muon-no-split-qkv",),
