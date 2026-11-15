@@ -3043,9 +3043,11 @@ Training-loss gap to C (identical batches):
   stitching it adapts almost at once: training gap +0.0006 / +0.0003 on 39101-40053. The 40053 readout is running
   (so far CoQA 55.5 vs C 53.1, FDA 77.9 vs 75.0).
 * **W (wider MLPs):** the gap to C *grows* (+0.0014 -> +0.0053 per window) although W is function-preserving and
-  on identical batches. A likely cause is the MuOwn update scale changing with the matrix shape (fc1 4608 x 1280,
-  fc2 1280 x 4608), which perturbs the trained weights; not verified. At 39100 recall is mixed (F1 when answering
-  +0.8, HasAns +1.4, CoQA -1.6).
+  on identical batches. Likely cause, by construction: MuOwn scales each matrix update by sqrt(max(m, n))
+  (emerging_optimizers.get_muon_scale_factor, spectral / shape_scaling modes). Widening 3584 -> 4608 raises it by
+  sqrt(4608 / 3584) = **+13 % effective lr on all 48 MLP matrices**, a confound of the widening rather than an effect
+  of the extra width. A clean W would compensate the scale for the widened matrices (per-parameter lr factor 1 /
+  1.134); not done. At 39100 recall is mixed (F1 when answering +0.8, HasAns +1.4, CoQA -1.6).
 
 ### 16.1 Results (2026-11-14 23:00)
 
