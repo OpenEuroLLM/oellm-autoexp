@@ -2851,3 +2851,153 @@ Hybrid minus attention, before and after identical fine-tuning:
   host is up.
 
 Budget: about 4 x 1.3 h (training, 1 node) + 6 x ~1 h (evals, 1 node) ~ 45-50 GPU-h of the ~100.
+
+## 18. Benchmark gap survey: ambitious vs the 32B dense and the Qwens (2026-11-15, CPU only)
+
+User 2026-11-15: "do we have a lead for the four critical benchmarks ... can we test SWDE and FDA? are there other
+benchmarks where we lag substantially behind the 32B dense model or Qwen3 / Qwen3.5?"
+
+**Sources.**
+* Ambitious: oellm-eval result trees on MN5 (`flag_evals_oellm/<export>/results/<task>_<shot>/`), extracted by
+  `scripts/korbi/recall_surgery/gap_extract_oellm.py`.
+  * `ambitious_v4_2ph_hd256_fp8_24000` (1.61T tokens): the full FLAG set, 1,473 rows shared with the 32B.
+  * `_23500` with the Qwens: the 184-row Qwen subset.
+* 32B dense: the team's per-checkpoint `<ckpt>.flag-evals-438.tasks.csv` (JUPITER
+  `/e/scratch/e-sta-openeurollm/poeppel1/flag-evals/results/`).
+  * `b1cons_90k` = 1.5T tokens, the equal-token reference.
+  * `b1consTW_300k` = 5T tokens.
+* Qwens: `ext_Qwen2.5-32B`, `ext_Qwen3-30B-A3B-Base`, `ext_Qwen3-14B-Base` (same oellm-eval suite).
+* Qwen3.5-35B-A3B-Base: export dir prepared on MN5, 0 rows done (see 18.4).
+* Join: `scripts/korbi/recall_surgery/gap_join.py`.
+  * Metric: the first one both sides report, in the order acc_norm > acc > exact_match > f1 > ...
+  * Scale: x100. gap = reference - ambitious (positive = ambitious behind).
+
+**Comparability caveats.**
+* **Harness version:** the 32B ran lm-eval 0.4.12 (team harness), ours 0.4.13 (oellm-eval).
+* **SQuAD v2 NoAns scoring differs** (§15). The team harness gives a literal "unanswerable" no credit, so the
+  absolute SQuAD v2 values are low on both sides; the ranking is consistent.
+* **global_piqa_prompted is not usable as a gap signal against the 32B.**
+  * Ambitious averages 46.7 over the 32 languages, the 32B 90k 31.3 (often 17-31, i.e. chance-level 25 % for 4
+    options), the Qwens 73.0.
+  * The two OELLM base models both fail the prompted (instruction-style) format, and the 32B more than ambitious.
+  * This is the single largest cluster vs the Qwens (12 of the top 20 rows), but it is a prompt-format effect shared
+    with the 32B, not an ambitious-specific deficit.
+  * Many `include_*` rows show ambitious 30-50 points *ahead* of the 32B: also a prompt/format artifact.
+* **Checkpoint noise:** Winogrande 65.8 at 24000 vs 62.5 at 23500 (same run, 500 steps apart). Single rows of
+  small tasks (100-250 items: global_piqa, include, moral_scenarios, polymath) move by +-5-10.
+
+### 18.1 Category means (ambitious 24000 vs the 32B; positive = 32B ahead)
+
+| category | rows | vs 90k (1.5T, equal tokens) | vs 300k (5T) |
+|---|---|---|---|
+| RC/QA (coqa, squadv2, ...) | 3 | **+8.5** | +11.0 |
+| coreference (winogrande, wsc273) | 2 | **+5.5** | +6.8 |
+| belebele (24 languages) | 24 | +1.3 (median +0.6) | +4.9 |
+| math | 35 | -1.0 | -4.8 |
+| other (bigbench etc.) | 83 | -1.9 | +4.8 |
+| commonsense/science | 41 | -3.1 | +1.2 |
+| knowledge/reasoning (mmlu family) | 1036 | -5.5 | +2.3 |
+| multilingual | 196 | -8.6 | -2.8 |
+
+On the 184-row Qwen subset (ambitious 23500; mean of the three Qwens):
+
+| category | rows | vs Qwen mean | vs 32B 90k |
+|---|---|---|---|
+| coreference | 2 | **+9.4** | +8.5 |
+| math | 11 | +8.3 | -5.1 |
+| RC/QA | 6 | +4.2 | +8.0 |
+| commonsense/science | 21 | -1.4 | -2.2 |
+| other | 47 | -4.3 | -2.4 |
+| multilingual (excl. global_piqa_prompted) | 40 | -8.1 | -5.1 |
+
+### 18.2 Ranked top gaps (artifact rows dropped; 24000 for the 32B, 23500 for the Qwens)
+
+| # | task | shots | ambitious | 32B 90k | 32B 300k | Q2.5-32B | Q3-30B-A3B | Q3-14B | cluster |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | mgsm_native_cot_en | 5 | 62.8 (61.2) | 79.6 | – | 91.2 | 88.4 | 90.0 | generative CoT (English only; de/es/fr within 2 of the 32B) |
+| 2 | bigbench_dyck_languages (gen) | 10 | 34.4 (36.2) | 50.3 | – | Qmean 47.0 | | | exact-sequence generation / state tracking |
+| 3 | **coqa** | 0 | **65.9** (66.1) | 79.7 | 81.7 | 76.6 | 73.0 | 73.4 | conversational extractive QA |
+| 4 | **squadv2** (F1) | 10 | **26.1** (26.9) | 39.2 | 42.9 | 38.2 | 38.4 | 38.7 | extractive QA + abstention |
+| 5 | **winogrande** | 0 | **65.8** (62.5) | 70.3 | 70.6 | 75.9 | 72.5 | 73.8 | coreference |
+| 6 | **wsc273** | 0 | 78.0 (75.5) | 84.6 | 86.8 | 81.3 | 85.0 | 82.1 | coreference |
+| 7 | bigbench_qa_wikidata (gen) | 10 | 59.5 | 69.6 | – | | | | short factual generation |
+| 8 | bigbench_operators (gen) | 10 | 67.6 (63.8) | 77.6 | – | Qmean 83.5 | | | symbolic rule application |
+| 9 | bigbench_repeat_copy_logic (gen) | 10 | 50.0 (34.4) | 53.1 | – | 62.5 | 59.4 | 59.4 | exact copy with instructions |
+| 10 | global_mmlu moral_scenarios (tr/pl/cs/sr) | 5 | – | +15.4/+12.5/+12.4/+10.7 | | | | | one MMLU subject, multilingual |
+| 11 | **belebele_eng_Latn** | 5 | **79.9** (75.1) | 88.9 | 81.8 | 96.2 | 94.0 | 94.7 | RC (English only) |
+| 12 | commonsense_qa | 10 | (76.1) | 77.8 | | Qmean 87.2 | | | knowledge MC (vs Qwens only) |
+| 13 | gsm8k | 4 | (73.6) | 72.8 | 78.7 | 85.3 | 81.9 | 84.7 | math (vs Qwens only) |
+| 14 | xcsqa es/it/fr/pt | 0 | (32-36) | 36-41 | | Qmean 45-46 | | | multilingual commonsense MC |
+
+(Values in parentheses: ambitious 23500, the Qwen-comparable checkpoint.)
+
+Recall suite (0-shot, `contains`; §15), no 32B rows:
+
+| | swde | fda | squad_completion |
+|---|---|---|---|
+| ambitious 23500 | 82.1 | 31.5 | 56.6 |
+| Qwen2.5-32B | 85.2 | 28.6 | 56.1 |
+| Qwen3-30B-A3B | 84.6 | 30.3 | 57.7 |
+| Qwen3-14B | 85.7 | 30.8 | 60.7 |
+| q35c_gqa_59600 (conservative) | 77.7 | 25.1 | 58.0 |
+
+### 18.3 Belebele per language (5-shot acc_norm)
+
+| | amb 24000 | 32B 90k | 32B 300k | amb 23500 | Q2.5-32B | Q3-30B-A3B | Q3-14B |
+|---|---|---|---|---|---|---|---|
+| **mean (24)** | 82.6 | 83.9 | 87.5 | 82.9 | 91.7 | 89.6 | 90.9 |
+| eng_Latn | **79.9** | **88.9** | 81.8 | **75.1** | 96.2 | 94.0 | 94.7 |
+| pol_Latn | 79.2 | 82.9 | 86.9 | 81.8 | 92.4 | 89.7 | 90.6 |
+| slv_Latn | 81.3 | 84.4 | 88.6 | 82.1 | 90.9 | 89.6 | 91.1 |
+| swe_Latn | 82.6 | 85.2 | 88.2 | 84.0 | 92.4 | 91.0 | 91.1 |
+| nob_Latn | 82.7 | 85.3 | 87.4 | 83.0 | 92.7 | 90.0 | 90.4 |
+| fra_Latn | 85.1 | 87.1 | 90.8 | 85.6 | 94.9 | 91.2 | 94.3 |
+| ita_Latn | 82.3 | 84.1 | 87.1 | 81.6 | 93.2 | 90.6 | 92.6 |
+| mlt_Latn | 77.9 | 78.2 | 85.3 | 77.6 | 72.4 | 76.1 | 79.7 |
+| est/fin/lit/lvs/ell/por/ron | 80-84 | equal (+-0.3) | +4-6 | | | | |
+
+* **vs the 32B at equal tokens, belebele is at parity except English** (-9.0) and pol/slv/swe/nob (-2.5 to -3.7).
+  The 18 other languages are within 1.5.
+* **English is anomalous on both OELLM models:** the 32B is 88.9 at 90k but 81.8 at 300k, ambitious 79.9 / 75.1
+  between two checkpoints 500 steps apart. eng_Latn is the one language where both models are *below* their own
+  non-English mean. That points to an English-specific format/answer-letter issue, not reading comprehension.
+* vs the Qwens the gap is uniform, -7 to -10 on every language except Maltese (where ambitious leads), as is the
+  32B 300k. The Qwen gap is a scale / data effect shared with the 32B, not hybrid-specific.
+
+### 18.4 SWDE / FDA for the 32B
+
+* **No 32B checkpoint has swde, fda or squad_completion rows** (grep of all three team CSVs: the only hits are hash
+  substrings). The team's FLAG 438 suite does not include the Based recall tasks.
+* **Submitted 2026-11-15 13:39 (user: "please run the evals"): JUPITER job 2919163** (`o32_recall`, 1 node, 2 h,
+  PENDING (Priority) at submission). A new standalone job, not in a pool: the small16 hosts are the testbed's, and
+  the 32B training jobs and their buffer are untouched. No idle booster node at submission (sinfo: 0 idle, 119
+  planned), so it starts when it backfills.
+  * Config `config/experiments/korbi/recall_surgery/o32_recall_jupiter.yaml`, script
+    `scripts/korbi/recall_surgery/o32_recall_readout.sh`.
+  * HF backend (`small31_eval.py`, as the testbed readouts, batch 4). b1cons_90k and b1consTW_300k from
+    `/e/scratch/e-sta-openeurollm/production_training/downstream_eval_32b/hf/` (Qwen3ForCausalLM, 64 GB bf16), one GPU
+    per row group.
+  * `--max-length 4096` = the 32B's max_position_embeddings.
+  * Results: `/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/o32_recall/<ckpt>/results/{swde,fda,squad_completion}_0/`.
+  * Caveat when comparing: ambitious and the Qwens ran on vLLM via oellm-eval, the 32B on lm-eval's HF backend (same
+    task YAMLs; greedy decoding).
+* **Qwen3.5-35B-A3B-Base:** not run on JUPITER (no free node). The MN5 export dir
+  `flag_evals_oellm/ext_Qwen3.5-35B-A3B-Base` exists with 0 rows done.
+
+### 18.5 Where the gaps cluster
+
+1. **The four critical rows are the cleanest deficit in the whole 1,473-row comparison.** At equal tokens ambitious
+   is at parity or ahead of the 32B on knowledge (mmlu family -5.5), multilingual (-8.6), commonsense (-3.1) and math
+   (-1.0). It is behind only on extractive/conversational QA (CoQA +13.8, SQuAD v2 F1 +13.1) and coreference
+   (Winogrande +4.5, WSC +6.6), and these are also behind the Qwens.
+2. **A second, smaller cluster is exact generative output:** English mgsm CoT, bigbench dyck / operators /
+   repeat_copy_logic / qa_wikidata (+3 to +17 vs the 32B, larger vs the Qwens). These need precise multi-token
+   output tracking the context, plausibly the same precision limitation as SQuAD "F1 when answering" (§15: 70 vs
+   89-92). The recall suite itself (copy a value) is at Qwen level, so it is not raw retrieval.
+3. **Belebele is not a cluster:** parity in 18 of 24 languages. The English row is unstable on both OELLM models
+   (32B 88.9 -> 81.8 from 1.5T to 5T), so it is probably not an architecture signal.
+4. **vs the Qwens, the residual gaps are scale/data-shared with the 32B:** global_piqa_prompted, belebele, xcsqa,
+   gsm8k, commonsense_qa. Only coreference and RC/QA are behind both the Qwens and the 32B.
+5. **Lead for surgery:** target the RC/coreference pair (CoQA, SQuAD v2, Winogrande, WSC), with the generative
+   precision rows (dyck, operators, mgsm_en CoT) as secondary probes that cost no new data. The belebele average and
+   SWDE/FDA are not where ambitious lags.

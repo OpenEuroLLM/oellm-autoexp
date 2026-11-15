@@ -1,0 +1,45 @@
+# @package _global_
+# The recall suite (swde / fda / squad_completion, 0-shot) for the in-house 32B dense (b1cons_90k, b1consTW_300k):
+# docs/recall_surgery_ambitious.md §18. One standalone 1-node JUPITER job (NOT in a pool: the small16 hosts are the
+# testbed's), scripts/korbi/recall_surgery/o32_recall_readout.sh in the training image, same env as the testbed
+# readouts (small31_readout_jupiter.yaml). 2 h wall time so it can backfill.
+#   ssh jupiter 'cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py \
+#       --no-monitor --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --config-name experiments/korbi/recall_surgery/o32_recall_jupiter --yes'
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: jupiter
+  - /slurm: jupiter
+  - _self_
+
+aux:
+  out: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/o32_recall
+
+container:
+  image: /e/project1/e-sta-openeurollm/poeppel1/container_cache/MegatronTraining-JUPITER_pt2512_aarch64_202602231451.sif
+
+backend:
+  command: bash scripts/korbi/recall_surgery/o32_recall_readout.sh
+  env:
+    OUT: ${aux.out}
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/e/project1/e-sta-openeurollm/poeppel1/pylibs_ruler"
+    HF_HOME: /e/scratch/e-sta-openeurollm/poeppel1/cache/hf
+    NLTK_DATA: /e/scratch/e-sta-openeurollm/poeppel1/cache/nltk_data
+    HF_DATASETS_OFFLINE: "1"
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    TOKENIZERS_PARALLELISM: "false"
+    TRITON_LIBCUDA_PATH: /.singularity.d/libs
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    account: e-ext-2025e02-108
+    partition: booster
+
+job:
+  name: o32_recall
+  base_output_dir: ${aux.out}/logs
+  est_step_time_s: 3600
