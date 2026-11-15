@@ -3157,6 +3157,29 @@ valid. Incomplete readouts are skipped per column.
 * Next: the remaining readouts (DK2 43868 / 44822, D2 44822, Wp / D2h / T 41961) narrow the means. The DK1 result
   suggests a K + dropout variant whose dropout is kept low or annealed, rather than stitched.
 
+**Last-3 readout means at the same steps (41961 / 43868 / 44822), arm vs C** (lead 19:25: gate = >= +2 on F1 when
+answering, HasAns and CoQA together in the means; **not met by any arm**):
+
+| arm | F1 ans | HasAns | CoQA | FDA | SWDE | Wino | valid |
+|---|---|---|---|---|---|---|---|
+| C | 57.66 | 48.21 | 54.36 | 70.17 | 76.07 | 55.93 | 1.8600 |
+| K | 58.13 (+0.47) | 48.36 (+0.15) | 55.39 (+1.03) | 72.00 (+1.83) | 75.57 (-0.50) | 55.80 (-0.13) | 1.8545 (**-0.0055**) |
+| D2 (44822 partial) | 58.87 (+1.21) | 50.00 (+1.79) | 54.61 (+0.25) | 72.85 (+2.68) | 75.10 (-0.97) | 55.33 (-0.60) | 1.8565 (-0.0035) |
+| M | 57.78 (+0.12) | 47.41 (-0.80) | 56.34 (+1.98) | 74.63 (+4.46) | 76.53 (+0.46) | 54.77 (-1.16) | 1.8634 (+0.0034) |
+| L | 57.85 (+0.19) | 48.29 (+0.08) | 52.88 (-1.48) | 71.43 (+1.26) | 74.07 (-2.00) | 54.91 (-1.02) | 1.8660 (+0.0060) |
+
+* The trend worth following is K's growing loss advantage (valid -0.0011 -> -0.0071) with its recall columns
+  drifting up; D2 / DK2 are also below C in loss after their stitch (-0.003 to -0.004). FDA is positive for K / D2 /
+  DK2 in the means (+2.0 to +2.7).
+* **Stopped** (lead 19:25): W, Wp, D2h, T at their current point, no further legs.
+* **Fourth leg** (small31_phase2late4_jupiter, 19:30): C / K / D2 / DK2 from 44822 to 48638 (+5.5 BT; train_iters
+  48638 for all four: identical batches), saves / readouts at 46730 / 48638.
+  * Priorities C / K 8, D2 7, DK2 6, readouts 5: all below the 84B smoke tests (priority 10), which need a whole
+    empty host. smoke_a runs on host003, the legs fill host004 (4 x 4 nodes), and a readout cannot take host003
+    from smoke_b when smoke_a ends.
+  * DK2_44822's missing rows are completing in its running readout. No new host was submitted (squeue: host003 /
+    host004 only).
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
