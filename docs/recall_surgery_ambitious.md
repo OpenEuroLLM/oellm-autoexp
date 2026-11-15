@@ -2793,6 +2793,15 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
 
   Consistent with the +0.015 / +0.016 gaps at the end of the first leg. No shock.
 * Budget: ~3 x 0.95 h x 16 GPUs = ~45 GPU-h training + 6 readouts (~20).
+* **Guard incident (11:15):** readout s31ro_C_40053 was placed on **host107** (the 32B run's host; one spare node,
+  jpbo-108-45) for **76 s** (11:15:04-11:16:20). The guard cancelled it and re-enqueued it in small16.
+  * Cause: host108 reached max_runs_per_host = 5 by run count (3 training + 2 readouts) while it still had 4 free
+    nodes, so the pool fell through to the next host.
+  * The 32B run was unaffected (still RUNNING, 516 nodes).
+  * Fix: max_runs_per_host 5 -> 9. host108's 18 nodes then fill (3 x 4 training + 6 readouts) before its run count
+    does, so a run fits host108 whenever it has free nodes.
+  * C_40053 moved back from small16 to the 32B pool: run 0093, verified on host108. The guard still restores 0 at the
+    end.
 
 ### 16.1 Results (2026-11-14 23:00)
 
