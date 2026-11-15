@@ -3110,6 +3110,18 @@ D2 (D1's dropout-trained branches stitched into C@39100) at 40053, paired with C
 * **D2** recovered to C's loss within ~950 steps of the stitch and is ahead on CoQA / FDA at 40053, behind by 0.3-0.5
   on the two SQuAD columns: one readout, ~2-4 points of noise. Its 41961 / 43868 / 44822 readouts will tell.
 
+**host108 cleared (user 2026-11-15: move our jobs to the 16-node hosts; 17:21).**
+* DK1 and Wp leg 1 had already finished on host108 (saves 39100).
+* Wp leg 2 (run 0109, 8 nodes) was cancelled gracefully: SIGUSR2 -> "successfully saved checkpoint from iteration
+  39352", tracker 39352.
+* Re-enqueued in jupiter_pool_small16 at 4 nodes (`small31_Wp_627952`, the native layout = the reference layout).
+  Resumed "from ... Wp/ckpt at iteration 39352"; 39353-39358 = 1.8981 / 1.9210 / 2.0630 / 2.0176 / 2.0417 / 2.0467
+  vs C on the same batches 1.8978 / 1.9431 / 2.0626 / 2.0170 / 2.0416 / 2.0469.
+* The 32B pool's max_runs_per_host is back to 0, the host108 guard stopped, and no run or queued record of ours is in
+  that pool. Only pool runs were cancelled; host108's Slurm job, the 32B run and its hosts untouched. host108 idle.
+* small16 priorities: D2 / DK2 leg 2 45, the third legs (K / D2 / DK2) 40, D1h 35, Wp 33, T 30. DK2 stitched
+  17:00 (tracker 39100).
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
