@@ -3673,7 +3673,15 @@ agent; priorities below every testbed run):
   0.353) are smaller on JSC. The losses after each update still match.
   * Suspects: reductions that depend on the DP size (1024 vs 64 GPUs), e.g. MoonEP's redundant-expert gradient slots
     or the Engram sparse-gradient rows counted per rank in the norm.
-  * To settle before a long JUPITER continuation: compare the per-group norms (diag_layer_grad_norms) at the same step.
+  * Lead: losses that match through 35910 after several updates point to a norm-REPORTING difference rather than
+    different gradients. Check before a long JUPITER continuation of the main run:
+    1. Per-group / per-layer grad norms. Both sides log diag_layer_grad_norms / diag_clip_events (diagnostics_interval
+       1), so diff them at 35901-35910 group by group (attention / CKDA / experts / Engram / embedding). This shows
+       which group carries the 10-25 %.
+    2. One parameter checksum after N steps: per-tensor sums / norms of the main run's own rolling save at 36000 on
+       MN5 vs a JUPITER `main` save at 36000, read from both DCP checkpoints with dcp_surgery's reader (CPU, no
+       training needed). MN5 did not log a weight checksum per step, but MEGATRON_DIAG_WEIGHT_EVERY=10 logs weight stats
+       every 10 steps on both sides, so these can be compared at 35910 / 35920 / ... directly.
 
 **Disk quota (smoke_b's save at 35910 failed: "[Errno 122] Disk quota exceeded" after 738 of 1081 GB).**
 * **The limit is the project's fscratch fileset quota.** `df` inside `/e/fscratch/e-sta-openeurollm` showed
