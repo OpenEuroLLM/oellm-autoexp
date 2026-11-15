@@ -31,7 +31,8 @@ _PKG = _HERE / "oellm_ambitious"
 _KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram", "K": "kronlstm",  # K: a ckda_branch KronLSTM
           "-": "mlp",  # -: a dense SwiGLU MLP (the small-scale testbeds, docs/recall_surgery_ambitious.md §14)
           "S": "kvshare",  # S: a ckda_branch kvshare attention (an earlier attention layer's keys / values)
-          "A": "ckda_attn"}  # A: an additive ckda_branch layer (CKDA + a parallel attention branch)
+          "A": "ckda_attn",  # A: an additive ckda_branch layer (CKDA + a parallel attention branch)
+          "Q": "ckda_kvshare"}  # Q: an additive kvshare ckda_branch layer (CKDA + a kvshare attention branch)
 _MHC = ("phi", "b_pre", "b_post", "b_res", "alpha_pre", "alpha_post", "alpha_res")
 
 # megatron/core/ssm/engram.py
@@ -114,8 +115,9 @@ def _balancing(m: dict) -> str:
 
 def _additive(m: dict) -> bool:
     """An ADDITIVE ckda_branch run: complex_kda stays at full weight (no crossfade, alpha ends at 1) and the
-    attention branch is added on top -- out = alpha * ckda + m * gamma_scale * gamma * calib * branch."""
-    return (m.get("ckda_branch") == "attention" and not m.get("ckda_branch_crossfade")
+    attention (or kvshare attention) branch is added on top -- out = alpha * ckda + m * gamma_scale * gamma * calib
+    * branch."""
+    return (m.get("ckda_branch") in ("attention", "kvshare") and not m.get("ckda_branch_crossfade")
             and float(m.get("ckda_branch_alpha_end", 0.0)) == 1.0)
 
 
@@ -136,8 +138,8 @@ def _schedule(m: dict, it: int) -> tuple[float, float]:
 
 
 def branch_add(m: dict) -> tuple[set[int], float, float]:
-    """An additive ckda_branch run: (layers that export as "ckda_attn", alpha on complex_kda, the factor on
-    gamma * calib of the branch) at the checkpoint's iteration (``m["_ckpt_iteration"]``)."""
+    """An additive ckda_branch run: (layers that export as "ckda_attn" / "ckda_kvshare", alpha on complex_kda, the
+    factor on gamma * calib of the branch) at the checkpoint's iteration (``m["_ckpt_iteration"]``)."""
     if not _additive(m):
         return set(), 1.0, 1.0
     it = m.get("_ckpt_iteration")
@@ -145,7 +147,7 @@ def branch_add(m: dict) -> tuple[set[int], float, float]:
         raise ValueError("ckda_branch (additive): the checkpoint iteration is needed for the branch scale")
     groups = int(m.get("ckda_branch_num_query_groups", 2))
     stack = m["num_query_groups"] if m.get("group_query_attention") else m["num_attention_heads"]
-    if groups != stack:
+    if m["ckda_branch"] == "attention" and groups != stack:  # a kvshare branch has the source's KV groups
         raise ValueError(f"ckda_branch: {groups} KV groups in the branch, {stack} in the stack's attention: "
                          "per-layer KV groups are not in the HF model")
     alpha, mult = _schedule(m, int(it))
@@ -226,9 +228,9 @@ def hf_config(m: dict, vocab: int) -> dict:
     added, _, _ = branch_add(m)
     if any(syms[i] != "L" for i in added):
         raise ValueError(f"additive ckda_branch layers {sorted(added)} must be complex_kda (L) layers")
-    syms = ["A" if i in added else c for i, c in enumerate(syms)]
+    syms = [("Q" if m.get("ckda_branch") == "kvshare" else "A") if i in added else c for i, c in enumerate(syms)]
     kv_sources = {}
-    if folded and m.get("ckda_branch") == "kvshare":
+    if (folded or added) and m.get("ckda_branch") == "kvshare":
         # per kvshare layer, the attention layer whose keys / values it reads (ckda_branch_kv_source_layers)
         layers, sources = list(m["ckda_branch_layers"]), list(m["ckda_branch_kv_source_layers"])
         kv_sources = {str(l): int(src) for l, src in zip(layers, sources)}
@@ -410,7 +412,8 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     p, hp = f"decoder.layers.{i}.", f"model.layers.{i}."
     g = lambda name: t.pop(p + name)  # noqa: E731
     mixer = {"attention": "mhc_attn_mixer", "ckda": "mhc_attn_mixer", "kronlstm": "mhc_attn_mixer",
-             "kvshare": "mhc_attn_mixer", "ckda_attn": "mhc_attn_mixer", "moe": "mhc_mlp_mixer", "mlp": "mhc_mlp_mixer",
+             "kvshare": "mhc_attn_mixer", "ckda_attn": "mhc_attn_mixer", "ckda_kvshare": "mhc_attn_mixer",
+             "moe": "mhc_mlp_mixer", "mlp": "mhc_mlp_mixer",
              "engram": "residual_scheme.mhc_mixer"}[kind]
     if cfg["residual"] == "ldm":  # this layer's write and the next read's query
         for n in _LDM_NET + ("forget_logit",):
@@ -463,6 +466,28 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         if p + "self_attention.branch.q_layernorm.weight" in t:
             add(hp + "mixer.attn.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
             add(hp + "mixer.attn.k_norm.weight", g(b + "k_layernorm.weight").to(cast))
+    elif kind == "ckda_kvshare":
+        # an additive kvshare ckda_branch layer: the complex_kda mixer at weight alpha (folded into its o_proj) plus
+        # the kvshare branch (q / gate / o / q norm of its own, the source layer's keys / values at run time) on the
+        # same normalised input, its weight m * gamma_scale * gamma * calib folded into the branch's o_proj
+        _, alpha, scale_add = branch_add(m)
+        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        pre = p + "self_attention.layer."
+        for k in sorted(k for k in t if k.startswith(pre)):
+            w = t.pop(k)
+            if alpha != 1.0 and k == pre + "o_proj.weight":
+                w = w.float() * alpha
+            add(hp + "mixer.ckda.layer." + k[len(pre):], w.to(cast))
+        b = "self_attention.branch."
+        q, z = _split_kvshare(g(b + "linear_qkv.weight"), cfg)
+        add(hp + "mixer.attn.q_proj.weight", q.to(cast))
+        add(hp + "mixer.attn.gate_proj.weight", z.to(cast))
+        gamma = float(g("self_attention.branch_mix.gamma").float().reshape(-1)[0])
+        weight = scale_add * gamma
+        if p + "self_attention.branch_mix.calib" in t:  # ckda_branch_calibrate's measured scale
+            weight *= float(g("self_attention.branch_mix.calib").float().reshape(-1)[0])
+        add(hp + "mixer.attn.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
+        add(hp + "mixer.attn.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
     elif kind == "kvshare" and i in folded:
         # a ckda_branch kvshare attention past its hand-over: q / gate / o / q norm of its own, the keys / values
         # of the source attention layer at run time (cfg kv_share_sources); the branch's output weight folded into

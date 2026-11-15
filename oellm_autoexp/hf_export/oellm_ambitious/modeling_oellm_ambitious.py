@@ -19,6 +19,8 @@
   - "kvshare": a ckda_branch kvshare attention past its hand-over: the attention above with its own q / gate /
     o / q norm over the keys / values of an earlier attention layer (``kv_share_sources``; XSA against that
     layer's value of the token), no KV of its own;
+  - "ckda_kvshare": an ADDITIVE kvshare ckda_branch layer: the CKDA mixer plus a kvshare attention branch (its own
+    q / gate / o / q norm over the keys / values of an earlier attention layer, ``kv_share_sources``), summed;
   - "ckda_attn": an ADDITIVE ckda_branch layer: the CKDA mixer (``fla_layer``) plus a parallel attention branch
     of the stack's kind on the same normalised input, ``ckda(x) + attention(x)`` (the branch's weight
     ``m * gamma_scale * gamma * calib`` folded into its o_proj); decoding state (ckda state, (k, v));
@@ -382,6 +384,32 @@ class OellmCkdaAttn(nn.Module):
         b, n_attn = self.attn(x, s_attn, keep_state)
         new = (n_ckda, n_attn) if keep_state else None
         return y + b, new
+
+
+class OellmCkdaKVShare(nn.Module):
+    """An additive kvshare ckda_branch layer (Megatron ``ckda_branch: kvshare``, ``crossfade: false``,
+    ``alpha_end: 1``): the CKDA mixer and a kvshare attention branch on the same normalised input, summed (the
+    branch's scale folded into ``attn.o_proj`` by the exporter). The model sets ``kv`` (the source layer's keys /
+    values) before each call, as for a kvshare layer. State: the CKDA state (the source's cache holds k / v)."""
+
+    def __init__(self, config: OellmAmbitiousConfig) -> None:
+        super().__init__()
+        self.ckda = OellmFLALayer(config.fla_layer)
+        self.attn = OellmKVShareAttention(config)
+
+    @property
+    def kv(self):
+        return self.attn.kv
+
+    @kv.setter
+    def kv(self, value) -> None:
+        self.attn.kv = value
+
+    def forward(self, x: torch.Tensor, state=None, attention_mask=None, keep_state: bool = True):
+        stateless = not keep_state and state is None and _fast(x)
+        y, n_ckda = self.ckda(x, state, attention_mask, not stateless)
+        b, _ = self.attn(x, None, keep_state)
+        return y + b, (n_ckda if keep_state else None)
 
 
 class OellmKVShareAttention(nn.Module):
@@ -811,6 +839,9 @@ class OellmAmbitiousLayer(nn.Module):
         elif self.kind == "ckda_attn":  # an additive ckda_branch layer: CKDA + a parallel attention branch
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmCkdaAttn(config)
+        elif self.kind == "ckda_kvshare":  # an additive kvshare ckda_branch layer: CKDA + a kvshare branch
+            self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
+            self.mixer = OellmCkdaKVShare(config)
         elif self.kind == "moe":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmMoE(config)
@@ -829,7 +860,7 @@ class OellmAmbitiousLayer(nn.Module):
             # stateless (scoring, fast path): FLA's fused input projections, no final state
             stateless = not keep_state and state is None and _fast(xin)
             out, new_state = self.mixer(xin, state, attention_mask, not stateless)
-        elif self.kind == "ckda_attn":
+        elif self.kind in ("ckda_attn", "ckda_kvshare"):
             out, new_state = self.mixer(xin, state, attention_mask, keep_state)
         elif self.kind in ("moe", "mlp"):
             out = self.mixer(xin)
@@ -903,7 +934,8 @@ class OellmAmbitiousModel(OellmAmbitiousPreTrainedModel):
         # kvshare layers: {layer index: source attention layer index}; the sources keep their keys / values
         self.kv_share = {int(i): int(src) for i, src in (getattr(config, "kv_share_sources", None) or {}).items()}
         for i, src in self.kv_share.items():
-            if config.block_types[i] != "kvshare" or config.block_types[src] != "attention" or src >= i:
+            if (config.block_types[i] not in ("kvshare", "ckda_kvshare") or config.block_types[src] != "attention"
+                    or src >= i):
                 raise ValueError(f"kv_share_sources: layer {i} ({config.block_types[i]}) reads layer {src} "
                                  f"({config.block_types[src]}): an earlier attention layer expected")
             self.layers[src].mixer.keep_kv = True
