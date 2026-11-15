@@ -858,6 +858,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "ckda_branch_rest_dropout": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help='Dropout on everything but the ckda_branch branches ("the rest"), in training only: the complex_kda term of the branch layers (inside the branch mix, before the branch is added) and the outputs of every other attention, complex_kda and MLP sublayer (at the mHC write); the branches and the Engram layers are not dropped. Forces the model to carry information through the new branches while the rest is unreliable (small31 arm D, docs/recall_surgery_ambitious.md §14.8). Needs the mHC residual (mhc).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "ckda_branch_start_iteration": MegatronArgMetadata(
         arg_type=int,
         default=0,
@@ -9884,6 +9892,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=2,
+    ),
+    "ckda_branch_rest_dropout": MegatronActionSpec(
+        option_strings=("--ckda-branch-rest-dropout",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "ckda_branch_start_iteration": MegatronActionSpec(
         option_strings=("--ckda-branch-start-iteration",),

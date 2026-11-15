@@ -107,6 +107,7 @@ ckda_branch_log_interval: 10  # Every this many iterations, rank 0 prints per br
 ckda_branch_m_ramp: 200  # m falls linearly from ``ckda_branch_m_start`` to 1 over this many steps.
 ckda_branch_m_start: 4.0  # External multiplier m of the branch's output at insertion: the branch's contribution grows m times faster than its weights alone would move it.
 ckda_branch_num_query_groups: 2  # KV groups of the attention branch (its query heads: num_attention_heads).
+ckda_branch_rest_dropout: 0.0  # Dropout on everything but the ckda_branch branches ("the rest"), in training only: the complex_kda term of the branch layers (inside the branch mix, before the branch is added) and the outputs of every other attention, complex_kda and MLP sublayer (at the mHC write); the branches and the Engram layers are not dropped. Forces the model to carry information through the new branches while the rest is unreliable (small31 arm D, docs/recall_surgery_ambitious.md §14.8). Needs the mHC residual (mhc).
 ckda_branch_start_iteration: 0  # The iteration the branch was inserted at; the schedules below count from it.
 ckpt_assume_constant_structure: false  # Assume the checkpoint structure is constant across saves to enable optimizations.
 ckpt_convert_format: null  # choices: ['torch', 'torch_dist'] | Checkpoint format for conversion.
