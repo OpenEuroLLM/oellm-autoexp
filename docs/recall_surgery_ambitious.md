@@ -3493,7 +3493,7 @@ hours, when we potentially get the next host, we are ready." No Slurm job was su
 | `ckpt/main/iter_0035603` | main run persistent save (1083 GiB, 1025 files) | done: 17m26s, names + sizes identical, sha256 of `.metadata` + 3 shards identical |
 | `ckpt/main_rolling/iter_0035900` | main run's newest save (rolling; the run logged to 36000 on 11-13, then failed restarts) | done: 17m43s, identical (1025 files, 3 hashes) |
 | `ckpt/main_eval/iter_0023300` | the frozen 23300 (dropout-stitch start, §19) | done: 15m54s, identical (1025 files, 3 hashes) |
-| `ckpt/broad_ctrl_eval/iter_0024400` | broad-session ctrl@24400 (stitch base / leg-2 control) | transferring (started 18:39, 257 chunks) |
+| `ckpt/broad_ctrl_eval/iter_0024400` | broad-session ctrl@24400 (stitch base / leg-2 control) | done: identical (257 files, 3 hashes); one rsync stream dropped ("Connection closed") and left 4 partial temp files, removed after a resuming rerun |
 | `data/v8ml-stages-8k64k/s1` | stage-1 `.idx` (23.3 GB) from MN5 + `.bin` symlinks to the JSC s3 `.bin` | done; audited: 531 / 531 identical to MN5 (incl. .bin range hashes through the links) |
 | `data/tokenizers/*`, `data/engram_token_map_256k.npy` | tokenizer-256k-agent / -v2 / -v2-agent, engram map | sha256 identical to MN5 |
 | `datamix/` | opt81 8k64k stage 1 / 2 with JSC paths (+ the MN5 originals, sha256-identical) | done (setup script: 531 + 531 prefixes, 0 missing, weights identical) |
