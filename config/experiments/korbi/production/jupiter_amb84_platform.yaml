@@ -41,6 +41,10 @@ backend:
     TORCHINDUCTOR_CACHE_DIR: ${aux.hybrid_env}/cache/inductor
     # Triton finds no libcuda.so in the JUPITER images otherwise (FLA falls back to CPU, CKDA fails to import)
     TRITON_LIBCUDA_PATH: /.singularity.d/libs
+    # cuBLAS 13.8.0.4 (the MN5 image's version; PyPI nvidia-cublas aarch64 wheel) ahead of the image's 13.2.2: MoonEP's
+    # expert GEMMs use TE's cuBLASLt grouped GEMM (general_grouped_gemm_for_grouped_tensor), which asserts cuBLAS
+    # >= 13.3 (login-GPU check 2026-11-15). The rest is the image's own default LD_LIBRARY_PATH.
+    LD_LIBRARY_PATH: "${aux.hybrid_env}/cublas/nvidia/cu13/lib:/usr/local/cuda/lib64/:/usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/lib/python3.12/dist-packages/torch_tensorrt/lib:/usr/local/cuda/compat/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.singularity.d/libs"
     WANDB_RUN_GROUP: main_mhc4_jupiter
     # MareNostrum's slurm env of the main run (production settings checklist: compile threads), not in slurm/jupiter
     TORCHINDUCTOR_COMPILE_THREADS: "1"
