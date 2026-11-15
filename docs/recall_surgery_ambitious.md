@@ -3164,14 +3164,21 @@ answering, HasAns and CoQA together in the means; **not met by any arm**):
 |---|---|---|---|---|---|---|---|
 | C | 57.66 | 48.21 | 54.36 | 70.17 | 76.07 | 55.93 | 1.8600 |
 | K | 58.13 (+0.47) | 48.36 (+0.15) | 55.39 (+1.03) | 72.00 (+1.83) | 75.57 (-0.50) | 55.80 (-0.13) | 1.8545 (**-0.0055**) |
-| D2 (44822 partial) | 58.87 (+1.21) | 50.00 (+1.79) | 54.61 (+0.25) | 72.85 (+2.68) | 75.10 (-0.97) | 55.33 (-0.60) | 1.8565 (-0.0035) |
+| D2 | 58.84 (+1.18) | 49.55 (+1.34) | 54.61 (+0.25) | 74.03 (+3.86) | 75.10 (-0.97) | 55.33 (-0.60) | 1.8567 (-0.0033) |
+| DK2 | 58.81 (+1.15) | 48.82 (+0.61) | 55.23 (+0.87) | 73.93 (+3.76) | 75.77 (-0.30) | 55.75 (-0.18) | 1.8554 (-0.0046) |
 | M | 57.78 (+0.12) | 47.41 (-0.80) | 56.34 (+1.98) | 74.63 (+4.46) | 76.53 (+0.46) | 54.77 (-1.16) | 1.8634 (+0.0034) |
 | L | 57.85 (+0.19) | 48.29 (+0.08) | 52.88 (-1.48) | 71.43 (+1.26) | 74.07 (-2.00) | 54.91 (-1.02) | 1.8660 (+0.0060) |
 
 * The trend worth following is K's growing loss advantage (valid -0.0011 -> -0.0071) with its recall columns
   drifting up; D2 / DK2 are also below C in loss after their stitch (-0.003 to -0.004). FDA is positive for K / D2 /
   DK2 in the means (+2.0 to +2.7).
-* **Stopped** (lead 19:25): W, Wp, D2h, T at their current point, no further legs.
+* (19:45, all readouts through 44822 in.) DK2 valid vs C: -0.0039 at 41961, -0.0058 at 44822. The mean valid column
+  of small31_paired.py includes the zero-shot readout (+0.03) for D2 / DK2 / D2h; the paired steps after adapting
+  are the comparison.
+* **Stopped** (lead 19:25): W, Wp, D2h, T at their current point, no further legs. Final paired means (all
+  readouts): Wp -0.62 / -0.39 / -0.19 / -0.90 (F1 when answering / HasAns / CoQA / FDA), valid -0.0004;
+  T -0.23 / -0.10 / -0.15 / +1.17, valid +0.0019; D2h -1.69 / +0.10 / -1.30 / +2.10, valid -0.0009 at 41961.
+  All neutral within noise.
 * **Fourth leg** (small31_phase2late4_jupiter, 19:30): C / K / D2 / DK2 from 44822 to 48638 (+5.5 BT; train_iters
   48638 for all four: identical batches), saves / readouts at 46730 / 48638.
   * Priorities C / K 8, D2 7, DK2 6, readouts 5: all below the 84B smoke tests (priority 10), which need a whole
