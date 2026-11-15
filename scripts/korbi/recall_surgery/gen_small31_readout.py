@@ -25,15 +25,17 @@ LATE_STEPS = [38623, 39100]
 LATE2_STEPS = [40053, 41961]
 # + the third leg (small31_phase2late3_jupiter): +3 BT / +3.5 BT after the insertion
 LATE3_STEPS = [43868, 44822]
+# + the fourth leg (small31_phase2late4_jupiter, C / K / D2 / DK2): +4.5 BT / +5.5 BT after the insertion
+LATE4_STEPS = [46730, 48638]
 ARM_STEPS = {"b7": BASE_STEPS, "r3": BASE_STEPS, "r3p": BASE_STEPS, "a0": BASE_STEPS,
              "E": EARLY_STEPS, "Ep": EARLY_STEPS,
-             "C": LATE_STEPS + LATE2_STEPS + LATE3_STEPS, "L": LATE_STEPS + LATE2_STEPS + LATE3_STEPS, "Lp": LATE_STEPS,
+             "C": LATE_STEPS + LATE2_STEPS + LATE3_STEPS + LATE4_STEPS, "L": LATE_STEPS + LATE2_STEPS + LATE3_STEPS, "Lp": LATE_STEPS,
              "M": LATE_STEPS + LATE2_STEPS + LATE3_STEPS, "Mp": LATE_STEPS,
              # §14.8: K / W at +0.5 / +1 / +2 BT; D1 at 39100; D2 zero-shot at 39100 and adapted at 40053
-             "K": [39100, 40053, 41961, 43868, 44822], "W": [39100, 40053, 41961], "D1": [39100],
-             "D2": [39100, 40053, 41961, 43868, 44822],
+             "K": [39100, 40053, 41961, 43868, 44822] + LATE4_STEPS, "W": [39100, 40053, 41961], "D1": [39100],
+             "D2": [39100, 40053, 41961, 43868, 44822] + LATE4_STEPS,
              # DK1: K's branch with rest dropout; DK2: its branches stitched into C@39100 (zero-shot, then adapted)
-             "DK1": [39100], "DK2": [39100, 40053, 41961, 43868, 44822],
+             "DK1": [39100], "DK2": [39100, 40053, 41961, 43868, 44822] + LATE4_STEPS,
              "Wp": [39100, 40053, 41961], "D1h": [39100], "D2h": [39100, 40053, 41961],
              "T": [39100, 40053, 41961]}
 # readouts whose start waits for the run's resolved config instead of the checkpoint (the exporter reads the

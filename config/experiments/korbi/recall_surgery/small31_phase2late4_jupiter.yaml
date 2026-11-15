@@ -1,0 +1,21 @@
+# @package _global_
+# Fourth leg of the late arms C / K / D2 / DK2 (docs/recall_surgery_ambitious.md §14.8; lead 2026-11-15 19:25): from
+# 44822 (+3.5 BT after the insertion at 38146) to 48638 (+5.5 BT), saves / readouts at 46730 (+4.5 BT) and 48638.
+# train_iters 48638 for all four arms: identical batches across them (a new order from 44823 on, as at each leg).
+# small16, priority 8 (below the 84B smoke tests at 10, which need a whole empty host).
+defaults:
+  - small31_phase2late3_jupiter
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 48638
+    exit_interval: 48638
+    save_extra_steps: [46730, 48638]
+
+job:
+  metadata:
+    pool_priority: 8
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.out_root}/${aux.arm}/ckpt/iter_0044822/.metadata
