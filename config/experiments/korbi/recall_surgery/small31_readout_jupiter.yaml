@@ -542,3 +542,23 @@ sweep:
           job.start_condition:
             class_name: FileExistsCondition
             path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31/Wp/ckpt/iter_0041961/.metadata
+        - aux.arm: D1h
+          aux.step: 39100
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31/D1h/ckpt/iter_0039100/.metadata
+        - aux.arm: D2h
+          aux.step: 39100
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31/D2h/current_small31_D2h.yaml
+        - aux.arm: D2h
+          aux.step: 40053
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31/D2h/ckpt/iter_0040053/.metadata
+        - aux.arm: D2h
+          aux.step: 41961
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31/D2h/ckpt/iter_0041961/.metadata
