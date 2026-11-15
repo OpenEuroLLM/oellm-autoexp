@@ -1,4 +1,152 @@
+# @package _global_
+# Phase 2 of the small-scale testbed (docs/recall_surgery_ambitious.md §14), LATE arms -- PREPARED, launched when b7
+# reaches its late checkpoint (default the end, iteration 38146 = 20 BT) and E / Ep their end (9535). All five start
+# from b7@late (scripts/korbi/recall_surgery/small31_insert.sh) and train 0.5 BT (954 steps) on the same data
+# (train_iters 40053 for all five: the late data order is shared among them, not with b7's own end):
+#   C    b7 continued (the control)
+#   L    3:1 random attention inserted late (mixers 4 / 12 / 20), crossfade as E
+#   Lp   paired random attention inserted late (mixers 1 / 9 / 17), crossfade as Ep
+#   M    E's trained new attention (E@9535) transplanted at mixers 4 / 12 / 20 as crossfade ckda_branch branches
+#        (transplant_attention.py; alpha 1 -> 0 over 200 steps, then the attention alone; exported as plain attention)
+#   Mp   Ep's, at mixers 1 / 9 / 17
+# Readouts at +0.25 BT (38623) and +0.5 BT (39100) against b7@38146.
+#   for a in C L Lp; do ARM=$a IT=38146 bash scripts/korbi/recall_surgery/small31_insert.sh; done
+#   for a in M Mp; do ARM=$a IT=38146 DONOR_IT=9535 bash scripts/korbi/recall_surgery/small31_insert.sh; done
+#   PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor --monitor-state-dir \
+#       /e/scratch/e-sta-openeurollm/poeppel1/pool_state --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/small31_phase2late_jupiter --yes
+defaults:
+  - small31_jupiter
+  - _self_
 
+aux:
+  arm: C
+  late_it: 38146
+
+backend:
+  megatron:
+    train_iters: 40053
+    # the late arms run past b7's train_iters (38146): the scheduler's total-samples check fails at load without the
+    # override (2026-11-15: every late arm crash-looped, "class input value 2563392 and checkpoint value 2441344 for
+    # total number of iterations do not match"). lr is constant (min_lr = lr), so the schedule is unchanged; the
+    # per-group lr bounds are reset after the load (Megatron 2c8a1a0f4)
+    override_opt_param_scheduler: true
+    exit_interval: 39100
+    save_extra_steps: [38623, 39100]
+    save_interval: 100000
+    exit_on_missing_checkpoint: true
+
+job:
+  metadata:
+    # 2026-11-15: C / M / Mp first (45), then L / Lp (38); the E / Ep extension below (30)
+    pool_priority: 45
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.out_root}/${aux.arm}/ckpt/latest_checkpointed_iteration.txt
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: C
+        # late random insertion, the same function-preserving recipe as E / Ep (crossfade branches, 200 steps)
+        - aux.arm: L
+          job.metadata.pool_priority: 38
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 200
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+        - aux.arm: Lp
+          job.metadata.pool_priority: 38
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [3, 19, 36]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 200
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+        # crossfade branches on b7's complex_kda sublayers (the layer pattern stays b7's)
+        - aux.arm: M
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 200
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+        - aux.arm: Mp
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [3, 19, 36]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: true
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 200
+          backend.megatron.ckda_branch_alpha_end: 0.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+        # §14.8 arm K: ADDITIVE kvshare attention (CKDA at full weight, alpha 1, gamma 0 at insertion): new q / gate / o
+        # at the E positions reading the keys / values of the nearest preceding attention layer of b7
+        - aux.arm: K
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 34]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+          backend.megatron.check_for_nan_in_loss_and_grad: true
+        # §14.8 arm W: every dense MLP widened 3584 -> 4608, function-preserving (zero fc2 columns)
+        - aux.arm: W
+          backend.megatron.ffn_hidden_size: 4608
+          backend.megatron.check_for_nan_in_loss_and_grad: true
+        # §14.8 arm D1: ADDITIVE attention branches (copies of the preceding attention layers, gamma 0) trained with
+        # HEAVY dropout on the rest (complex_kda terms, attention, complex_kda and MLP sublayer outputs; not the
+        # branches, not Engram): recall has to flow through the new attention
+        - aux.arm: D1
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 42]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: 38146
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_calibrate: false
+          backend.megatron.check_for_nan_in_loss_and_grad: true
+          backend.megatron.ckda_branch_rest_dropout: 0.3
         # §14.8 arm DK1: K's branch (additive kvshare, q / gate / o from the source layer) trained with rest dropout 0.3
         - aux.arm: DK1
           backend.megatron.ckda_branch: kvshare
