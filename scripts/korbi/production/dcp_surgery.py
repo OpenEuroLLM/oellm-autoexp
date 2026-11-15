@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
 import math
 import os
 import pickle
+import shutil
 
 import torch
 
@@ -149,16 +151,25 @@ def write_surgery(src, dst, md, replace, append_rows=None, *, tag, log=print, ch
     for f in os.listdir(tmp):
         os.remove(os.path.join(tmp, f))
     os.rmdir(tmp)
-    n_link = 0
+    n_link = n_copy = 0
     for f in os.listdir(src):
         if f.endswith(".distcp"):
-            os.link(os.path.join(src, f), os.path.join(dst, f))
-            n_link += 1
+            s, d = os.path.join(src, f), os.path.join(dst, f)
+            try:
+                os.link(s, d)
+                n_link += 1
+            except OSError as exc:
+                # src and dst can be on different file systems (e.g. a fscratch source and an
+                # e-ext scratch destination); hard links are then impossible, so copy instead.
+                if exc.errno != errno.EXDEV:
+                    raise
+                shutil.copy2(s, d)
+                n_copy += 1
     with open(os.path.join(dst, ".metadata"), "wb") as f:
         pickle.dump(out, f)
     n_chunks = len(plan)
-    log(f"surgery: {n_link} hard links, {len(files)} new file(s), {len(replace)} keys rewritten, "
-        f"{len(append_rows)} keys extended, {n_chunks} tensor chunks")
+    log(f"surgery: {n_link} hard links, {n_copy} cross-device copies, {len(files)} new file(s), "
+        f"{len(replace)} keys rewritten, {len(append_rows)} keys extended, {n_chunks} tensor chunks")
     return out
 
 
