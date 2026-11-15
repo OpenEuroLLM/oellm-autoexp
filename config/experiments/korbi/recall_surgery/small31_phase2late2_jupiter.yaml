@@ -125,3 +125,9 @@ sweep:
           backend.megatron.ckda_branch_gamma_scale: 1.0
           backend.megatron.ckda_branch_calibrate: false
           backend.megatron.check_for_nan_in_loss_and_grad: true
+        # §14.8 arm W': W with the MLP update scale of the 3584-wide model (muon_scale_reference_ffn_hidden_size): the
+        # widening without the +13 % effective-lr confound of MuOwn's sqrt(max(m, n)) scale
+        - aux.arm: Wp
+          backend.megatron.ffn_hidden_size: 4608
+          backend.megatron.muon_scale_reference_ffn_hidden_size: 3584
+          backend.megatron.check_for_nan_in_loss_and_grad: true

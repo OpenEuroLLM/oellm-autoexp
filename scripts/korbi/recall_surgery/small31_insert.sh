@@ -27,6 +27,7 @@
 #   ARM=E IT=1907 small31_insert.sh;  ARM=M IT=38146 DONOR_IT=9535 small31_insert.sh;  ARM=C IT=38146 small31_insert.sh
 #   DK1     (§14.8) K's start (additive kvshare, q / gate / o copied), trained with rest dropout: a hard-link copy of K@IT
 #   DK2     (§14.8) DK1's trained kvshare branches (DONOR_IT of DK1) transplanted into C@IT (SRC_ARM=C)
+#   Wp      (§14.8) W's start (MLPs widened to 4608): a hard-link copy of W@IT, run with the 3584 Muon update scale
 #   ARM=D2 SRC_ARM=C IT=39100 DONOR_IT=39100 small31_insert.sh
 set -euo pipefail
 : "${ARM:?E | Ep}" "${IT:?b7 iteration}"
@@ -37,7 +38,7 @@ B7="*-NL-L-L-L-L-L-L-*-L-L-L-L-L-L-L-N*-L-L-L-L-L-L-L-"
 case "$ARM" in
   E|L|M)   LAYERS=9,25,42; PATTERN="*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"; DONOR=E ;;
   Ep|Lp|Mp) LAYERS=3,19,36; PATTERN="*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"; DONOR=Ep ;;
-  C|W) LAYERS=; PATTERN= ;;
+  C|W|Wp) LAYERS=; PATTERN= ;;
   K|D1) LAYERS=9,25,42; PATTERN= ;;
   D2) LAYERS=9,25,42; PATTERN=; DONOR=D1 ;;
   DK1) LAYERS=9,25,42; PATTERN= ;;
@@ -68,6 +69,7 @@ case "$ARM" in
        --src "$SRC" --dst "$OUT/$it" --branch attention --groups 2 --init attn --layers "$LAYERS" \
        --kv-sources "$REFS" --seed 1234 ;;
   DK1) cp -al "$ROOT/K/ckpt/$it" "$OUT/$it" ;;
+  Wp) cp -al "$ROOT/W/ckpt/$it" "$OUT/$it" ;;
   M|Mp|D2|DK2)
     : "${DONOR_IT:?the donor E / Ep / D1 checkpoint iteration}"
     din=$(printf 'iter_%07d' "$DONOR_IT")

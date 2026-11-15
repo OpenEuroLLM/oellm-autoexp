@@ -33,7 +33,8 @@ ARM_STEPS = {"b7": BASE_STEPS, "r3": BASE_STEPS, "r3p": BASE_STEPS, "a0": BASE_S
              "K": [39100, 40053, 41961, 43868, 44822], "W": [39100, 40053, 41961], "D1": [39100],
              "D2": [39100, 40053, 41961, 43868, 44822],
              # DK1: K's branch with rest dropout; DK2: its branches stitched into C@39100 (zero-shot, then adapted)
-             "DK1": [39100], "DK2": [39100, 40053, 41961, 43868, 44822]}
+             "DK1": [39100], "DK2": [39100, 40053, 41961, 43868, 44822],
+             "Wp": [39100, 40053, 41961]}
 # readouts whose start waits for the run's resolved config instead of the checkpoint (the exporter reads the
 # architecture from <run>/current_*.yaml): D2@39100 is a surgery checkpoint, its run starts after it
 CONFIG_GATED = {("D2", 39100), ("DK2", 39100)}
