@@ -3064,7 +3064,17 @@ existing allocations only, no new submissions). Priority order, recall F1 primar
      scale(reference) / scale(actual) = 1 / 1.134 (per-parameter and batched paths; param groups unchanged).
    * The widening without the lr confound. host108, 8 nodes, after DK1 / W.
 4. **D at rest dropout 0.5:** D1h (attention branch as D1) + D2h (stitched into C@39100), small16.
-5. **T** (learned per-head attention temperature): next, needs Megatron + HF export code.
+5. **T** (learned per-head attention temperature): see below.
+
+* **T** (implemented, 35f5c0598): `attention_head_temperature`. One 1-D parameter per softmax-attention layer
+  (init 1) multiplies the normalized query of each head, after q / k / v are split (fused and unfused qk-norm
+  paths), in the attention param group. HF export: `mixer.head_temperature` (both forward paths). T = b7@38146 (hard
+  links; the parameter is not in the checkpoint, so the partial load keeps the 1s), leg 1 + leg 2, small16.
+* **small16 hosts held** (`pool_ctl hold host003 / host004`): the pool has handover and a 30-min idle exit, and
+  host003 sat idle while host004 was full. Held, neither is released before its job ends (user: use them until
+  then); no Slurm change, no submission.
+* **Spend (17:00):** small16 1269 (excl. ft17b) + 32B pool 227 = **1496 GPU-h**, measured. The cap is lifted for
+  the existing allocations; logging continues.
 
 Placement: host108 runs only 8-node legs of ours (host109 has 4 free nodes, so none can land there), packing 2
 (two 8-node runs on 18 nodes), the guard (`host108_guard.log`) alive for all our names until stopped. W's leg 2
