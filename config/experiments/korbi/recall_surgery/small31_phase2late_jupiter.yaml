@@ -26,6 +26,11 @@ aux:
 backend:
   megatron:
     train_iters: 40053
+    # the late arms run past b7's train_iters (38146): the scheduler's total-samples check fails at load without the
+    # override (2026-11-15: every late arm crash-looped, "class input value 2563392 and checkpoint value 2441344 for
+    # total number of iterations do not match"). lr is constant (min_lr = lr), so the schedule is unchanged; the
+    # per-group lr bounds are reset after the load (Megatron 2c8a1a0f4)
+    override_opt_param_scheduler: true
     exit_interval: 39100
     save_extra_steps: [38623, 39100]
     save_interval: 100000
