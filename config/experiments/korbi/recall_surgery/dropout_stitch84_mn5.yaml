@@ -1,0 +1,102 @@
+# @package _global_
+# 84B dropout-stitch session (docs/recall_surgery_ambitious.md §19; PREPARED 2026-11-15, NOT launched -- gate: the
+# small-scale D2 / DK2 of §14.8 beat C by >= ~2 on F1-when-answering / HasAns / CoQA over their last 2-3 readouts,
+# and the user's go): the small31 arms D1 / D2 / DK1 / DK2 on the ambitious v4 84B model, in the geometry of the 23300
+# broad session (hybrid_v4_broad23k_mn5: phase 1, 8k, gbs 1024 x 8k, lr 3.005e-4 constant, the main run's batches via
+# the reference-layout sampler, 64 nodes per arm, measured 10.6-11.0 s/step), so the broad session's ctrl
+# (v4_broad23k/ctrl: saves 23600 / 24000 / 24400 ckpt_eval, 24800 persistent; readouts done) is the leg-1 control.
+#
+# Leg 1 (23300 -> 24400, 1100 steps = 137.5 main-run steps = 9.2B tokens; small31 D1: 954 steps = 2.5 % of its tokens):
+#   D1     ADDITIVE attention branches on complex_kda 9/25/41/58/74/90 (the 3:1 positions, small31's E layout), each a
+#          copy of the nearest preceding attention layer 0/17/33/50/66/82 (gamma 0: exact at insertion), trained with
+#          ckda_branch_rest_dropout 0.3: dropout on the complex_kda terms of the branch layers and on every other
+#          attention / complex_kda / MoE sublayer output at the mHC write; the branches and Engram undropped (Megatron
+#          489a9cbf8; exact under full recompute, test_rest_dropout_under_full_recompute_matches_no_recompute)
+#   DK1    the same with ADDITIVE kvshare branches (q / gate / o / q norm copied from the source layer; keys / values =
+#          the source's at run time: no extra KV cache at inference)
+#   D1h    (optional) D1 at rest dropout 0.5
+# Leg 2 (24400 -> 24800, 400 steps, no dropout; the batches ctrl trained on from 24400):
+#   ctrl2  the broad ctrl's 24400 on today's code: the paired control (and the code-drift check against ctrl's logged
+#          24401-24800 losses / its 24800 readout)
+#   D2     ctrl@24400 + D1@24400's trained branches (+ gamma + optimizer states, transplant_attention.py) -- the stitch
+#   DK2    ctrl@24400 + DK1@24400's kvshare branches
+#   D2h    (optional) ctrl@24400 + D1h@24400's branches
+# Start checkpoints: scripts/korbi/recall_surgery/ds84_surgery.sh (1-node pool jobs ds84_surgery_mn5) write
+# <aux.root>/<arm>/ckpt/iter_N + tracker; each arm's start_condition is its own tracker (base config), so all arms can
+# be enqueued at once: D1 / DK1 / ctrl2 start when d6 / dk6 / ctrl2 are done, D2 / DK2 when d2 / dk2 have stitched the
+# leg-1 exit saves. load = save = <aux.root>/<arm>/ckpt (pool restarts resume from the arm's own newest save).
+# Branch settings as small31 D1 / DK1 (no calibration, attention lr x1, gamma_scale 1).
+#
+#   cd $R/autoexp_ds84 && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/<mn5_pool_p264|mn5_pool_c136> \
+#       --config-name experiments/korbi/recall_surgery/dropout_stitch84_mn5 --yes [slurm.sbatch.account=cns143 \
+#       slurm.sbatch.qos=acc_xlarge]
+# (aux.only defaults to the five main arms; the optional pair: "aux.only=[D1h,D2h]"; dry run: --dry-run --dry-run-root $D)
+defaults:
+  - ../production/hybrid_v4_broad23k_mn5
+  - _self_
+
+aux:
+  suite: dropout_stitch84
+  arm: D1
+  only: [D1, DK1, ctrl2, D2, DK2]
+  it: 23300
+  start: 23300
+  steps: 1100
+  root: ${aux.main_root}/production/dropout_stitch84
+  dir: ${aux.arm}
+
+backend:
+  megatron:
+    # a NaN step raises instead of poisoning the weights (small31 C at 41062)
+    check_for_nan_in_loss_and_grad: true
+    ckda_branch_calibrate: false
+
+job:
+  name: ds84_${aux.dir}
+  est_step_time_s: 12.0
+
+sweep:
+  type: product
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: D1
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_rest_dropout: 0.3
+        - aux.arm: DK1
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33, 50, 66, 82]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_rest_dropout: 0.3
+        - aux.arm: D1h
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_rest_dropout: 0.5
+        - aux.arm: ctrl2
+          aux.start: 24400
+          aux.steps: 400
+        - aux.arm: D2
+          aux.start: 24400
+          aux.steps: 400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        - aux.arm: DK2
+          aux.start: 24400
+          aux.steps: 400
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_kv_source_layers: [0, 17, 33, 50, 66, 82]
+          backend.megatron.ckda_branch_num_query_groups: 2
+        - aux.arm: D2h
+          aux.start: 24400
+          aux.steps: 400
+          backend.megatron.ckda_branch: attention
+          backend.megatron.ckda_branch_layers: [9, 25, 41, 58, 74, 90]
+          backend.megatron.ckda_branch_num_query_groups: 2

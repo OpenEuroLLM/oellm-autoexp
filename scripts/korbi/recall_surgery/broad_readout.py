@@ -69,6 +69,13 @@ SESSIONS = {
             "root": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad23k",
             "prefix": "v4b23k", "snapshot": "autoexp_v4b23k1", "it": 23300, "steps": "400,800,1500",
             "dec_steps": "1600"},
+    # 84B dropout-stitch session (§19, dropout_stitch84_mn5): D1 / DK1 / D1h 23300 -> 24400 (+300 / +700 / +1100),
+    # ctrl2 / D2 / DK2 / D2h 24400 (the stitched start, +1100) -> 24800 (+1500); compare with the broad ctrl's saves
+    # (--dirs v4b23k_ctrl_fp8_<step>). A stitched start exports once its run has launched (its current_*.yaml).
+    "ds84": {"arms": ("D1", "DK1", "ctrl2", "D2", "DK2", "D1h", "D2h"),
+             "root": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/dropout_stitch84",
+             "prefix": "ds84", "snapshot": "autoexp_ds84", "it": 23300, "steps": "300,700,1100,1500",
+             "dec_steps": None},
     "p2": {"arms": ("ctrl", "kv8_lr4", "post4_lr4", "kv8_post4_lr4", "conv_lr4", "kv16_lr8", "k6_L49"),
            "root": "/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_broad",
            "prefix": "v4broad", "snapshot": "autoexp_v4broad1", "it": None, "steps": None, "dec_steps": None},
@@ -86,8 +93,10 @@ SUITES = {
     "all": "config/eval_tasks/ckdab_fast_belebele.yaml",
     "fast": "config/eval_tasks/ckdab_fast.yaml",
     "belebele": "config/eval_tasks/ckdab_belebele.yaml",
+    # + the recall suite (SWDE / FDA / squad_completion): the §19 dropout-stitch readouts
+    "recall": "config/eval_tasks/ckdab_recall_full.yaml",
 }
-N_ROWS = {"all": 27, "fast": 3, "belebele": 24}
+N_ROWS = {"all": 27, "fast": 3, "belebele": 24, "recall": 30}
 # runtime env per arm (the eval-time switches a training change needs because the export does not carry it)
 ARM_ENV = {"k6_L49": {"OELLM_ENGRAM_OUT_SCALE": "0.0", "OELLM_ENGRAM_SCALE_LAYERS": "49"}}
 # crossfade hand-over of conv_lr4 / cgqa_lr4 when the run's config cannot be read (both suites' schedule)
@@ -459,7 +468,7 @@ def main(argv=None) -> int:
 
     def common(p):
         p.add_argument("--session", choices=sorted(SESSIONS), default="23k",
-                       help="23k (default: from 23300, 4 arms) or p2 (superseded phase-2 plan)")
+                       help="23k (default: from 23300, 4 arms), ds84 (dropout stitch, §19) or p2 (superseded)")
         p.add_argument("--arms", default=None, help="comma list (default: the session's arms)")
         p.add_argument("--it", type=int, help="the start iteration IT (default: the session's; p2: required)")
         p.add_argument("--steps", help="comma list relative to --it (default 23k: 400,800,1500 unless --abs-steps "

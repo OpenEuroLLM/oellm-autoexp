@@ -3320,3 +3320,120 @@ Recall suite (0-shot, `contains`; §15), no 32B rows:
 5. **Lead for surgery:** target the RC/coreference pair (CoQA, SQuAD v2, Winogrande, WSC), with the generative
    precision rows (dyck, operators, mgsm_en CoT) as secondary probes that cost no new data. The belebele average and
    SWDE/FDA are not where ambitious lags.
+
+## 19. 84B dropout-stitch session: D2 / DK2 on the big model (PREPARED 2026-11-15, not launched)
+
+User 2026-11-15: "So D2 in large is promising? Can / should we try that?" and "tomorrow around noon, we'll get a MN5
+host". This section is the 84B version of the small-scale arms D1 / D2 / DK1 / DK2 (§14.8), prepared so it can start
+on that host. Nothing is enqueued.
+
+**Gate (start only if both hold):**
+* the small-scale D2 or DK2 beats C by >= ~2 points on F1 when answering, HasAns F1 and CoQA F1, as the mean over its
+  last 2-3 readouts (through the third leg, 43868 / 44822);
+* the user's go.
+
+**Geometry: the 23300 broad session (§10), not the latest main-run step.**
+* Reason 1: every surgery result so far (§2, §10) is at 23300-23500, and the goal asks for the proof at that scale.
+* Reason 2: the broad session's ctrl already exists as the leg-1 control: `v4_broad23k/ctrl` with saves 23600 / 24000 /
+  24400 (ckpt_eval) and 24800 (persistent), and readouts done.
+* Phase 1, 8k sequences, gbs 1024 x 8k, lr 3.005e-4 constant, the main run's batches (reference-layout sampler), 64
+  nodes per arm. Measured 10.6-11.0 s/step for the broad arms; ~12 s/step is assumed with the six branches.
+* A fresh render of the broad ctrl matches the arguments it ran with (`config-mn5-pool-p264.0754.yaml`); the new arms
+  differ only by the branch flags and `check_for_nan_in_loss_and_grad` (no numerical effect).
+
+**Arms** (`config/experiments/korbi/recall_surgery/dropout_stitch84_mn5.yaml`):
+
+| arm | start | steps | what |
+|---|---|---|---|
+| D1 | main 23300 + surgery `d6` | 1100 (to 24400) | additive attention branches on CKDA 9 / 25 / 41 / 58 / 74 / 90, copies of attention 0 / 17 / 33 / 50 / 66 / 82 (gamma 0), `ckda_branch_rest_dropout` 0.3 |
+| DK1 | main 23300 + surgery `dk6` | 1100 | the same with additive kvshare branches (q / gate / o / q norm copied from the source, keys / values = the source's) |
+| ctrl2 | broad ctrl@24400 (hard links) | 400 (to 24800) | the paired control of leg 2 on today's code; also the code-drift check against ctrl's logged 24401-24800 losses and its 24800 readout |
+| D2 | ctrl@24400 + D1@24400's branches (surgery `d2`) | 400 | the stitch, no dropout |
+| DK2 | ctrl@24400 + DK1@24400's branches (`dk2`) | 400 | the kvshare stitch, no dropout |
+| D1h / D2h (optional) | as D1 / D2 | 1100 / 400 | rest dropout 0.5 (only if the small-scale D2h beats D2) |
+
+* **Positions:** the six 3:1 positions, as small31's E layout (3 branches in 24 mixers there, 6 in 48 here: 12.5 % ->
+  25 % attention in both). The source of each branch is the nearest preceding attention layer, as small31 D1 / K.
+  * The alternative was the copy-path positions right after attention 17 / 33 / 50 / 66 (§3.5b; the broad session's
+    post4 at 19 / 35 / 52 / 68). Not chosen: it is not what the small-scale result validates.
+* **Branch settings as small31 D1 / DK1:** no calibration, attention lr x1, gamma_scale 1, CKDA at full weight
+  (alpha 1). The early CKDA layers (3 / 5 / 7) and every complex eigenvalue stay. Engram is untouched (user: keep
+  Engram); the rest dropout does not touch it.
+* **Leg 1 length:** 1100 steps = 9.2B tokens. Small31 D1 trained 954 steps (2.5 % of its tokens); this is 0.6 % of
+  the 84B run's 23300 steps.
+* **Start checkpoints:** `scripts/korbi/recall_surgery/ds84_surgery.sh` (1-node pool jobs
+  `config/experiments/korbi/recall_surgery/ds84_surgery_mn5.yaml`) writes `<root>/<arm>/ckpt/iter_N` + tracker. Root:
+  `/gpfs/scratch/ehpc533/hybrid_nucleus/production/dropout_stitch84`.
+  * `d6` / `dk6`: `add_ckda_branch.py --init attn` / `--branch kvshare --kvshare-init copy` + `verify`.
+  * `ctrl2`: hard links.
+  * `d2` / `dk2`: `transplant_attention.py` (branch donor, input-norm fold); they wait for D1's / DK1's tracker = 24400.
+  * Each training arm's start gate is its own tracker, so all arms and surgeries can be enqueued at once.
+* **Readouts:** `broad_readout.py launch --session ds84 --rounds recall`. The new round `recall` is
+  `config/eval_tasks/ckdab_recall_full.yaml`: CoQA, Winogrande, SQuAD v2 10-shot, 24 belebele, SWDE / FDA /
+  squad_completion. Samples are logged, so `squad_uniform.py` gives F1 when answering.
+  * Steps: D1 / DK1 at 24400 (dropout off at eval) and optionally 23600 / 24000; D2 / DK2 / ctrl2 at 24400 (zero-shot
+    stitch) and 24800.
+  * Compare against the broad ctrl's v4b23k_ctrl_fp8_<step> (`table --dirs ...`).
+  * A stitched start exports once its run has launched (export_run.sh needs the run's current_*.yaml).
+
+**Checks done (2026-11-15):**
+* **`ckda_branch_rest_dropout` on the 84B stack.**
+  * The 84B uses per-sublayer mHC (no `mhc_per_layer`), so every sublayer output goes through the mHC write that the
+    option drops. MoE sublayers are dropped there too; Engram layers are not TransformerLayers.
+  * The main run trains with `--recompute-granularity full`. New test
+    `test_rest_dropout_under_full_recompute_matches_no_recompute[attention|kvshare]` (Megatron 28c5f5303): recompute
+    vs not gives 0 difference in output, input grad and branch grads; another seed gives 0.79 relative difference
+    (the dropout is active).
+  * Passed with the existing rest-dropout and kvshare-recompute tests on the JUPITER login GH200, pt2512 image (the
+    local TE install has a libcudart 12/13 clash).
+* **Surgery code:** `add_ckda_branch.py selftest` (incl. --init attn and the kvshare chain) and `dcp_surgery.py
+  selftest` pass locally. Dry runs of both configs render (7 + 7 jobs). The script's DRY mode prints the intended
+  commands.
+* **Eval support:**
+  * The HF export handles `ckda_attn` (D2) and `ckda_kvshare` (DK2; testbed commit 6bab889c).
+  * vLLM had `ckda_attn` and the replacing `kvshare` but not the additive `ckda_kvshare`. Added (vLLM d25adee662: a
+    CKDA + kvshare-branch block, weight names `mixer.ckda.layer.*` / `mixer.attn.*`, the branch wired to its source's
+    XSA values).
+  * **Not yet run against HF.** `vllm_parity.py tiny --components --only ckda_kvshare,ckdab_addkv_mix` (new variants)
+    needs the MN5 vLLM environment: 1 node, ~10 min, `vllm_parity_mn5` aux.mode=components. Until it passes, DK2
+    readouts use the HF backend.
+  * The vLLM commit is local only, not pushed and not in the superproject pointer. The MN5 snapshot gets it via
+    sync_to_marenostrum.sh.
+
+**Timeline on the host (T0 = host start, after its preflight):**
+
+| | 264-node p264 host (4 x 64) | 136-node c136 host (2 x 64) |
+|---|---|---|
+| surgeries d6 / dk6 / ctrl2 (1 node each, parallel) | T0 + 0.5 h | T0 + 0.5 h |
+| D1 + DK1 (40 min start-up + 1100 x ~12 s) | T0 + 4.9 h | T0 + 4.9 h |
+| ctrl2 (40 min + 400 x 11 s), parallel to leg 1 | T0 + 2.5 h | after leg 1: T0 + 7 h |
+| stitch d2 / dk2 (~20 min) | T0 + 5.3 h | T0 + 5.3 h |
+| D2 + DK2 (40 min + 400 x 11 s) | T0 + 7.3 h | T0 + 7.3 h (ctrl2 after: + 2 h) |
+| last readouts (export ~0.5 h + rows ~1 h) | ~T0 + 9 h | ~T0 + 10-11 h |
+
+* Node-hours: D1 / DK1 2 x 64 x 4.4 h = 563, ctrl2 64 x 2 = 128, D2 / DK2 2 x 64 x 2 = 256. Total ~950 node-h
+  (~3,800 GPU-h), + ~20 node-h of readouts. The optional D1h / D2h pair adds ~410.
+* On the p264 host the fourth 64-node slot can take the optional D1h.
+
+**Open risks:**
+1. **Code drift since 11-12.** If ctrl2's losses differ from the broad ctrl's at 24401+, the old ctrl readouts are not
+   the paired control; ctrl2 then is.
+2. **MoE routing during leg 1.** The expert-bias updates see dropout-time inputs in D1 / DK1. D2 / DK2 take only the
+   branches from D1 / DK1 (the rest is ctrl's), so this does not reach the stitched models.
+3. **vLLM `ckda_kvshare` is untested** (above).
+4. **Disk:** the arms write rolling saves every 400 steps (latest kept) + one persistent save at the exit: ~1.1 TB
+   each, ~6-8 TB peak. The broad session's quota note (§10, 26.5 TB free on 11-12) has to be re-checked.
+5. **Calibration of branch magnitude:** the small-scale lr was 1.8e-3, here 3.0e-4 for every parameter. The branches'
+   gamma grows at the run's lr, as the rest does. At small scale D1's gamma reached 0.11-0.19 after 954 steps.
+
+**Could the test run on a 256-node JUPITER job of <= 5 h instead? No.**
+* **Data to move:** an 84B checkpoint is 1083 GiB (iter_0023300: 1024 files, measured). The stitch needs two of them
+  (main@23300 and ctrl@24400): ~2.2 TB. MN5 -> JUPITER ran at ~1.3 GB/s aggregate (10 x 16 hpctransfer jobs), so
+  ~30-60 min before anything starts. The paired batches also need the stage-1 opt81 datamix and the agenttok data
+  with identical index caches on JSC (not verified there).
+* **Stack:** the 84B training stack has never run on JUPITER GH200.
+  * The MoE dispatcher (MoonEP / HybridEP builds), the CuTe mHC / CKDA kernels at this scale and the fsdp_dtensor 84B
+    load are untested there.
+  * The JUPITER pt2512 image's TE 2.10 FusedAdam saves non-sharded state (the small31 resume bug, §14.6).
+* **Time:** a first bring-up plus 1100 + 400 steps (~3 h of training even with four 64-node arms in parallel) does not
+  fit in 5 h. The MN5 host is the place for it.
