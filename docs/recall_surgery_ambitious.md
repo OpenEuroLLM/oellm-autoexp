@@ -3186,6 +3186,8 @@ answering, HasAns and CoQA together in the means; **not met by any arm**):
     from smoke_b when smoke_a ends.
   * DK2_44822's missing rows are completing in its running readout. No new host was submitted (squeue: host003 /
     host004 only).
+  * **Running since 19:45** on host004 (runs 0308-0311; smoke_a on host003). First step 44823 on identical batches:
+    C 1.9954, K 1.9905 (-0.0049), D2 1.9931 (-0.0023), DK2 1.9908 (-0.0046). ETA 48638 ~21:00, readouts ~21:45.
 
 ### 16.1 Results (2026-11-14 23:00)
 
