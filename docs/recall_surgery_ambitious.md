@@ -3070,6 +3070,12 @@ existing allocations only, no new submissions). Priority order, recall F1 primar
   (init 1) multiplies the normalized query of each head, after q / k / v are split (fused and unfused qk-norm
   paths), in the attention param group. HF export: `mixer.head_temperature` (both forward paths). T = b7@38146 (hard
   links; the parameter is not in the checkpoint, so the partial load keeps the 1s), leg 1 + leg 2, small16.
+  * The first launch failed at load ("Missing key in checkpoint state_dict: ...self_attention.head_temperature"):
+    the fsdp_dtensor load is strict on model keys, so the partial-load assumption was wrong.
+    `add_head_temperature.py` (ec1cf6d0) writes ones + zero Adam states for the three attention layers. Relaunched:
+    **38147 = 1.721098 = C exactly**, 38148-38152 within 1e-4 of C.
+  * First steps of the other new arms: DK1 2.375 / 2.393 / 2.472 / 2.528 (rest dropout, as D1); Wp 1.72193 / 1.76491
+    (as W); D1h 4.00 -> 3.77 at grad norm 8.3 -> 5.5 (rest dropout 0.5).
 * **small16 hosts held** (`pool_ctl hold host003 / host004`): the pool has handover and a 30-min idle exit, and
   host003 sat idle while host004 was full. Held, neither is released before its job ends (user: use them until
   then); no Slurm change, no submission.
