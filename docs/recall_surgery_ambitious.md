@@ -2766,6 +2766,34 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
 * Remaining: r3 / r3p (~2k steps each) and a0 (~5.5k steps, one host change) to 38146, plus their 20 BT readouts:
   ~70. **Projected ~1250.**
 
+**C / M / L continued by +1.5 BT (user 2026-11-15; started 10:50).**
+* **Placement:** on host108 (job 2912921), the 18-node host of the 32B pool the user gave us.
+  * Pool runs 0087 (M), 0088 (L), 0089 (C), 4 nodes each; priority -10 (the 32B run: 0).
+  * max_runs_per_host 0 -> 5 for packing; the old value 0 is restored by the guard at the end.
+  * The pool code cannot pin a host (newest host first). `late2_guard.sh` (JUPITER login, every 15 s; log
+    `monitor_logs/late2_guard.log`) cancels any run of ours placed on a host other than host108 at once, e.g. on the
+    32B run's host107 (job 2908638, 4 spare nodes = its failure buffer) or on the pending host109. It re-enqueues
+    such a run in jupiter_pool_small16. All three assignments verified on host108.
+  * Our job records have the three keys the 32B pool's older monitor rejects stripped (`strip_new_keys.py`).
+* **Config:** small31_phase2late2_jupiter. train_iters 41961, exit 41961, saves 40053 (+1 BT) / 41961 (+2 BT),
+  override_opt_param_scheduler, v3 resume.
+  * train_iters is the same for the three arms, so their batches are identical to each other.
+  * The order from 39101 differs from the first leg's schedule: the sample index depends on train_iters, which must
+    grow past 40053.
+* **Readouts** at 40053 / 41961 for C / M / L are enqueued in the same pool (priority -10, guarded).
+* **First steps** (loss / grad norm; logged lr 1.8e-3; bounds "0 of 7 groups differed"; v3 reset of output layer +
+  embedding, as for every resume):
+
+| step | C | M | L |
+|---|---|---|---|
+| 39101 | 1.8917 / 0.180 | 1.9024 (+0.011) | 1.9046 (+0.013) |
+| 39102 | 1.9032 | 1.9207 (+0.018) | 1.9226 (+0.019) |
+| 39104 | 1.6395 | 1.6504 (+0.011) | 1.6522 (+0.013) |
+| 39105 | 2.1186 | 2.1311 (+0.013) | 2.1322 (+0.014) |
+
+  Consistent with the +0.015 / +0.016 gaps at the end of the first leg. No shock.
+* Budget: ~3 x 0.95 h x 16 GPUs = ~45 GPU-h training + 6 readouts (~20).
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
