@@ -2749,6 +2749,23 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
   * late insertion (C / L / M) has not paid off within 0.5 BT;
   * merging early-trained attention late (M / Mp) is no better than random late attention (L / Lp).
 
+**Budget update (2026-11-15 06:50):**
+* Spent: small16 1122 GPU-h excluding ft17b, plus ~60 for b7 on the 32B buffer = **~1180 of 1500**.
+* By arm:
+
+| item | GPU-h |
+|---|---|
+| readouts | 233 |
+| r3 / r3p | 184 / 184 |
+| a0 | 160 |
+| b7 | 143 + ~60 |
+| E / Ep | 90 / 77 |
+| C / M / Mp | 12 each (incl. the crash loop) |
+| L / Lp | 7 / 7 |
+
+* Remaining: r3 / r3p (~2k steps each) and a0 (~5.5k steps, one host change) to 38146, plus their 20 BT readouts:
+  ~70. **Projected ~1250.**
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
