@@ -26,6 +26,10 @@ backend:
     save_interval: 100000
     exit_on_missing_checkpoint: true
     override_opt_param_scheduler: true
+    # 2026-11-15: C hit a sudden NaN gradient at 41062 (healthy losses before, grad norm 0.18); unchecked, the update
+    # made every weight NaN (the cancel-time save 41081 was unusable; resumed from rolling 41000). With the check a NaN
+    # step raises instead (the pool's retry resumes from the last clean save), as for a0 (§14.5). No effect on numerics.
+    check_for_nan_in_loss_and_grad: true
 
 job:
   metadata:
