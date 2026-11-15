@@ -3788,11 +3788,12 @@ cannot hold another 1.1 TB checkpoint plus training saves. Loads stay on fscratc
 **Capture of the next B1 host** (`scripts/korbi/recall_surgery/capture_next_host.sh`). The next 516 is host117
 (job 2925729, StartTime ~02:09:56); host118 (job 2925792) follows at ~05:48. The B1 run is host115 (job 2923572).
 The guard is pool-level only: no `scontrol`, no `scancel`, no requeue.
-* It sets the B1 pool `handover=false` (so host115 is not retired to host117) and `max_runs_per_host=4` (so the four
-  128-node arms fit). The older B1 pool code has **no per-host hold/freeze**, so the first 128-node `ctrl` run is the
-  keeper: it starts as soon as host117 is live and keeps the host busy; K / Kd01 / DK03 wait for the surgery tracker.
-* It waits for host117's precheck log and >= 384 usable nodes, runs one read-only `srun --overlap` container/GPU check,
-  then enqueues the arms into the B1 pool with our repo's `run_autoexp.py`.
+* It sets the B1 pool `handover=false` (so host115 is not retired to host117) and `max_runs_per_host=5` (the 1-node
+  surgery plus four 128-node arms fit). The older B1 pool code has **no per-host hold/freeze**, so the 128-node `ctrl`
+  run is the keeper: it is queued at 01:30, before host117 starts, so the host is never idle; K / Kd01 / DK03 wait for
+  the surgery tracker.
+* It waits for host117's precheck log and >= 385 usable nodes, runs one read-only `srun --overlap` container/GPU check,
+  then enqueues the 1-node surgery first and the K arms into the B1 pool with our repo's `run_autoexp.py`.
 * After every arm ends (or `MAX_H`), it restores `handover=true` / `max_runs_per_host=0`. The B1 run on host115 is
   never signalled.
 * `ctrl` starts without the surgery; the K arms are gated on `surgery/DK1/ckpt/latest_checkpointed_iteration.txt = 35900`.
