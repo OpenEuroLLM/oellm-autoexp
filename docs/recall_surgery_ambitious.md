@@ -2692,6 +2692,24 @@ anomalous.
 * **Reading:** at the matched 6 BT, inserting 3:1 attention at 1 BT buys part of the from-scratch 3:1 loss and CoQA
   advantage (E more than Ep), not all of it. The SQuAD deficit is an abstention habit of the early-inserted arms.
 
+**Late arms: training loss vs C on identical batches** (all five reached 39100 at ~06:15 inside the host segment;
+mean of arm - C per window; every arm loads the same b7@38146 with the same v3 reset):
+
+| window | C | M (E's attention) | Mp (Ep's) | L (random, E layout) | Lp (random, Ep layout) |
+|---|---|---|---|---|---|
+| 38147-38246 (crossfade) | 1.9034 | +0.0001 | +0.0001 | +0.0011 | +0.0009 |
+| 38247-38346 (crossfade end) | 1.9279 | +0.0061 | +0.0069 | +0.0089 | +0.0105 |
+| 38347-38623 (to +0.25 BT) | 1.9162 | +0.0214 | +0.0262 | +0.0221 | +0.0316 |
+| 38624-38861 | 1.9244 | +0.0159 | +0.0202 | +0.0169 | +0.0240 |
+| 38862-39100 (to +0.5 BT) | 1.9299 | +0.0147 | +0.0181 | +0.0162 | +0.0213 |
+
+* At 38147 all arms are identical (loss 1.7211): the insertion is function-preserving.
+* Every late insertion costs training loss once the CKDA output is crossfaded out: +0.015-0.021 at +0.5 BT,
+  shrinking ~0.006-0.010 from the +0.25 BT window.
+* The transplanted early-trained attention is only marginally better than a random late insertion: M vs L -0.0015,
+  Mp vs Lp -0.0032 at +0.5 BT. The E layout (mixers 4 / 12 / 20) costs less than the paired Ep layout.
+* For scale: E's whole 6-BT gain over b7 is 0.006 in valid loss.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
