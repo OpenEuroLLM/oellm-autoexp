@@ -1,0 +1,20 @@
+# @package _global_
+# Third leg of the late arms C / M / L (docs/recall_surgery_ambitious.md §14.7; user 2026-11-15 13:25): from 41961
+# (+2 BT after the insertion at 38146) to 44822 (+3.5 BT), readouts at 43868 (+3 BT) / 44822 (+3.5 BT), to see whether
+# M / L cross C. Same placement as small31_phase2late2_jupiter (host108 of the 32B pool, priority -10, late2_guard.sh).
+# train_iters 44822 for all three arms: identical batches across them (a new order from 41962 on, as at 39101).
+# Each arm starts only from its own 41961 save (C's second leg ended later: NaN at 41062, resumed from 41000).
+defaults:
+  - small31_phase2late2_jupiter
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 44822
+    exit_interval: 44822
+    save_extra_steps: [43868, 44822]
+
+job:
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${aux.out_root}/${aux.arm}/ckpt/iter_0041961/.metadata
