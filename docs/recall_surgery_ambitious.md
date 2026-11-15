@@ -3751,3 +3751,57 @@ started.
     live. A taken-over host needs a run of ours on it at all times;
   * the supervisor has `refresh_alloc`, so a `scontrol update NodeList=` shrink is picked up. Its batch node also
     hosts run steps (the 32B run used all 516 nodes, batch node included), so the batch node counts as a run node.
+
+## 20. K-style kvshare on the latest main run and the next 516-node host (2026-11-15/16)
+
+**What the small31 testbed actually chose.** The §14.8 readouts through +5.5 BT (48638) and the latest session
+(2026-11-15 22:23, before the spend limit) agree on the ordering:
+
+* **No arm passed the gate** (>= ~2 points over C on SQuAD F1-when-answering / HasAns / CoQA together).
+* **K (additive kvshare attention) is the best stitch.** It is the only arm with a strict loss improvement
+  (valid -0.0011 -> -0.0071 over +3.5 BT) and its recall rows trend up with it; the last readout at 44822 is
+  +2.7 F1-when-answering / +4.5 HasAns / +2.0 CoQA, with FDA +1.5. One readout carries 2-4 points of noise.
+* **D2 / DK2** keep FDA / squad_completion gains (+2-3 / +4-5) but are at C on CoQA and SQuAD on average.
+* **W' / T / D2h** are neutral. **M / L** (replace/crossfade) are behind.
+* The branch arms were short (99-199 steps); the result rules out a cheap post-fit, not the architecture.
+
+**The intervention to run at 84B.** Add K-style branches to the **latest main run's 35900 rolling save**, not the
+older 23300 broad-session geometry: six 3:1 positions 9 / 25 / 41 / 58 / 74 / 90, each reading the keys / values of
+the nearest preceding attention layer 0 / 17 / 33 / 50 / 66 / 82. q / gate / o / q-norm are copied from the source,
+the input-norm gain is folded, gamma starts at 0, complex_kda stays at full weight (`alpha_end 1.0`, no crossfade,
+no calibration), and there is no extra KV cache at inference. This is the small31 K recipe, not a replacement or a
+crossfade. Engram and the complex eigenvalues are untouched.
+
+**Four paired 128-node arms on the next 516-node host** (`config/experiments/korbi/recall_surgery/kvshare_main_jupiter.yaml`):
+`K` (no rest dropout), `ctrl` (same continuation without branches), `Kd01` (rest dropout 0.1) and `DK03`
+(rest dropout 0.3, the small31 DK1 recipe). 128 nodes x mbs 2 = 256 nodes x mbs 1, so every arm sees the main run's
+batches through the reference-layout sampler. 1000 steps = 67.1 BT (1.7 % of the main run); saves at 36400 / 36900,
+readouts on the six target rows (FDA, SWDE, SQuAD v2, CoQA, Winogrande, Belebele). Four arms = 512 of 516 nodes;
+**no `scontrol update NodeList=` shrink is needed** (the earlier 256-node plan would only fit K + ctrl).
+
+**Surgery** (`config/experiments/korbi/recall_surgery/kvshare_main_surgery_jupiter.yaml`): one 1-node job writes
+`/e/scratch/e-ext-2025e02-108/poeppel1/ambitious_kvshare/surgery/DK1/ckpt/iter_0035900` from
+`/e/fscratch/.../runs/main_v4_jsc/ckpt_rolling/iter_0035900`, with `add_ckda_branch.py --branch kvshare
+--kvshare-init copy` and `verify`. Saves go to e-ext scratch (31 TB free); fscratch is at 99 % (1.8 TB free) and
+cannot hold another 1.1 TB checkpoint plus training saves. Loads stay on fscratch.
+
+**Capture of the next B1 host** (`scripts/korbi/recall_surgery/capture_next_host.sh`). The next 516 is host117
+(job 2925729, StartTime ~02:09:56); host118 (job 2925792) follows at ~05:48. The B1 run is host115 (job 2923572).
+The guard is pool-level only: no `scontrol`, no `scancel`, no requeue.
+* It sets the B1 pool `handover=false` (so host115 is not retired to host117) and `max_runs_per_host=4` (so the four
+  128-node arms fit). The older B1 pool code has **no per-host hold/freeze**, so the first 128-node `ctrl` run is the
+  keeper: it starts as soon as host117 is live and keeps the host busy; K / Kd01 / DK03 wait for the surgery tracker.
+* It waits for host117's precheck log and >= 384 usable nodes, runs one read-only `srun --overlap` container/GPU check,
+  then enqueues the arms into the B1 pool with our repo's `run_autoexp.py`.
+* After every arm ends (or `MAX_H`), it restores `handover=true` / `max_runs_per_host=0`. The B1 run on host115 is
+  never signalled.
+* `ctrl` starts without the surgery; the K arms are gated on `surgery/DK1/ckpt/latest_checkpointed_iteration.txt = 35900`.
+
+**Small16 test before 02:00.** The two existing 16-node hosts are idle and held. Enqueue the 1-node surgery, then
+`aux.only=[smoke_K]` (16 nodes, 5 steps, save at 35905). At gamma 0 the K branch is function-preserving, so the
+smoke's 35901-35905 losses must match the main run's MN5 log within noise; the run also checks the container, memory,
+branch gradients and the JUPITER save/load path. The surgery output and the smoke save go to e-ext scratch.
+
+**Expectation.** The 32B dense reference has ~3x the tokens and ~12x the active parameters; a 67 BT intervention is
+1.7 % of the main run's tokens. The target is a clear move on the six recall rows, not parity with the 32B. If the K
+trend does not appear by 36900, the remaining explanations are data mix / scale, not the mixer alone.
