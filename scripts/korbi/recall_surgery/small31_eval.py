@@ -70,20 +70,35 @@ SQUAD_JSON = os.environ.get(
 
 
 def _offline_squad() -> None:
-    from lm_eval.tasks.ruler import qa_utils
+    # patch requests.get itself: lm-eval's YAML `!function` loader imports qa_utils.py from its file path as its own
+    # module object, so patching lm_eval.tasks.ruler.qa_utils.download_json misses the copy the task calls
+    import requests
 
-    if getattr(qa_utils.download_json, "_small31_offline", False) or not os.path.exists(SQUAD_JSON):
+    if getattr(requests.get, "_small31_offline", False) or not os.path.exists(SQUAD_JSON):
         return
-    online = qa_utils.download_json
+    online = requests.get
 
-    def download_json(url):
-        if url.endswith("/dev-v2.0.json"):
-            with open(SQUAD_JSON) as f:
-                return json.load(f)
-        return online(url)
+    class _Response:
+        status_code = 200
 
-    download_json._small31_offline = True
-    qa_utils.download_json = download_json
+        def __init__(self, path):
+            with open(path, "rb") as f:
+                self.content = f.read()
+            self.text = self.content.decode()
+
+        def json(self):
+            return json.loads(self.content)
+
+        def raise_for_status(self):
+            return None
+
+    def get(url, *args, **kwargs):
+        if str(url).endswith("/SQuAD-explorer/dataset/dev-v2.0.json"):
+            return _Response(SQUAD_JSON)
+        return online(url, *args, **kwargs)
+
+    get._small31_offline = True
+    requests.get = get
 
 
 def run_rows(a) -> int:
