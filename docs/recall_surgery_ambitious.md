@@ -3437,3 +3437,30 @@ on that host. Nothing is enqueued.
   * The JUPITER pt2512 image's TE 2.10 FusedAdam saves non-sharded state (the small31 resume bug, §14.6).
 * **Time:** a first bring-up plus 1100 + 400 steps (~3 h of training even with four 64-node arms in parallel) does not
   fit in 5 h. The MN5 host is the place for it.
+
+### 19.2 host110 takeover: ABORTED (2026-11-15 18:05, user)
+
+* **Plan (user, ~17:45):** host109 keeps the 32B B1 job (run 0111). We take the 32B pool's host110 (job 2919391, 516 nodes,
+  started ~17:34), node-check it and shrink it to 256 working nodes for the 84B attempt.
+* **Aborted:** user ~18:05: "Maybe it's better to do the preparation without time pressure, cancel 110 now and make it all
+  work first." Nothing was changed on job 2919391: no scontrol, nothing written under the pool's `hosts/host110/`. The
+  lead handles the job itself.
+* **Node check done before the abort** (17:47-17:49, one `srun --overlap` step inside the allocation, the pool's
+  precheck_command with `NODECHECK_TIMEOUT_S=120`; files in `/e/scratch/e-sta-openeurollm/poeppel1/host110_check/`):
+  * **All 516 nodes pass nodecheck** (mounts, memory / NUMA, GPU count, ECC, IB link_downed) and the GEMM probe.
+  * The pool's own precheck at 17:37 reported 118 "/e/project1 not readable within 20s" failures. At 120 s none
+    remained, so these were mount stalls at host start (516 nodes stat'ing /e/project1 at once), not faulty nodes.
+  * **11 nodes have slow GEMM** (519-564 TFLOP/s vs ~600 typical): jpbo-011-25, 031-43, 044-37, 045-15, 054-37,
+    065-23, 078-26, 099-22, 104-05, 109-18, 122-44. The slowest is jpbo-054-37 at 519.
+  * **The IB pair probe failed globally at 516 nodes:** "516/2064 clients joined" within its 121 s rendezvous, the same
+    as in the pool's untrusted precheck. That is the probe's rendezvous at scale, not a per-node result, so the fabric
+    was not assessed. A rerun on 264 candidates exited at once (rc 143) and was not retried before the abort.
+  * No set of "5 faulty nodes" shows up at the node-check level.
+* **Lessons for a later takeover of a 32B-pool host:**
+  * the pool's precheck on a fresh 516-node host is not reliable: transient mount stalls; the IB probe cannot
+    rendezvous 2064 clients in 120 s;
+  * the 32B pool's code (checkout `oellm-autoexp` 6f030e50) has no per-host hold. An idle host is released when queued
+    work cannot fit it for `insufficient_grace_s` (900 s), and handover can retire a busy host once three hosts are
+    live. A taken-over host needs a run of ours on it at all times;
+  * the supervisor has `refresh_alloc`, so a `scontrol update NodeList=` shrink is picked up. Its batch node also
+    hosts run steps (the 32B run used all 516 nodes, batch node included), so the batch node counts as a run node.
