@@ -46,6 +46,13 @@ job_state() { squeue -h -j "$JOB" -o "%T" 2>/dev/null | head -1; }
 settings() {
   log "setting B1 pool handover=false max_runs_per_host=5"
   ctl set handover=false max_runs_per_host=5 2>&1 | sed 's/^/  /'
+  # queue the control before the host starts: it is the keeper that stops the idle release, and it
+  # needs no surgery. host115 is full with the B1 run, so it can only land on host117.
+  log "enqueuing the control keeper"
+  (cd "$OUR" && PYTHONPATH=. timeout 600 "$PY" scripts/run_autoexp.py --no-monitor \
+    --monitor-state-dir "$STATE" --pool "$POOL" --config-name "$CFG" --yes \
+    "aux.only=[ctrl]" slurm.sbatch.account=e-sta-openeurollm 2>&1) \
+    | grep -E "^Enqueued|Plan:|rror|Traceback" | sed 's/^/  /'
 }
 settings_done=0
 # wait until SETTINGS_AT unless the host is already running
@@ -87,13 +94,13 @@ srun --overlap --jobid="$JOB" --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=0 \
 # 4. enqueue as many arms as the usable nodes hold; ctrl keeps the host busy
 u=$(host_usable); u=${u:-0}
 if [ "$u" -ge "$FULL_USABLE" ]; then
-  ARMS="K,ctrl,Kd01,DK03"
+  ARMS="K,Kd01,DK03"
 elif [ "$u" -ge "$MIN_USABLE" ]; then
-  ARMS="K,ctrl,DK03"
+  ARMS="K,DK03"
 else
-  ARMS="K,ctrl"
+  ARMS="K"
 fi
-log "enqueuing the 1-node surgery first, then $ARMS into $POOL (usable $u)"
+log "enqueuing the 1-node surgery, then $ARMS into $POOL (usable $u; control already queued)"
 (cd "$OUR" && PYTHONPATH=. timeout 600 "$PY" scripts/run_autoexp.py --no-monitor \
   --monitor-state-dir "$STATE" --pool "$POOL" \
   --config-name experiments/korbi/recall_surgery/kvshare_main_surgery_jupiter --yes \
@@ -103,7 +110,7 @@ log "enqueuing the 1-node surgery first, then $ARMS into $POOL (usable $u)"
   --monitor-state-dir "$STATE" --pool "$POOL" --config-name "$CFG" --yes \
   "aux.only=[$ARMS]" slurm.sbatch.account=e-sta-openeurollm 2>&1) \
   | grep -E "^Enqueued|Plan:|rror|Traceback" | sed 's/^/  /'
-log "enqueued; monitor places the surgery + ctrl on $HOST. K/Kd01/DK03 wait for the surgery tracker."
+log "enqueued; the control keeper is already queued, the surgery and $ARMS follow. K/Kd01/DK03 wait for the surgery tracker."
 
 # 5. restore the B1 pool when every arm has ended (or on timeout / STOP)
 deadline=$(( $(date +%s) + MAX_H * 3600 ))
