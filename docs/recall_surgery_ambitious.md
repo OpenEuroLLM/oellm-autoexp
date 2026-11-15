@@ -2889,6 +2889,94 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
 * Only the three third-leg training runs, already placed on host108, stay in the 32B pool. A retry of one of them
   would also land on host109: the guard would cancel it and re-enqueue it in small16.
 
+**+3 / +3.5 BT result (third leg, 15:20).** Recall-F1 columns first (user 2026-11-15: "mainly about recall F1"):
+
+| arm | step | SQuAD F1 when answering | HasAns F1 | CoQA F1 | FDA | SWDE | SQ compl. | Wino | valid | valid - C |
+|---|---|---|---|---|---|---|---|---|---|---|
+| C | 43868 | 58.84 | 51.22 | 53.50 | 68.0 | 74.7 | 48.9 | 56.43 | 1.8566 | |
+| M | 43868 | 59.62 | 47.20 | 55.22 | 73.0 | 75.4 | 49.8 | 54.93 | 1.8610 | +0.0044 |
+| L | 43868 | 59.61 | 48.56 | 51.61 | 70.9 | 72.1 | 48.2 | 55.01 | 1.8638 | +0.0072 |
+| C | 44822 | 55.50 | 46.98 | 54.06 | 74.2 | 76.7 | (running) | 55.72 | 1.8609 | |
+| M | 44822 | 57.82 | 48.72 | 57.79 | 76.6 | 76.9 | 48.3 | 54.85 | 1.8622 | **+0.0013** |
+| L | 44822 | 56.79 | 48.61 | 53.26 | 75.3 | 75.5 | 47.5 | 55.33 | 1.8658 | +0.0049 |
+
+Training-loss gap vs C per 0.25 BT window (identical batches, leg 3):
+
+| window | M - C | L - C |
+|---|---|---|
+| 41962-42438 | +0.0055 | +0.0065 |
+| 42439-42915 | +0.0059 | +0.0068 |
+| 42916-43391 | +0.0076 | +0.0076 |
+| 43392-43868 | +0.0071 | +0.0084 |
+| 43869-44345 | +0.0052 | +0.0094 |
+| 44346-44822 | **+0.0043** | +0.0090 |
+
+* **M closes in on C; L stalls.** M's valid gap is +0.0013 at +3.5 BT (from +0.0129 at +0.5 BT), and its training
+  gap falls to +0.0043. L's gap has stayed at +0.005-0.009 since +2 BT.
+* On the recall-F1 columns M is at or above C at +3.5 BT: F1 when answering +2.3, HasAns +1.7, CoQA +3.7, FDA +2.4.
+  These are single readouts with ~2-4 points of checkpoint noise (C itself moves 53.5 -> 54.1 CoQA, 58.8 -> 55.5 F1
+  when answering between 43868 and 44822), so this is "no worse than C", not yet a win.
+* The transplanted early-trained attention (M) is clearly better than fresh late attention (L) from +3 BT on.
+* Note: the third leg used train_iters 44822 for all three arms (a new batch order from 41962, identical across
+  them); every leg starts with the v3 resume for all three.
+
+### 14.8 Stitching arms K / W / D (/ T) on the small31 testbed (user 2026-11-15)
+
+**Why.** At scale the attention ratio is not the cause: q35c (3:1, same data) is no better than ambitious on CoQA /
+SQuAD, and late 3:1 insertion (M / L) only recovers to C. These arms test stitching ideas that keep CKDA at full
+weight (nothing replaced or crossfaded out) and leave Engram untouched (user: "we want to keep engrams, so no fading
+out there"). Primary readout: recall F1, in this order: SQuAD v2 F1 when answering, HasAns F1, CoQA F1, FDA / SWDE
+/ squad_completion; Winogrande secondary; valid loss.
+
+**Protocol** (paired with C): from b7@38146 with the v3 resume. Leg 1 = small31_phase2late (train_iters 40053, exit
+39100); leg 2 = small31_phase2late2 (train_iters 41961, saves 40053 / 41961). Same batches as C on each leg,
+override_opt_param_scheduler, NaN check on. Readouts (full small31 set incl. RULER) at 39100 / 40053 / 41961.
+
+**Arms:**
+* **K: additive kvshare attention.**
+  * At the E positions (sublayers 9 / 25 / 42), each reading the keys / values of the nearest preceding attention
+    layer of b7 (0 / 17 / 34): `ckda_branch: kvshare`, crossfade off, alpha 1 (alpha_end 1.0, ramp 0), m 1, gamma 0
+    at insertion.
+  * Initialization (`add_ckda_branch.py --kvshare-init copy`, new): q / gate rows and linear_proj COPIED from the
+    source attention layer, its input-norm gain folded into the q / gate columns against the CKDA layer's input
+    norm; fresh MuOwn states. The branch starts as the source's attention pattern on this layer's input.
+  * No KV cache of its own.
+* **W: wider dense MLPs** (the dense analogue of top-k + 1).
+  * Every MLP layer 3584 -> 4608 (+29 %; +94M parameters), `widen_ffn.py` (new): new fc1 rows N(0, 0.02) (the
+    model's init std), new fc2 columns zero, zero optimizer states for the new slices; run with ffn_hidden_size 4608.
+  * Megatron has one ffn_hidden_size for all layers, so the widening is global. Shapes verified (fc1 4608 x 1280
+    halves, fc2 1280 x 4608).
+* **D: dropout-forced attention, then stitched.**
+  * D1: additive full-attention branches at 9 / 25 / 42, copies of the preceding attention layers (`--init attn`,
+    norm fold), gamma 0, trained on leg 1 with `ckda_branch_rest_dropout: 0.3`.
+    * New Megatron option (489a9cbf8, unit tests, mirror files regenerated): training-time dropout on the CKDA term
+      of the branch layers (inside BranchMix, before the branch is added) and on every other attention / CKDA / MLP
+      sublayer output (at the mHC write).
+    * The branches and the Engram layers are not dropped; mHC is required.
+  * D2: D1's branches (+ gamma + states) stitched into C@39100 with transplant_attention.py's branch-donor mode
+    (input-norm fold), dropout off.
+    * Readouts: zero-shot at 39100 (gated on D2's run config, which the exporter needs for the architecture), and
+      after adapting 39100 -> 40053 on C's batches.
+    * D1 itself is read out at 39100 (no dropout at eval).
+  * A full-attention branch is used because it exports as `ckda_attn`. An additive kvshare branch (K) needs a new
+    export kind (in progress, needed for K's readouts).
+* **T** (learned per-head attention temperature): lower priority; not started (budget).
+
+**Placement** (user: only the existing JUPITER allocations, no new Slurm submissions):
+* All new runs go into jupiter_pool_small16 (host003 / host004 running, no pending host).
+* host108 cannot take new runs safely: in the 32B pool host109 (the 32B run's 516-node host, 4 spare) is the newest
+  host, and the pool places runs on the newest host first; a 4-node run would land on its failure buffer. host108
+  (job 2912921) has been idle since the C / M / L third leg ended (~15:15).
+
+**First steps** (C at 38147-38152: 1.7211 / 1.7643 / 1.8909 / 1.9981 / 1.8681 / 1.8862):
+* K: 1.7211 / 1.7643 / 1.8909 / 1.9980 / 1.8681 / 1.8862, function-preserving (step 1 exact). The copied branches'
+  outputs RMS 0.11-0.54 vs CKDA 0.22-0.47, scaled by gamma ~1e-4 at 38150.
+
+**Budget** (15:25): measured 1382 GPU-h (small16 1206 excl. ft17b + 32B pool 176).
+* Committed remaining (K two legs + 3 readouts, D1 + readout, D2 zero-shot readout + adapt + readout, a0 20 BT
+  readout): ~55. **Projected ~1437.**
+* W would add ~31 (-> ~1468); T ~30 more (-> ~1497). W and T are held for the lead's / user's cap decision.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
