@@ -57,9 +57,14 @@ job:
   name: amb84_jsc_${aux.run}
   base_output_dir: ${aux.main_root}/${aux.run}
   start_condition:
-    class_name: FileExistsCondition
-    path: ${job.base_output_dir}/ckpt_rolling/latest_checkpointed_iteration.txt
-    persistent_pass: true
+    class_name: AndCondition
+    conditions:
+      - class_name: FileExistsCondition
+        path: ${job.base_output_dir}/ckpt_rolling/latest_checkpointed_iteration.txt
+        persistent_pass: true
+      # save-path pre-flight: free quota on the save file system >= aux.save_free_tb (not persistent: re-checked)
+      - class_name: ShellCommandCondition
+        command: bash scripts/korbi/recall_surgery/jsc_quota_check.sh ${job.base_output_dir} ${aux.save_free_tb}
   metadata:
     pool_singleton: null
     pool_priority: 90
@@ -99,8 +104,12 @@ sweep:
           backend.megatron.exit_interval: 35910
           job.base_output_dir: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc
           job.start_condition:
-            class_name: FileExistsCondition
-            path: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc/ckpt/iter_0035905/.metadata
-            persistent_pass: true
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc/ckpt/iter_0035905/.metadata
+                persistent_pass: true
+              - class_name: ShellCommandCondition
+                command: bash scripts/korbi/recall_surgery/jsc_quota_check.sh /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc 2.2
           job.metadata.pool_priority: ${aux.smoke_priority}
           job.est_steps: 5

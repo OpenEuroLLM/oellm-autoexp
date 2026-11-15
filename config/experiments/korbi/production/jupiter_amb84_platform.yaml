@@ -23,7 +23,10 @@ aux:
     ep:
       libs: ${aux.hybrid_env}/pylibs_ep
       sif: MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  # run roots (saves): fscratch until the save-location decision (§19.1: the project fscratch fileset was full)
   main_root: ${aux.amb84}/runs
+  # save-path pre-flight (start condition, jsc_quota_check.sh): free quota >= 2 x one 84B checkpoint (1.08 TiB)
+  save_free_tb: 2.2
   node_check: "off"
   mn5_exclude_file: null
 
@@ -73,3 +76,8 @@ slurm:
     account: e-sta-openeurollm
     partition: booster
     qos: null
+
+job:
+  # reset the inherited start condition (a dict merge would keep the MareNostrum FileExistsCondition's keys); every
+  # JUPITER run config sets its own: tracker condition AND the save-path pre-flight (jsc_quota_check.sh)
+  start_condition: null

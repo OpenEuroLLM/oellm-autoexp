@@ -3643,6 +3643,68 @@ agent; priorities below every testbed run):
 * Reference for the smoke check: MN5's 35901-35910 lines in `configs/main_run/slurm-mn5-pool-p264.0987.log` (loss,
   grad norm).
 
+**Smoke test result (2026-11-15 20:30-20:50, small16).** smoke_a: load rolling 35900, steps 35901-35905, async save at
+35905. smoke_b: reload that save, steps 35906-35910. Compared with MN5's `slurm-mn5-pool-p264.0987.log`, same batches:
+
+| step | MN5 loss | JSC loss | Δ | MN5 grad norm | JSC grad norm |
+|---|---|---|---|---|---|
+| 35901 | 1.102696 | 1.102695 | -1e-6 | 0.252 | 0.198 |
+| 35902 | 1.103165 | 1.102930 | -2.4e-4 | 0.203 | 0.168 |
+| 35903 | 1.090423 | 1.090411 | -1e-5 | 0.196 | 0.172 |
+| 35904 | 1.049714 | 1.049700 | -1e-5 | 0.192 | 0.192 |
+| 35905 | 1.096339 | 1.096291 | -5e-5 | 0.187 | 0.163 |
+| 35906 (1st after reload) | 1.114277 | 1.114255 | -2e-5 | 0.211 | 0.184 |
+| 35907 | 1.092557 | 1.103423 | (+0.011) | 0.424 | 0.326 |
+| 35908 | 1.107616 | 1.107659 | +4e-5 | 0.203 | 0.181 |
+| 35909 | 1.098686 | 1.098722 | +4e-5 | 0.202 | 0.175 |
+| 35910 | 1.093799 | 1.093837 | +4e-5 | 0.353 | 0.173 |
+
+* **35907 is a logging artifact, not a forward difference.** It is the second step after smoke_b's reload. Megatron
+  does not reset the loss accumulator on a process's first logged iteration, so at log_interval 1 the second step
+  after a resume prints the MEAN of the first two (memory "resume first log averages two steps").
+  * (1.114277 + 1.092557) / 2 = 1.103417 vs the logged 1.103423 (Δ 6e-6).
+  * The batch is therefore the same, and the following steps match again.
+  * Not loss-averaging over micro batches: both sides run micro batch 1, and every other step matches to <= 2.4e-4.
+* **Save → load on JUPITER is exact enough to continue.** 35908-35910 after the reload match MN5 within 4e-5. The TE
+  2.18 image writes complete Adam state.
+  * The cold-Adam guard logged "1 parameter partially zero" (word_embeddings rows with zero Adam state = tokens never
+    seen); no non-DTensor state.
+* **Open, not blocking:** JSC grad norms are mostly 10-25 % lower than MN5's, and MN5's spikes (35907 0.424, 35910
+  0.353) are smaller on JSC. The losses after each update still match.
+  * Suspects: reductions that depend on the DP size (1024 vs 64 GPUs), e.g. MoonEP's redundant-expert gradient slots
+    or the Engram sparse-gradient rows counted per rank in the norm.
+  * To settle before a long JUPITER continuation: compare the per-group norms (diag_layer_grad_norms) at the same step.
+
+**Disk quota (smoke_b's save at 35910 failed: "[Errno 122] Disk quota exceeded" after 738 of 1081 GB).**
+* **The limit is the project's fscratch fileset quota.** `df` inside `/e/fscratch/e-sta-openeurollm` showed
+  110T / 110T / 5.4G free.
+  * Deleting the 738 GB partial raised the free space to 743G, so this is the binding limit.
+  * `jutil project dataquota` still reports fscratch "0 used" of 107 TB soft (stale accounting); `jutil user dataquota`
+    has no fscratch row; mmlsquota is not available to users.
+  * Our share is ~4.3 TB (the four transferred checkpoints). The rest of the 110 TB belongs to other team members.
+* **Freed (ours, test artifacts only):** the corrupt partial `smoke_v4_jsc/ckpt/iter_0035910` and, after the
+  comparison above, the smoke save `iter_0035905` with its tracker (1.8 TB).
+* **Tracker safety under async save:** the tracker stayed at 35905, as it must. For fsdp_dtensor async saves the DCP
+  finalize (metadata write, which raises a CheckpointException on any rank's error) runs before Megatron's
+  `iter_finalize_fn`, which writes `latest_checkpointed_iteration.txt` and does the retention deletion. A failed save
+  therefore leaves the tracker and the previous checkpoint untouched; only a partial `iter_N` dir without `.metadata`
+  stays behind.
+  * Retention note: with save_retain_interval 10000, a run's first successful save deletes the previous non-retained
+    persistent iteration. In the run roots that is only a hard link (the `ckpt/main` copies stay).
+* **Pre-flight:** `scripts/korbi/recall_surgery/jsc_quota_check.sh DIR NEED_TB` (df-based) is now part of every JUPITER
+  training run's start condition (AndCondition with its tracker condition):
+  * `aux.save_free_tb` 2.2 = 2 x one 84B checkpoint;
+  * the platform block resets the inherited MareNostrum start condition.
+  A run waits instead of training into a failing save.
+* **Where saves go:** fscratch has ~1.8 TB free, not enough for the dropout-stitch session (D1 / DK1 / ctrl2 / D2 /
+  DK2: ~6-8 TB peak with rolling saves) or the main-run continuation (1.08 TiB per save + rolling).
+  * Options (lead / user to decide):
+    * (a) e-ext-2025e02-108 scratch (24 TB headroom, but the 32B run's file system);
+    * (b) clean up our own old data on `/e/scratch/e-sta-openeurollm` (poeppel1 owns 95.9 TB there per jutil);
+    * (c) ask the team to free fscratch.
+  * Saves stay at `aux.main_root` = fscratch until decided. Moving them is one override:
+    `aux.main_root=<dir>` (main / smoke) or `aux.root=<dir>` (stitch).
+
 **Evals on JUPITER:** the team image `oellm-eval-vllm.sif` has stock vLLM 0.28 (torch 2.13). Our oellm_ambitious
 vLLM fork (v0.32 base, CKDA / Engram / MoE fast paths) has no aarch64 build; building one is a multi-hour job, not
 started.

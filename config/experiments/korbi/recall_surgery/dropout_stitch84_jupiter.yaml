@@ -37,3 +37,14 @@ backend:
   megatron:
     # 128 nodes x 4 GPUs x 2 = gbs 1024 (MN5: 64 nodes x 4 x 4); the sampler keeps the samples per step
     micro_batch_size: 2
+
+job:
+  # the broad session's tracker start condition + the save-path pre-flight (free quota >= aux.save_free_tb)
+  start_condition:
+    class_name: AndCondition
+    conditions:
+      - class_name: FileExistsCondition
+        path: ${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt
+        persistent_pass: true
+      - class_name: ShellCommandCondition
+        command: bash scripts/korbi/recall_surgery/jsc_quota_check.sh ${job.base_output_dir} ${aux.save_free_tb}
