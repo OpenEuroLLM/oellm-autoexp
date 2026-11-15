@@ -37,7 +37,8 @@ aux:
   surgery_root: ${aux.kv_root}/surgery
   run_root: ${aux.kv_root}/runs
   main_root: ${aux.run_root}
-  load_main: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/main_v4_jsc/ckpt
+  # the 35900 save is in ckpt_rolling, not in ckpt (which holds the 35603 persistent save)
+  load_main: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/main_v4_jsc/ckpt_rolling
   load_tracker: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/main_v4_jsc/ckpt_rolling/latest_checkpointed_iteration.txt
   load_surgery: ${aux.surgery_root}/DK1/ckpt
   load_surgery_tracker: ${aux.surgery_root}/DK1/ckpt/latest_checkpointed_iteration.txt
