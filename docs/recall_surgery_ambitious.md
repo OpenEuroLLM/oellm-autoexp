@@ -3006,6 +3006,47 @@ override_opt_param_scheduler, NaN check on. Readouts (full small31 set incl. RUL
   readout): ~55. **Projected ~1437.**
 * W would add ~31 (-> ~1468); T ~30 more (-> ~1497). W and T are held for the lead's / user's cap decision.
 
+**§14.8 first readouts (2026-11-15 16:20).** Recall-F1 columns first; same batches as C:
+
+| arm | step | SQuAD F1 when answering | HasAns F1 | CoQA F1 | FDA | SWDE | SQ compl. | Wino | RULER 4k | valid | valid - C |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| C | 39100 | 58.52 | 51.35 | 57.52 | 77.3 | 74.5 | 50.4 | 56.35 | 75.5 | 1.8620 | |
+| K | 39100 | 57.56 | 51.40 | 56.23 | 77.7 | 75.3 | 48.4 | 55.88 | 75.6 | 1.8609 | **-0.0011** |
+| D1 (dropout-trained, eval without) | 39100 | 59.62 | 52.38 | 57.55 | 78.8 | 75.6 | 51.9 | 54.85 | 74.6 | 1.9079 | +0.0459 |
+| D2 zero-shot (C + D1's branches) | 39100 | 57.38 | 49.20 | 54.07 | 76.5 | 74.3 | 55.3 | 56.04 | 72.9 | 1.8915 | +0.0295 |
+| W | 39100 | 59.35 | 52.74 | 55.89 | 75.9 | 76.6 | (running) | 54.93 | 74.6 | 1.8650 | +0.0030 |
+| M | 39100 | 55.95 | 45.01 | 54.89 | 75.0 | 74.7 | 49.5 | 54.70 | 74.5 | 1.8749 | +0.0129 |
+| L | 39100 | 55.58 | 48.24 | 54.72 | 74.1 | 75.0 | 49.5 | 54.93 | 71.4 | 1.8765 | +0.0145 |
+| C | 40053 | 59.22 | 50.32 | 53.09 | 75.0 | 75.0 | 49.0 | 54.70 | 61.9 | 1.8610 | |
+| K | 40053 | 60.01 | 49.52 | 53.49 | 79.3 | 75.7 | (running) | 54.93 | 61.2 | 1.8602 | **-0.0008** |
+
+Training-loss gap to C (identical batches):
+
+| window | K | D1 (with dropout) | D2 | W | M | L |
+|---|---|---|---|---|---|---|
+| 38147-38346 | -0.0001 | +0.2608 | | +0.0014 | +0.0031 | +0.0050 |
+| 38347-38623 | -0.0007 | +0.1689 | | +0.0019 | +0.0214 | +0.0221 |
+| 38624-39100 | **-0.0011** | +0.1463 | | +0.0024 | +0.0153 | +0.0165 |
+| 39101-39577 | -0.0008 | | +0.0006 | +0.0030 | +0.0134 | +0.0154 |
+| 39578-40053 | -0.0003 | | +0.0003 | +0.0041 | +0.0122 | +0.0149 |
+| 40054-40530 | -0.0000 | | | +0.0053 | +0.0112 | +0.0139 |
+| 40531-41007 | -0.0005 | | | | +0.0099 | +0.0116 |
+
+* **K (additive kvshare) is the first arm that is not behind C.** Training loss is 0.0003-0.0011 below C from the
+  start, valid -0.0011 / -0.0008. Recall F1 equals C within noise at 39100; at 40053 F1 when answering +0.8 and FDA
+  +4.3, HasAns -0.8. Adding attention without taking anything away costs nothing, unlike M / L (+0.013-0.015). It
+  does not yet buy a clear recall gain at +1 BT.
+* **D1:** the dropout-trained model (evaluated without dropout) is 0.046 worse in valid loss, but **level with or
+  above C on every recall row**: F1 when answering +1.1, HasAns +1.0, CoQA = C, FDA +1.5, squad_completion +1.5.
+  Recall, measured this way, is not tied to the LM loss here.
+* **D2 zero-shot** (D1's branches in C): valid +0.030. Recall a little below C except squad_completion (+4.9). After
+  stitching it adapts almost at once: training gap +0.0006 / +0.0003 on 39101-40053. The 40053 readout is running
+  (so far CoQA 55.5 vs C 53.1, FDA 77.9 vs 75.0).
+* **W (wider MLPs):** the gap to C *grows* (+0.0014 -> +0.0053 per window) although W is function-preserving and
+  on identical batches. A likely cause is the MuOwn update scale changing with the matrix shape (fc1 4608 x 1280,
+  fc2 1280 x 4608), which perturbs the trained weights; not verified. At 39100 recall is mixed (F1 when answering
+  +0.8, HasAns +1.4, CoQA -1.6).
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
