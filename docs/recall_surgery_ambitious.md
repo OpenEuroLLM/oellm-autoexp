@@ -2851,6 +2851,44 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
   with the checkpoint.
 * Valid loss is the cleanest signal: the gap to C is +0.011 (M) / +0.013 (L) at 40053, vs +0.013 / +0.015 at 39100.
 
+**+1 / +2 BT result (14:30, all readouts in).** Valid loss and training-loss gaps vs C on identical batches:
+
+| step | C valid | M - C | L - C |
+|---|---|---|---|
+| 39100 (+0.5 BT) | 1.8620 | +0.0129 | +0.0145 |
+| 40053 (+1 BT) | 1.8610 | +0.0108 | +0.0131 |
+| 41961 (+2 BT) | 1.8625 | **+0.0045** | **+0.0060** |
+
+| training window (0.25 BT) | C | M - C | L - C |
+|---|---|---|---|
+| 39101-39577 | 1.9165 | +0.0134 | +0.0154 |
+| 39578-40053 | 1.9182 | +0.0122 | +0.0149 |
+| 40054-40530 | 1.9333 | +0.0112 | +0.0139 |
+| 40531-41007 | 1.9395 | +0.0099 | +0.0116 |
+| 41008-41484 | 1.9142 | +0.0112 | +0.0120 |
+| 41485-41961 | 1.9333 | +0.0063 | +0.0072 |
+
+* Readouts at 41961: C CoQA 55.5 / Wino 55.6 / SQuAD F1 24.2 / RULER 74.8; M 56.0 / 54.5 / 24.1 / 75.6; L 53.8 / 54.4 /
+  24.8 / 72.4. These are equal within the ~4-point checkpoint noise. Full rows: small31_table.py --arms C M L.
+* The gap is still closing, faster in the last 0.25 BT (M +0.0063, L +0.0072). At this rate M / L would reach C
+  around +3 BT; the third leg (to 44822 = +3.5 BT) is running.
+* M (transplanted early attention) stays ~0.001-0.003 ahead of L (random late attention).
+* **C's resume at 41000 is not a handicap for C.** On the identical batches 41001-41030, the relaunch trained
+  slightly *better* than C's original path before its NaN (-0.009 to -0.010). So the 41008-41484 window, if
+  anything, overstates the M / L gaps slightly.
+
+**host109 handover and two more guard catches (14:24-14:27).**
+* The 32B run handed over to host109 at 14:01 (job 2914363, 516 nodes), so host109 became the newest host. Two
+  third-leg readouts were placed there (newest host first):
+  * L_43868: 14:23:54-14:26:01, node jpbo-122-34;
+  * M_43868: 14:24:50-14:27:23, node jpbo-122-40.
+  Spare nodes; the guard cancelled each and re-enqueued it in small16. The 32B run was unaffected (RUNNING, 516).
+* With host109 the newest host, any later placement of ours in the 32B pool would land there. All remaining late
+  readouts are therefore moved to jupiter_pool_small16 (C_43868, C / M / L_44822 cancelled in the 32B pool and
+  enqueued in small16; L / M_43868 there via the guard).
+* Only the three third-leg training runs, already placed on host108, stay in the 32B pool. A retry of one of them
+  would also land on host109: the guard would cancel it and re-enqueue it in small16.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
