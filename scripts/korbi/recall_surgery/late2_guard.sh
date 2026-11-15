@@ -18,12 +18,14 @@ ROOT=${ROOT:-/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31}
 ALLOWED_HOST=${ALLOWED_HOST:-host108}
 OLD_MAX_RUNS=${OLD_MAX_RUNS:-0}
 POLL_S=${POLL_S:-15}
-DONE_STEP=${DONE_STEP:-41961}  # the guard ends once the C / M / L readouts at this step are complete (third leg: 44822)
+DONE_STEP=${DONE_STEP:-41961}  # the guard ends once the readouts of ARMS at this step are complete (third leg: 44822)
+ARMS=${ARMS:-C M L}
+REENQUEUE_TRAIN=${REENQUEUE_TRAIN:-1}  # 0: a misplaced training run is only cancelled (its leg's config is ambiguous)
 STOP=${STOP:-$ROOT/late2_guard.stop}
 log() { echo "$(date '+%F %T') [late2_guard] $*"; }
 ctl() { (cd "$CTL_REPO" && PYTHONPATH=. timeout 120 "$PY" scripts/pool_ctl.py "$P" "$@"); }
 done_all() {
-  for a in C M L; do
+  for a in $ARMS; do
     d=$ROOT/evals/small31_${a}_$DONE_STEP
     [ -f "$d/done/ruler_4096.ok" ] && [ -f "$d/valid_loss.json" ] && [ "$(ls "$d/done" | wc -l)" -ge 7 ] || return 1
   done
@@ -39,7 +41,7 @@ reenqueue() {  # $1 = NAME of the cancelled run
     | grep -E "^Enqueued|rror" | cut -c1-160)
   log "re-enqueued $only ($cfg) in jupiter_pool_small16"
 }
-log "start: pool $P, allowed host $ALLOWED_HOST, done at the $DONE_STEP readouts, restore max_runs_per_host=$OLD_MAX_RUNS at the end"
+log "start: pool $P, allowed host $ALLOWED_HOST, done at the $DONE_STEP readouts of $ARMS, restore max_runs_per_host=$OLD_MAX_RUNS at the end"
 declare -A seen
 while true; do
   for rd in "$P"/runs/*; do
@@ -52,7 +54,10 @@ while true; do
     if [ "$host" != "$ALLOWED_HOST" ]; then
       log "WRONG HOST: $rid $name on $host -> cancel"
       ctl cancel "$rid" 2>&1 | tail -1
-      reenqueue "$name"
+      case "$name" in
+        small31_*) [ "$REENQUEUE_TRAIN" = 1 ] && reenqueue "$name" || log "training run $name: cancelled, not re-enqueued" ;;
+        *) reenqueue "$name" ;;
+      esac
     elif [ -z "${seen[$rid]:-}" ]; then
       seen[$rid]=1; log "ok: $rid $name on $host"
     fi
