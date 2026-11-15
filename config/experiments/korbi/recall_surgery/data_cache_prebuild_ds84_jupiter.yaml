@@ -1,0 +1,78 @@
+# @package _global_
+# Dataset-index prebuild for the JUPITER dropout-stitch session (dropout_stitch84_jupiter: the 23300 broad-session
+# geometry, phase 1, 8k, gbs 1024, stage-1 datamix with JSC paths; docs/recall_surgery_ambitious.md §19.1) on ONE GPU,
+# so D1 / DK1's 128-node starts do not build it on rank 0. Same pattern as
+# production/data_cache_prebuild_amb84_p2_jupiter (the arm's own config + a stand-in model + skip_train). The key does
+# not depend on the branch settings, so one build serves D1 / DK1 / D2 / DK2 / ctrl2. PREPARED, NOT ENQUEUED:
+#   ... run_autoexp.py --no-monitor --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_small16 \
+#       --config-name experiments/korbi/recall_surgery/data_cache_prebuild_ds84_jupiter --yes
+defaults:
+  - dropout_stitch84_jupiter
+  - _self_
+
+aux:
+  ep: 1
+  topk: 2
+  expert_ffn: 256
+  pattern: "*E"
+  nodes: 1
+  only: [ctrl]
+
+backend:
+  torchrun_args:
+    nproc_per_node: 1
+  env:
+    WANDB_MODE: disabled
+  megatron:
+    skip_train: true
+    eval_iters: ${oc.eval:'(int(${backend.megatron.train_iters}) // int(${backend.megatron.eval_interval}) + 1) * 10'}
+    distributed_timeout_minutes: 180
+    micro_batch_size: 1
+    hidden_size: 256
+    ffn_hidden_size: 512
+    kv_channels: 64
+    num_attention_heads: 4
+    num_query_groups: 2
+    num_experts: 4
+    moe_router_topk: 2
+    expert_model_parallel_size: 1
+    engram_table_size: 1024
+    ckda_branch: null
+    ckda_branch_layers: null
+    load: null
+    save: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    account: e-ext-2025e02-108
+
+job:
+  name: amb84_jsc_prebuild_p1
+  base_output_dir: ${aux.amb84}/data_cache_prebuild/p1
+  start_condition: null
+  state_events: []
+  est_steps: 1
+  est_step_time_s: 1800
+  log_events:
+    - name: indices_built
+      pattern: "[after dataloaders are built]"
+      pattern_type: substring
+      match_once: true
+      action: {class_name: CancelAction, reason: "dataset indices built: the prebuild is done"}
+  metadata:
+    pool_singleton: null
+    pool_priority: 60
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ctrl

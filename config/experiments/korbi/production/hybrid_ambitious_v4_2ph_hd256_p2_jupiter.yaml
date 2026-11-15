@@ -1,0 +1,104 @@
+# @package _global_
+# The ambitious v4 main run (ambitious_e360_eng80_v4_2ph_hd256, phase 2: 64k, gbs 1024) continued on JUPITER
+# (docs/recall_surgery_ambitious.md §19.1; user 2026-11-15: "prepare everything so that we can continue / fix ambitious
+# on jupiter"). PREPARED, NOT ENQUEUED.
+#
+# Recipe = the MareNostrum render of the last segment (platform swap: jupiter_amb84_platform.yaml) (hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5, run
+# mn5-pool-p264.0987: 36000 logged, rolling save 35900); only the platform changes:
+#   * container: JUPITER te218-fa3 (torch 2.11 nv26.02, TE 2.18 -- its FusedAdam keeps the DTensor sharding of the
+#     Adam state, so JUPITER saves are complete; TE 2.10 / pt2512 wrote rank 0's shard only, §14.6)
+#   * extra libs (aux.hybrid_env on fscratch): MoonEP ec3eb8b built for aarch64 sm90 in that image, liger 0.8.4 and
+#     emerging_optimizers 0.2.0 (the MN5 image's version, copied from it; the JUPITER image ships 0.1.0)
+#   * data: the JSC mirror (stage 2 = v8ml-stages/s3, byte-identical to MN5: jsc_data_audit.py), the datamix with JSC
+#     paths and identical weights (jsc_ambitious84_setup.sh), the same tokenizer / engram map (sha256-identical)
+#   * checkpoints: fscratch copies (hpctransfer, names + sizes + sampled sha256 identical) hard-linked into the run root
+#     runs/main_v4_jsc (ckpt/iter_0035603 + ckpt_rolling/iter_0035900; Megatron loads the newer, 35900)
+#   * the data order across node counts: the main run's reference-layout sampler (data_sampler_reference_dp_size 512,
+#     micro batch 1) -- 256 JUPITER nodes = 1024 GPUs as the MN5 segment, other counts keep the order too
+#   * no NODE_CHECK pre-check (MareNostrum scripts): the pool's preflight node check (jupiter_pool_amb84) instead
+#
+# Arms (aux.only):
+#   main      256 nodes, resumes at 35901 and trains on (the "continue ambitious" run; pool singleton ambitious_main_v4
+#             is NOT shared with MareNostrum's pools -- never run both at once, the user decides where it trains)
+#   smoke_a   16 nodes (a small16 host or the amb84 host): load 35900, 5 steps (35901-35905) on the main run's batches,
+#             persistent save at 35905 (async + persistent worker, as in production) -> loss vs MN5's logged
+#             35901-35905 (p264.0987 log)
+#   smoke_b   the same root: resume from smoke_a's 35905 save, 5 steps -> loss vs MN5's 35906-35910 (save -> load
+#             exactness on JUPITER, incl. the Adam / MuOwn / Engram states)
+# Enqueue (after ./sync_to_jupiter.sh and jsc_ambitious84_setup.sh):
+#   cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/<jupiter_pool_amb84|jupiter_pool_small16> \
+#       --config-name experiments/korbi/production/hybrid_ambitious_v4_2ph_hd256_p2_jupiter --yes "aux.only=[smoke_a,smoke_b]"
+#   (small16 hosts run on account e-ext-2025e02-108: add slurm.sbatch.account=e-ext-2025e02-108)
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5
+  - jupiter_amb84_platform
+  - override /container: jupiter
+  - override /slurm: jupiter
+  - _self_
+
+aux:
+  stage_datamix: ${aux.amb84}/datamix/datamix_v8ml_opt81_8k64k_stage2_jsc.txt
+  only: [main]
+  run: main_v4_jsc
+
+backend:
+  megatron:
+    load: ${job.base_output_dir}/ckpt
+    save: ${job.base_output_dir}/ckpt
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    tensorboard_dir: ${job.base_output_dir}/tb
+    wandb_save_dir: ${job.base_output_dir}/wandb
+
+job:
+  name: amb84_jsc_${aux.run}
+  base_output_dir: ${aux.main_root}/${aux.run}
+  start_condition:
+    class_name: FileExistsCondition
+    path: ${job.base_output_dir}/ckpt_rolling/latest_checkpointed_iteration.txt
+    persistent_pass: true
+  metadata:
+    pool_singleton: null
+    pool_priority: 90
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.run}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.run: main
+          aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          aux.nodes: 256
+          backend.megatron.micro_batch_size: 1
+          job.base_output_dir: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/main_v4_jsc
+          job.metadata.pool_singleton: ambitious_main_v4_jsc
+        - aux.run: smoke_a
+          aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          aux.nodes: 16
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.exit_interval: 35905
+          backend.megatron.save_extra_steps: [35905]
+          job.base_output_dir: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc
+          job.metadata.pool_priority: 95
+          job.est_steps: 5
+        - aux.run: smoke_b
+          aux.phase: 2
+          aux.seq: 65536
+          aux.gbs: 1024
+          aux.nodes: 16
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.exit_interval: 35910
+          job.base_output_dir: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc/ckpt/iter_0035905/.metadata
+            persistent_pass: true
+          job.metadata.pool_priority: 94
+          job.est_steps: 5

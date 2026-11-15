@@ -1,0 +1,45 @@
+# @package _global_
+# Start checkpoints of the JUPITER dropout-stitch session (dropout_stitch84_jupiter; docs/recall_surgery_ambitious.md
+# §19.1): ds84_surgery_mn5's steps (d6 / dk6 / ctrl2 / d2 / dk2 [/ d6h / d2h], scripts/korbi/recall_surgery/
+# ds84_surgery.sh) on the fscratch copies of the MN5 checkpoints, as 1-node pool jobs in jupiter_pool_amb84 (DCP
+# surgery of ~1.1 TB checkpoints: too heavy for a login node). PREPARED, NOT ENQUEUED.
+#   SRC   ${aux.amb84}/ckpt/main_eval            iter_0023300 (the main run's frozen 23300, hpctransfer copy)
+#   CTRL  ${aux.amb84}/ckpt/broad_ctrl           ckpt_eval -> ../broad_ctrl_eval (iter_0024400 of v4_broad23k/ctrl)
+#   ROOT  ${aux.amb84}/runs/dropout_stitch84     <arm>/ckpt/iter_N + tracker (each training arm's start condition)
+#   cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_amb84 \
+#       --config-name experiments/korbi/recall_surgery/ds84_surgery_jupiter --yes
+defaults:
+  - ds84_surgery_mn5
+  - override /container: jupiter
+  - override /slurm: jupiter
+  - _self_
+
+aux:
+  amb84: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84
+  hybrid_env: ${aux.amb84}/env
+  images:
+    ep:
+      libs: ${aux.hybrid_env}/pylibs_ep
+      sif: MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  root: ${aux.amb84}/runs/dropout_stitch84
+  src: ${aux.amb84}/ckpt/main_eval
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+
+backend:
+  env:
+    CTRL: ${aux.amb84}/ckpt/broad_ctrl
+    SIF: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+    NVIDIA_PYTORCH_VERSION: "26.02"
+    TRITON_LIBCUDA_PATH: /.singularity.d/libs
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    account: e-sta-openeurollm
+    partition: booster
+    qos: null

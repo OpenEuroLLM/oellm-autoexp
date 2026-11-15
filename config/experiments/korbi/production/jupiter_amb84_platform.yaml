@@ -1,0 +1,71 @@
+# @package _global_
+# JUPITER platform block of the 84B ambitious runs (docs/recall_surgery_ambitious.md §19.1), included after a MareNostrum
+# config of the main-run chain: swaps container, extra libs, caches, data / tokenizer / engram-map paths and slurm for
+# the JUPITER copies, nothing of the recipe. Users: hybrid_ambitious_v4_2ph_hd256_p2_jupiter (main run, phase 2),
+# recall_surgery/dropout_stitch84_jupiter (phase 1 arms). The primary config also needs
+#   - override /container: jupiter
+#   - override /slurm: jupiter
+# and sets aux.stage_datamix (stage 1 or 2 JSC datamix).
+#
+# Prepared by scripts/korbi/recall_surgery/jsc_ambitious84_setup.sh (+ the MN5 -> fscratch hpctransfers):
+#   ${aux.amb84}/env               pylibs_moonep_ec3eb8b (MoonEP ec3eb8b built for aarch64 sm90 in the te218-fa3 image),
+#                                  pylibs_ep (liger 0.8.4 + emerging_optimizers 0.2.0 = the MN5 image's), caches
+#   ${aux.amb84}/data              tokenizers (sha256-identical to MN5), engram_token_map_256k.npy (identical),
+#                                  v8ml-stages-8k64k/s1 (MN5's s1 .idx + symlinks to the JSC s3 .bin: same inodes on MN5)
+#   ${aux.amb84}/datamix           datamix_v8ml_opt81_8k64k_stage{1,2}_jsc.txt (MN5 weights, JSC paths)
+#   ${aux.amb84}/ckpt              the transferred checkpoints (never written by runs; run roots hard-link them)
+aux:
+  amb84: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84
+  jsc_data: /e/data1/datasets/playground/mmlaion/oellm_testing
+  # caches, exclude file and the extra python libs resolve below hybrid_env
+  hybrid_env: ${aux.amb84}/env
+  images:
+    ep:
+      libs: ${aux.hybrid_env}/pylibs_ep
+      sif: MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  main_root: ${aux.amb84}/runs
+  node_check: "off"
+  mn5_exclude_file: null
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+
+backend:
+  env:
+    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep_ec3eb8b:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/pylibs_ep"
+    HF_HOME: ${aux.hybrid_env}/cache/hf
+    # JUPITER's torch 2.11 rejects the per_process_memory_fraction key (c10::ValueError at start-up; small31)
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    NVIDIA_PYTORCH_VERSION: "26.02"
+    TRITON_CACHE_DIR: ${aux.hybrid_env}/cache/triton
+    TORCHINDUCTOR_CACHE_DIR: ${aux.hybrid_env}/cache/inductor
+    # Triton finds no libcuda.so in the JUPITER images otherwise (FLA falls back to CPU, CKDA fails to import)
+    TRITON_LIBCUDA_PATH: /.singularity.d/libs
+    WANDB_RUN_GROUP: main_mhc4_jupiter
+    # MareNostrum's slurm env of the main run (production settings checklist: compile threads), not in slurm/jupiter
+    TORCHINDUCTOR_COMPILE_THREADS: "1"
+    TORCHINDUCTOR_FX_GRAPH_CACHE: "1"
+    HF_HUB_OFFLINE: "1"
+    NUMEXPR_MAX_THREADS: "256"
+  megatron:
+    data_args_path: ${aux.stage_datamix}
+    data_cache_path: ${aux.amb84}/data_cache
+    tokenizer_model: ${aux.amb84}/data/tokenizers/tokenizer-256k-agent
+    engram_token_map: ${aux.amb84}/data/engram_token_map_256k.npy
+    fixed_valid_data_path:
+      - ${aux.jsc_data}/v8ml-valid/all_text_document
+      - ${aux.jsc_data}/v8ml-valid/web_en_text_document
+      - ${aux.jsc_data}/v8ml-valid/multilingual_text_document
+      - ${aux.jsc_data}/v8ml-valid/code_text_document
+      - ${aux.jsc_data}/v8ml-valid/math_text_document
+      - ${aux.jsc_data}/v8ml-valid/reasoning_text_document
+      - ${aux.jsc_data}/v8ml-valid/long_64k_text_document
+
+slurm:
+  exclude_file: ${aux.hybrid_env}/mn5_exclude_nodes.txt
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "12:00:00"
+    account: e-sta-openeurollm
+    partition: booster
+    qos: null
