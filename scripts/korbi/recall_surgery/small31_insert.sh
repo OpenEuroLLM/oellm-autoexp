@@ -16,6 +16,11 @@
 #   M / Mp  E's / Ep's trained new attention (DONOR_IT of E / Ep) transplanted into b7@IT as crossfade ckda_branch
 #           attention branches at the same sublayers (scripts/korbi/production/transplant_attention.py)
 # The first CKDA mixers (complex eigenvalues) stay CKDA in both. Login node (hard links + a few MB of new tensors).
+#   K       (§14.8) ADDITIVE kvshare attention at the E positions 9 / 25 / 42, reading the keys / values of the
+#           nearest preceding attention layer 0 / 17 / 34; q / gate / o copied from that layer (input norm folded),
+#           gamma 0 (function-preserving); CKDA stays at full weight
+#   W       (§14.8) every dense MLP widened 3584 -> 4608 (new fc1 rows N(0, 0.02), new fc2 columns 0;
+#           scripts/korbi/production/widen_ffn.py), run with ffn_hidden_size 4608
 #   ARM=E IT=1907 small31_insert.sh;  ARM=M IT=38146 DONOR_IT=9535 small31_insert.sh;  ARM=C IT=38146 small31_insert.sh
 set -euo pipefail
 : "${ARM:?E | Ep}" "${IT:?b7 iteration}"
@@ -26,7 +31,8 @@ B7="*-NL-L-L-L-L-L-L-*-L-L-L-L-L-L-L-N*-L-L-L-L-L-L-L-"
 case "$ARM" in
   E|L|M)   LAYERS=9,25,42; PATTERN="*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"; DONOR=E ;;
   Ep|Lp|Mp) LAYERS=3,19,36; PATTERN="*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"; DONOR=Ep ;;
-  C) LAYERS=; PATTERN= ;;
+  C|W) LAYERS=; PATTERN= ;;
+  K) LAYERS=9,25,42; PATTERN= ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
 esac
 REFS=0,17,34
@@ -44,6 +50,11 @@ cd "$(dirname "$0")/../../.."
 X=(apptainer exec --bind /e --env PYTHONPATH=.:submodules/Megatron-LM:flash-linear-attention "$SIF")
 case "$ARM" in
   C) cp -al "$SRC" "$OUT/$it" ;;
+  K) "${X[@]}" env CKDA_BRANCH_ATTN_LAYERS=$REFS python scripts/korbi/production/add_ckda_branch.py apply \
+       --src "$SRC" --dst "$OUT/$it" --branch kvshare --groups 2 --layers "$LAYERS" --kv-sources "$REFS" \
+       --kvshare-init copy --seed 1234 ;;
+  W) "${X[@]}" python scripts/korbi/production/widen_ffn.py --src "$SRC" --dst "$OUT/$it" --ffn 4608 \
+       --init-std 0.02 --seed 1234 ;;
   M|Mp)
     : "${DONOR_IT:?the donor E / Ep checkpoint iteration}"
     din=$(printf 'iter_%07d' "$DONOR_IT")

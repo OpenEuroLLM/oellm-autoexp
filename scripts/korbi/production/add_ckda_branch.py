@@ -186,7 +186,8 @@ def attention_branch(src: dict, ref_gains: dict, *, heads: int, d: int, groups: 
     return out
 
 
-def kvshare_branch(att: dict, *, heads: int, d: int, groups: int, eps: float, gen: torch.Generator) -> dict:
+def kvshare_branch(att: dict, *, heads: int, d: int, groups: int, eps: float, gen: torch.Generator,
+                   init: str = "random", layer_norm: torch.Tensor | None = None) -> dict:
     """New tensors of a kvshare branch (names relative to ``self_attention.``): the keys / values are the
     source attention layer's at run time, so only ``linear_qkv`` = per query group [q heads | gate heads] x d,
     ``q_layernorm`` and ``linear_proj`` -- new, random (user 2026-11-10: q / o learnt from scratch):
@@ -195,6 +196,10 @@ def kvshare_branch(att: dict, *, heads: int, d: int, groups: int, eps: float, ge
       linear_proj  random directions x the median row norm of the source's linear_proj
       q_layernorm  the source's gains (the temperature its keys were trained with), its exp_avg_sq
       MuOwn states fresh rows: g = row norm, v_norm = the median of the source's rows, momenta 0
+    ``init="copy"`` (2026-11-15, small31 arm K): q / gate rows and linear_proj COPIED from the source attention layer
+    (the source's input-norm gain ``att["linear_qkv.layer_norm_weight"]`` folded into the q / gate columns against
+    the branch layer's ``layer_norm``), so the branch starts as the source's attention pattern on this layer's
+    input; MuOwn states fresh as above.
 
     ``att``: the source attention layer's ``linear_qkv.weight`` / ``linear_proj.weight`` (+ MuOwn states
     ``<name>.<state>``) and ``q_layernorm.weight`` (+ ``.exp_avg_sq``)."""
@@ -208,13 +213,25 @@ def kvshare_branch(att: dict, *, heads: int, d: int, groups: int, eps: float, ge
     q_vrows = torch.cat([att["linear_qkv.weight.v_norm"][g * per:g * per + hpg * d] for g in range(groups)])
     q_norm, q_vref = q_rows.norm(dim=1).median(), q_vrows.median()
     rows, states = [], []
-    for _ in range(groups):
-        q = _noise_rows(hpg * d, hidden, q_norm, gen)
-        gate = _noise_rows(hpg * d, hidden, eps * q_norm, gen)
+    if init == "copy":
+        if layer_norm is None or "linear_qkv.layer_norm_weight" not in att:
+            raise ValueError("kvshare_branch init=copy: needs the source's and the branch layer's input-norm gains")
+        g_layer = layer_norm.float()
+        if (g_layer.abs() < 1e-6 * g_layer.abs().max()).any():
+            raise ValueError("kvshare_branch init=copy: input-norm gains of the branch layer are ~0: cannot fold")
+        r = att["linear_qkv.layer_norm_weight"].float() / g_layer
+    for g in range(groups):
+        if init == "copy":
+            q = qkv[g * per:g * per + hpg * d].float() * r[None, :]
+            gate = qkv[g * per + hpg * d:g * per + 2 * hpg * d].float() * r[None, :]
+        else:
+            q = _noise_rows(hpg * d, hidden, q_norm, gen)
+            gate = _noise_rows(hpg * d, hidden, eps * q_norm, gen)
         rows += [q, gate]
         states += [_new_rows_states(q, q_vref), _new_rows_states(gate, q_vref)]
     w = torch.cat(rows, 0)
-    o = _noise_rows(proj.shape[0], heads * d, proj.norm(dim=1).median(), gen)
+    o = (proj.float().clone() if init == "copy" else
+         _noise_rows(proj.shape[0], heads * d, proj.norm(dim=1).median(), gen))
     out = {"branch.linear_qkv.weight": w, "branch.linear_proj.weight": o}
     out.update({f"branch.linear_qkv.weight.{s}": t for s, t in _cat_states(states).items()})
     out.update({f"branch.linear_proj.weight.{s}": t
@@ -808,12 +825,14 @@ def derive(a, md=None) -> dict:
     if a.branch == "kvshare" or random_init or attn_copy:
         if len(kv_sources) != len(layers) or any(s not in ATTN_LAYERS or s >= l for s, l in zip(kv_sources, layers)):
             raise SystemExit(f"--kv-sources {kv_sources}: one earlier attention layer {ATTN_LAYERS} per layer {layers}")
-        names = ATTN_COPY_SRC if attn_copy else RANDOM_ATTN_SRC if random_init else KVSHARE_SRC
+        kv_copy = a.branch == "kvshare" and getattr(a, "kvshare_init", "random") == "copy"
+        names = (ATTN_COPY_SRC if attn_copy else RANDOM_ATTN_SRC if random_init else
+                 KVSHARE_SRC + ["linear_qkv.layer_norm_weight"] if kv_copy else KVSHARE_SRC)
         for src_layer in kv_sources:
             for rel in names:
                 key = _key(src_layer, rel)
                 want[key] = torch.empty(tuple(smd[key].size), dtype=smd[key].properties.dtype)
-    if attn_copy:
+    if attn_copy or (a.branch == "kvshare" and getattr(a, "kvshare_init", "random") == "copy"):
         for layer in layers:
             key = LAYER_NORM.format(l=layer)
             if key not in smd or _key(layer, "layer.q_proj.weight") not in smd:
@@ -840,8 +859,12 @@ def derive(a, md=None) -> dict:
         if a.branch == "kvshare":
             d = smd[_key(ATTN_LAYERS[0], "q_layernorm.weight")].size[0]
             heads = smd[_key(ATTN_LAYERS[0], "linear_proj.weight")].size[1] // d
-            att = {rel: want[_key(kv_sources[i], rel)].float() for rel in KVSHARE_SRC}
-            new = kvshare_branch(att, heads=heads, d=d, groups=a.groups, eps=a.eps, gen=gen)
+            kv_init = getattr(a, "kvshare_init", "random")
+            rels = KVSHARE_SRC + (["linear_qkv.layer_norm_weight"] if kv_init == "copy" else [])
+            att = {rel: want[_key(kv_sources[i], rel)].float() for rel in rels}
+            new = kvshare_branch(att, heads=heads, d=d, groups=a.groups, eps=a.eps, gen=gen, init=kv_init,
+                                 layer_norm=want[LAYER_NORM.format(l=layer)] if kv_init == "copy" else None)
+            print(f"layer {layer} <- kvshare source {kv_sources[i]} (init {kv_init})", flush=True)
         elif attn_copy:
             att = {rel: want[_key(kv_sources[i], rel)].float() for rel in ATTN_COPY_SRC}
             if a.groups * (2 * (att["linear_proj.weight"].shape[1] // att["q_layernorm.weight"].shape[0]) // a.groups
@@ -994,6 +1017,9 @@ def main(argv=None) -> int:
                    help="attention: copy = from complex_kda's projections; random = random rows at the reference "
                         "attention layers' (--kv-sources) row norms; attn = a copy of the attention layer "
                         "(--kv-sources) with all its optimizer states, its input-norm gain folded in")
+    p.add_argument("--kvshare-init", choices=["random", "copy"], default="random",
+                   help="kvshare: q / gate / o rows random at the source's norms, or copied from the source attention "
+                        "layer (input-norm gains folded)")
     p.add_argument("--no-fold-norm", action="store_true",
                    help="--init attn: copy linear_qkv as is (do not fold g_attn / g_layer into its columns)")
     p.add_argument("--kv-sources", default=None,
