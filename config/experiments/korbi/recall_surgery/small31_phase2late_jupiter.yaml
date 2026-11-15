@@ -33,7 +33,8 @@ backend:
 
 job:
   metadata:
-    pool_priority: 40
+    # 2026-11-15: C / M / Mp first (45), then L / Lp (38); the E / Ep extension below (30)
+    pool_priority: 45
   start_condition:
     class_name: FileExistsCondition
     path: ${aux.out_root}/${aux.arm}/ckpt/latest_checkpointed_iteration.txt
@@ -48,6 +49,7 @@ sweep:
         - aux.arm: C
         # late random insertion, the same function-preserving recipe as E / Ep (crossfade branches, 200 steps)
         - aux.arm: L
+          job.metadata.pool_priority: 38
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [9, 25, 42]
           backend.megatron.ckda_branch_num_query_groups: 2
@@ -61,6 +63,7 @@ sweep:
           backend.megatron.ckda_branch_gamma_scale: 1.0
           backend.megatron.ckda_branch_calibrate: false
         - aux.arm: Lp
+          job.metadata.pool_priority: 38
           backend.megatron.ckda_branch: attention
           backend.megatron.ckda_branch_layers: [3, 19, 36]
           backend.megatron.ckda_branch_num_query_groups: 2

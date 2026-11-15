@@ -24,8 +24,10 @@ aux:
 
 backend:
   megatron:
-    exit_interval: 9535
-    save_extra_steps: [2384, 2861, 3815, 5722, 7629, 9535]
+    # 9535 first (5 BT); extended 2026-11-15 to 11445 (6 BT, = the bases' save_interval save at 11445): same
+    # train_iters / data order / schedule, resumed from 9535 (v3 cold-Adam ramp)
+    exit_interval: 11445
+    save_extra_steps: [2384, 2861, 3815, 5722, 7629, 9535, 11445]
     # no regular interval saves beyond the marks (rolling saves every 500 still carry restarts)
     save_interval: 100000
     exit_on_missing_checkpoint: true
@@ -43,7 +45,8 @@ backend:
 
 job:
   metadata:
-    pool_priority: 40
+    # the extension runs below the late arms (C / M / Mp 45, L / Lp 38)
+    pool_priority: 30
   # the arm resumes only from its surgery output (or later saves of its own)
   start_condition:
     class_name: FileExistsCondition

@@ -14,9 +14,11 @@ REPO = Path(__file__).resolve().parents[3]
 OUT = REPO / "config/experiments/korbi/recall_surgery/small31_readout_jupiter.yaml"
 ROOT = "/e/scratch/e-sta-openeurollm/poeppel1/recall_surgery/small31"
 # the log-spaced token marks of small31_jupiter (save_extra_steps, 0.25 / 0.5 / 1 / 2 / 4 / 8 / 16 BT) + the end (20 BT)
-BASE_STEPS = [477, 954, 1907, 3815, 7629, 15259, 30518, 38146]
+# + 11445 (6 BT, a save_interval save; 2026-11-15: the matched point of the E / Ep extension)
+BASE_STEPS = [477, 954, 1907, 3815, 7629, 11445, 15259, 30518, 38146]
 # Phase-2 early insertion at 1907 (small31_phase2_jupiter): +0.25 / +0.5 BT, b7's marks 3815 / 7629, 5722, the end 9535
-EARLY_STEPS = [2384, 2861, 3815, 5722, 7629, 9535]
+# + 11445: E / Ep extended to 6 BT (2026-11-15), matched with the bases' 11445 save
+EARLY_STEPS = [2384, 2861, 3815, 5722, 7629, 9535, 11445]
 # Phase-2 late arms from b7@38146 (small31_phase2late_jupiter): +0.25 BT (the crossfade end) and +0.5 BT
 LATE_STEPS = [38623, 39100]
 ARM_STEPS = {"b7": BASE_STEPS, "r3": BASE_STEPS, "r3p": BASE_STEPS, "a0": BASE_STEPS,
