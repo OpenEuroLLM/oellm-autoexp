@@ -2803,6 +2803,54 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
   * C_40053 moved back from small16 to the 32B pool: run 0093, verified on host108. The guard still restores 0 at the
     end.
 
+**C's second leg diverged at 41062; relaunch; third leg started (13:40).**
+* **Who cancelled C:** not the guard (no log entry). The 32B pool's monitor log rule `nonfinite_grad_norm` ("the run
+  diverged") cancelled run 0089 at 11:33:54. That was correct.
+  * C's grad norm turned NaN at 41062 after healthy steps (loss 1.54-1.88, grad norm 0.18). No loss was logged from
+    then on, and Megatron did not skip the steps.
+  * The cancel-time save iter_0041081 has non-finite weights (12 / 12 tensors checked); rolling iter_0041000 is
+    clean.
+* **Fix:**
+  * iter_0041081 quarantined as `bad_nan41062_iter_0041081`; C resumes from a hard-link copy of rolling 41000
+    (tracker 41000) to 41961 with the leg-2 config (same train_iters 41961 as M / L, so the same batches): run 0097
+    on host108;
+  * `check_for_nan_in_loss_and_grad: true` for the late legs (as for a0), so a NaN step raises instead of poisoning
+    the weights.
+* **a0 hit a NaN as well** (small16, 33896, after the v3 resume at 33521). Its NaN check raised (no corrupt save),
+  but the pool marked the job cancelled. Relaunched from its 33520 save (small31_a0_5dda5b_q2, small16 host003).
+  r3 / r3p resumed with v3 on small16 host003 (first steps healthy) and completed 38146; their 20 BT readouts are
+  running.
+* **Third leg** (small31_phase2late3_jupiter, train_iters 44822 for all three, saves / readouts at 43868 = +3 BT and
+  44822 = +3.5 BT):
+  * M / L started from their 41961 saves (runs 0099 / 0098, host108);
+  * C's third leg waits for C's own 41961 save;
+  * readouts enqueued (priority -10).
+  * The guard was replaced by an instance that ends at the 44822 readouts (`DONE_STEP=44822`, log
+    `monitor_logs/late3_guard.log`); the old instance was stopped by PID. Packing (9) stays until then, then goes
+    back to 0.
+* For the record: the 32B run's own job restarted on host107 around 12:45 (run 0086 -> 0096). Nothing of ours was
+  on host107 then; the only time was the 76 s readout at 11:15.
+* **Budget (13:45, measured from both pools' ledgers):** small16 1166 (excl. ft17b) + 32B pool 121 (b7 63, C / M /
+  L 48, readouts 9) = **1287 GPU-h**.
+  * Remaining: C leg 2 (~6) + legs 3 (~40) + 7 readouts (~25) + a0 to 38146 (~30) + 20 BT readouts (~8) = ~110.
+  * **Projected ~1395 of 1500.**
+
+**+1 / +2 BT readouts so far** (C at 41961 pending its relaunch):
+
+| arm | step | CoQA F1 | Wino | SQuAD F1 | HasAns F1 | abstain @ answerable | SWDE | FDA | SQ compl. | RULER 4k | valid loss |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| C | 40053 | 53.09 | 54.70 | 26.20 | 50.32 | 15.0 | 75.0 | 75.0 | 49.0 | 61.9 | 1.8610 |
+| M | 40053 | 53.48 | 53.91 | 23.95 | 45.98 | 19.4 | 74.4 | 73.1 | 47.9 | 71.1 | 1.8718 |
+| L | 40053 | 53.29 | 54.46 | 23.50 | 45.08 | 22.5 | 73.8 | 74.3 | 49.0 | 69.1 | 1.8741 |
+| M | 41961 | 56.02 | 54.54 | 24.11 | 46.30 | 17.2 | 77.3 | 74.3 | 52.9 | 75.6 | 1.8670 |
+| L | 41961 | 53.78 | 54.38 | 24.84 | 47.70 | 16.6 | 74.6 | 68.1 | 51.0 | 72.4 | 1.8685 |
+
+* C's CoQA fell 57.5 -> 53.1 from 39100 to 40053 with no change to the model, and its RULER 75.5 -> 61.9: the
+  checkpoint-to-checkpoint noise of these rows is ~4 points.
+* At +1 BT the critical rows of M / L equal C's within that noise. SQuAD F1 is 2-3 below C; its abstention swings
+  with the checkpoint.
+* Valid loss is the cleanest signal: the gap to C is +0.011 (M) / +0.013 (L) at 40053, vs +0.013 / +0.015 at 39100.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
