@@ -2668,14 +2668,14 @@ anomalous.
   the checkpoint)"; the v3 reset of output_layer + word_embeddings as on every JUPITER resume. train_iters is the
   same 40053 for all five, so they see identical batches.
 
-**6 BT (11445) readout, matched step** (the bases' RULER cells at 11445 are pending a rerun):
+**6 BT (11445) readout, matched step:**
 
 | arm | CoQA F1 | Wino | SQuAD F1 | HasAns F1 (uniform) | F1 when answering | abstain @ answerable | SWDE | FDA | SQ compl. | RULER 4k | valid loss |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| b7 (7:1) | 44.85 | 53.75 | 20.58 | 39.52 | 47.53 | 16.9 | 70.7 | 75.6 | 41.3 | - | 2.0154 |
-| r3 (3:1) | 50.69 | 52.72 | 19.52 | 37.48 | 49.82 | 24.8 | 71.0 | 75.9 | 43.3 | - | 1.9934 |
-| r3p (paired 3:1) | 50.19 | 52.01 | 24.02 | 46.13 | 50.05 | 7.8 | 68.8 | 66.7 | 41.9 | - | 1.9942 |
-| a0 (attention) | 47.61 | 51.07 | 21.03 | 40.38 | 46.91 | 13.9 | 70.8 | 76.0 | 41.8 | - | 2.0203 |
+| b7 (7:1) | 44.85 | 53.75 | 20.58 | 39.52 | 47.53 | 16.9 | 70.7 | 75.6 | 41.3 | 66.2 | 2.0154 |
+| r3 (3:1) | 50.69 | 52.72 | 19.52 | 37.48 | 49.82 | 24.8 | 71.0 | 75.9 | 43.3 | 69.9 | 1.9934 |
+| r3p (paired 3:1) | 50.19 | 52.01 | 24.02 | 46.13 | 50.05 | 7.8 | 68.8 | 66.7 | 41.9 | 75.4 | 1.9942 |
+| a0 (attention) | 47.61 | 51.07 | 21.03 | 40.38 | 46.91 | 13.9 | 70.8 | 76.0 | 41.8 | 73.6 | 2.0203 |
 | **E** (b7 + 3:1 from 1 BT) | 47.55 | 52.72 | 15.32 | 29.43 | 46.79 | 37.1 | 69.9 | 71.3 | 43.0 | 63.6 | 2.0093 |
 | **Ep** (b7 + paired from 1 BT) | 44.56 | 54.70 | 11.04 | 21.15 | 42.57 | 50.3 | 66.3 | 76.8 | 46.3 | 69.5 | 2.0112 |
 
@@ -2689,6 +2689,8 @@ anomalous.
     1 to 16 BT), so this cell is noisy.
 * **Winogrande:** within noise (stderr ~1.4) for every arm.
 * **Recall rows:** no consistent difference (SWDE 66-71, FDA 67-77 across arms).
+* **RULER 4k:** the from-scratch 3:1 arms and a0 lead (r3p 75.4, a0 73.6, r3 69.9). E 63.6 is below b7 (66.2); Ep
+  69.5 is above it. 100 samples per task: ~±4 points.
 * **Reading:** at the matched 6 BT, inserting 3:1 attention at 1 BT buys part of the from-scratch 3:1 loss and CoQA
   advantage (E more than Ep), not all of it. The SQuAD deficit is an abstention habit of the early-inserted arms.
 
@@ -2709,6 +2711,43 @@ mean of arm - C per window; every arm loads the same b7@38146 with the same v3 r
 * The transplanted early-trained attention is only marginally better than a random late insertion: M vs L -0.0015,
   Mp vs Lp -0.0032 at +0.5 BT. The E layout (mixers 4 / 12 / 20) costs less than the paired Ep layout.
 * For scale: E's whole 6-BT gain over b7 is 0.006 in valid loss.
+
+**Late arms: readouts at +0.25 / +0.5 BT** (06:45; SQuAD v2 uniform abstain rule):
+
+| arm | step | CoQA F1 | Wino | SQuAD F1 | HasAns F1 | F1 when answering | abstain @ answerable | SWDE | FDA | SQ compl. | RULER 4k | valid loss |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| b7 | 38146 | 54.52 | 55.80 | 22.61 | 43.43 | 56.22 | 22.8 | 73.7 | 71.9 | 48.0 | 71.9 | 1.8631 |
+| C | 38623 | 55.85 | 55.64 | 26.87 | 51.61 | 58.20 | 11.3 | 72.4 | 70.4 | 46.0 | 70.3 | 1.8621 |
+| M | 38623 | 55.64 | 54.54 | 22.50 | 43.11 | 56.09 | 23.1 | 73.2 | 66.9 | 47.8 | 70.1 | 1.8778 |
+| Mp | 38623 | 50.90 | 56.12 | 24.36 | 46.78 | 55.09 | 15.1 | 71.7 | 65.3 | 48.8 | 68.4 | 1.8830 |
+| L | 38623 | 54.50 | 55.01 | 23.27 | 44.67 | 56.43 | 20.8 | 72.0 | 69.6 | 47.4 | 68.1 | 1.8788 |
+| Lp | 38623 | 51.30 | 55.09 | 24.39 | 46.83 | 53.96 | 13.2 | 72.7 | 64.3 | 49.8 | 66.7 | 1.8879 |
+| C | 39100 | 57.52 | 56.35 | 26.74 | 51.35 | 58.52 | 12.2 | 74.5 | 77.3 | 50.4 | 75.5 | 1.8620 |
+| M | 39100 | 54.89 | 54.70 | 23.49 | 45.01 | 55.95 | 19.5 | 74.7 | 75.0 | 49.5 | 74.5 | 1.8749 |
+| Mp | 39100 | 55.69 | 54.38 | 25.11 | 48.18 | 56.03 | 14.0 | 72.9 | 75.0 | 47.7 | 73.6 | 1.8793 |
+| L | 39100 | 54.72 | 54.93 | 25.17 | 48.24 | 55.58 | 13.2 | 75.0 | 74.1 | 49.5 | 71.4 | 1.8765 |
+| Lp | 39100 | 55.24 | 54.70 | 28.22 | 54.20 | 57.25 | 5.3 | 75.9 | 77.2 | 50.7 | 71.5 | 1.8828 |
+
+* **No late insertion beats the control C at +0.5 BT on the critical rows:** CoQA 54.7-55.7 vs C 57.5; Winogrande
+  54.4-54.9 vs 56.4; valid loss +0.013-0.021.
+  * SQuAD F1: only Lp edges C (28.2 vs 26.7), and through abstention: 5 % on answerable questions vs C's 12 %. Its
+    F1 when answering (57.3) is below C's (58.5).
+  * C itself moves a lot between neighbouring checkpoints (b7@38146 -> C@38623: CoQA +1.3, SQuAD F1 +4.3, abstain
+    23 -> 11 %) with no architecture change: the SQuAD / abstention columns are noisy at this scale (stderr ~1-2
+    points on CoQA / Winogrande; abstention swings by 10+ points between checkpoints).
+* **Transplant vs random late insertion:** no consistent difference.
+  * M (E's trained attention) vs L (random, same positions): CoQA 54.9 vs 54.7, SQuAD 23.5 vs 25.2, valid 1.8749 vs
+    1.8765.
+  * Mp vs Lp: CoQA 55.7 vs 55.2, SQuAD 25.1 vs 28.2, valid 1.8793 vs 1.8828.
+  * Carrying early-trained attention into the late model is not worth more than inserting fresh attention, within
+    0.5 BT.
+* The insertions are still recovering (valid-loss gap to C 0.016 / 0.020 / 0.017 / 0.025 at +0.25 BT -> 0.013 /
+  0.017 / 0.015 / 0.021 at +0.5 BT). A longer continuation would show whether any arm overtakes C. At this rate the
+  gaps close in roughly 1-2 BT more, if they keep shrinking linearly.
+* **Overall Phase-2 reading at this scale:**
+  * early 3:1 insertion (E) captures part of the from-scratch 3:1 advantage (loss and CoQA) at 6 BT;
+  * late insertion (C / L / M) has not paid off within 0.5 BT;
+  * merging early-trained attention late (M / Mp) is no better than random late attention (L / Lp).
 
 ### 16.1 Results (2026-11-14 23:00)
 
