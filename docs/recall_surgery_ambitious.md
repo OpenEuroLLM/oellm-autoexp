@@ -2971,6 +2971,15 @@ override_opt_param_scheduler, NaN check on. Readouts (full small31 set incl. RUL
 **First steps** (C at 38147-38152: 1.7211 / 1.7643 / 1.8909 / 1.9981 / 1.8681 / 1.8862):
 * K: 1.7211 / 1.7643 / 1.8909 / 1.9980 / 1.8681 / 1.8862, function-preserving (step 1 exact). The copied branches'
   outputs RMS 0.11-0.54 vs CKDA 0.22-0.47, scaled by gamma ~1e-4 at 38150.
+* D1 (rest dropout 0.3): 2.375 / 2.395 / 2.477 / 2.530 / 2.376 / 2.363 at grad norm 2.7 -> 1.0, settling by ~38160;
+  2.14 at 38355. Its branches take weight faster than K's (gamma 0.11 / 0.17 / 0.19 at layers 9 / 25 / 42 by 38350;
+  K at 38930: -0.003 / 0.10 / 0.12): the dropout pushes the model onto the new attention, as intended.
+* **Export of K** (`ckda_kvshare`, 6bab889c):
+  * the HF layer is CKDA + kvshare attention on the same normalized input, the branch weight m * gamma folded into
+    the branch o_proj, kv plumbing as for kvshare layers;
+  * exporter: additive kvshare runs map their branch layers to it;
+  * check job `s31check_K_38146` (small31_kcheck_jupiter): K@38146 valid loss vs b7@38146 (must be equal: gamma
+    0), and prefill vs cached decode with a synthetic branch weight. The login GPU was busy, hence a pool job.
 
 **Budget** (15:25): measured 1382 GPU-h (small16 1206 excl. ft17b + 32B pool 176).
 * Committed remaining (K two legs + 3 readouts, D1 + readout, D2 zero-shot readout + adapt + readout, a0 20 BT
