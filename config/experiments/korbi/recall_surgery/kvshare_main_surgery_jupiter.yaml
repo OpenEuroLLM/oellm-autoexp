@@ -1,0 +1,62 @@
+# @package _global_
+# Start checkpoint of the K-style intervention on the latest ambitious main run
+# (docs/recall_surgery_ambitious.md §14.8 K / §19.1 JUPITER bring-up; user 2026-11-15:
+# "prepare everything to then capture and run on the next one at 2 am").
+#
+# Add ADDITIVE kvshare attention branches to the main run's 35900 rolling save:
+#   layers 9 / 25 / 41 / 58 / 74 / 90  (the six 3:1 positions)
+#   keys / values from the nearest preceding attention layers 0 / 17 / 33 / 50 / 66 / 82
+#   q / gate / o / q-norm copied from the source, input-norm gain folded, gamma 0
+#   complex_kda stays at full weight (alpha_end 1.0, no crossfade, no calibration)
+# This is the small31 K arm (the only strict loss-improving stitch, recall trending up) at 84B.
+#
+# Output: ${aux.root}/DK1/ckpt/iter_0035900 + tracker (the K training arms' start gate).
+# The output lives on e-ext scratch: fscratch has ~1.8 TB free, the surgery writes ~1.1 TB.
+# One 1-node pool job; run it on the existing small16 hosts first as the trainability test.
+defaults:
+  - ds84_surgery_jupiter
+  - _self_
+
+aux:
+  # e-ext scratch (31 TB free; fscratch is at 99 %)
+  root: /e/scratch/e-ext-2025e02-108/poeppel1/ambitious_kvshare/surgery
+  # the main run root on JUPITER (hard links to 35603 + 35900); ckpt_rolling holds the 35900 tracker
+  src: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/main_v4_jsc/ckpt_rolling
+  it: 35900
+  only: [dk6]
+  surgery: dk6
+
+backend:
+  command: bash scripts/korbi/recall_surgery/ds84_surgery.sh ${aux.surgery}
+  env:
+    ROOT: ${aux.root}
+    SRC: ${aux.src}
+    IT: ${aux.it}
+    LAYERS: "9,25,41,58,74,90"
+    SOURCES: "0,17,33,50,66,82"
+    SIF: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+
+job:
+  name: kvshare_main_surgery
+  base_output_dir: ${aux.root}/logs
+  est_step_time_s: 2400
+  start_condition: null
+  metadata:
+    pool_priority: 60
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    account: e-sta-openeurollm
+    partition: booster
+    qos: null
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.surgery}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.surgery: dk6
