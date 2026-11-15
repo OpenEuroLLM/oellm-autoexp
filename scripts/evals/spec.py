@@ -158,6 +158,9 @@ class ModelCode:
     fusion_impl: Literal["triton", "reference"] = "triton"
     decode_kernels: Literal["triton", "reference"] = "triton"
     moe_fp8: Literal["w8a16", ""] = "w8a16"
+    # load the fp8 routed experts directly as E4M3 (vllm 96194e05c2; needs moe_fp8=w8a16): no bf16 expert stack at
+    # load, 23.4 instead of 42.3 GiB per GPU at EP4 -> more KV cache / concurrency; the export's bytes are copied unchanged
+    moe_fp8_direct: bool = True
     engram_tables: Literal["uva", "ram", "mmap", "gpu"] = "uva"
     engram_decode_impl: Literal["batched", "reference"] = "batched"
     engram_lookup: Literal["leader", "replicated"] = "leader"
@@ -175,6 +178,7 @@ class ModelCode:
             "OELLM_FUSION_IMPL": self.fusion_impl,
             "OELLM_DECODE_KERNELS": self.decode_kernels,
             "OELLM_MOE_FP8": self.moe_fp8,
+            "OELLM_MOE_FP8_DIRECT": b(self.moe_fp8_direct and self.moe_fp8 == "w8a16"),
             "OELLM_ENGRAM_TABLES": self.engram_tables,
             "OELLM_ENGRAM_DECODE_IMPL": self.engram_decode_impl,
             "OELLM_ENGRAM_LOOKUP": self.engram_lookup,

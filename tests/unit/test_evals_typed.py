@@ -334,3 +334,12 @@ def test_run_job_rejects_a_bad_spec(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"kind": "worker", "name": "x"}))
     assert run_job.main([str(bad)]) == 2
+
+
+def test_model_code_moe_fp8_direct_env():
+    """OELLM_MOE_FP8_DIRECT (vllm 96194e05c2) is on with the default w8a16 experts and off without fp8 experts."""
+    from scripts.evals.spec import ModelCode
+
+    assert ModelCode().env()["OELLM_MOE_FP8_DIRECT"] == "1"
+    assert ModelCode(moe_fp8="").env()["OELLM_MOE_FP8_DIRECT"] == "0"
+    assert ModelCode(moe_fp8_direct=False).env()["OELLM_MOE_FP8_DIRECT"] == "0"
