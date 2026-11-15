@@ -2980,6 +2980,21 @@ override_opt_param_scheduler, NaN check on. Readouts (full small31 set incl. RUL
   * exporter: additive kvshare runs map their branch layers to it;
   * check job `s31check_K_38146` (small31_kcheck_jupiter): K@38146 valid loss vs b7@38146 (must be equal: gamma
     0), and prefill vs cached decode with a synthetic branch weight. The login GPU was busy, hence a pool job.
+  * **Check passed (15:33):** at gamma 0, K@38146's export gives the same v8ml-valid losses as b7@38146 to every
+    printed digit (all 1.53267, web_en 2.56625, multilingual 2.98504, code 1.38531, math 1.20540; 16 docs each).
+    With a synthetic branch weight the branch changes the logits (max |d| 6.1), and prefill vs cached decode agree to
+    0.098 at logit scale 16 (bf16). (The check's valid_loss.json write failed on a missing output dir; the losses are
+    in its log.)
+* **W on host108** (lead 2026-11-15: use host108; a run larger than host109's free nodes cannot land there):
+  * The 32B pool's packing is back to 0 (one run per host; restored by the guard at 15:27). host109 runs the 32B
+    job, so it takes no second run at any size, and W's 8 nodes exceed its 4 spares as well.
+  * W runs at 8 nodes, micro-batch 2, with the reference-layout sampler
+    (`data_sampler_reference_dp_size 16` / `_micro_batch_size 4`, cyclic dataloader): C's 4-node sample order, gbs
+    64.
+  * Leg 1 small31_W_19b8d8, leg 2 small31_W_675b6f (gated on W@39100), priority -10. Guard instance `ARMS=W
+    REENQUEUE_TRAIN=0` (log monitor_logs/w_guard.log): a misplaced W leg (e.g. if host110, pending, starts empty
+    first) is cancelled, not re-enqueued.
+  * Readouts in small16.
 
 **Budget** (15:25): measured 1382 GPU-h (small16 1206 excl. ft17b + 32B pool 176).
 * Committed remaining (K two legs + 3 readouts, D1 + readout, D2 zero-shot readout + adapt + readout, a0 20 BT
