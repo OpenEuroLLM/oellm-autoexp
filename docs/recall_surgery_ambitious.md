@@ -3049,6 +3049,27 @@ Training-loss gap to C (identical batches):
   of the extra width. A clean W would compensate the scale for the widened matrices (per-parameter lr factor 1 /
   1.134); not done. At 39100 recall is mixed (F1 when answering +0.8, HasAns +1.4, CoQA -1.6).
 
+**§14.8 queue after the cap was lifted** (user 2026-11-15: "keep going as long as we have these host jobs";
+existing allocations only, no new submissions). Priority order, recall F1 primary:
+1. **DK** = K's branch (additive kvshare, copied q / gate / o) trained with rest dropout 0.3 (DK1, leg 1, from a
+   hard-link copy of K@38146), then stitched into C@39100 (DK2, transplant branch-donor mode). DK2 is read out
+   zero-shot and after adapting to 40053 / 41961. DK1 runs on host108 (run 0107, 8 nodes, reference layout); DK2's
+   insertion chain waits for DK1@39100.
+2. **Noise reduction:** K, D2 and DK2 continue through the third-leg config (train_iters 44822, saves 43868 /
+   44822, the same batches as C / M / L), with readouts at every save. D2's exit-40053 override was removed: D2
+   continues to 41961, then leg 3. All in small16, each leg gated on the previous save.
+3. **W' (Wp):** W with `muon_scale_reference_ffn_hidden_size: 3584`.
+   * New Megatron option (4b595ea0f, unit tests, mirror files regenerated): the MLP tags linear_fc1 / fc2 with
+     (reference, actual) shapes, and the emerging optimizers multiply their orthogonalized update by
+     scale(reference) / scale(actual) = 1 / 1.134 (per-parameter and batched paths; param groups unchanged).
+   * The widening without the lr confound. host108, 8 nodes, after DK1 / W.
+4. **D at rest dropout 0.5:** D1h (attention branch as D1) + D2h (stitched into C@39100), small16.
+5. **T** (learned per-head attention temperature): next, needs Megatron + HF export code.
+
+Placement: host108 runs only 8-node legs of ours (host109 has 4 free nodes, so none can land there), packing 2
+(two 8-node runs on 18 nodes), the guard (`host108_guard.log`) alive for all our names until stopped. W's leg 2
+(run 0106) completed on host108.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
