@@ -3473,6 +3473,156 @@ on that host. Nothing is enqueued.
 * **Time:** a first bring-up plus 1100 + 400 steps (~3 h of training even with four 64-node arms in parallel) does not
   fit in 5 h. The MN5 host is the place for it.
 
+### 19.1 JUPITER bring-up: continue / fix ambitious on JUPITER (2026-11-15 evening, prepared, nothing enqueued)
+
+User ~18:05: "prepare everything so that we can continue / fix ambitious on jupiter ... make sure we use the correct
+data (some dataset parts are using a slightly different tokenizer - check this in detail) ... so that in a couple of
+hours, when we potentially get the next host, we are ready." No Slurm job was submitted, changed or cancelled.
+
+**Where things are.** Everything lives on the project's flash scratch (`/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84`).
+`/e/scratch/e-sta-openeurollm` is at its soft limit (212.99 of 214.75 TB), so it was not used.
+* **fscratch policy:** files older than 30 days are purged and empty directories go after 3 days
+  ([JSC docs](https://apps.fz-juelich.de/jsc/hps/jupiter/filesystems.html)).
+  * hpctransfer keeps MN5's mtimes, so the checkpoints (written 11-06 to 11-13) reach 30 days around 12-06 to 12-13.
+  * Before then, refresh them with `touch` or move them to project storage. Also check the policy key (mtime / atime)
+    before relying on that.
+* **jutil fscratch usage:** jutil still reported 0 used at 17:20, so its accounting lags.
+
+| path below `ambitious84/` | what | status |
+|---|---|---|
+| `ckpt/main/iter_0035603` | main run persistent save (1083 GiB, 1025 files) | done: 17m26s, names + sizes identical, sha256 of `.metadata` + 3 shards identical |
+| `ckpt/main_rolling/iter_0035900` | main run's newest save (rolling; the run logged to 36000 on 11-13, then failed restarts) | done: 17m43s, identical (1025 files, 3 hashes) |
+| `ckpt/main_eval/iter_0023300` | the frozen 23300 (dropout-stitch start, §19) | done: 15m54s, identical (1025 files, 3 hashes) |
+| `ckpt/broad_ctrl_eval/iter_0024400` | broad-session ctrl@24400 (stitch base / leg-2 control) | transferring (started 18:39, 257 chunks) |
+| `data/v8ml-stages-8k64k/s1` | stage-1 `.idx` (23.3 GB) from MN5 + `.bin` symlinks to the JSC s3 `.bin` | done; audited: 531 / 531 identical to MN5 (incl. .bin range hashes through the links) |
+| `data/tokenizers/*`, `data/engram_token_map_256k.npy` | tokenizer-256k-agent / -v2 / -v2-agent, engram map | sha256 identical to MN5 |
+| `datamix/` | opt81 8k64k stage 1 / 2 with JSC paths (+ the MN5 originals, sha256-identical) | done (setup script: 531 + 531 prefixes, 0 missing, weights identical) |
+| `env/` | `pylibs_moonep_ec3eb8b` (aarch64 sm90 build), `pylibs_ep` (liger 0.8.4 + emerging_optimizers 0.2.0), caches | done |
+| `configs/main_run/` | the main run's rendered configs, the p264.0921 / 0987 logs (reference losses 35601-36000), trackers | done |
+| `runs/{main_v4_jsc,smoke_v4_jsc}` | run roots: hard links of 35603 + rolling 35900 + trackers | done (setup script, 18:54) |
+| `audit/` | data audit / tokenizer fingerprint outputs | done |
+
+**Transfers:** hpctransfer from the workstation, MN5 → JUPITER login nodes, `--jobs 128 --no-perms`.
+* Throughput: 3.5-4 GiB/s while all 128 streams run, 1.0-1.4 GiB/s averaged over a checkpoint.
+* The last ~10 of 512 chunks crawl at 20-100 MiB/s, so a 1.08 TiB checkpoint takes ~16-17 min.
+* Chained by `scratchpad/hpct/chain.sh`.
+
+**Data correctness (the tokenizer audit).** Scripts:
+* `scripts/korbi/recall_surgery/jsc_data_audit.py`: the same code on MN5 and JSC, one process per prefix (MN5's
+  300 s CPU rlimit).
+* `jsc_tok_fingerprint.py`: decode → re-encode round trip per candidate tokenizer.
+* An MN5-side twin comparison (`retok_status.py`) against the non-agent twin trees.
+
+1. **Stage 2 + all 7 validation sets are byte-identical on JSC.**
+   * Checked per prefix, 531 / 531 plus 7 / 7: `.bin` size, sha256 of 16 × 4 MiB ranges of the `.bin`, full sha256 of
+     the `.idx`, dtype, sequence / document counts, a 64-sequence token fingerprint.
+   * 0 missing, 0 mismatches. All int32, no `<bos>` (Megatron adds BOS), every sequence ends in `<eos>`=2, max id
+     262143 < vocab.
+2. **Stage 1 is the same tokens.** On MN5, all 531 stage-1 `.bin` are the same inodes as the stage-2 ones (same
+   relative names). Only the `.idx` differ (the stage split). JSC therefore needs only the s1 `.idx`; the `.bin` are
+   symlinks to the verified JSC s3 files.
+3. **Which tokenizer produced what** (531 stage-2 prefixes, against the non-agent twin trees `flag-decon-v2` /
+   `v8-decon`):
+
+| class | prefixes | sources |
+|---|---|---|
+| agent re-tokenized (tokenizer-256k-agent, delimiters native: ids 13-36) | 38 | agenttrove, 3 of 4 nemotron-pretraining-specialized-1.0 shards, every chat / reasoning / agent SFT set: hftok Nemotron-Cascade-2 / Cascade-SFT-Stage-1 / Math-v2 / SFT-Math-v4 / SFT-Science-v2, Themis, hermes, marin open-thoughts-4 ×3; mv1sub dart-math, glaiveai, misc_instruct, nemo_science_math, nvidia_openscience, open_thoughts, prism_math, ring-lite-sft; vtok Alibaba-Apsara, Terminal-Corpus, SWE-ZERO, acereason, dolmino-math, cascade stage2, competitive programming ×2, omnithought ×2, openthoughts3_glm47, openthoughts4_code_qwen3 |
+| original tokenizer-256k (left as text: same vocabulary and pieces, only delimiter strings would differ) | 493 | the pretraining sources (dclm, hplt, finepdfs(-edu), fineopus, finewiki, dochplt, nemotron-cc ×3, finephrase, megamath, finemath, openwebmath, starcoder, swallow ×2, stackv2-edu, specialized-1.1, the 4th specialized-1.0 shard), hftok common-pile-stackv2 (57 shards) and Pretraining-Specialized-v1.2, mv1sub P3 / ling-coder ×3 / math / math_word_problems / pyedu_reasoning / stackexchange / websight, vtok nemotron_sft_math_v3 |
+
+   * This matches `scripts/datamix_v8/retok_sources_v8.txt` (re-tokenize where >= 1 % of the sequences use delimiters
+     structurally) and docs/flag_retokenization.md. This is the "slightly different tokenizer": tokenizer-256k vs
+     tokenizer-256k-agent, same 262,144 vocabulary, differing only in the 59 delimiter slots.
+   * **No prefix comes from tokenizer-256k-v2 / -v2-agent** (a different vocabulary). The round trip reproduces 100 % of
+     the ids with tokenizer-256k-agent for every prefix, and <= 0.54 (mostly < 0.1) with -v2(-agent).
+     * Broad pass: 6 × 1024 ids per prefix, all 538.
+     * Deep pass: 48 × 4096 ids on all 75 non-pretraining prefixes plus one shard of every pretraining source.
+   * **No delimiter strings tokenized as ordinary pieces** in any sample: 0 literal `<think>` / `<|im_start|>` /
+     `<tool_call>` ... after decoding with special tokens skipped. The 493 "left as text" prefixes do not carry the chat
+     formats.
+   * Decoded snippets (`audit/fp_all.snip`, `deep_part_*.snip`) read as clean text in every source.
+4. **The JSC datamix maps each MN5 prefix to the identical file.**
+   * `jsc_ambitious84_setup.sh` rewrites only the path prefix: stage 2 → `oellm_testing/`, stage 1 → `ambitious84/data/...s1/`.
+   * It checks that weights and order equal the MN5 file and that every prefix has `.bin` + `.idx`.
+   * The stage-1 symlinks point at the audited s3 `.bin`; the JSC s3 tree has no same-named file from another
+     tokenization in the mix.
+
+**Software:** image `/e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif`.
+* **Versions:** torch 2.11.0a0 nv26.02, TE 2.18.0, triton 3.6.0, flash_attn 2.7.4, deep_ep, nvidia-resiliency-ext 0.6.0.
+* **TE 2.18 FusedAdam:** `FusedAdam._initialize_state` uses `param._local_tensor` and re-wraps as DTensor. That is
+  the TE 2.19 behaviour MN5 has, so JUPITER saves should be complete; pt2512 / TE 2.10 saved only rank 0's shard (§14.6).
+* **Extra libs:** MoonEP ec3eb8b (the main run's commit) built in this image for aarch64 sm90 in a few minutes. Plus
+  liger 0.8.4 and emerging_optimizers 0.2.0, copied from the MN5 image (the JUPITER image ships 0.1.0); same versions
+  as the main run.
+* **Version gap to MN5's image:** torch 2.14 nv26.09, TE 2.19, triton 3.8. Kernels compile differently, and the smoke
+  test decides whether that matters.
+* **Not needed for the 84B mHC-4 main run:** CuTe kernels (LDM only) and power retention.
+* **Blocker found and fixed: cuBLAS.** Login-GPU check (`logs/logintest.sh`):
+  * Setup: a 5-sublayer stand-in `*ENLE` (attention, MoE through MoonEP, Engram, CKDA, MoE), mHC-4, Megatron-FSDP,
+    muown_classical, mock data, the production arguments otherwise.
+  * MoonEP's expert GEMMs use TE's cuBLASLt grouped GEMM (`general_grouped_gemm_for_grouped_tensor`). TE asserts
+    cuBLAS >= 13.3; the image has 13.2.2.
+  * Fix: cuBLAS 13.8.0.4, the MN5 image's version, from the PyPI `nvidia-cublas` aarch64 wheel into
+    `env/cublas/nvidia/cu13/lib`, put first in LD_LIBRARY_PATH (platform block). The driver (610.57) supports it.
+  * With it the forward passed attention and the MoonEP MoE. The rerun then hit "Triton Error [CUDA]: out of memory"
+    in the first CKDA layer, because another user's job held 89 of the login GPU's 95 GiB.
+  * The full forward / backward / save / load check is the smoke test on a compute host.
+
+**Configs** (rendered with `--dry-run`; the Megatron arguments diffed against MN5's launch script of the last segment
+`mn5-pool-p264.0987` / against `dropout_stitch84_mn5`):
+* `production/jupiter_amb84_platform.yaml`: the platform block (container, extra libs, caches, data / tokenizer /
+  engram / validation paths, slurm). It is included after a MareNostrum config.
+* `production/hybrid_ambitious_v4_2ph_hd256_p2_jupiter.yaml`: the main run on JUPITER.
+  * Arms:
+    * `main`: 256 nodes, resumes 35900 → 35901+;
+    * `smoke_a`: 16 nodes, 35901-35905, async persistent save at 35905;
+    * `smoke_b`: resume from that save, 35906-35910.
+  * Diff vs MN5: only paths and the W&B name, 172 / 172 arguments otherwise identical. Env: MN5's
+    TORCHINDUCTOR_COMPILE_THREADS=1 etc. carried over; per_process_memory_fraction dropped (torch 2.11 rejects it).
+  * The data order at any node count comes from the main run's reference-layout sampler (dp 512 × mbs 1).
+* `recall_surgery/dropout_stitch84_jupiter.yaml`: §19's D1 / DK1 / D2 / DK2 (+ ctrl2, D1h / D2h).
+  * 128 nodes per arm, micro batch 2 (MN5: 64 × 4). Diff vs MN5: paths + micro batch only.
+  * `ds84_surgery_jupiter.yaml`: the start-checkpoint surgeries as 1-node jobs, SRC / CTRL = the fscratch copies.
+* `production/data_cache_prebuild_amb84_p2_jupiter.yaml` and `recall_surgery/data_cache_prebuild_ds84_jupiter.yaml`:
+  1-GPU dataset-index prebuilds.
+  * They are the runs' own configs with a stand-in model and skip_train. Cache-key arguments are identical to the runs
+    (checked), except eval_iters for p2, which is sized as a training run sizes validation (the MN5 prebuild rule).
+* `pool/jupiter_pool_amb84.yaml` (256 nodes, account e-sta-openeurollm, hold_hosts, no successor, preflight
+  `pool/node_health_jupiter.yaml`).
+  * NOT created: creating the pool queues a host.
+
+**Order when a host is in sight:**
+1. `./sync_to_jupiter.sh`, then `bash scripts/korbi/recall_surgery/jsc_ambitious84_setup.sh` on a login node.
+2. Prebuilds p2 / p1 and smoke_a / smoke_b in small16 (account override `slurm.sbatch.account=e-ext-2025e02-108`).
+   Check:
+   * smoke_a's 35901-35905 loss and grad norm match `configs/main_run/slurm-mn5-pool-p264.0987.log`;
+   * smoke_b's 35906-35910 match too (save → load exact on JUPITER).
+3. Then the 84B arms or `main` on the big host.
+
+**Enqueued 2026-11-15 19:00 in jupiter_pool_small16** (existing hosts only; lead-approved; coordinated with the testbed
+agent; priorities below every testbed run):
+* the 1-GPU prebuilds `amb84_jsc_prebuild_p2_3eec12` (running on host004 from 19:02) and `amb84_jsc_prebuild_p1_442a88`;
+* `amb84_jsc_smoke_a_1_ac397a` / `amb84_jsc_smoke_b_2_f3d078` (16 nodes each). They start once a host is completely
+  empty: host004 ~19:15-19:30, host003 ~20:00 per the testbed agent.
+* Host submission: squeue checked after the enqueue showed no new small16 host.
+  * The pool keeps max_hosts_running + keep_pending = 2 hosts while work is queued, and both are live.
+  * Guard `scripts/korbi/recall_surgery/amb84_small16_guard.sh` (JUPITER login, log `ambitious84/logs/`) pool-cancels
+    these four jobs at 23:30, so no queued job of ours is left when the hosts end (~00:29 / ~00:36) and the pool cannot
+    submit a successor.
+* Reference for the smoke check: MN5's 35901-35910 lines in `configs/main_run/slurm-mn5-pool-p264.0987.log` (loss,
+  grad norm).
+
+**Evals on JUPITER:** the team image `oellm-eval-vllm.sif` has stock vLLM 0.28 (torch 2.13). Our oellm_ambitious
+vLLM fork (v0.32 base, CKDA / Engram / MoE fast paths) has no aarch64 build; building one is a multi-hour job, not
+started.
+* (a) HF backend on JUPITER:
+  * `scripts/korbi/hf_export/export_run.sh <run dir> <step> <out>` (export_ambitious, CPU) in the te218 image on one node;
+  * then lm-eval's HF backend as the small31 / o32 readouts do (`small31_eval.py`), with the 84B spread over a node's
+    4 GH200;
+  * untested at 84B.
+* (b) Copy the HF export back to MN5 with hpctransfer (fp8 experts, ~100 GB: a few minutes) and use the usual
+  `scripts/evals/launch.py --export <name>` (vLLM, OELLM_MOE_FP8_DIRECT).
+* (b) is the proven path for the readouts; (a) needs a first test on a node.
+
 ### 19.2 host110 takeover: ABORTED (2026-11-15 18:05, user)
 
 * **Plan (user, ~17:45):** host109 keeps the 32B B1 job (run 0111). We take the 32B pool's host110 (job 2919391, 516 nodes,
