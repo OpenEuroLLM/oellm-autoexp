@@ -3820,3 +3820,12 @@ trend does not appear by 36900, the remaining explanations are data mix / scale,
 **Capture script updated for the surgery.** `max_runs_per_host=5` (1-node surgery + four 128-node arms = 513 nodes),
 thresholds 513 / 385 usable nodes, surgery enqueued first at priority 90 into the B1 pool, then the training arms.
 The live-wait loop includes `kvshare_main_surgery`, so the B1 pool is restored only after the surgery and arms end.
+
+**Control load path.** The main run's `runs/main_v4_jsc/ckpt` holds the 35603 persistent save; the 35900 save is in
+`ckpt_rolling`. The control arm's `--load` is therefore `ckpt_rolling` (commit 31cbedbb), so the paired continuation
+starts at 35900, not 35603.
+
+**B1 handover trade-off.** The guard sets `handover=false` from 01:30 until our arms end, so host115 is not retired
+and the B1 run continues there. Host118 (job 2925792, ~05:48) may start while handover is off; if B1 should move to
+it, restore `handover=true` after host118 is live (and after host117 is busy with our runs) rather than waiting for
+our arms. This is not automated: the current guard restores at the end of the arms.
