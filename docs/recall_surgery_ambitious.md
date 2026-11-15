@@ -3122,6 +3122,41 @@ D2 (D1's dropout-trained branches stitched into C@39100) at 40053, paired with C
 * small16 priorities: D2 / DK2 leg 2 45, the third legs (K / D2 / DK2) 40, D1h 35, Wp 33, T 30. DK2 stitched
   17:00 (tracker 39100).
 
+**§14.8 paired readouts (18:35; `small31_paired.py`: arm - C at the same step, then the mean over the arm's
+readouts).** Columns: SQuAD F1 when answering / HasAns F1 / CoQA F1 / FDA / SWDE / squad_completion / Winogrande /
+valid. Incomplete readouts are skipped per column.
+
+| arm | readouts | F1 ans | HasAns | CoQA | FDA | SWDE | SQcomp | Wino | valid |
+|---|---|---|---|---|---|---|---|---|---|
+| **K** (additive kvshare) | 39100-44822 (5) | +0.24 | -0.06 | +0.44 | +2.04 | -0.00 | -1.20 | -0.12 | **-0.0037** (-0.0011 -> **-0.0071** at 44822) |
+| K @ 44822 | | +2.73 | +4.48 | +1.95 | +1.50 | +0.10 | -2.00 | +0.24 | -0.0071 |
+| W (widened, lr confound) | 3 | -0.08 | +0.76 | -0.57 | -1.83 | -0.03 | -1.07 | +0.32 | +0.0035 |
+| Wp (W, lr corrected) | 2-3 | -0.36 | -1.50 | -0.19 | -0.90 | +0.43 | -0.80 | -0.63 | +0.0001 |
+| T (head temperature) | 1-2 | +0.08 | -1.88 | +0.51 | +0.20 | +0.05 | -0.70 | +0.23 | +0.0003 |
+| D1 (dropout 0.3, attn branch; eval w/o dropout) | 39100 | +1.10 | +1.03 | +0.03 | +1.50 | +1.10 | +1.50 | -1.50 | +0.0459 |
+| **DK1** (dropout 0.3, kvshare branch) | 39100 | **+2.31** | **+3.82** | -1.23 | **+4.10** | **+3.10** | **+4.50** | -2.44 | +0.0462 |
+| D1h (dropout 0.5) | 39100 | -2.33 | -3.06 | -2.02 | +1.60 | +0.50 | +4.30 | -2.84 | +0.1250 |
+| D2 (D1 stitched into C) | 39100-44822 | -0.31 | -0.08 | -0.05 | **+2.88** | -0.54 | +1.97 | -0.35 | -0.0031 / -0.0030 at 41961 / 43868 |
+| DK2 (DK1 stitched into C) | 39100-41961 | -0.18 | -2.27 | -0.32 | +0.53 | -0.47 | +4.25 | +0.74 | -0.0039 at 41961 |
+| D2h (D1h stitched) | 39100-41961 | -1.51 | -1.00 | -1.30 | +2.10 | -0.57 | +4.45 | +0.37 | +0.0004 at 40053 |
+| M (transplant, crossfade) | 6 | -1.08 | -3.60 | +0.58 | +0.95 | +0.30 | +0.50 | -1.17 | +0.0083 |
+| L (random late, crossfade) | 6 | -0.87 | -2.51 | -1.40 | -0.15 | -1.18 | -0.10 | -0.89 | +0.0104 |
+
+* **K is the best stitch so far.** Its valid gap to C widens steadily: -0.0011 / -0.0008 / -0.0043 / -0.0051 /
+  -0.0071. Recall equals C on average over five readouts and is ahead at the last one (F1 when answering +2.7,
+  HasAns +4.5, CoQA +2.0). Adding kvshare attention with CKDA kept at full weight is a strict improvement in loss,
+  and the recall rows trend up with it.
+* **Dropout-forced attention helps recall in the dropout-trained model itself.** DK1 (K's branch, rest dropout 0.3,
+  evaluated without dropout) is +2.3 / +3.8 / +4.1 / +3.1 / +4.5 on F1 when answering / HasAns / FDA / SWDE /
+  squad_completion at 39100, despite +0.046 valid; D1 likewise +1.0-1.5. At p = 0.5 (D1h) SQuAD drops.
+* **Stitching the dropout-trained branch back into C keeps only part of that.** D2 / DK2 / D2h after adapting:
+  valid about C - 0.003 to -0.004 (like K's added attention), FDA / squad_completion up (+2-5), SQuAD columns at or
+  below C. Recall did not transfer through the stitch beyond the extraction rows.
+* **Wp:** with the lr confound removed, the wider MLPs are neutral (valid +-0.001, recall within noise). **T:**
+  neutral so far.
+* Next: the remaining readouts (DK2 43868 / 44822, D2 44822, Wp / D2h / T 41961) narrow the means. The DK1 result
+  suggests a K + dropout variant whose dropout is kept low or annealed, rather than stitched.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
