@@ -3805,3 +3805,17 @@ branch gradients and the JUPITER save/load path. The surgery output and the smok
 **Expectation.** The 32B dense reference has ~3x the tokens and ~12x the active parameters; a 67 BT intervention is
 1.7 % of the main run's tokens. The target is a clear move on the six recall rows, not parity with the 32B. If the K
 trend does not appear by 36900, the remaining explanations are data mix / scale, not the mixer alone.
+
+**Small16 test result (2026-11-16 00:05-00:15).** The two existing 16-node hosts were at 11:42 / 11:36 of their
+12 h wall, so the pool's `min_remaining_s=1800` refused the 40-min surgery: it stayed PENDING. The pool was closed
+(no successor host, no Slurm change) and the test was done with read-only `srun --overlap` steps inside host004:
+* the JUPITER te218 container starts and sees CUDA (`torch 2.11.0a0+...nv26.02`, `cuda True`);
+* `add_ckda_branch.py selftest` passes in that container, including the kvshare chain and `verify` (0 tensors
+  differ). The code path is good; only the 84B checkpoint write was untested.
+* The first 84B surgery attempt failed at `os.link` with **EXDEV** (fscratch source -> e-ext destination). Fixed in
+  `dcp_surgery.py` (commit 59571799): cross-device `.distcp` files are copied with `shutil.copy2`; same-FS surgeries
+  keep hard links. The small16 surgery run is left PENDING; the B1 host runs it.
+
+**Capture script updated for the surgery.** `max_runs_per_host=5` (1-node surgery + four 128-node arms = 513 nodes),
+thresholds 513 / 385 usable nodes, surgery enqueued first at priority 90 into the B1 pool, then the training arms.
+The live-wait loop includes `kvshare_main_surgery`, so the B1 pool is restored only after the surgery and arms end.

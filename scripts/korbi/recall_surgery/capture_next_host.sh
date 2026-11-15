@@ -9,7 +9,7 @@
 # What it does (all pool-level, never scontrol/scancel/requeue):
 #   1. at SETTINGS_AT (default 01:30) or as soon as the host starts:
 #        B1 pool handover=false            (B1 stays on host115; no handover to host117)
-#        B1 pool max_runs_per_host=4       (four 128-node arms fit on host117)
+#        B1 pool max_runs_per_host=5       (1-node surgery + four 128-node arms fit on host117)
 #      The 32B pool's older code has no per-host hold/freeze: the first 128-node control run
 #      assigned to host117 is the keeper that prevents the idle release.
 #   2. waits for host117 RUNNING, its precheck log, and >= MIN_USABLE usable nodes
@@ -31,8 +31,8 @@ CTL_REPO=${CTL_REPO:-/e/project1/e-sta-openeurollm/poeppel1/Projects/oellm-autoe
 PY=${PY:-$OUR/.venv/bin/python}
 STATE=${STATE:-/e/scratch/e-sta-openeurollm/poeppel1/pool_state}
 CFG=${CFG:-experiments/korbi/recall_surgery/kvshare_main_jupiter}
-MIN_USABLE=${MIN_USABLE:-384}     # 3 x 128; below that only K + ctrl
-FULL_USABLE=${FULL_USABLE:-512}   # 4 x 128
+MIN_USABLE=${MIN_USABLE:-385}     # 3 x 128 + the 1-node surgery; below that only K + ctrl
+FULL_USABLE=${FULL_USABLE:-513}   # 4 x 128 + the 1-node surgery
 SETTINGS_AT=${SETTINGS_AT:-01:30} # local JUPITER time (CET); host StartTime is ~02:09
 MAX_H=${MAX_H:-12}
 POLL_S=${POLL_S:-30}
@@ -44,8 +44,8 @@ job_state() { squeue -h -j "$JOB" -o "%T" 2>/dev/null | head -1; }
 
 # 1. protect the host before the B1 monitor can hand it to the 32B run
 settings() {
-  log "setting B1 pool handover=false max_runs_per_host=4"
-  ctl set handover=false max_runs_per_host=4 2>&1 | sed 's/^/  /'
+  log "setting B1 pool handover=false max_runs_per_host=5"
+  ctl set handover=false max_runs_per_host=5 2>&1 | sed 's/^/  /'
 }
 settings_done=0
 # wait until SETTINGS_AT unless the host is already running
@@ -93,11 +93,17 @@ elif [ "$u" -ge "$MIN_USABLE" ]; then
 else
   ARMS="K,ctrl"
 fi
-log "enqueuing $ARMS into $POOL (usable $u)"
+log "enqueuing the 1-node surgery first, then $ARMS into $POOL (usable $u)"
 (cd "$OUR" && PYTHONPATH=. timeout 600 "$PY" scripts/run_autoexp.py --no-monitor \
-  --monitor-state-dir "$STATE" --pool "$POOL" --config-name "$CFG" --yes "aux.only=[$ARMS]" 2>&1) \
+  --monitor-state-dir "$STATE" --pool "$POOL" \
+  --config-name experiments/korbi/recall_surgery/kvshare_main_surgery_jupiter --yes \
+  slurm.sbatch.account=e-sta-openeurollm job.metadata.pool_priority=90 2>&1) \
   | grep -E "^Enqueued|Plan:|rror|Traceback" | sed 's/^/  /'
-log "enqueued; monitor places the arms on $HOST. K/Kd01/DK03 wait for the surgery tracker."
+(cd "$OUR" && PYTHONPATH=. timeout 600 "$PY" scripts/run_autoexp.py --no-monitor \
+  --monitor-state-dir "$STATE" --pool "$POOL" --config-name "$CFG" --yes \
+  "aux.only=[$ARMS]" slurm.sbatch.account=e-sta-openeurollm 2>&1) \
+  | grep -E "^Enqueued|Plan:|rror|Traceback" | sed 's/^/  /'
+log "enqueued; monitor places the surgery + ctrl on $HOST. K/Kd01/DK03 wait for the surgery tracker."
 
 # 5. restore the B1 pool when every arm has ended (or on timeout / STOP)
 deadline=$(( $(date +%s) + MAX_H * 3600 ))
@@ -107,7 +113,7 @@ while :; do
   for r in "$POOL"/runs/*; do
     [ -f "$r/meta.env" ] || continue
     name=$(grep -h '^NAME=' "$r/meta.env" | tail -1 | cut -d= -f2 | tr -d "'\"")
-    case "$name" in amb84_jsc_K|amb84_jsc_ctrl|amb84_jsc_Kd01|amb84_jsc_DK03) ;; *) continue ;; esac
+    case "$name" in amb84_jsc_K|amb84_jsc_ctrl|amb84_jsc_Kd01|amb84_jsc_DK03|kvshare_main_surgery) ;; *) continue ;; esac
     [ -f "$r/rc" ] || live=$((live + 1))
   done
   log "arms still live: $live"
