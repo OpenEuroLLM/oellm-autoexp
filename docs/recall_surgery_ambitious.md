@@ -2995,6 +2995,11 @@ override_opt_param_scheduler, NaN check on. Readouts (full small31 set incl. RUL
     REENQUEUE_TRAIN=0` (log monitor_logs/w_guard.log): a misplaced W leg (e.g. if host110, pending, starts empty
     first) is cancelled, not re-enqueued.
   * Readouts in small16.
+  * **Placed on host108 (run 0105, 15:34), same batches as C:** W - C at 38147-38152 = +0.0008 / +0.0006 / +0.0002 /
+    +0.0003 / +0.0003 / +0.0002 (bf16 noise of the different reduction layout). Grad norm 0.240 vs 0.204 at step 1:
+    the new fc2 columns get a gradient at once, the new fc1 rows only after them.
+  * 8 nodes run ~0.95 s / step vs ~1.1 at 4 nodes (micro-batch 2 is less efficient), so W costs ~32 GPU-h instead
+    of ~21. **Projected total ~1480 of 1500.**
 
 **Budget** (15:25): measured 1382 GPU-h (small16 1206 excl. ft17b + 32B pool 176).
 * Committed remaining (K two legs + 3 readouts, D1 + readout, D2 zero-shot readout + adapt + readout, a0 20 BT
