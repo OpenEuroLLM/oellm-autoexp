@@ -466,6 +466,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "attention_head_temperature": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="A learned temperature per query head on the softmax-attention layers: the normalized query of head h is multiplied by ``head_temperature[h]`` (initialized to 1, so a checkpoint without it computes exactly what it computed before; a 1-D parameter, trained by the scalar optimizer) -- the logit scale of each head becomes learnable (small31 arm T, docs/recall_surgery_ambitious.md §14.8). Needs split q / k / v.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "attention_length_scaling": MegatronArgMetadata(
         arg_type=str,
         default="none",
@@ -9581,6 +9589,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.1,
+    ),
+    "attention_head_temperature": MegatronActionSpec(
+        option_strings=("--attention-head-temperature",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "attention_length_scaling": MegatronActionSpec(
         option_strings=("--attention-length-scaling",),

@@ -290,6 +290,7 @@ def hf_config(m: dict, vocab: int) -> dict:
         "head_dim": m["kv_channels"],
         "qk_layernorm": bool(m.get("qk_layernorm")),
         "attention_output_gate": bool(m.get("attention_output_gate")),
+        "attention_head_temperature": bool(m.get("attention_head_temperature")),
         "rope_theta": float(m.get("rotary_base") or 10000) if pos == "rope" else None,
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
@@ -529,6 +530,8 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
         add(hp + "mixer.k_norm.weight", g("self_attention.k_layernorm.weight").to(cast))
         add(hp + "input_layernorm.weight", g("self_attention.linear_qkv.layer_norm_weight").to(cast))
+        if p + "self_attention.head_temperature" in t:  # attention_head_temperature: one logit scale per head
+            add(hp + "mixer.head_temperature", g("self_attention.head_temperature").float())
         # trained sparse-attention parameters (page_sparse_selector nsa / csa2 / indexer): not part of the HF
         # model; campaign_midtraining/extract_variant_params.py takes them for the long-context probe
         for k in [k for k in t if k.startswith(p + "self_attention.core_attention.")]:

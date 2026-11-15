@@ -265,6 +265,9 @@ class OellmXSAAttention(nn.Module):
         zcg = config.layernorm_zero_centered_gamma
         self.q_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
         self.k_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
+        # Megatron attention_head_temperature: a learned logit scale per query head on the normalized query
+        self.head_temperature = (nn.Parameter(torch.ones(self.nh))
+                                 if getattr(config, "attention_head_temperature", False) else None)
         # a kvshare source (OellmAmbitiousModel sets keep_kv): last_kv = this call's keys / values incl. the
         # past, [b, nkv, S, d] each, for the kvshare layers after it
         self.keep_kv, self.last_kv = False, None
@@ -305,6 +308,8 @@ class OellmXSAAttention(nn.Module):
             kern = _kernels()
             q = kern.rms_norm(q, self.q_norm.weight, self.q_norm.variance_epsilon, self.q_norm.zero_centered_gamma)
             k = kern.rms_norm(k, self.k_norm.weight, self.k_norm.variance_epsilon, self.k_norm.zero_centered_gamma)
+        if self.head_temperature is not None:
+            q = q * self.head_temperature.to(q.dtype)[:, None]
         q, k = self._rope(q, k, 0)
         kt, vt = k.transpose(1, 2), v.transpose(1, 2)
         o = F.scaled_dot_product_attention(q.transpose(1, 2), kt, vt, is_causal=True, scale=d**-0.5,
@@ -334,6 +339,8 @@ class OellmXSAAttention(nn.Module):
         v = self.v_proj(x).view(b, s, self.nkv, self.d)
         if self.q_norm is not None:
             q, k = self.q_norm(q), self.k_norm(k)
+        if self.head_temperature is not None:
+            q = q * self.head_temperature.to(q.dtype)[:, None]
         past = 0 if state is None else state[0].shape[2]
         q, k = self._rope(q, k, past)
         own_v = v

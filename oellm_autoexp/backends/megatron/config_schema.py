@@ -1069,6 +1069,13 @@ class MegatronConfig(ConfigInterface):
     # a 200-step hand-over).
     ckda_branch_gamma_scale: float = 1.0
 
+    # A learned temperature per query head on the softmax-attention layers: the normalized
+    # query of head h is multiplied by ``head_temperature[h]`` (initialized to 1, so a
+    # checkpoint without it computes exactly what it computed before; a 1-D parameter, trained
+    # by the scalar optimizer) -- the logit scale of each head becomes learnable (small31 arm
+    # T, docs/recall_surgery_ambitious.md §14.8). Needs split q / k / v.
+    attention_head_temperature: bool = False
+
     # Muon-family optimizers scale a matrix's orthogonalized update by a factor of its shape
     # (sqrt(max(m, n)) for scale_mode spectral). With this set, the dense MLP's linear_fc1 /
     # linear_fc2 weights get the update scale of the same matrices at this ffn_hidden_size

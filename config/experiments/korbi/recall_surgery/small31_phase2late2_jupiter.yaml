@@ -146,3 +146,8 @@ sweep:
           backend.megatron.ckda_branch_gamma_scale: 1.0
           backend.megatron.ckda_branch_calibrate: false
           backend.megatron.check_for_nan_in_loss_and_grad: true
+        # §14.8 arm T: a learned per-head temperature (logit scale on the normalized query, init 1) on the existing
+        # attention layers; the parameter is not in b7's checkpoint (partial load keeps the 1s)
+        - aux.arm: T
+          backend.megatron.attention_head_temperature: true
+          backend.megatron.check_for_nan_in_loss_and_grad: true

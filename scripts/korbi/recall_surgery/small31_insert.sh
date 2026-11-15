@@ -28,6 +28,7 @@
 #   DK1     (§14.8) K's start (additive kvshare, q / gate / o copied), trained with rest dropout: a hard-link copy of K@IT
 #   DK2     (§14.8) DK1's trained kvshare branches (DONOR_IT of DK1) transplanted into C@IT (SRC_ARM=C)
 #   D1h     (§14.8) D1 at rest dropout 0.5: a hard-link copy of D1@IT;  D2h: D1h's branches into C@IT (as D2)
+#   T       (§14.8) b7@IT as it is (hard links), run with attention_head_temperature (the new parameter starts at 1)
 #   Wp      (§14.8) W's start (MLPs widened to 4608): a hard-link copy of W@IT, run with the 3584 Muon update scale
 #   ARM=D2 SRC_ARM=C IT=39100 DONOR_IT=39100 small31_insert.sh
 set -euo pipefail
@@ -39,7 +40,7 @@ B7="*-NL-L-L-L-L-L-L-*-L-L-L-L-L-L-L-N*-L-L-L-L-L-L-L-"
 case "$ARM" in
   E|L|M)   LAYERS=9,25,42; PATTERN="*-NL-L-L-*-L-L-L-*-L-L-L-*-L-L-L-N*-L-L-L-*-L-L-L-"; DONOR=E ;;
   Ep|Lp|Mp) LAYERS=3,19,36; PATTERN="*-N*-L-L-L-L-L-L-*-*-L-L-L-L-L-L-N*-*-L-L-L-L-L-L-"; DONOR=Ep ;;
-  C|W|Wp) LAYERS=; PATTERN= ;;
+  C|W|Wp|T) LAYERS=; PATTERN= ;;
   K|D1|D1h) LAYERS=9,25,42; PATTERN= ;;
   D2h) LAYERS=9,25,42; PATTERN=; DONOR=D1h ;;
   D2) LAYERS=9,25,42; PATTERN=; DONOR=D1 ;;
@@ -61,7 +62,7 @@ mkdir -p "$OUT"
 cd "$(dirname "$0")/../../.."
 X=(apptainer exec --bind /e --env PYTHONPATH=.:submodules/Megatron-LM:flash-linear-attention "$SIF")
 case "$ARM" in
-  C) cp -al "$SRC" "$OUT/$it" ;;
+  C|T) cp -al "$SRC" "$OUT/$it" ;;
   K) "${X[@]}" env CKDA_BRANCH_ATTN_LAYERS=$REFS python scripts/korbi/production/add_ckda_branch.py apply \
        --src "$SRC" --dst "$OUT/$it" --branch kvshare --groups 2 --layers "$LAYERS" --kv-sources "$REFS" \
        --kvshare-init copy --seed 1234 ;;
