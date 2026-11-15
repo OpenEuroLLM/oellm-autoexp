@@ -2599,6 +2599,61 @@ anomalous.
   network disabled). The 21 base readouts so far were re-enqueued; their finished rows are skipped, so only RULER
   runs.
 
+### 14.7 E / Ep to 6 BT, the late arms, readout fixes, budget (2026-11-15 03:45)
+
+* **E / Ep (clean, v3) reached 9535** at ~03:30 and are extended to **11445 (6 BT)**:
+  * same train_iters / data order / schedule, resumed from 9535 with the v3 ramp; priority 30;
+  * 11445 rather than 11444 because the bases' save_interval save is at 11445 (3 x 3815), so b7 / r3 / r3p / a0
+    all have iter_0011445 and the comparison is matched to the step;
+  * readouts at 11445 enqueued for b7 / r3 / r3p / a0 / E / Ep (gen_small31_readout.py grid + 11445).
+* **Late arms** (small31_phase2late_jupiter: from b7@38146, train_iters 40053, the same batches for every late arm,
+  exit 39100, saves 38623 / 39100 = +0.25 / +0.5 BT):
+  * enqueued; each arm starts when its insertion writes its tracker. Priorities C / M / Mp 45, L / Lp 38, above the
+    E / Ep extension (30) and the readouts (20);
+  * a login-node chain (`<root>/late_insert_chain.sh`, log `late_insert_chain.log`) waits for b7@38146's .metadata,
+    then inserts C, M, Mp, L, Lp in that order (M / Mp: DONOR_IT = 9535 of the clean E / Ep);
+  * every late arm starts from the same JUPITER checkpoint, so every one (C included) gets the identical v3 ramp at
+    38147;
+  * timing: ~954 steps x 1.15 s = ~18 min + load per arm. b7 reaches 38146 at ~04:30; the small16 hosts end at
+    ~07:15-07:30 with USR1 at 900 s before the wall, so the late arms should finish inside the segment. A cut arm
+    saves at the signal and resumes on the next host with v3.
+* **transplant_attention.py: branch donors.** The clean E / Ep carry their trained attention as a crossfade
+  `ckda_branch` on the CKDA sublayer (alpha = 0 since 2107), not as an attention sublayer, so the transplant refused
+  them ("donor sublayer 9 is not attention"; a dry run on b7@34335 caught it).
+  * It now copies `self_attention.branch.*` + `branch_mix.gamma` and their optimizer states (21 keys per sublayer).
+  * The donor/base input-norm ratio is folded into branch.linear_qkv (inversely into m_u / g / m_g / v_g), so the
+    base's branch computes exactly the donor's branch function on the base's normalized input.
+  * Fold ratios: median 1.10-1.32, max up to 11.4 (one channel each at sublayers 25 / 19). Donor gammas
+    E 0.97 / 0.38 / 0.80, Ep 0.22 / 1.13 / 0.57.
+  * Dry runs: both M and Mp read back exactly.
+* **Readout RULER row, second fix.** The first fix patched `lm_eval.tasks.ruler.qa_utils.download_json`, but
+  lm-eval's YAML `!function` loader imports qa_utils.py as a separate module object, so every readout after 00:05
+  still failed the RULER row. The other rows are all complete, e.g. E 9535 clean: CoQA F1 0.456, Winogrande 0.519,
+  SQuAD v2 F1 15.6, SWDE 0.689, FDA 0.759, squad_completion 0.405.
+  * small31_eval.py now intercepts `requests.get` for the SQuAD URL; tested by loading qa_utils from its file path
+    with sockets blocked.
+  * All 37 readouts lacking RULER were re-enqueued (finished rows are skipped). The four 11445 readouts that started
+    before the fix get a RULER rerun after they end.
+* **Budget** (pool ledger; 1500 GPU-h for the branch, the 1.7B fine-tunes tallied separately):
+
+| item | GPU-h |
+|---|---|
+| b7 (32B buffer nodes 13:48-19:30 + small16) | ~60 + 130 |
+| r3 / r3p / a0 | 134 / 134 / 109 |
+| E / Ep (shock-affected first runs + clean runs) | 81 / 68 |
+| readouts (incl. failed RULER reruns) | 144 |
+| resume tests | 2 |
+| **spent** | **~862** |
+| remaining: bases to 38146 (b7 0.75 h, r3 / r3p ~3.8 h, a0 ~4.8 h on 4 nodes) | ~210 |
+| E / Ep extension (~0.6 h each) | ~18 |
+| late arms (5 x ~0.4 h) | ~32 |
+| readouts (37 RULER-only + ~20 full) | ~115 |
+| **projected** | **~1240** |
+
+  (The ft17b 1.7B jobs on small16 used 37 GPU-h, tallied separately.)
+* r3 / r3p / a0 reach 38146 after the current host segment (~07:30 / ~07:35 / ~08:30), so they cross one host change:
+  a USR1 save, then a v3 resume a few thousand steps before their 20 BT checkpoint.
+
 ### 16.1 Results (2026-11-14 23:00)
 
 Run notes: the hybrid arms first failed on JUPITER, because Triton found no libcuda (`TRITON_LIBCUDA_PATH=/.singularity.d/libs`,
