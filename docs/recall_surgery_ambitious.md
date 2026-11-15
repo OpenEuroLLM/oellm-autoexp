@@ -3814,7 +3814,8 @@ trend does not appear by 36900, the remaining explanations are data mix / scale,
   differ). The code path is good; only the 84B checkpoint write was untested.
 * The first 84B surgery attempt failed at `os.link` with **EXDEV** (fscratch source -> e-ext destination). Fixed in
   `dcp_surgery.py` (commit 59571799): cross-device `.distcp` files are copied with `shutil.copy2`; same-FS surgeries
-  keep hard links. The small16 surgery run is left PENDING; the B1 host runs it.
+  keep hard links. The small16 pool was closed (no successor host) and its pending surgery run was cancelled at the
+  pool level (not a Slurm job); the B1 host runs the surgery.
 
 **Capture script updated for the surgery.** `max_runs_per_host=5` (1-node surgery + four 128-node arms = 513 nodes),
 thresholds 513 / 385 usable nodes, surgery enqueued first at priority 90 into the B1 pool, then the training arms.
