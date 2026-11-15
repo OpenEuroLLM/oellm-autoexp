@@ -42,6 +42,8 @@ aux:
   stage_datamix: ${aux.amb84}/datamix/datamix_v8ml_opt81_8k64k_stage2_jsc.txt
   only: [main]
   run: main_v4_jsc
+  # the smoke arms' pool priority (95 on an own host; below every testbed run in small16: aux.smoke_priority=10)
+  smoke_priority: 95
 
 backend:
   megatron:
@@ -86,7 +88,7 @@ sweep:
           backend.megatron.exit_interval: 35905
           backend.megatron.save_extra_steps: [35905]
           job.base_output_dir: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc
-          job.metadata.pool_priority: 95
+          job.metadata.pool_priority: ${aux.smoke_priority}
           job.est_steps: 5
         - aux.run: smoke_b
           aux.phase: 2
@@ -100,5 +102,5 @@ sweep:
             class_name: FileExistsCondition
             path: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/smoke_v4_jsc/ckpt/iter_0035905/.metadata
             persistent_pass: true
-          job.metadata.pool_priority: 94
+          job.metadata.pool_priority: ${aux.smoke_priority}
           job.est_steps: 5
