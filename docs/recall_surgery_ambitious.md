@@ -3843,3 +3843,15 @@ learned per-head attention temperature; its start checkpoint is the K surgery pl
 `add_head_temperature.py` (`surgery/DK1T/ckpt/iter_0035900`). The host supervisor got stuck in its old-run settle loop
 after the manual control run was killed; the shrink itself is recorded correctly, and the surgery/control steps are
 being launched directly inside the allocation (`SLURM_JOB_ID=2927441`) while that loop is cleared.
+
+**Host120 -> 256 (2026-11-16 05:20).** The user: kill host120 and use 256 nodes, not 252. Host120 (job 2927441)
+was cancelled; it is no longer used. A fresh **256-node** host was submitted from the prepared pool
+`jupiter_pool_amb84`: **job 2928984 (jupiter_pool_amb84_host001, 256 nodes)**, pending with a current Slurm estimate
+of 09:05. The pool monitor is running, the preflight template is `node_health_d77da9`, and `hold_hosts: true`.
+`amb84_jsc_ctrl_64e385` and `kvshare_main_surgery_c4b212` are queued in that pool. The B1 pool was restored to
+`handover=true, max_runs_per_host=0`; host115 (the 32B run) and the B1 hosts121/122 were not changed.
+
+The 256-node fit is **control 128 + DK1T 128**, both gbs 1024, no shrink. The 1-node K surgery and the 1-node
+`add_head_temperature.py` run before the two arms; `wait_dk1t.sh` waits for `surgery/DK1/ckpt = 35900`, creates
+`surgery/DK1T/ckpt = 35900`, then enqueues the DK1T arm into the same pool. The control is already queued and can run
+beside the 1-node surgery; DK1T joins once the head-temperature checkpoint exists (128 + 128 = 256).
