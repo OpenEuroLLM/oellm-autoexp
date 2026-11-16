@@ -50,6 +50,13 @@ this experiment directory, and the local surgery helpers overlaid. The copy's
 state was not copied. The active pool monitor remains the existing one.
 
 ## Results
+- The fresh run root also made a fresh data-cache path. It had rebuilt 15 GB
+  of indices; 476 existing final files matched names/sizes in the earlier
+  kvshare cache. `scripts/seed_cache.py` reuses completed content-addressed
+  entries with hard links, descriptors last, without linking locks/temporary
+  files or overwriting current entries. The dataset writer uses atomic rename,
+  so future destination updates cannot modify the earlier cache through a link.
+
 - Recovery: non-persistent writes are disabled, but Megatron's load-path resolver
   already prefers a newer checkpoint in its configured rolling directory.
   `scripts/prepare_resume_alias.sh` makes K_main/ckpt_rolling an alias to its
