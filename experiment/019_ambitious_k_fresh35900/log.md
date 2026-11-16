@@ -50,6 +50,12 @@ this experiment directory, and the local surgery helpers overlaid. The copy's
 state was not copied. The active pool monitor remains the existing one.
 
 ## Results
+- Baseline parity launcher initially lacked its multiprocessing main guard.
+  A spawned vLLM process re-executed the launcher and failed during bootstrap;
+  this was not a checkpoint/model mismatch. Added the main guard and matched
+  parity's numerical/runtime environment to the recall workers (eager for
+  explicit prefill/chunk comparisons). Retry uses the existing valid export.
+
 - The fresh run root also made a fresh data-cache path. It had rebuilt 15 GB
   of indices; 476 existing final files matched names/sizes in the earlier
   kvshare cache. `scripts/seed_cache.py` reuses completed content-addressed
