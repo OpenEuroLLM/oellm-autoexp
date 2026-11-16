@@ -3855,3 +3855,15 @@ The 256-node fit is **control 128 + DK1T 128**, both gbs 1024, no shrink. The 1-
 `add_head_temperature.py` run before the two arms; `wait_dk1t.sh` waits for `surgery/DK1/ckpt = 35900`, creates
 `surgery/DK1T/ckpt = 35900`, then enqueues the DK1T arm into the same pool. The control is already queued and can run
 beside the 1-node surgery; DK1T joins once the head-temperature checkpoint exists (128 + 128 = 256).
+
+**e-ext account for the 256 host (2026-11-16 05:34).** The user updated job 2928984 to `e-ext-2025e02-108`.
+Before the update it was e-sta, priority 350591, Slurm estimate 09:05, behind the B1 516-node jobs (priority
+351155). After the update: **account e-ext-2025e02-108, priority 351334, Reason=Resources, StartTime 06:00:37**,
+above the B1 516-node jobs. `sshare`: e-ext fairshare 0.256 vs e-sta 0.005 for this user (e-ext NormShares 0.0333 vs
+e-sta 0.0139). The e-ext account is the right one for this host.
+
+A second e-ext pool (`jupiter_pool_amb84_ext`) was created while testing the account and submitted a duplicate
+256-node host `2929066`; its monitor was stopped and the duplicate was cancelled. **Only 2928984 remains** (256
+nodes, e-ext). B1 host115 (the 32B run) and the B1 516-node host jobs 2929021/2929023 were not changed. The control
+and the 1-node K surgery are queued on 2928984; `wait_dk1t.sh` creates the head-temperature checkpoint and enqueues
+DK1T after surgery.
