@@ -1,0 +1,60 @@
+# @package _global_
+# Experiment 019: plain K, independently rebuilt from the original main 35900.
+defaults:
+  - kvshare_main_mn5
+  - _self_
+
+aux:
+  arm: K
+  only: [K]
+  steps: 5
+  nodes: 128
+  kv_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116
+  node_check: thorough
+
+backend:
+  megatron:
+    load: ${aux.load_surgery}
+    exit_interval: 35905
+    save_interval: 1000000
+    save_extra_steps: [35905]
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+    eval_interval: 1000000
+    eval_iters: 0
+    full_validation: false
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1
+    ckda_branch: kvshare
+    ckda_branch_layers: ${aux.layers}
+    ckda_branch_kv_source_layers: ${aux.sources}
+    ckda_branch_num_query_groups: 2
+    ckda_branch_start_iteration: ${aux.start}
+    ckda_branch_crossfade: false
+    ckda_branch_alpha_hold: 0
+    ckda_branch_alpha_ramp: 0
+    ckda_branch_alpha_end: 1.0
+    ckda_branch_m_start: 1.0
+    ckda_branch_m_ramp: 0
+    ckda_branch_gamma_scale: 1.0
+    ckda_branch_rest_dropout: 0.0
+    attention_head_temperature: false
+
+job:
+  name: ambitious_K_fresh35900_5step
+  base_output_dir: ${aux.run_root}/K
+  est_steps: 5
+  start_condition:
+    class_name: FileContentCondition
+    path: ${aux.load_surgery_tracker}
+    pattern: "^\\s*35900\\s*$"
+    mode: regex
+    persistent_pass: true
+  metadata:
+    pool_priority: 90
+    pool_use_excluded_nodes: false
+
+sweep:
+  type: list
+  groups: []

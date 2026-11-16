@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - kvshare_main_surgery_mn5
+  - _self_
+
+aux:
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/surgery
+
+backend:
+  command: bash experiment/019_ambitious_k_fresh35900/scripts/rebuild.sh
+
+job:
+  name: ambitious_K_fresh35900_surgery
