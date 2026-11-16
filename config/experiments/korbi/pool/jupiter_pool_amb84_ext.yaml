@@ -1,0 +1,63 @@
+# @package _global_
+# JUPITER pool for the 84B ambitious runs -- e-ext account variant (user 2026-11-16: try e-ext-2025e02-108;
+# e-sta fairshare 0.005 vs e-ext 0.256, B1 516-node hosts have higher priority than our 256-node host) (docs/recall_surgery_ambitious.md §19.1; user 2026-11-15: "prepare
+# everything so that we can continue / fix ambitious on jupiter ... so that when we get the next host, we are ready").
+# Its host is a large booster allocation (256 nodes; 516 with slurm.sbatch.nodes=516) that runs, packed:
+#   the main-run continuation   hybrid_ambitious_v4_2ph_hd256_p2_jupiter  (256 nodes, phase 2, 64k)
+#   the dropout-stitch session  dropout_stitch84_jupiter                  (D1 + DK1 at 128 nodes each, then D2 / DK2)
+#   the smoke test              hybrid_ambitious_v4_2ph_hd256_p2_jupiter aux.only=[smoke_a,smoke_b] (16 nodes)
+# Every new host is node-checked first (preflight: GPU count, then node_health_jupiter; bad nodes excluded, a
+# failing host released), as the user asked ("we should do a node check first").
+#
+# NOT SUBMITTED. Creating the pool (run_autoexp below) queues a host at once (min_hosts 1); only on the user's go:
+#   cd ~/work/Projects/oellm-autoexp-hybrid && PYTHONPATH=. .venv/bin/python scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir /e/scratch/e-sta-openeurollm/poeppel1/pool_state \
+#       --config-name experiments/korbi/pool/jupiter_pool_amb84 [slurm.sbatch.nodes=516]
+#   then the monitor: .venv/bin/python scripts/monitor_autoexp.py --session-dir <state>/pool_jupiter-pool-amb84
+# Work goes in with --pool /e/scratch/e-sta-openeurollm/poeppel1/pools/jupiter_pool_amb84 (see the run configs).
+defaults:
+  - /backend: pool_host
+  - /slurm: jupiter_autoexclude_pool_host
+  - /job: pool_host
+  - /sweep: none
+  - _self_
+
+job:
+  name: jupiter_pool_amb84_ext
+  base_output_dir: /e/scratch/e-ext-2025e02-108/poeppel1/pools/${job.name}
+  pool_host:
+    # capture: a started host is not released for lack of work (the 84B runs have long start-ups)
+    hold_hosts: true
+    max_hosts_running: 1
+    max_own_hosts: 1
+    # no successor of its own: one host at a time, submitted only when the pool is created
+    keep_pending: 0
+    min_hosts: 1
+    max_runs_per_host: 6
+    handover: false
+    # node check before the host takes work: GPU count per node, then the node-health benchmark
+    preflight: true
+    preflight_gpus_per_node: 4
+    preflight_check: experiments/korbi/pool/node_health_jupiter
+    idle_exit_s: 3600
+    monitor_dead_exit_s: 86400
+    min_remaining_s: 3600
+    stop_grace_s: 1800
+    preempt_grace_s: 2700
+    max_attempts: 20
+    host_stale_s: 1800
+    poll_s: 15
+    keep_monitor: true
+
+slurm:
+  sbatch:
+    nodes: 256
+    time: "12:00:00"
+    # the 32B team's large-host account (516-node hosts ran on it); e-ext-2025e02-108 as the fallback
+    account: e-ext-2025e02-108
+    partition: booster
+    # graceful stop 15 min before the wall (user 2026-11-13)
+    signal: "B:USR1@900"
+
+index: 0
+stage: ""
