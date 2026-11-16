@@ -57,3 +57,8 @@ hashes and test changed world sizes before adopting a different layout.
 Baseline surgery completed at 19:11:08 CET, 691 s after pool start: first
 derive/read 361 s, first pass total 407 s, independent derive/read 252 s,
 108/108 hashes matching. The source metadata checksum was unchanged.
+
+Baseline HF export uses the existing parallel exporter: 32 worker processes,
+8 read threads, fast byte-range reader. At 19:39 it reported 374 GB of 655.4 GB
+read at 4.0 GB/s, 175/393 units completed. This export path is already parallel;
+the six-worker surgery plan addresses a different, single-process operation.

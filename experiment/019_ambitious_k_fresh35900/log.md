@@ -50,6 +50,22 @@ this experiment directory, and the local surgery helpers overlaid. The copy's
 state was not copied. The active pool monitor remains the existing one.
 
 ## Results
+- Recovery: non-persistent writes are disabled, but Megatron's load-path resolver
+  already prefers a newer checkpoint in its configured rolling directory.
+  `scripts/prepare_resume_alias.sh` makes K_main/ckpt_rolling an alias to its
+  own persistent ckpt directory. The initial load remains verified surgery
+  35900; later retries select its own latest published save without changing
+  the surgery tracker or copying checkpoint data.
+
+- 19:36 CET: Submitted `ambitious_K_fresh35900_main_cbcde1` plus four
+  gated export/parity jobs. Unfroze host006. Baseline export `.1213` started
+  at 19:37:17 on one node; main K `.1214` started at 19:37:19 on 128 nodes.
+  The readout watcher started with PID 2712122, log at
+  `<fresh root>/readout_watch/watch.log`. Future exports wait for metadata and
+  the published iteration tracker; evaluations wait for export parity readiness.
+  Baseline 35900 is hard-linked into K_main/ckpt_eval, without changing the
+  training load source or copying the 1.1-TB checkpoint.
+
 - 2026-11-16 19:22 CET, user explicitly authorized stopping pool workloads,
   shrinking the current allocation to 136 nodes, then a 128-node K continuation
   with a checkpoint at 35999 and critical recall evaluation of its checkpoints.
