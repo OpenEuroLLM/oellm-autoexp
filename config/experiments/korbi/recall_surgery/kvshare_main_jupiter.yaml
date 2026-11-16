@@ -42,6 +42,9 @@ aux:
   load_tracker: /e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/runs/main_v4_jsc/ckpt_rolling/latest_checkpointed_iteration.txt
   load_surgery: ${aux.surgery_root}/DK1/ckpt
   load_surgery_tracker: ${aux.surgery_root}/DK1/ckpt/latest_checkpointed_iteration.txt
+  # DK1T = the same K branch + rest dropout 0.3 + learned per-head attention temperature
+  load_surgery_t: ${aux.surgery_root}/DK1T/ckpt
+  load_surgery_t_tracker: ${aux.surgery_root}/DK1T/ckpt/latest_checkpointed_iteration.txt
   layers: [9, 25, 41, 58, 74, 90]
   sources: [0, 17, 33, 50, 66, 82]
 
@@ -149,6 +152,24 @@ sweep:
           backend.megatron.ckda_branch_m_ramp: 0
           backend.megatron.ckda_branch_gamma_scale: 1.0
           backend.megatron.ckda_branch_rest_dropout: 0.3
+        - aux.arm: DK1T
+          job.base_output_dir: ${aux.run_root}/DK1T
+          job.start_condition: null
+          backend.megatron.load: ${aux.load_surgery_t}
+          backend.megatron.ckda_branch: kvshare
+          backend.megatron.ckda_branch_layers: ${aux.layers}
+          backend.megatron.ckda_branch_kv_source_layers: ${aux.sources}
+          backend.megatron.ckda_branch_num_query_groups: 2
+          backend.megatron.ckda_branch_start_iteration: ${aux.start}
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_alpha_hold: 0
+          backend.megatron.ckda_branch_alpha_ramp: 0
+          backend.megatron.ckda_branch_alpha_end: 1.0
+          backend.megatron.ckda_branch_m_start: 1.0
+          backend.megatron.ckda_branch_m_ramp: 0
+          backend.megatron.ckda_branch_gamma_scale: 1.0
+          backend.megatron.ckda_branch_rest_dropout: 0.3
+          backend.megatron.attention_head_temperature: true
         - aux.arm: smoke_K
           aux.nodes: 16
           aux.steps: 5
