@@ -50,6 +50,20 @@ this experiment directory, and the local surgery helpers overlaid. The copy's
 state was not copied. The active pool monitor remains the existing one.
 
 ## Results
+- 20:03 CET: Retried only baseline export/parity as
+  `ambitious_K_export_retry_35900_cb6364`, pool task `.1215`. Spawn-style
+  child import (`runpy`, `__mp_main__`) now completes without loading a model.
+  The three future checkpoint export jobs remain queued and use the fixed
+  parity script. Original baseline export completed in 155.0 s: 101 files,
+  1973 tensors, 248.7 GB; structural check had zero missing/unexpected/shape
+  differences. Its earlier failure was launcher bootstrap, before parity scores.
+- Main K `.1214` loaded surgery 35900 successfully. Sum of load-phase maxima
+  170.9 s; actual data reads max 32.2 s; state creation max 42.0 s;
+  preprocessing 22.4 s; metadata/rerun/args reads account for most remainder.
+  The 128-node thorough precheck passed, all GPU groups about 24.5 GB/s.
+  At 20:04 it was still in dataset setup, with rank-zero process 73458 active
+  on as01r2b18. No iteration or trained save had yet been observed.
+
 - Baseline parity launcher initially lacked its multiprocessing main guard.
   A spawned vLLM process re-executed the launcher and failed during bootstrap;
   this was not a checkpoint/model mismatch. Added the main guard and matched
@@ -57,7 +71,7 @@ state was not copied. The active pool monitor remains the existing one.
   explicit prefill/chunk comparisons). Retry uses the existing valid export.
 
 - The fresh run root also made a fresh data-cache path. It had rebuilt 15 GB
-  of indices; 476 existing final files matched names/sizes in the earlier
+  of indices; linked 3909 completed files (62.0 GB logical, zero data copies); 476 existing final files matched names/sizes in the earlier
   kvshare cache. `scripts/seed_cache.py` reuses completed content-addressed
   entries with hard links, descriptors last, without linking locks/temporary
   files or overwriting current entries. The dataset writer uses atomic rename,

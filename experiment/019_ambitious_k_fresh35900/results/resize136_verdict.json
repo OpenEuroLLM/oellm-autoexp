@@ -1,0 +1,1 @@
+{"status": "exclude", "exclude": ["as05r2b20", "as05r2b25", "as05r3b05", "as05r3b08", "as07r2b24", "as07r3b10", "as07r3b25", "as07r4b06"], "why": "GPU matmul down to 400 TFLOP/s vs median 601 (< 0.80 x) [thorough]", "groups": {"0": 24.155412705407134, "1": 19.47854198415933, "2": 24.230861904120374, "3": 24.194099917705714}}
