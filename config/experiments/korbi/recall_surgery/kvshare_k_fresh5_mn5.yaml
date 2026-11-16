@@ -52,7 +52,7 @@ job:
     mode: regex
     persistent_pass: true
   metadata:
-    pool_priority: 90
+    pool_priority: 100
     pool_use_excluded_nodes: false
 
 sweep:
