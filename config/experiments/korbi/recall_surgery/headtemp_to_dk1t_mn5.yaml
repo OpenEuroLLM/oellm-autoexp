@@ -1,0 +1,51 @@
+# @package _global_
+# One-node CPU step: add Megatron's attention_head_temperature parameters to the K surgery checkpoint, so the
+# DK1T arm (K's kvshare branch + rest dropout 0.3 + per-head temperature) can load it (docs/recall_surgery_ambitious.md
+# §20). Waits for the K surgery tracker 35900; writes surgery/DK1T/ckpt/iter_0035900 + tracker.
+defaults:
+  - ds84_surgery_mn5
+  - _self_
+
+aux:
+  root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_main/surgery
+  src: ${aux.root}/DK1/ckpt/iter_0035900
+  dst: ${aux.root}/DK1T/ckpt/iter_0035900
+  it: 35900
+  only: [headtemp]
+  surgery: headtemp
+
+backend:
+  command: bash scripts/korbi/recall_surgery/headtemp_to_dk1t.sh
+  env:
+    SRC: ${aux.src}
+    DST: ${aux.dst}
+    IT: ${aux.it}
+
+job:
+  name: kvshare_headtemp
+  base_output_dir: ${aux.root}/logs/headtemp
+  est_step_time_s: 1800
+  start_condition:
+    class_name: FileContentCondition
+    path: ${aux.root}/DK1/ckpt/latest_checkpointed_iteration.txt
+    pattern: "^\\s*35900\\s*$"
+    mode: regex
+    persistent_pass: true
+  metadata:
+    pool_priority: 85
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "01:00:00"
+    account: cns144
+    qos: acc_xehpc
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.surgery}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.surgery: headtemp
