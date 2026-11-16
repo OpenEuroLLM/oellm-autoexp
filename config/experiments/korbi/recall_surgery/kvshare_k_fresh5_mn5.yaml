@@ -13,6 +13,10 @@ aux:
   node_check: thorough
 
 backend:
+  env:
+    FSDP_DCP_LOCAL_LOAD_PLAN: "1"
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
+    MEGATRON_DEBUG_SAVE_TIMING: "1"
   megatron:
     load: ${aux.load_surgery}
     exit_interval: 35905
