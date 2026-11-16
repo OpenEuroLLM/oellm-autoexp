@@ -3830,3 +3830,16 @@ starts at 35900, not 35603.
 and the B1 run continues there. Host118 (job 2925792, ~05:48) may start while handover is off; if B1 should move to
 it, restore `handover=true` after host118 is live (and after host117 is busy with our runs) rather than waiting for
 our arms. This is not automated: the current guard restores at the end of the arms.
+
+**Host120 shrink (2026-11-16 05:13).** The user: "release all nodes of this host job that are unused. (264 nodes)."
+Host120 (job 2927441, 516 nodes) was resized to **252 nodes**, exactly 264 released. The first 252 nodes in the
+allocation order (including the batch node `jpbo-001-18`) were kept; the 264 removed nodes were written to
+`hosts/host120/exclude_nodes` and the supervisor logged `usable nodes: 516 -> 252` / `allocation shrunk to 252`.
+` squeue -j 2927441 -o %D` reports 252. Host115 (the 32B run) was not touched.
+
+Fit on 252 nodes: **control 125 + DK1T 125 + surgery 1 = 251**, one spare. The paired arms use 125 nodes x 4 GPUs x
+micro batch 2 = gbs 1000 (not 1024); both arms see the same batches. DK1T = K's kvshare branch + rest dropout 0.3 +
+learned per-head attention temperature; its start checkpoint is the K surgery plus
+`add_head_temperature.py` (`surgery/DK1T/ckpt/iter_0035900`). The host supervisor got stuck in its old-run settle loop
+after the manual control run was killed; the shrink itself is recorded correctly, and the surgery/control steps are
+being launched directly inside the allocation (`SLURM_JOB_ID=2927441`) while that loop is cleared.
