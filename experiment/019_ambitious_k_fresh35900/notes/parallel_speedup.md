@@ -44,3 +44,16 @@ repeated metadata parsing, and replicated optimizer-state reads as possible
 serialization points. Rank-local planning is a candidate only when the
 snapshot supports it and correctness has been checked. Apply any implementation
 to a new attempt/snapshot rather than editing a running process's source files.
+
+Also inspect delta chunk layout: `add_ckda_branch.py` currently forces 64-MB
+row chunks, chosen to avoid excessive metadata on small models. The resulting
+eight delta files total about 1.1 GB. At 512 loading ranks, a serialized tensor
+chunk much larger than a rank's slice can cause repeated reads/deserialization
+across ranks. This is a possible amplification mechanism, not a measured load
+result yet. Benchmark 1–4-MB row chunks against 64 MB while measuring read
+traffic, metadata size, per-rank peak memory, and load time. Match all tensor
+hashes and test changed world sizes before adopting a different layout.
+
+Baseline surgery completed at 19:11:08 CET, 691 s after pool start: first
+derive/read 361 s, first pass total 407 s, independent derive/read 252 s,
+108/108 hashes matching. The source metadata checksum was unchanged.

@@ -50,6 +50,43 @@ this experiment directory, and the local surgery helpers overlaid. The copy's
 state was not copied. The active pool monitor remains the existing one.
 
 ## Results
+- 2026-11-16 19:22 CET, user explicitly authorized stopping pool workloads,
+  shrinking the current allocation to 136 nodes, then a 128-node K continuation
+  with a checkpoint at 35999 and critical recall evaluation of its checkpoints.
+- Froze host006 and cancelled eight remaining internal pool records (including
+  old pending evaluations, control, DK1T retries and the K smoke). No queued
+  Slurm host was cancelled. A diagnostic step launched from the login node hit
+  Slurm I/O launch errors; discarded that attempt and reran from the batch node.
+- Fresh thorough check: 240 candidates, median 600.85 TFLOP/s; 232 compute
+  passes. Network group 1 measured 19.48 GB/s; the two slowest pairs identify
+  as01r5b16. Removed it from consideration as well as all compute failures.
+- Resized 48653415 from 264 to 136, with no active workload/test steps or inuse
+  reservations. Kept the batch node and the best 135 remaining nodes. Worst
+  retained GPU 591.63 TFLOP/s. See `results/resize136_selection.json` and
+  `results/keep136.txt`. Queued job IDs and submit timestamps diff unchanged.
+- Prepared the documented 1000-step continuation to 36900; saves at 35999,
+  36400 and 36900 are all retained. In-training validation stays disabled
+  because of its known 64k-mode failure; checkpoint recall readouts are separate.
+- Readouts: baseline 35900 plus all three saves, six spare-node workers on
+  the 30-row critical recall suite (CoQA, Winogrande, SQuAD v2, SWDE, FDA,
+  squad_completion and 24 Belebele languages). Each export is parallel and
+  gated on its completed checkpoint; evaluations wait for structural export
+  checks and actual-export HF/vLLM parity, including chunked prefill.
+
+- 19:19:22 CET: Fresh K `.1210` started on 128 nodes in host006, after
+  DK1T `.1209` failed on the same missing branch-temperature key. No existing
+  Slurm step/allocation was stopped. Both configs have sequence 65536, GBS
+  1024, microbatch 2, final iteration 35905, synchronous save. DK1T uses rest
+  dropout 0.3 and head temperature; fresh K uses 0.0 and false.
+
+- 19:11:08 CET: Surgery `.1207` completed with rc=0. First pass 407 s,
+  including 361 s reading 96 source tensors. Wrote 108 new keys into eight
+  delta files; hard-linked 1024 original shards, zero full-shard copies.
+  Independent verification: 108 tensors, zero hash differences. Source
+  `.metadata` hash checked unchanged; fresh tracker published at 35900.
+  See `results/surgery.log` and `results/surgery_manifest.json`.
+- Instrumented training entry: `ambitious_K_fresh35900_5step_af465d`.
+
 - 19:07 CET: The snapshot supports rank-local DCP planning and the existing
   DK1T save test already uses it. Enable `FSDP_DCP_LOCAL_LOAD_PLAN=1` plus
   load/save phase timing for K. Replace only our not-yet-started pool entry

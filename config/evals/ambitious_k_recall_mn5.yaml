@@ -1,0 +1,21 @@
+# Experiment 019: launch only after the export's HF/vLLM parity gate succeeds.
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/K_main
+  step: 35999
+  name: ambitious_K_fresh35900_fp8_35999
+rows:
+  harnesses: [lm-eval-harness]
+  suite_file: config/eval_tasks/ckdab_recall_full.yaml
+lm_eval:
+  workers: 6
+  split_s: 300
+  max_parts: 8
+  engine: {tp: 4, dp: 1, expert_parallel: true, max_num_seqs: 64, request_batch_size: 64}
+  job: {priority: 70, use_excluded_nodes: false}
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264

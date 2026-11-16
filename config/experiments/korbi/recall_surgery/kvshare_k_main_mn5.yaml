@@ -1,0 +1,24 @@
+# @package _global_
+# User 2026-11-16: 128-node plain-K continuation in the resized 136-node host.
+defaults:
+  - kvshare_k_fresh5_mn5
+  - _self_
+
+aux:
+  steps: 1000
+
+backend:
+  megatron:
+    exit_interval: 36900
+    save_extra_steps: [35999, 36400, 36900]
+    # Keep all three saves available for recall readouts and the pre-validation fallback.
+    save_retain_interval: null
+    # In-training validation has a known 64k-mode failure; evaluate saves separately.
+    eval_interval: 1000000
+    eval_iters: 0
+    full_validation: false
+
+job:
+  name: ambitious_K_fresh35900_main
+  base_output_dir: ${aux.run_root}/K_main
+  est_steps: 1000

@@ -1,0 +1,47 @@
+# @package _global_
+# Parallel HF export, structural check, and real-export HF/vLLM parity before eval.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+aux:
+  step: 35999
+  iter_name: iter_0035999
+  ckpt_kind: ckpt
+  run: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/K_main
+  export_name: ambitious_K_fresh35900_fp8_${aux.step}
+  export_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/${aux.export_name}
+backend:
+  command: bash experiment/019_ambitious_k_fresh35900/scripts/export_and_check.sh ${aux.run} ${aux.step} ${aux.export_dir}
+job:
+  name: ambitious_K_export_${aux.step}
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/export_logs/${aux.step}
+  est_step_time_s: 2400
+  start_condition:
+    class_name: AndCondition
+    conditions:
+      - class_name: FileExistsCondition
+        path: ${aux.run}/${aux.ckpt_kind}/${aux.iter_name}/.metadata
+        persistent_pass: true
+      - class_name: FileContentCondition
+        path: ${aux.run}/${aux.ckpt_kind}/latest_checkpointed_iteration.txt
+        pattern: "^\\s*${aux.step}\\s*$"
+        mode: regex
+        persistent_pass: true
+  metadata:
+    pool_priority: 80
+    pool_use_excluded_nodes: false
+slurm:
+  sbatch:
+    nodes: 1
+    time: "04:00:00"
+    account: cns144
+    qos: acc_xehpc
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - {aux.step: 35900, aux.iter_name: iter_0035900, aux.ckpt_kind: ckpt_eval}
+        - {aux.step: 35999, aux.iter_name: iter_0035999}
+        - {aux.step: 36400, aux.iter_name: iter_0036400}
+        - {aux.step: 36900, aux.iter_name: iter_0036900}
