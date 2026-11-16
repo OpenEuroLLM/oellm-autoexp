@@ -3867,3 +3867,20 @@ A second e-ext pool (`jupiter_pool_amb84_ext`) was created while testing the acc
 nodes, e-ext). B1 host115 (the 32B run) and the B1 516-node host jobs 2929021/2929023 were not changed. The control
 and the 1-node K surgery are queued on 2928984; `wait_dk1t.sh` creates the head-temperature checkpoint and enqueues
 DK1T after surgery.
+
+**MN5 264-node preparation (2026-11-16 05:48).** Synced the latest code to a frozen snapshot
+`/gpfs/projects/ehpc533/users/korbip/hybrid_v019/autoexp_kvshare` (`SYNC_STAMP`: superproject `ce3b5111`,
+Megatron `28c5f5303`). Checks inside the MN5 `MegatronTraining-hybrid-ep_x86_64_202610161948.sif` container:
+`torch` + `megatron` import; `attention_head_temperature` is a `TransformerConfig` field; `dcp_surgery.py selftest`
+passes (chunked rewrite + append, 2/3-rank read-back); `add_ckda_branch.py selftest` passes (incl. kvshare chain and
+`verify`, 0 tensors differ); `add_head_temperature.py` on a tiny DCP writes the three new tensors and reads them back;
+`headtemp_to_dk1t.sh` writes the DK1T checkpoint and tracker `35900`. All four MN5 configs render:
+`kvshare_main_mn5`, `kvshare_main_surgery_mn5`, `headtemp_to_dk1t_mn5` (control 128 + DK1T 128, gbs 1024, mbs 2;
+1-node surgery and head-temperature). The main-run source is
+`main_mhc4/.../ckpt_rolling/iter_0035900` (tracker 35900, 1024 files, 308 MB `.metadata`); `gpfs_scratch` has room.
+
+Jobs are enqueued in the existing `mn5_pool_p264` (no new Slurm job, no existing job changed):
+`kvshare_main_surgery_9332f2` (priority 90), `kvshare_headtemp_6f7abc` (85), `kvshare_main_ctrl_0_0890d7` and
+`kvshare_main_DK1T_1_c8ddca` (80). The p264 pool has many 264-node hosts pending; when one starts, the 1-node
+surgery runs first, then the 1-node head-temperature step, then control and DK1T at 128 nodes each (258 of 264
+nodes; 6 spare). `mn5_exclude_nodes.txt` is absent, so no `--exclude`; the p264 host preflight handles bad nodes.
