@@ -5,9 +5,8 @@ import os
 import sys
 from pathlib import Path
 
-from oellm_autoexp.hf_export.vllm_parity import check
-
 def main():
+    from oellm_autoexp.hf_export.vllm_parity import check
     from scripts.evals.spec import ModelCode
 
     # Same arithmetic/load paths as the recall workers; eager execution for the
