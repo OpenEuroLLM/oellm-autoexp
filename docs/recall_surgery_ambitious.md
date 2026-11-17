@@ -5001,3 +5001,39 @@ statement from the other side.
 Also recorded here: `moe_fp8_direct: true` is required for this eval. With the previous
 `false` envelope the sessions OOM-looped (`free: 12 MB of 68 GB`) on nodes shared with training;
 with `true` (23.4 GiB/GPU of weights) a 900-sample Belebele row ran in 64 s with zero OOM lines.
+
+### 22.20 RULER at 36900: no long-context advantage, and a specific multiquery regression
+
+First RULER run on this stack (`config/evals/ruler_pair_mn5.yaml`, suite
+`config/eval_tasks/ruler_long_32k.yaml`: 9 tasks x 4 lengths, 36 rows per arm, `split_s: 0`, envelope
+8 sequences / 65536 batched tokens / `moe_fp8_direct: true`; the 32k row passed a smoke at
+`niah_single_1` 1.0 in 153 s with no OOM). Both arms at 36900, v4 control / v4a pinned, %:
+
+| task | 4096 | 8192 | 16384 | 32768 |
+| --- | --- | --- | --- | --- |
+| niah_multikey_1 | 100.0 / 99.0 | 96.0 / 97.0 | 95.0 / 89.0 | 90.0 / 86.0 |
+| niah_multikey_2 | 100.0 / 100.0 | 99.0 / 100.0 | 100.0 / 99.0 | 99.0 / 99.0 |
+| niah_multikey_3 | 100.0 / 100.0 | 99.0 / 100.0 | 100.0 / 97.0 | 97.0 / 96.0 |
+| niah_multiquery | 85.2 / **44.5** | 90.8 / 96.0 | 89.8 / 97.2 | 49.2 / **23.0** |
+| niah_multivalue | 99.8 / 94.8 | 99.8 / 99.8 | 94.5 / 97.0 | 93.0 / 90.0 |
+| niah_single_1/2/3 | 100.0 / 100.0 | 100.0 / 100.0 | 100.0 / 100.0 | 100.0 / 100.0 |
+| ruler_vt | 99.8 / 99.8 | 99.6 / 99.8 | 99.0 / 99.6 | 93.8 / 91.2 |
+
+Mean `v4a - v4` over the 36 rows: **-2.07 pp**; excluding the four `niah_multiquery` rows it is
+**-0.56 pp**, i.e. parity. The single-needle tasks are saturated at 100 % for both arms, so RULER's
+only discriminative rows here are the multi-* ones.
+
+The `niah_multiquery` rows carry the whole difference, and they are not noise: n = 100 per row
+(stderr reported as N/A), so a binomial se is ~4-5 pp, while v4a is **-40.7 pp at 4096** (~7 se) and
+**-26.2 pp at 32768** (~5 se) -- yet *ahead* at 8192 (+5.2) and 16384 (+7.4). A non-monotone pattern
+like that is not a capacity story; it is a specific behavioural difference on multi-query retrieval.
+
+**Consequence for the v4a reading:** the training validation favours v4a on `long_64k`
+(1.244178 vs 1.257662 at 37000, -0.0135 nats) while RULER at the same checkpoint shows no
+long-context advantage and two large multiquery regressions. Lower long-context perplexity does not
+imply better retrieval accuracy here, so the validation gain cannot be used as evidence of a
+long-context win.
+
+Caveats: one checkpoint pair (36900); n = 100 per RULER row with no stderr; this is the first RULER
+run on the stack. The cheap confirmation is to re-run just the four `niah_multiquery` rows at 36400
+(or with more samples) and see whether the 4096 gap reproduces.
