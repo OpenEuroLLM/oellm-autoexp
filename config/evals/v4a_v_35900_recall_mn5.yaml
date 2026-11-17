@@ -34,6 +34,11 @@ lm_eval:
   max_parts: 8
   # engine: the PR #2 layout (tp1 x dp4, expert parallel, 2048 seqs / 3072 batched tokens per
   # node, 0.88 utilization) and the PR #2 model-code switches are the spec defaults
+  model_code:
+    # uva tables (the PR's setting) stage ~160 GB in /dev/shm; on DP4 with the fp8-direct
+    # expert load the first launch hit the node memory limit at load (oom_kill, MaxRSS 368 GB,
+    # 2026-11-17 10:23). mmap reads the tables from the export instead.
+    engram_tables: mmap
   job: {priority: 70}
 
 paths:

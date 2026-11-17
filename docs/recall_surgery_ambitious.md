@@ -4643,3 +4643,58 @@ exactly zero, so the inserted attention contributes zero regardless of the kvsha
 Only the load can fail here. From 35905 on the `o_proj` is trained and the kvshare
 attention is part of the model, so those exports need the vLLM↔HF parity gate that §22.9
 still lists as open.
+
+### 22.16 V6 loaded and the 35905 save completed
+
+V6 job `.1277` (`ambitious_v4a_v_main_256_457a58`) loaded the corrected checkpoint:
+
+```
+successfully loaded checkpoint ... at iteration 35900
+```
+
+Training then ran normally:
+
+| iteration | lm loss | grad norm | TFLOP/s/GPU |
+|---|---:|---:|---:|
+| 35901 | 1.262994 | 2.383 | 1.8 (startup) |
+| 35902 | 1.738773 | 26.201 | 3.3 |
+| 35903 | 1.824767 | 8.113 | 65.5 |
+| 35904 | 1.577986 | 4.393 | 65.7 |
+| 35905 | 1.488086 | 2.313 | 37.6 |
+
+The first two steps were slow because the loaded model still had startup work; steps 35903-35904
+ran at the normal ~19.5 s/step.  No skipped or NaN iterations.
+
+The requested early save completed:
+
+```
+successfully saved checkpoint from iteration 35905
+ckpt/iter_0035905/.metadata  ~313 MB
+latest_checkpointed_iteration.txt = 35905
+```
+
+The 35905 save took about 3 minutes (10:23:03 -> 10:26:05) and finished successfully.
+The existing training loop continues; the next checkpoint is **35999**, followed by
+validation at 36000.  Watch `bc96c61c1` waits for the 35999 save or an error.
+
+#### The first eval launch OOMed at load (2026-11-17 10:23)
+
+The four sessions of the first launch (`.1279`-`.1282`) all died with `rc 1`:
+
+```
+error: Detected 2 oom_kill events in StepId=48685344.49. Some of the step tasks have been OOM Killed.
+srun: error: as07r2b26: task 0: Out Of Memory
+sacct: OUT_OF_ME+  MaxRSS 368573717K  (368 GB)
+```
+
+The failure is at **load**, before vLLM's "Loading model weights took ..." line, so the request
+settings (`max_num_seqs`) are not involved yet. The step's host memory was
+~160 GB of `uva` Engram tables in /dev/shm plus the load path of four DP ranks. This is the
+first DP4 run with `OELLM_MOE_FP8_DIRECT=1`: every earlier 84B DP4 run (2026-11-16,
+`ambitious_v4_2ph_fp8_1000`) had it off, and the four runs that ever set it are these four.
+
+The relaunch keeps the PR #2 layout and switches and sets `OELLM_ENGRAM_TABLES=mmap` (the
+tables are read from the export instead of staged in /dev/shm). `config/evals/
+v4a_v_35900_recall_mn5.yaml` records it. If that still exceeds the node memory, the next
+knob is `OELLM_MOE_FP8_DIRECT=0` (the previously validated load path, at 42.3 instead of
+23.4 GiB of experts per GPU at EP4).
