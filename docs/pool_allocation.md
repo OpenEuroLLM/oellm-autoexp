@@ -121,3 +121,31 @@ run's `--load` path and signal only those ranks.
   action.
 - A node with bad IB can pass a GPU-only allocation test. Run a communication
   check before putting it in a long training set.
+
+### Pinned recovery: the 256-node set
+
+The final recovery used the exact 256 nodes from a successful scheduler
+selection, not a pool retry.  The pool host `host007` was pinned by excluding
+every allocation node outside that set:
+
+```
+as07r5b04
+as07r5b05
+as07r5b06
+as07r5b08
+as07r5b09
+as07r5b10
+as07r5b12
+```
+
+The resulting 256-node set was tested directly:
+
+```bash
+srun --jobid="$JOB_ID" --overlap \
+  --nodes=256 --ntasks=1024 --ntasks-per-node=4 \
+  --gres=gpu:4 --nodelist="$PINNED_256" /bin/true
+# RC=0
+```
+
+This is a pool-level pin (`hosts/host007/exclude_nodes`), not a Slurm change.
+The pinned run resumes from the **35999** checkpoint.
