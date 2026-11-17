@@ -1,0 +1,22 @@
+# @package _global_
+# v4b: v4a with the inserted V layers' whole residual delta gated on by a ramp.
+#
+# Identical to v4a_v6_pin (same V6 35900 source, same pattern, same data order, same saves)
+# except for one variable: every inserted V layer writes
+#     streams + r(t) * (mhc_write(...) - streams),   r(t) = clamp((t - 35900) / 300, 0, 1)
+# so at 35900 the layer is an exact identity -- no attention write and no h_res stream mixing --
+# and both ramp in over the first 300 steps. The gate is a schedule, not a parameter: the
+# checkpoint layout, the strict loader and the export are unchanged, and exports at 36400 /
+# 36900 are past the ramp (r = 1). See docs/v4b_plan.md.
+defaults:
+  - v4a_v6_pin_mn5
+  - _self_
+
+backend:
+  megatron:
+    v_block_gate_ramp: 300
+    v_block_gate_start_iteration: 35900
+
+job:
+  name: ambitious_v4b_gate_256
+  base_output_dir: ${aux.kv_root}/runs/v4b_gate/main
