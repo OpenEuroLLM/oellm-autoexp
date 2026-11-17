@@ -4975,3 +4975,29 @@ against a stream of order 1. At `lr = 8.5e-4` Adam should move a consistent-sign
 `lr` per step, so the 17x shortfall means either a small group multiplier or a sign-noisy
 gradient from the random-init branch. Consequence: at 36k the arm measures "the parent plus six
 near-identity residual rewrites", not the V idea, and parity at 36400 is what that predicts.
+
+**The 36900 pair reads parity again, and the delta trajectory is noise.** v4 control / v4a pinned
+(after the `moe_fp8_direct: true` relaunch, both 30/30 rows):
+
+| row | 35900 | 36000 | 36400 | 36900 |
+| --- | --- | --- | --- | --- |
+| CoQA F1 | 66.08 / 64.94 | 66.69 / 61.89 | 64.82 / 67.08 | 67.62 / 68.42 |
+| CoQA EM | 50.02 / 48.52 | 50.85 / 44.90 | 48.80 / 51.52 | 51.12 / 52.02 |
+| SQuAD v2 F1 | 29.02 / 28.62 | 27.29 / 25.45 | 28.23 / 28.71 | 29.35 / 29.31 |
+| SQuAD v2 HasAns F1 | 57.41 / 56.82 | 53.60 / 50.27 | 56.09 / 57.26 | 58.02 / 58.01 |
+| Winogrande | 67.01 / 67.56 | 67.25 / 66.14 | 68.43 / 69.30 | 67.48 / 67.25 |
+| Belebele mean (24) | 85.10 / 84.98 | 85.36 / 83.44 | 85.77 / 86.04 | 85.17 / 85.51 |
+| Belebele eng_Latn | 79.56 / 78.89 | 78.78 / 77.11 | 81.33 / 81.00 | 77.67 / 79.33 |
+| SWDE | 82.18 / 80.92 | 81.28 / 81.01 | 82.45 / 81.37 | 83.17 / 82.81 |
+| FDA | 30.04 / 29.04 | 30.76 / 30.13 | 28.77 / 28.31 | 29.85 / 29.58 |
+| squad_completion | 56.20 / 56.17 | 56.77 / 56.00 | 57.07 / 56.00 | 57.00 / 57.94 |
+
+Mean `v4a - v4` over the 11 rows: **-0.60 (35900), -2.07 (36000), +0.50 (36400), +0.32 (36900)**
+pp. The same comparison moves by 2.6 pp between adjacent checkpoints, and at 36900 v4a is ahead on
+5 rows and behind on 6 -- indistinguishable. The control's own 36400 -> 36900 movement
+(CoQA +2.8, SQuAD v2 F1 +1.1, SWDE +0.7) is larger than any arm difference, which is the same
+statement from the other side.
+
+Also recorded here: `moe_fp8_direct: true` is required for this eval. With the previous
+`false` envelope the sessions OOM-looped (`free: 12 MB of 68 GB`) on nodes shared with training;
+with `true` (23.4 GiB/GPU of weights) a 900-sample Belebele row ran in 64 s with zero OOM lines.
