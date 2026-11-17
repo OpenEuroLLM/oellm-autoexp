@@ -492,5 +492,26 @@
    "calibrated"
   ],
   "notes": "ckda_branch post-fit (user 2026-11-09/10): a second mixer next to complex_kda on some layers of the v4_2ph hd256 main run, linear crossfade over 150 steps (alpha ckda + (1-alpha) calib (1+gamma) branch), then the branch alone. Small-model test (hd256 test model, 8 experts, from fctrl 1100), 8 nodes. This arm: KronLSTM, auto-calibrated; cancelled at load (calibration values only)."
+ },
+ "ambitious_v4_cont_main_128": {
+  "name": "v4_cont_35900+ (control)",
+  "tags": [
+   "v4",
+   "control",
+   "recall_surgery",
+   "35900+"
+  ],
+  "notes": "Control continuation from 35900 of ambitious v4 (2ph, hd256): the parent of the v4a V-layer comparison. ckpt_eval 36000, ckpt 36400."
+ },
+ "ambitious_v4a_v6_pin_256": {
+  "name": "v4a V6 pinned 35900+",
+  "tags": [
+   "v4a",
+   "V_layers",
+   "pinned",
+   "recall_surgery",
+   "35900+"
+  ],
+  "notes": "V-layer insertion (6 layers at 10/27/44/62/79/96) on the 35900 checkpoint, Engram seeds pinned: loss @35901 1.1035 vs control 1.1027. Inserted layers carry no input norm before 2026-11-17 and their mHC h_res = 0.9802 I + 0.0066 (1 - I), so they are not no-ops (docs/recall_surgery_ambitious.md \u00a722.18)."
  }
 }
