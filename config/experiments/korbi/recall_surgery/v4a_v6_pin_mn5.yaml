@@ -13,6 +13,10 @@ backend:
     engram_hash_per_layer: true
     kv_share_layers: [10, 27, 44, 62, 79, 96]
     kv_share_source_layers: [0, 18, 35, 53, 70, 87]
+    # Async checkpointing: the save runs on the persistent worker, so the step does not stall.
+    # Megatron silently disables --async-save without --use-persistent-ckpt-worker, so both are set.
+    async_save: true
+    use_persistent_ckpt_worker: true
 
 job:
   name: ambitious_v4a_v6_pin_256
