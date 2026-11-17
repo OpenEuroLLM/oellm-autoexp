@@ -4947,8 +4947,8 @@ whole run.
 | metric | v4 @36400 | v4a @36400 | 32B @1.5T | 32B @5T | Qwen2.5-32B | Qwen3-14B | Qwen3-30B-A3B | Qwen3.5-35B-A3B |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | CoQA F1 | 64.82 | 67.08 | 79.72 | 81.72 | 76.57 | 73.43 | 73.02 | 74.90 |
-| SQuAD v2 F1 | 28.23 | 28.0* | 39.22 | 42.91 | 38.22 | 38.69 | 38.39 | 38.16 |
-| SQuAD v2 HasAns F1 | 56.4* | 56.5* | 78.55 | 85.95 | 76.49 | 77.43 | 76.32 | 73.20 |
+| SQuAD v2 F1 | 28.23 | 28.71 | 39.22 | 42.91 | 38.22 | 38.69 | 38.39 | 38.16 |
+| SQuAD v2 HasAns F1 | 56.09 | 57.26 | 78.55 | 85.95 | 76.49 | 77.43 | 76.32 | 73.20 |
 | Winogrande | 68.43 | 69.30 | 70.32 | 70.56 | 75.85 | 73.80 | 72.45 | 76.01 |
 | Belebele mean (24) | 85.77 | 86.04 | 83.95 | 87.53 | 91.66 | 90.88 | 89.61 | 92.94 |
 | Belebele eng_Latn | 81.33 | 81.00 | 88.89 | 81.78 | 96.22 | 94.67 | 94.00 | 95.11 |
@@ -4956,11 +4956,16 @@ whole run.
 | FDA | 28.77 | 28.31 | - | - | 28.58 | 30.76 | 30.31 | 27.40 |
 | squad_completion | 57.07 | 56.00 | - | - | 56.13 | 60.72 | 57.71 | 61.93 |
 
-`*` from 7/8 (v4) and 5/8 (v4a) parts with an own scorer, validated to read ~0.5 pp low on the
-complete 36000 row. Caveats: the 32B suite has no SWDE / FDA / squad_completion (the dashes are
+Caveats: the 32B suite has no SWDE / FDA / squad_completion (the dashes are
 structural); 32B ran harness 0.4.12 against our 0.4.13, and its CoQA (81.7) sits far above
 Qwen2.5-32B under our harness (76.6), so cross-harness CoQA / SQuAD comparisons are softer than
 the Qwen ones; 36400 is ~2.4 T tokens, between 32B@1.5T and 32B@5T, much closer to the former.
+
+**The 36400 pair is complete and reads parity.** v4a is ahead on 7 of the 11 rows and behind on
+4: +2.26 CoQA F1 / +2.72 CoQA EM, +0.48 SQuAD v2 F1 / +0.70 EM / +1.17 HasAns F1, +0.87
+Winogrande, +0.27 Belebele mean; -0.33 Belebele eng, -1.08 SWDE, -0.46 FDA, -1.07
+squad_completion. Every delta is <= 1.7 se (CoQA 1.71 pp, Winogrande 1.31 pp), and the row split
+is 7-4, so neither the direction nor the size resolves the V layers at this step.
 
 **The V branch is still inert.** `o_proj` RMS of the six V layers at 36000 / 36400 against a
 trained attention layer (2.9e-3): 4.7e-5 -> 9.6e-5 (layer 10), 4.2e-5 -> 6.6e-5 (27),
