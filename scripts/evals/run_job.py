@@ -47,6 +47,8 @@ def export_steps(job: JobSpec, py: str) -> list[Step]:
     steps = [first,
              Step([py, "-c", "import sys, pathlib; sys.exit(0 if pathlib.Path(sys.argv[1]).is_dir() else 1)",
                    job.export_dir], check=True)]
+    if e.run_dir:  # export_run.sh is export-only: the name / shape check of the HF model
+        steps.append(Step([py, "-m", "oellm_autoexp.hf_export.check_export", job.export_dir], check=True))
     if not Path(job.view_dir).is_dir():
         steps.append(Step([py, "submodules/oellm-eval/containers/prepare_base_model_view.py", "--source",
                            job.export_dir, "--out", job.view_dir, "--template", "identity"], check=True))
