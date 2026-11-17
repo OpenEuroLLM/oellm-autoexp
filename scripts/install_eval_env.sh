@@ -8,7 +8,8 @@
 #                pip install -e oellm_evals[eval]
 #   leonardo  -> pip install --user -e oellm_evals[eval-base] inside
 #                eval_env-leonardo.sif (container ships torch + transformers)
-#   lumi      -> pip install --target $HOME/eval_local -e oellm_evals[eval-base]
+#   lumi      -> pip install --target $HOME/eval_local oellm_evals[eval-base]
+#                (non-editable, constrained to the container's packages)
 #                inside laif-rocm-….sif (container ships rocm torch)
 #
 # The `[eval]` / `[eval-base]` extras are declared in
@@ -68,7 +69,7 @@ case "$CLUSTER" in
         PYTHONPATH= "${PIP[@]}" install --no-cache-dir --no-build-isolation \
             rouge-score
         PYTHONPATH= "${PIP[@]}" install --no-cache-dir \
-            -e "$OELLM_EVALS_DIR[eval]" -e "$AUTOEXP_DIR" "compoconf==0.1.14"
+            -e "$OELLM_EVALS_DIR[eval]" -e "$AUTOEXP_DIR" "compoconf>=0.2.2"
         echo "✓ Venv ready at $VENV"
         ;;
 
@@ -81,7 +82,7 @@ case "$CLUSTER" in
             pip install --user --no-cache-dir --upgrade pip setuptools wheel
             pip install --user --no-cache-dir --upgrade \
                 -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
-                'compoconf==0.1.14'
+                'compoconf>=0.2.2'
         "
         # oellm-evals's local mode needs *some* venv path to `source activate`;
         # the container is already activated, so point at an empty stub.
@@ -96,22 +97,64 @@ case "$CLUSTER" in
     lumi)
         SIF="${OELLM_EVAL_SIF:-/scratch/project_462000963/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif}"
         BINDS=(--bind "$HOME" --bind /pfs --bind /scratch)
+        # ~44k files: too many for the LUMI home quota (100k). With EVAL_LOCAL_DIR
+        # (e.g. /scratch/<project>/users/$USER/eval_local) the env lives there and
+        # $HOME/eval_local (hardcoded in slurm/lumi_eval.yaml) becomes a symlink to it.
+        if [[ -n "${EVAL_LOCAL_DIR:-}" ]]; then
+            mkdir -p "$EVAL_LOCAL_DIR"
+            if [[ -e "$HOME/eval_local" && ! -L "$HOME/eval_local" ]]; then
+                if [[ -n "$(find "$HOME/eval_local" -type f -print -quit)" ]]; then
+                    echo "ERROR: $HOME/eval_local exists and contains files; move it away first." >&2
+                    exit 1
+                fi
+                rm -r "$HOME/eval_local"   # only empty directories
+            fi
+            ln -sfn "$EVAL_LOCAL_DIR" "$HOME/eval_local"
+            echo "$HOME/eval_local -> $EVAL_LOCAL_DIR"
+        fi
         TARGET="$HOME/eval_local/lib/python3.12/site-packages"
-        mkdir -p "$TARGET"
-        echo "Installing oellm[eval-base] into $TARGET via --target…"
+        BIN="$HOME/eval_local/bin"
+        mkdir -p "$TARGET" "$BIN"
+        echo "Installing oellm-eval[eval-base] into $TARGET via --target…"
         # `pip install --user` is rejected inside Lumi's container (a venv
         # is already active); `--target` is the equivalent escape hatch.
+        # - Only oellm-eval: the eval job runs `oellm-eval schedule`, and
+        #   oellm-autoexp (hydra/omegaconf -> antlr4 4.9) conflicts with
+        #   lm-eval[math] (antlr4 4.11).
+        # - Non-editable: .pth files of editable installs are ignored on PYTHONPATH.
+        # - Constrained to the container's versions, otherwise newer
+        #   huggingface-hub/numpy land in $TARGET and shadow (and break) the
+        #   container's transformers/numba.
         singularity exec "${BINDS[@]}" --env HF_HUB_OFFLINE=0 "$SIF" bash -c "
             set -e
+            python3 -m pip list --format=freeze 2>/dev/null | grep '==' | grep -viE '^(pip|wheel)==' > '$TARGET/../container_constraints.txt'
             pip install --no-cache-dir --upgrade --target '$TARGET' \
-                -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
-                'compoconf==0.1.14'
+                -c '$TARGET/../container_constraints.txt' \
+                '$OELLM_EVALS_DIR[eval-base]'
         "
-        if [[ ! -f "$HOME/eval_venv_stub/bin/activate" ]]; then
-            mkdir -p "$HOME/eval_venv_stub/bin"
-            : > "$HOME/eval_venv_stub/bin/activate"
-        fi
-        echo "✓ Lumi eval env ready at $TARGET (PYTHONPATH set by slurm/lumi_eval.yaml)"
+        # pip --target can't create the console script: a dependency ships a
+        # top-level `bin` package into $TARGET/bin. slurm/lumi_eval.yaml puts
+        # $HOME/eval_local/bin on PATH, so provide the entry point there.
+        cat > "$BIN/oellm-eval" <<'EOF'
+#!/bin/sh
+exec python3 -c 'import sys; from oellm.main import main; sys.exit(main())' "$@"
+EOF
+        chmod +x "$BIN/oellm-eval"
+        # oellm-eval's local mode does `source $VENV/bin/activate; python -m lm_eval`,
+        # but the container has only python3. The stub venv provides `python`,
+        # running the container's interpreter (resolved inside the container).
+        mkdir -p "$HOME/eval_venv_stub/bin"
+        # a wrapper, not a symlink: a symlinked interpreter loses the container's /opt/venv site-packages
+        rm -f "$HOME/eval_venv_stub/bin/python"
+        cat > "$HOME/eval_venv_stub/bin/python" <<'EOF'
+#!/bin/sh
+[ -x /opt/venv/bin/python3 ] && exec /opt/venv/bin/python3 "$@"
+exec python3 "$@"
+EOF
+        chmod +x "$HOME/eval_venv_stub/bin/python"
+        # like a real venv's activate: put the stub's bin/ first on PATH
+        echo 'export PATH="$(dirname "${BASH_SOURCE[0]}"):$PATH"' > "$HOME/eval_venv_stub/bin/activate"
+        echo "✓ Lumi eval env ready at $TARGET (PYTHONPATH/PATH set by slurm/lumi_eval.yaml)"
         ;;
 
     *)
@@ -122,11 +165,11 @@ esac
 
 # One-time runtime patches — idempotent.
 echo "Patching Megatron-Bridge model imports for tolerant loading…"
-python3 "$REPO_ROOT/container/megatron/patch_bridge_lazy_imports.py" \
+uv run --python 3.12 python "$REPO_ROOT/container/megatron/patch_bridge_lazy_imports.py" \
     "$REPO_ROOT/submodules/Megatron-Bridge/src/megatron/bridge/models"
 
 echo "Pulling heavy tokenizer files (Qwen3-0.6B)…"
-python3 "$REPO_ROOT/scripts/download_tokenizers.py" --tokenizers Qwen/Qwen3-0.6B || \
+uv run --python 3.12 python "$REPO_ROOT/scripts/download_tokenizers.py" --tokenizers Qwen/Qwen3-0.6B || \
     echo "(download_tokenizers.py failed — re-run manually if needed)"
 
 if [[ "$PREFETCH" == "1" ]]; then
@@ -140,12 +183,15 @@ if [[ "$PREFETCH" == "1" ]]; then
                 open-sci-0.01 "$OELLM_EVALS_DIR/oellm/resources/task-groups.yaml"
             ;;
         lumi)
+            # scripts/prefetch_datasets.py doesn't exist; use oellm-eval's own
+            # --download_only. --models must be an existing dir without
+            # *.safetensors so no model is downloaded (only the datasets).
             singularity exec "${BINDS[@]}" \
                 --env HF_HUB_OFFLINE=0 --env HF_DATASETS_OFFLINE=0 \
                 --env HF_HOME="${HF_HOME:?HF_HOME must be set for --prefetch}" \
-                --env PYTHONPATH="$TARGET" \
-                "$SIF" python3 "$REPO_ROOT/scripts/prefetch_datasets.py" \
-                open-sci-0.01 "$OELLM_EVALS_DIR/oellm/resources/task-groups.yaml"
+                --env PYTHONPATH="$TARGET" --env PATH="$BIN:/usr/bin:/bin" \
+                "$SIF" oellm-eval schedule --models "$REPO_ROOT/oellm_autoexp" \
+                --task_groups "${OELLM_EVAL_TASK_GROUPS:-open-sci-0.01}" --download_only true
             ;;
         juwels|jupiter)
             HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0 \
