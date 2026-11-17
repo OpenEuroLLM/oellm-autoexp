@@ -21,4 +21,4 @@ job:
   start_condition: null
 
 slurm:
-  srun_opts: "--gres=gpu:4"
+  srun_opts: "--overlap --gres=gpu:4"
