@@ -4693,8 +4693,17 @@ settings (`max_num_seqs`) are not involved yet. The step's host memory was
 first DP4 run with `OELLM_MOE_FP8_DIRECT=1`: every earlier 84B DP4 run (2026-11-16,
 `ambitious_v4_2ph_fp8_1000`) had it off, and the four runs that ever set it are these four.
 
-The relaunch keeps the PR #2 layout and switches and sets `OELLM_ENGRAM_TABLES=mmap` (the
-tables are read from the export instead of staged in /dev/shm). `config/evals/
-v4a_v_35900_recall_mn5.yaml` records it. If that still exceeds the node memory, the next
-knob is `OELLM_MOE_FP8_DIRECT=0` (the previously validated load path, at 42.3 instead of
-23.4 GiB of experts per GPU at EP4).
+The second launch set `OELLM_ENGRAM_TABLES=mmap` instead and OOMed harder: MaxRSS
+434 GB and 446 GB (mapped table pages count in RSS; `.55`/`.58` at 10:37). The tables are
+therefore not the binding item.
+
+The binding item is the fp8-direct expert load. The validated 84B DP4 run of 2026-11-16
+(`ambitious_v4_2ph_fp8_1000`, step `48653415.3`) completed with **MaxRSS 182 GB** with
+`uva` tables, `OELLM_LOCAL_EXPERT_LOAD=1`, `max_num_seqs 256` and `OELLM_MOE_FP8_DIRECT`
+off. The v4a runs are the only ones that ever set `OELLM_MOE_FP8_DIRECT=1`, and their
+non-table RSS is ~368 GB: the direct path holds the export's fp8 expert bytes on the host
+(four ranks x their shard) before they reach the GPU.
+
+The third launch keeps the PR #2 model-code switches and the DP4/EP4 engine layout and sets
+`moe_fp8_direct: false` (the validated load path, 42.3 instead of 23.4 GiB of experts per
+GPU at EP4). `config/evals/v4a_v_35900_recall_mn5.yaml` records it.

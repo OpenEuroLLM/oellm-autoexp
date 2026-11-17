@@ -35,10 +35,12 @@ lm_eval:
   # engine: the PR #2 layout (tp1 x dp4, expert parallel, 2048 seqs / 3072 batched tokens per
   # node, 0.88 utilization) and the PR #2 model-code switches are the spec defaults
   model_code:
-    # uva tables (the PR's setting) stage ~160 GB in /dev/shm; on DP4 with the fp8-direct
-    # expert load the first launch hit the node memory limit at load (oom_kill, MaxRSS 368 GB,
-    # 2026-11-17 10:23). mmap reads the tables from the export instead.
-    engram_tables: mmap
+    # The fp8-direct expert load (the PR's setting) is the first setting that ever ran in the
+    # eval path with DP4: two launches OOMed at load (oom_kill; MaxRSS 368 GB with uva tables,
+    # 434 GB with mmap, versus 182 GB for the validated 2026-11-16 DP4 run, 2026-11-17 10:23
+    # and 10:37). Load the fp8 tiles through the validated path instead; the PR's model-code
+    # switches and the DP4/EP4 engine layout stay.
+    moe_fp8_direct: false
   job: {priority: 70}
 
 paths:
