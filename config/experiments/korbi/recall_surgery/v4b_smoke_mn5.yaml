@@ -1,0 +1,32 @@
+# @package _global_
+# v4b smoke: 16 nodes, 6 steps from 35900, arch metrics on every step.
+#
+# What it must show in the log:
+#   35901  lm loss ~= 1.1035   (the v4a step-0 value: the gate is exactly closed)
+#   35902  lm loss ~= 1.10     (v4a gave 1.5907 -- that jump must be gone)
+#   [arch] vgate/r     rising 0.000 -> 0.005 -> ... (1/300, 2/300, ...)
+#   [arch] vgate/delta the ungated residual move, i.e. the impact the layer would have
+# No persistent save: the smoke run only reads the loss and the two metrics.
+defaults:
+  - v4b_gate_mn5
+  - _self_
+
+aux:
+  nodes: 16
+  steps: 6
+
+backend:
+  megatron:
+    exit_interval: 35906
+    arch_metrics_interval: 1
+    eval_interval: 100000000
+    save_extra_steps: []
+    save_interval: 1000000
+    non_persistent_save_interval: null
+
+job:
+  name: ambitious_v4b_gate_smoke
+  base_output_dir: ${aux.kv_root}/runs/v4b_gate_smoke/main
+  est_steps: 6
+  metadata:
+    pool_priority: 5
