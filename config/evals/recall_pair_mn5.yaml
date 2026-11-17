@@ -1,0 +1,61 @@
+# Paired recall readout: v4 control and v4a (first-class V layers) at matched checkpoints.
+# The 30-row critical suite: CoQA, Winogrande, SQuAD v2 10-shot, 24 Belebele, SWDE, FDA,
+# squad_completion (config/eval_tasks/ckdab_recall_full.yaml).
+#
+# Launches (one export job + four 1-node lm-eval sessions each, on the p264 pool):
+#
+#   # v4 control at 35900 (this file's default)
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/recall_pair_mn5.yaml
+#
+#   # v4 control at 36000
+#   ... --set export.step=36000 --set export.name=ambitious_v4_2ph_fp8_36000 \
+#       --set export.run_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/runs/main \
+#       --set export.config=/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/runs/main/current_ambitious_v4_cont_main_128.yaml
+#
+#   # v4a (pinned V6 restart) at 36000
+#   ... --set export.step=36000 --set export.name=ambitious_v4a_v6_pin_fp8_36000 \
+#       --set export.run_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6_pin/main \
+#       --set export.config=/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6_pin/main/current_ambitious_v4a_v6_pin_256.yaml
+#
+# v4a at 35900 is `config/evals/v4a_v_35900_recall_mn5.yaml` (the pinned V6 surgery checkpoint;
+# with the Engram pin it is the same function as the v4 control at 35900).
+#
+# Engine: TP1 x DP4 with expert parallelism (the PR #2 layout), on the validated memory
+# envelope (256 sequences / 32768 batched tokens / 0.85 per node). The PR #2 model-code
+# switches stay on; the fp8-direct load stays off (it reduces host memory, but the envelope
+# was validated without it, and the load path is not what this readout tests).
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256
+  step: 35900
+  name: ambitious_v4_2ph_fp8_35900
+  config: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/current_ambitious_v4_2ph_hd256_256n_p2.yaml
+
+rows:
+  harnesses: [lm-eval-harness]
+  suite_file: config/eval_tasks/ckdab_recall_full.yaml
+
+lm_eval:
+  workers: 4
+  split_s: 300
+  max_parts: 8
+  engine:
+    tp: 1
+    dp: 4
+    expert_parallel: true
+    max_num_seqs: 256
+    max_num_batched_tokens: 32768
+    gpu_memory_utilization: 0.85
+    request_batch_size: 256
+    response_cache: true
+  model_code:
+    # the fp8-direct load saves host memory but is off in every validated DP4 run
+    moe_fp8_direct: false
+  job: {priority: 70}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
