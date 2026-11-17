@@ -8,6 +8,11 @@ They check that the environment works, the hybrid model trains, all three optimi
 run, and multi-node communication works, and they give first throughput numbers for
 budgeting the full ladder.
 
+> **Update 2026-11-16:** this notebook stops at 2026-11-11. The later work (05/06 on the team
+> Megatron + hybrid model, the first WSD run crashing on host RAM, throughput test 12: Liger +
+> micro-batch 16 = 2.5x faster, test 13 setup, and the current production run
+> `../hyb100m/11_wsd_ladder.yaml`) is written up in **`../hyb100m/README.md`**.
+
 ## ▶ Status / resume here (2026-11-11 evening)
 
 **Done and working**

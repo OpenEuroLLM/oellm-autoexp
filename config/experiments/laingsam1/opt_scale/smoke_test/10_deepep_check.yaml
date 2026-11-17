@@ -1,0 +1,220 @@
+# @package _global_
+#
+# Smoke test 10: DeepEP check. Same model / data / gbs 256 / mbs 4 as 08 variant a (the chosen
+# setup), but with a gentle, stable schedule (lr 1e-3, 10-step warmup) and two optimizers.
+# Each optimizer is run twice:
+#   a2a_ep1    : current setup - every GPU holds all 96 experts, alltoall dispatcher (no traffic)
+#   deepep_ep4 : experts split over the node's 4 GPUs (24 each), tokens moved with DeepEP
+#                (moe_token_dispatcher_type flex, backend deepep; deep_ep 1.2.1 is in the container)
+# Expect: per pair, loss curves nearly identical (DeepEP/EP do not change the maths; only the
+# order of floating-point sums), and a throughput difference (EP4 adds NVLink traffic but
+# makes bigger per-expert matmuls).
+# Indices: 0 adam_a2a_ep1  1 adam_deepep_ep4  2 muownc_a2a_ep1  3 muownc_deepep_ep4
+# 50 x 256 = 12,800 samples, eval 768 = same as 06/08 -> data index is reused.
+#
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/10_deepep_check --dry-run
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/10_deepep_check --array-subset 1 --submit-and-exit
+#   (if 1 trains fine:)  ... --array-subset 0,2,3 --submit-and-exit
+# Cost: ~4 x 16 min x 4 GPUs = ~4.5 GPU-h expected, cap 4 x 25 min x 4 GPUs = 6.7 GPU-h.
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: smoke
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "smoke_ep_${backend.aux.variant}_N${slurm.sbatch.nodes}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    # Per-user root for Megatron checkout, pyext, logs, outputs, index cache (default = Sam's).
+    # Others: export OPT_SCALE_BASE=/e/scratch/<project>/users/<you>  (see opt_scale/README.md)
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    variant: adam_a2a_ep1   # overridden by sweep
+    opt_args: ""            # optimizer flags missing from the schema; set by the sweep
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern LELELE*ELELELE*ELELELE*ELELELE*E
+      --linear-beta-adam
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.opt_args}"
+
+  data_integrity_check: false   # MUST stay off (see 01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: identical to 06 ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: 640
+    ffn_hidden_size: 1920
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: alltoall   # sweep: flex in the deepep runs
+    moe_flex_dispatcher_backend: deepep   # only used when the dispatcher is flex
+    expert_model_parallel_size: 1         # sweep: 4 in the deepep runs
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120
+
+    # --- kernels / numerics (swept ones marked) ---
+    cross_entropy_loss_fusion: false      # 08: native fusion slower + more memory
+    cross_entropy_fusion_impl: native     # 'te' is disabled in team Megatron (arguments.py:1920)
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml (as 06) ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${backend.aux.base}/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 4
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 4          # 08 winner
+    global_batch_size: 256
+    train_iters: 50
+    exit_interval: 50
+
+    # --- optimizer: AdamW by default (sweep switches 2/3 to muown_classical) ---
+    optimizer: adam
+    lr: 1.e-3
+    min_lr: 1.e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    weight_decay: 0.1
+    clip_grad: 1.0
+    lr_warmup_iters: 10
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 10
+
+    eval_interval: 25            # (50//25+1) x 1 x 256 = 768 valid samples = same as 06
+    eval_iters: 1
+    log_interval: 1
+    log_throughput: true
+
+    save: null
+    load: null
+    save_interval: null
+    save_extra_steps: []
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}   # override: see opt_scale/README.md
+    partition: booster
+    time: "00:25:00"
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        # 0: AdamW, current setup (all experts on every GPU, alltoall)
+        - backend.aux.variant: adam_a2a_ep1
+        # 1: AdamW, experts split over 4 GPUs, DeepEP
+        - backend.aux.variant: adam_deepep_ep4
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.expert_model_parallel_size: 4
+        # 2: muown_classical (Swagatam's setting), current setup
+        - backend.aux.variant: muownc_a2a_ep1
+          backend.megatron.weight_decay: 0.0
+          backend.megatron.muon_split_qkv: true
+          backend.aux.opt_args: --optimizer muown_classical --muon-qkv-headwise
+        # 3: muown_classical, DeepEP
+        - backend.aux.variant: muownc_deepep_ep4
+          backend.megatron.weight_decay: 0.0
+          backend.megatron.muon_split_qkv: true
+          backend.aux.opt_args: --optimizer muown_classical --muon-qkv-headwise
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.expert_model_parallel_size: 4

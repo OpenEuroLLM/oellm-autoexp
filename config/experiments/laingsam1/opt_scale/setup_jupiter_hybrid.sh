@@ -43,6 +43,13 @@ if [ ! -d "$PYEXT/emerging_optimizers-0.2.0.dist-info" ]; then
 fi
 echo "[2/4] emerging_optimizers 0.2.0 at $PYEXT"
 
+# 2b. Liger kernel 0.8.0 (fused LM-head + cross-entropy; hyb100m/11 needs it for micro-batch 16).
+#     Same place, same way: only your pyext, the container is not touched.
+if [ ! -d "$PYEXT/liger_kernel-0.8.0.dist-info" ]; then
+  apptainer exec "$SIF" /opt/venv/bin/python -m pip install --no-deps --target "$PYEXT" liger-kernel==0.8.0
+fi
+echo "[2b]  liger-kernel 0.8.0 at $PYEXT"
+
 # 3. autoexp venv (uv; install uv first if missing: curl -LsSf https://astral.sh/uv/install.sh | sh)
 if [ ! -x "$VENV/bin/python" ]; then
   command -v uv >/dev/null || { echo "uv not found (see comment above)"; exit 1; }

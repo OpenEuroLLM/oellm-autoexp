@@ -1,0 +1,259 @@
+# @package _global_
+#
+# Pre-builds the ONE data index the sweep100m configs need that hyb100m/11 + 11b have not
+# cached already (AdamW, 1 step, no checkpoints): the train index of the 2x cooldown at batch
+# size 512 (1927.5 steps round to 1928 -> 987,136 samples instead of 986,880). Every other
+# stage / batch size uses the same sample counts as 11 and 11b (step counts scale with
+# 256 / batch size; validation = 2560 sequences per evaluation everywhere).
+# Run ONCE per $OPT_SCALE_BASE/cache before the first sweep submission and wait until COMPLETED:
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/prebuild_index --submit-and-exit
+# (If your cache is empty, i.e. you never ran hyb100m/11 + 11b, run those two first, or submit one
+# setting of the sweep alone and wait until all 4 of its jobs have started training.)
+# Cost: 1 job x ~25-35 min x 4 GPUs = ~2 GPU-h (cap 4).
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default        # no auto-restart
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: stable
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "hyb100m_sweep_indexprebuild_bs${backend.aux.gbs}_${stage}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/hyb100m_sweep/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    # Per-user root for Megatron checkout, pyext, logs, outputs, index cache (default = Sam's).
+    # Others: export OPT_SCALE_BASE=/e/scratch/<project>/users/<you>  (see opt_scale/README.md)
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    opt: adam
+    # --- swept (see the sweep block) ---
+    gbs: 256           # global batch size (sequences of 4096 tokens)
+    beta: 0.95         # AdamW: beta1 = beta2
+    mom: 0.95          # Muon / muown_classical: momentum
+    # Stage, in steps AT GBS 256 (scaled by 256/gbs below, so every batch size sees the same
+    # tokens): branch256 = step the cooldown starts from, end256 = last step.
+    # stable: 6168 / 6168 (no cooldown); 1x: 1542 -> 1928; 2x: 3084 -> 3855; 4x: 6168 -> 7710.
+    branch256: 6168
+    end256: 6168
+    # Warmup: linear from 0 over N tokens, N = the model's active parameter count without the
+    # embedding (the N of the 20N / 40N / 80N budgets), so 5 % of the 1x budget at every model
+    # size (rule of Porian et al. 2024, arXiv:2406.19146), and at least 50 steps.
+    # 100M model: 193 / 96 / 50 steps at batch 128 / 256 / 512.
+    warmup_tokens: 101061472
+    warmup_min_steps: 50
+    # --- derived (do not set) ---
+    start_iter: "${oc.eval:'round(${backend.aux.branch256} * 256 / ${backend.aux.gbs})'}"
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern LELELE*ELELELE*ELELELE*ELELELE*E
+      --linear-beta-adam
+      --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+    opt_args: ""       # set by the sweep
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.opt_args}"
+
+  data_integrity_check: false   # MUST stay off (see smoke_test/01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: identical to smoke_test/06_hybrid100m_team_arch.yaml ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: 640
+    ffn_hidden_size: 1920
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: alltoall
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120   # rank 0 builds a new sample index per budget
+
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml (as 04-06) ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${oc.env:OPT_SCALE_CACHE,${backend.aux.base}/cache/megatron_index}
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 2
+    # Megatron's default (true) makes every one of the 522 datasets cache a 4096 x 4096 attention
+    # mask in every data-reading process (~9 GB per process and split) and ships 16 masks per
+    # micro-batch to the GPU: this filled the host RAM in hyb100m/11. The model masks causally
+    # itself; Swagatam's reference config sets false.
+    create_attention_mask_in_dataloader: false
+    mmap_bin_files: false         # plain reads instead of mmap on GPFS (team setting)
+    # 262144 embedding rows, as Swagatam's and Korbinian's configs (the tokenizer file lists one
+    # extra added token, so Megatron would otherwise round up to 262272 = 128 unused rows)
+    padded_vocab_size: 262144
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 16         # with Liger (test 12: 91% GPU memory, 2.5x faster than 4)
+    global_batch_size: ${backend.aux.gbs}
+    # all step counts scale with 256/gbs -> same tokens at every batch size (see backend.aux)
+    train_iters: "${oc.eval:'round(${backend.aux.end256} * 256 / ${backend.aux.gbs})'}"
+    exit_interval: 1             # stop right after the index build + 1 step
+
+    # --- schedule: WSD, shared 40-step warmup, linear cooldown to 0 ---
+    lr: 1.e-3                  # swept
+    optimizer: adam
+    min_lr: 0.0
+    lr_warmup_iters: "${oc.eval:'max(${backend.aux.warmup_min_steps}, round(${backend.aux.warmup_tokens} / (${backend.aux.gbs} * ${backend.megatron.seq_length})))'}"   # see backend.aux.warmup_tokens
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: "${oc.eval:'round(${backend.aux.end256} * 256 / ${backend.aux.gbs}) - round(${backend.aux.branch256} * 256 / ${backend.aux.gbs})'}"   # stable: 0
+    clip_grad: 1.0
+    weight_decay: 0.1
+    adam_beta1: ${backend.aux.beta}   # beta1 = beta2 (swept)
+    adam_beta2: ${backend.aux.beta}
+
+    # Every 252M tokens (240 steps at gbs 256), 2560 sequences = 10.5M tokens per eval, at every
+    # batch size -> identical validation samples and eval points (in tokens) across batch sizes,
+    # one validation index per budget shared by all of them. Plus a final eval in every job.
+    eval_interval: "${oc.eval:'240 * 256 // ${backend.aux.gbs}'}"
+    eval_iters: "${oc.eval:'10 * 256 // ${backend.aux.gbs}'}"
+    log_interval: 1
+    log_throughput: true
+
+    save: null
+    load: null
+    # Permanent checkpoints only at the cooldown branch points (+ the final step, saved
+    # automatically); crash recovery from ONE rolling "non-persistent" checkpoint every ~40 min
+    # in ckpt/non_persistent (Megatron loads whichever is newer).
+    save_interval: 100000
+    save_retain_interval: null
+    save_extra_steps:                      # 1x / 2x branch points (4x branch = final step)
+      - "${oc.eval:'round(1542 * 256 / ${backend.aux.gbs})'}"
+      - "${oc.eval:'round(3084 * 256 / ${backend.aux.gbs})'}"
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+    exit_duration_in_mins: null
+    log_memory_to_tensorboard: true
+    log_params_norm: true
+    # Per-layer MoE metrics as on LUMI (aux loss, router scores, expert utilisation, expert
+    # viability). NOT moe_masked_layer_validation: it draws 8 extra validation batches per eval
+    # that Megatron does not size the validation set for (dataloader 'single' -> runs out at
+    # ~eval 14, crash), and costs ~17x a normal eval (one pass per masked MoE layer).
+    moe_per_layer_logging: true
+    moe_expert_viability_metrics: true
+    ckpt_format: torch_dist
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_project: optimizer_scaling_laws
+    wandb_entity: openeurollm-project   # as on LUMI; offline here, applies when you wandb sync
+
+slurm:
+  # = config/slurm/jupiter.yaml launcher_cmd, prefixed with the background memory sampler of
+  # smoke_test/12 (CPU / HBM per NUMA node, file vs anon pages, 30 largest processes; every 60 s).
+  launcher_cmd: "\
+    mkdir -p ${job.base_output_dir} ; ( while true ; do date +%T ; grep -h -e MemFree -e FilePages -e AnonPages /sys/devices/system/node/node*/meminfo ; grep -e MemAvailable -e Cached /proc/meminfo ; ps -u $USER -o rss=,pid=,comm= --sort=-rss | head -30 ; sleep 60 ; done >> ${job.base_output_dir}/node_mem_$SLURM_JOB_ID.log 2>&1 & ) ;\\\n \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+    ${oc.select:container.runtime,apptainer} exec \
+    ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+    --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    # wandb.init reads WANDB_TAGS (comma-separated, no spaces). Must be in slurm.env (-> `export`
+    # in job.sbatch, inherited by the container); container.env is not rendered on JUPITER and
+    # backend.env goes through `apptainer --env`, which would split the value at the commas.
+    # All Megatron args are also logged as the wandb run config (filterable there anyway).
+    WANDB_TAGS: "jupiter,sweep,hybrid_gdn_moe,hyb100m,wsd,${backend.aux.opt},${stage},lr=${backend.megatron.lr},beta=${backend.aux.beta},wd=${backend.megatron.weight_decay},gbs=${backend.aux.gbs},nodes=${slurm.sbatch.nodes}"
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}   # override: see opt_scale/README.md
+    partition: booster
+    time: "01:00:00"           # index build ~20-30 min + startup
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - {stage: cooldown2x, backend.aux.gbs: 512, backend.aux.branch256: 3084, backend.aux.end256: 3855}

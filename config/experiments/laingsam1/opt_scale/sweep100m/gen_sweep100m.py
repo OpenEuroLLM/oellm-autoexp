@@ -1,0 +1,392 @@
+"""Generate opt_scale/sweep100m/{adam,muon,muown_classical,prebuild_index}.yaml from hyb100m/11.
+
+Usage (from the repo root): python3 config/experiments/laingsam1/opt_scale/sweep100m/gen_sweep100m.py config/experiments/laingsam1/opt_scale
+Edit GBS / OPTS below to change the grid, then re-run (overwrites the 4 yaml files).
+"""
+import sys
+
+root = sys.argv[1]  # .../config/experiments/laingsam1/opt_scale
+src = open(f"{root}/hyb100m/11_wsd_ladder.yaml").read()
+body0 = src[src.index("defaults:"):src.index("\nsweep:") + 1]
+
+GBS = [64, 128, 256, 512]
+OPTS = {
+    "adam": dict(lrs=["2.5e-4", "5.e-4", "1.e-3", "2.e-3", "4.e-3"], hp="beta", vals=["0.9", "0.95", "0.975"]),
+    "muon": dict(lrs=["2.5e-4", "5.e-4", "1.e-3", "2.e-3", "4.e-3"], hp="mom", vals=["0.9", "0.95", "0.975"]),
+    "muown_classical": dict(lrs=["2.5e-4", "5.e-4", "1.e-3", "2.e-3", "4.e-3"], hp="mom", vals=["0.9", "0.95", "0.975"]),
+}
+
+# token-aligned step counts: everything is defined in steps at gbs 256 and scaled by 256/gbs
+SC = "256 / ${backend.aux.gbs}"
+
+
+def common_body(opt, prebuild=False):
+    b = body0
+    hp = OPTS[opt]["hp"] if opt in OPTS else "beta"
+    letter = "b" if hp == "beta" else "m"
+    rep = {
+        # --- names / dirs ---
+        '''  # e.g. hyb100m_adam_lr0.001_b0.95_wd0.1_gbs256_decay2x  (= wandb run name = output dir name)
+  name: "hyb100m_${backend.aux.opt}_lr${backend.megatron.lr}_b${backend.megatron.adam_beta1}_wd${backend.megatron.weight_decay}_gbs${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/hyb100m/${job.name}"''':
+        (f'''  # e.g. hyb100m_sweep_{opt}_lr0.001_{hp}0.95_bs256_cooldown2x  (= wandb run name = output dir name)
+  # model _ "sweep" _ optimizer _ learning rate _ {hp} _ batch size _ stage
+  name: "hyb100m_sweep_${{backend.aux.opt}}_lr${{backend.megatron.lr}}_{hp}${{backend.aux.{hp}}}_bs${{backend.aux.gbs}}_${{stage}}"
+  base_output_dir: "${{backend.aux.base}}/experiments/opt_scale/hyb100m_sweep/${{job.name}}"''' if not prebuild else
+         '''  name: "hyb100m_sweep_indexprebuild_bs${backend.aux.gbs}_${stage}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/hyb100m_sweep/${job.name}"'''),
+        # --- aux: sweep knobs + derived step counts ---
+        '''    opt: adam          # overridden by sweep
+    start_iter: 0      # decays: stable checkpoint step they branch from
+''':
+        f'''    opt: {opt if opt in OPTS else "adam"}
+    # --- swept (see the sweep block) ---
+    gbs: 256           # global batch size (sequences of 4096 tokens)
+    beta: 0.95         # AdamW: beta1 = beta2
+    mom: 0.95          # Muon / muown_classical: momentum
+    # Stage, in steps AT GBS 256 (scaled by 256/gbs below, so every batch size sees the same
+    # tokens): branch256 = step the cooldown starts from, end256 = last step.
+    # stable: 6168 / 6168 (no cooldown); 1x: 1542 -> 1928; 2x: 3084 -> 3855; 4x: 6168 -> 7710.
+    branch256: 6168
+    end256: 6168
+    # Warmup: linear from 0 over N tokens, N = the model's active parameter count without the
+    # embedding (the N of the 20N / 40N / 80N budgets), so 5 % of the 1x budget at every model
+    # size (rule of Porian et al. 2024, arXiv:2406.19146), and at least 50 steps.
+    # 100M model: 193 / 96 / 50 steps at batch 128 / 256 / 512.
+    warmup_tokens: 101061472
+    warmup_min_steps: 50
+    # --- derived (do not set) ---
+    start_iter: "${{oc.eval:'round(${{backend.aux.branch256}} * {SC})'}}"
+''',
+        # --- batch / steps / schedule ---
+        "    global_batch_size: 256\n": "    global_batch_size: ${backend.aux.gbs}\n",
+        '''    # Stable phase defaults (decays override in the sweep).
+    train_iters: 6168
+''': f'''    # all step counts scale with 256/gbs -> same tokens at every batch size (see backend.aux)
+    train_iters: "${{oc.eval:'round(${{backend.aux.end256}} * {SC})'}}"
+''',
+        "    lr_warmup_iters: 40\n":
+        "    lr_warmup_iters: \"${oc.eval:'max(${backend.aux.warmup_min_steps}, round(${backend.aux.warmup_tokens} / "
+        "(${backend.aux.gbs} * ${backend.megatron.seq_length})))'}\"   # see backend.aux.warmup_tokens\n",
+        "    lr_wsd_decay_iters: 0      # stable: no decay\n":
+        f"    lr_wsd_decay_iters: \"${{oc.eval:'round(${{backend.aux.end256}} * {SC}) - round(${{backend.aux.branch256}} * {SC})'}}\"   # stable: 0\n",
+        # --- validation: same tokens per eval and same eval points (in tokens) at every gbs ---
+        '''    # Every 240 steps (~20 min, 26 points on the stable curve), 10 x 256 x 4096 = 10.5M tokens
+    # (~15 s per evaluation). (6168//240+1) x 10 = 260 = the old 500 x 20 -> same cached
+    # validation index. Megatron also evaluates once more at the end of every job.
+    eval_interval: 240
+    eval_iters: 10
+''': f'''    # Every 252M tokens (240 steps at gbs 256), 2560 sequences = 10.5M tokens per eval, at every
+    # batch size -> identical validation samples and eval points (in tokens) across batch sizes,
+    # one validation index per budget shared by all of them. Plus a final eval in every job.
+    eval_interval: "${{oc.eval:'240 * 256 // ${{backend.aux.gbs}}'}}"
+    eval_iters: "${{oc.eval:'10 * 256 // ${{backend.aux.gbs}}'}}"
+''',
+        # --- checkpoints: persistent only at branch points + end; rolling one for crash recovery ---
+        '''    save_interval: 514                     # ~45 min; 6168 = 12 x 514
+    save_retain_interval: 1542             # keeps 1542 / 3084 / 4626 / 6168 (branch points), deletes the rest
+    save_extra_steps: []
+''': f'''    # Permanent checkpoints only at the cooldown branch points (+ the final step, saved
+    # automatically); crash recovery from ONE rolling "non-persistent" checkpoint every ~40 min
+    # in ckpt/non_persistent (Megatron loads whichever is newer).
+    save_interval: 100000
+    save_retain_interval: null
+    save_extra_steps:                      # 1x / 2x branch points (4x branch = final step)
+      - "${{oc.eval:'round(1542 * {SC})'}}"
+      - "${{oc.eval:'round(3084 * {SC})'}}"
+    non_persistent_save_interval: "${{oc.eval:'round(514 * {SC})'}}"
+    non_persistent_ckpt_type: global
+''',
+        # --- data loading: as Swagatam's 100M reference config (see README "Data loading") ---
+        "    num_workers: 2                # test 12: same speed as 4, fewer leaking worker processes\n":
+        """    num_workers: 2
+    # Megatron's default (true) makes every one of the 522 datasets cache a 4096 x 4096 attention
+    # mask in every data-reading process (~9 GB per process and split) and ships 16 masks per
+    # micro-batch to the GPU: this filled the host RAM in hyb100m/11. The model masks causally
+    # itself; Swagatam's reference config sets false.
+    create_attention_mask_in_dataloader: false
+    mmap_bin_files: false         # plain reads instead of mmap on GPFS (team setting)
+    # 262144 embedding rows, as Swagatam's and Korbinian's configs (the tokenizer file lists one
+    # extra added token, so Megatron would otherwise round up to 262272 = 128 unused rows)
+    padded_vocab_size: 262144
+""",
+        # --- shared data-index cache (read-only for colleagues; see RUNBOOK.md) ---
+        "    data_cache_path: ${backend.aux.base}/cache/megatron_index\n":
+        "    data_cache_path: ${oc.env:OPT_SCALE_CACHE,${backend.aux.base}/cache/megatron_index}\n",
+        # --- tags ---
+        '''    WANDB_TAGS: "jupiter,ladder_v2,hybrid_gdn_moe,hyb100m,wsd,${backend.aux.opt},${stage},lr=${backend.megatron.lr},beta=${backend.megatron.adam_beta1},wd=${backend.megatron.weight_decay},gbs=${backend.megatron.global_batch_size},nodes=${slurm.sbatch.nodes}"''':
+        f'''    WANDB_TAGS: "jupiter,sweep,hybrid_gdn_moe,hyb100m,wsd,${{backend.aux.opt}},${{stage}},lr=${{backend.megatron.lr}},{hp}=${{backend.aux.{hp}}},wd=${{backend.megatron.weight_decay}},gbs=${{backend.aux.gbs}},nodes=${{slurm.sbatch.nodes}}"''',
+    }
+    for a, c in rep.items():
+        assert b.count(a) == 1, a[:70]
+        b = b.replace(a, c)
+    return b
+
+
+def opt_specific(b, opt):
+    if opt == "adam":
+        rep = {"    adam_beta1: 0.95\n    adam_beta2: 0.95\n":
+               "    adam_beta1: ${backend.aux.beta}   # beta1 = beta2 (swept)\n    adam_beta2: ${backend.aux.beta}\n",
+               "    lr: 1.e-3                  # overridden per optimizer by the sweep\n":
+               "    lr: 1.e-3                  # swept\n    optimizer: adam\n"}
+    elif opt == "muon":
+        rep = {'    opt_args: ""       # set by the sweep\n':
+               '''    # Batched Muon step: same-shape matrices (e.g. the 96 experts of a layer) are stacked and
+    # orthogonalized in one batched call instead of one by one. Same per-matrix maths (up to
+    # floating-point summation order), far fewer GPU calls: this is what makes muown_classical
+    # as fast as AdamW (on by default there; off by default for Muon, also in the team configs).
+    # Checked in smoke_test/16_muon_batched_check.yaml. Not in the autoexp schema -> raw flag.
+    opt_args: "--muon-batched-step"
+''',
+               "    lr: 1.e-3                  # overridden per optimizer by the sweep\n":
+               '''    lr: 1.e-3                  # swept; SAME grid as AdamW: with scale 0.2 x sqrt(max(m, n)) Muon's
+    # update size matches AdamW's, so one lr scale serves both (Moonlight convention; the LUMI
+    # lr / batch grids used the same lrs for both). hyb100m/11 ran Muon at 5e-3 (the LUMI value
+    # for batch 4096).
+    # Muon = LUMI settings otherwise; momentum swept. The Adam part (embeddings, router, norms)
+    # keeps beta1 = beta2 = 0.95.
+    optimizer: muon
+    muon_momentum: ${backend.aux.mom}
+    muon_nesterov: true
+    muon_scale_mode: spectral
+    muon_coefficient_type: polar_express
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: true
+    muon_extra_scale_factor: 0.2
+    muon_scalar_optimizer: adam
+'''}
+    elif opt == "muown_classical":
+        rep = {"    lr: 1.e-3                  # overridden per optimizer by the sweep\n":
+               "    lr: 1.e-3                  # swept\n    muon_split_qkv: true\n",
+               "    weight_decay: 0.1\n": "    weight_decay: 0.0            # muown_classical (Swagatam's setting, as hyb100m/11)\n",
+               '    opt_args: ""       # set by the sweep\n':
+               '''    # muown_classical (as hyb100m/11); its momentum is --angular-muown-momentum (it reuses the
+    # AngularMuown settings), not muon_momentum. The Adam part keeps beta1 = beta2 = 0.95.
+    opt_args: "--optimizer muown_classical --muon-qkv-headwise --angular-muown-momentum ${backend.aux.mom}"
+'''}
+    for a, c in rep.items():
+        assert b.count(a) == 1, (opt, a[:60])
+        b = b.replace(a, c)
+    return b
+
+
+STAGES = '''    # stage: stable + 3 cooldown branches (1x / 2x / 4x Chinchilla), as in hyb100m/11
+    - type: list
+      configs:
+        - stage: stable
+        - type: list
+          defaults:
+            backend.megatron.save_extra_steps: []
+            backend.megatron.non_persistent_save_interval: null   # a cooldown restarts from its branch point
+            backend.megatron.load: "\\\\${sibling.stable.job.base_output_dir}/ckpt"
+            backend.megatron.ckpt_step: "\\\\${backend.aux.start_iter}"
+            backend.megatron.override_opt_param_scheduler: true
+            job.start_condition:
+              class_name: FileExistsCondition
+              # .metadata is written last -> the branch checkpoint is complete (as on LUMI)
+              path: "\\\\${sibling.stable.job.base_output_dir}/ckpt/iter_\\\\${oc.eval:'str(\\\\${backend.aux.start_iter}).zfill(7)'}/.metadata"
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError"
+          configs:
+            - {stage: cooldown1x, backend.aux.branch256: 1542, backend.aux.end256: 1928, slurm.sbatch.time: "02:00:00"}
+            - {stage: cooldown2x, backend.aux.branch256: 3084, backend.aux.end256: 3855, slurm.sbatch.time: "03:00:00"}
+            - {stage: cooldown4x, backend.aux.branch256: 6168, backend.aux.end256: 7710, slurm.sbatch.time: "05:00:00"}
+'''
+
+
+def header(opt, o):
+    n = len(GBS) * len(o["lrs"]) * len(o["vals"])
+    hpname = "beta1 = beta2" if o["hp"] == "beta" else "momentum"
+    cost = {"adam": 50, "muon": 57, "muown_classical": 51}[opt]
+    nl, nv = len(o["lrs"]), len(o["vals"])
+    per_gbs = nl * nv * 4
+    lines = [
+        "# @package _global_",
+        "#",
+        f"# sweep100m / {opt}: WSD ladder (stable + 1x / 2x / 4x Chinchilla cooldowns) for every",
+        f"# combination of batch size x lr x {hpname}. 100M-active hybrid MoE, everything else as",
+        "# hyb100m/11_wsd_ladder.yaml (model, data, Liger + micro-batch 16, logging, restarts).",
+        "# Generated from 11 by gen_sweep100m.py; see README.md in this folder.",
+        "#",
+        f"#   batch size : {', '.join(map(str, GBS))}   (same tokens per stage at every batch size)",
+        f"#   lr         : {', '.join(o['lrs'])}",
+        f"#   {hpname:11s}: {', '.join(o['vals'])}",
+        f"# = {n} settings x 4 jobs (stable, cooldown1x, cooldown2x, cooldown4x) = {n * 4} jobs, ~{cost} GPU-h per",
+        f"#   setting -> ~{n * cost:,} GPU-h for the whole file (~{per_gbs // 4 * cost:,} per batch size).",
+        "#",
+        "# Job index = ((gbs_i x %d + lr_i) x %d + %s_i) x 4 + stage_i  (gbs_i: 0=64 1=128 2=256 3=512;" % (nl, nv, o["hp"]),
+        "#   stage_i: 0 stable, 1 cooldown1x, 2 cooldown2x, 3 cooldown4x). One batch size = %d consecutive jobs:" % per_gbs,
+        "#   " + "   ".join(f"gbs {g}: {i * per_gbs}-{(i + 1) * per_gbs - 1}" for i, g in enumerate(GBS)),
+        "#",
+        "# BEFORE the first submission: prebuild_index.yaml (once per cache, see README).",
+        "# Runs need the monitor (tmux), like 11:",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/{opt} --dry-run",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/{opt} --array-subset <range>",
+        "",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def sweep_block(o):
+    s = "sweep:\n  type: product\n  groups:\n"
+    s += "    # batch size\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.gbs: {g}}}\n" for g in GBS)
+    s += "    # learning rate\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.lr: {lr}}}\n" for lr in o["lrs"])
+    s += f"    # {'beta1 = beta2' if o['hp'] == 'beta' else 'momentum'}\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.{o['hp']}: {v}}}\n" for v in o["vals"])
+    return s + STAGES
+
+
+for opt, o in OPTS.items():
+    b = opt_specific(common_body(opt), opt)
+    open(f"{root}/sweep100m/{opt}.yaml", "w").write(header(opt, o) + b + sweep_block(o))
+
+# --- phase 1: learning rate x batch size at momentum 0.95, one file per optimizer, run whole ---
+P1_GBS = [128, 256, 512]
+P1_LRS = ["2.5e-4", "5.e-4", "1.e-3", "2.e-3", "4.e-3", "8.e-3"]
+P1_COST = {"muon": 57, "muown_classical": 51, "adam": 50}
+
+
+def phase1_header(opt):
+    nl = len(P1_LRS)
+    n = len(P1_GBS) * nl
+    centre = P1_LRS.index("1.e-3")
+    rng = lambda g: f"{g * nl * 4}-{(g + 1) * nl * 4 - 1}"
+    pil = lambda g: f"{(g * nl + centre) * 4}-{(g * nl + centre) * 4 + 3}"
+    return "\n".join([
+        "# @package _global_",
+        "#",
+        f"# sweep100m phase 1 / {opt}: learning rate x batch size, one WSD ladder per setting.",
+        "# Question: what is the best learning rate at each batch size and token budget?",
+        "#",
+        f"#   batch size : {', '.join(map(str, P1_GBS))} sequences of 4096 tokens (same tokens at every batch size)",
+        f"#   lr         : {', '.join(P1_LRS)}",
+        "#   momentum   : 0.95 (AdamW: beta1 = beta2 = 0.95); weight decay and everything else as README.md",
+        f"# = {n} settings x 4 jobs (stable, cooldown1x, cooldown2x, cooldown4x) = {n * 4} jobs, ~{P1_COST[opt]} GPU-h per",
+        f"#   setting -> ~{n * P1_COST[opt]:,} GPU-h for the whole file.",
+        "#",
+        f"# Job index = (batch_i x {nl} + lr_i) x 4 + stage_i   (stage_i: 0 stable, 1 cooldown1x, 2 cooldown2x, 3 cooldown4x)",
+        "#   " + "   ".join(f"batch {b}: {rng(g)}" for g, b in enumerate(P1_GBS)),
+        "#   lr 1e-3 ladders (run these first): " + ", ".join(f"batch {b}: {pil(g)}" for g, b in enumerate(P1_GBS)),
+        "#",
+        "# How to run it: RUNBOOK.md in this folder. Generated by gen_sweep100m.py from hyb100m/11.",
+        "",
+        "",
+    ])
+
+
+def phase1_sweep():
+    s = "sweep:\n  type: product\n  groups:\n"
+    s += "    # batch size\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.gbs: {g}}}\n" for g in P1_GBS)
+    s += "    # learning rate\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.lr: {lr}}}\n" for lr in P1_LRS)
+    return s + STAGES
+
+
+for opt in OPTS:
+    b = opt_specific(common_body(opt), opt)
+    open(f"{root}/sweep100m/phase1_{opt}.yaml", "w").write(phase1_header(opt) + b + phase1_sweep())
+
+# --- 1x runs: the same learning rate x batch size grid as phase 1, but each setting is ONE run
+# trained from scratch to the 1x budget (2.0B tokens: warmup, constant lr, cooldown over the
+# last 20 %). No ladder, no branching: ~4-5x cheaper per setting, for locating the good region.
+RUN1X_COST = {"muon": 13, "muown_classical": 11.5, "adam": 11.5}
+
+
+def run1x_header(opt):
+    nl = len(P1_LRS)
+    n = len(P1_GBS) * nl
+    return "\n".join([
+        "# @package _global_",
+        "#",
+        f"# sweep100m 1x runs / {opt}: learning rate x batch size, one run per setting.",
+        "# Question: where is the good learning-rate range at each batch size? (cheap first pass;",
+        "# the best settings then get full ladders with phase1_*.yaml for the 2x / 4x budgets)",
+        "#",
+        f"#   batch size : {', '.join(map(str, P1_GBS))} sequences of 4096 tokens",
+        f"#   lr         : {', '.join(P1_LRS)}",
+        "#   momentum   : 0.95 (AdamW: beta1 = beta2 = 0.95)",
+        "# Each run: 2.0B tokens from scratch = warmup 101M tokens (= N), constant lr, linear cooldown to 0",
+        "# over the last 20 % (the same schedule as a ladder's 1x branch, without the branching).",
+        f"# = {n} runs, 1 job each, ~{RUN1X_COST[opt]} GPU-h per run -> ~{round(n * RUN1X_COST[opt]):,} GPU-h for the whole file,",
+        "#   ~3 h per run. Crash recovery from a rolling checkpoint; final checkpoint kept.",
+        "#",
+        f"# Job index = batch_i x {nl} + lr_i:   " + "   ".join(
+            f"batch {b}: {g * nl}-{(g + 1) * nl - 1}" for g, b in enumerate(P1_GBS)),
+        "#",
+        "# Needs the monitor only for automatic restarts, so --submit-and-exit is fine too:",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/run1x_{opt} --dry-run",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/run1x_{opt}",
+        "# Generated by gen_sweep100m.py from hyb100m/11.",
+        "",
+        "",
+    ])
+
+
+def run1x_sweep():
+    s = "sweep:\n  type: product\n  groups:\n"
+    s += "    # batch size\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.gbs: {g}}}\n" for g in P1_GBS)
+    s += "    # learning rate\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.lr: {lr}}}\n" for lr in P1_LRS)
+    s += ("    # one run from scratch to the 1x budget: cooldown from step 1542 to 1928 (at batch 256)\n"
+          "    - type: list\n      configs:\n"
+          "        - stage: run1x\n"
+          "          backend.aux.branch256: 1542\n"
+          "          backend.aux.end256: 1928\n"
+          "          backend.megatron.save_extra_steps: []\n"
+          "          slurm.sbatch.time: \"04:30:00\"\n")
+    return s
+
+
+for opt in OPTS:
+    b = opt_specific(common_body(opt), opt)
+    open(f"{root}/sweep100m/run1x_{opt}.yaml", "w").write(run1x_header(opt) + b + run1x_sweep())
+
+# --- prebuild: the data indexes the sweep needs that are not cached yet (1 step each) ---
+b = opt_specific(common_body("prebuild", prebuild=True), "adam")
+pre_rep = {
+    "  - /job: auto_restart   # monitor resubmits on time limit / crash (resumes from latest ckpt)": "  - /job: default        # no auto-restart",
+    "    exit_interval: null\n": "    exit_interval: 1             # stop right after the index build + 1 step\n",
+    '''    save: "${job.base_output_dir}/ckpt"
+    load: "${job.base_output_dir}/ckpt"''': "    save: null\n    load: null",
+    '''    non_persistent_save_interval: "${oc.eval:'round(514 * 256 / ${backend.aux.gbs})'}"
+    non_persistent_ckpt_type: global''': "    non_persistent_save_interval: null\n    non_persistent_ckpt_type: null",
+    "    exit_duration_in_mins: 690             # clean save + exit 30 min before the 12 h limit\n": "    exit_duration_in_mins: null\n",
+    '''    time: "12:00:00"           # stable (JUPITER max = 12 h); others override''': '''    time: "01:00:00"           # index build ~20-30 min + startup''',
+}
+for a, c in pre_rep.items():
+    assert b.count(a) == 1, ("pre", a[:60])
+    b = b.replace(a, c)
+a = b.index("  # = config/job/auto_restart.yaml"); z = b.index("backend:\n")
+b = b[:a] + "\n" + b[z:]
+pre_header = '''# @package _global_
+#
+# Pre-builds the ONE data index the sweep100m configs need that hyb100m/11 + 11b have not
+# cached already (AdamW, 1 step, no checkpoints): the train index of the 2x cooldown at batch
+# size 512 (1927.5 steps round to 1928 -> 987,136 samples instead of 986,880). Every other
+# stage / batch size uses the same sample counts as 11 and 11b (step counts scale with
+# 256 / batch size; validation = 2560 sequences per evaluation everywhere).
+# Run ONCE per $OPT_SCALE_BASE/cache before the first sweep submission and wait until COMPLETED:
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/prebuild_index --submit-and-exit
+# (If your cache is empty, i.e. you never ran hyb100m/11 + 11b, run those two first, or submit one
+# setting of the sweep alone and wait until all 4 of its jobs have started training.)
+# Cost: 1 job x ~25-35 min x 4 GPUs = ~2 GPU-h (cap 4).
+
+'''
+pre_sweep = '''sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - {stage: cooldown2x, backend.aux.gbs: 512, backend.aux.branch256: 3084, backend.aux.end256: 3855}
+'''
+open(f"{root}/sweep100m/prebuild_index.yaml", "w").write(pre_header + b + pre_sweep)
+print("written")

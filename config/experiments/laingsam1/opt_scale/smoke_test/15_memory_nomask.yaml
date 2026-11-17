@@ -1,0 +1,241 @@
+# @package _global_
+#
+# Smoke test 15: does create_attention_mask_in_dataloader: false remove the host-RAM problem?
+# Finding (2026-11-16, test 14 + code): with Megatron's default (true) every GPTDataset caches
+# its own seq x seq attention mask (4096 x 4096 bool = 16.8 MB) in every process that reads
+# data. The v8ml mix has 522 datasets -> ~8.8 GB per process for the train split and again for
+# the validation split, and every micro-batch carries 16 masks (~270 MB) through shared memory
+# to the GPU. Test 14 measured exactly this shape: ~16-18 GB per data-reading process, flat
+# after ~150 steps, a second jump at the first validation. The model does not need the mask
+# (causal masking is done inside attention); Swagatam's 100M reference config sets it to false.
+#
+# 3 jobs, AdamW, identical to the first 500 steps of hyb100m/11 and to test 14 (same cached data
+# index, validations at 240 and 480), all with the mask OFF:
+#   0 nomask            mmap on,  2 workers   (compare with 14 control: only the mask differs)
+#   1 nomask_nommap     mmap off, 2 workers   (+ the team's mmap setting)
+#   2 nomask_nommap_w8  mmap off, 8 workers   (Swagatam's worker count)
+# Pass = node memory far below test 14's control (214 GB allocated after the first validation,
+# 166 GB free) and flat; same or better s/step; loss as test 14 (math-neutral).
+#
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/15_memory_nomask --dry-run
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/15_memory_nomask --submit-and-exit
+# No checkpoints, no auto-restart. Cost: 3 jobs x ~45 min x 4 GPUs = ~9 GPU-h; cap 15 GPU-h.
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default        # no auto-restart
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: stable
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "smoke_mem2_${backend.aux.variant}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    # Per-user root for Megatron checkout, pyext, logs, outputs, index cache (default = Sam's).
+    # Others: export OPT_SCALE_BASE=/e/scratch/<project>/users/<you>  (see opt_scale/README.md)
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    opt: adam
+    variant: control   # overridden by sweep
+    start_iter: 0      # decays: stable checkpoint step they branch from
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern LELELE*ELELELE*ELELELE*ELELELE*E
+      --linear-beta-adam
+      --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+    opt_args: ""       # set by the sweep
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.opt_args}"
+
+  data_integrity_check: false   # MUST stay off (see smoke_test/01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: identical to smoke_test/06_hybrid100m_team_arch.yaml ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: 640
+    ffn_hidden_size: 1920
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: alltoall
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120   # rank 0 builds a new sample index per budget
+
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml (as 04-06) ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${backend.aux.base}/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 2                # sweep
+    mmap_bin_files: true          # sweep
+    create_attention_mask_in_dataloader: false   # THE change under test (Megatron default: true)
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 16         # with Liger (test 12: 91% GPU memory, 2.5x faster than 4)
+    global_batch_size: 256
+    # Stable phase defaults (decays override in the sweep).
+    train_iters: 6168
+    exit_interval: 500           # 2 validations (240, 480), as the first 500 steps of 11
+
+    # --- schedule: WSD, shared 40-step warmup, linear cooldown to 0 ---
+    lr: 1.e-3                  # overridden per optimizer by the sweep
+    min_lr: 0.0
+    lr_warmup_iters: 40
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 0      # stable: no decay
+    clip_grad: 1.0
+    weight_decay: 0.1
+    adam_beta1: 0.95
+    adam_beta2: 0.95
+
+    # Every 240 steps (~20 min, 26 points on the stable curve), 10 x 256 x 4096 = 10.5M tokens
+    # (~15 s per evaluation). (6168//240+1) x 10 = 260 = the old 500 x 20 -> same cached
+    # validation index. Megatron also evaluates once more at the end of every job.
+    eval_interval: 240
+    eval_iters: 10
+    log_interval: 1
+    log_throughput: true
+
+    save: null
+    load: null
+    save_interval: null
+    save_retain_interval: null
+    save_extra_steps: []
+    exit_duration_in_mins: null
+    log_memory_to_tensorboard: true
+    log_params_norm: true
+    # Per-layer MoE metrics as on LUMI (aux loss, router scores, expert utilisation, expert
+    # viability). NOT moe_masked_layer_validation: it draws 8 extra validation batches per eval
+    # that Megatron does not size the validation set for (dataloader 'single' -> runs out at
+    # ~eval 14, crash), and costs ~17x a normal eval (one pass per masked MoE layer).
+    moe_per_layer_logging: true
+    moe_expert_viability_metrics: true
+    ckpt_format: torch_dist
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_project: opt_scale_throughput
+    wandb_entity: openeurollm-project   # as on LUMI; offline here, applies when you wandb sync
+
+slurm:
+  # = config/slurm/jupiter.yaml launcher_cmd, prefixed with the background memory sampler of
+  # smoke_test/12 (CPU / HBM per NUMA node, file vs anon pages, 30 largest processes; every 60 s).
+  launcher_cmd: "\
+    mkdir -p ${job.base_output_dir} ; ( while true ; do date +%T ; grep -h -e MemFree -e FilePages -e AnonPages -e Shmem /sys/devices/system/node/node*/meminfo ; grep -e MemAvailable -e Cached -e Shmem: -e Mapped: -e AnonPages: -e Unevictable: -e SUnreclaim: /proc/meminfo ; df -k /dev/shm | tail -1 ; for p in $(ps -u $USER -o pid= --sort=-rss | head -24) ; do echo PROC $p $(cat /proc/$p/comm 2>/dev/null) $(grep -e RssAnon -e RssFile -e RssShmem /proc/$p/status 2>/dev/null | paste -sd\" \") ; done ; sleep 30 ; done >> ${job.base_output_dir}/node_mem_$SLURM_JOB_ID.log 2>&1 & ) ;\\\n \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+    ${oc.select:container.runtime,apptainer} exec \
+    ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+    --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    # wandb.init reads WANDB_TAGS (comma-separated, no spaces). Must be in slurm.env (-> `export`
+    # in job.sbatch, inherited by the container); container.env is not rendered on JUPITER and
+    # backend.env goes through `apptainer --env`, which would split the value at the commas.
+    # All Megatron args are also logged as the wandb run config (filterable there anyway).
+    WANDB_TAGS: "jupiter,hyb100m,memory,nomask,${backend.aux.variant},workers=${backend.megatron.num_workers},mmap=${backend.megatron.mmap_bin_files}"
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}   # override: see opt_scale/README.md
+    partition: booster
+    time: "01:15:00"           # expected ~45 min (startup + 500 x ~4.7 s + 2 validations)
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - {backend.aux.variant: nomask}
+        - {backend.aux.variant: nomask_nommap, backend.megatron.mmap_bin_files: false}
+        - {backend.aux.variant: nomask_nommap_w8, backend.megatron.mmap_bin_files: false, backend.megatron.num_workers: 8}

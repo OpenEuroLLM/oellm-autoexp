@@ -15,7 +15,11 @@ results and debugging history is `smoke_test/README.md`.
 | `smoke_test/05_hybrid_env_check.sh` | checks the environment inside the container (login node, free) |
 | `smoke_test/06_hybrid100m_team_arch.yaml` | **reference config**: 100M-active hybrid MoE, 4 optimizers, 100 steps |
 | `smoke_test/08_throughput_gbs256.yaml` | throughput test at gbs 256 (micro-batch / kernel variants, AdamW) |
-| `hyb100m/07_hyb100m_20N.yaml` | first real run: 100M, D = 20N (2.02B tokens), 4 optimizers |
+| `hyb100m/11_wsd_ladder.yaml` | **main run**: 100M, WSD ladder 1x / 2x / 4x Chinchilla, 4 optimizers, fast settings. **How to run it, history and costs: `hyb100m/README.md`** |
+| `sweep100m/` | **hyperparameter sweep** at 100M: WSD ladder for every batch size x lr x beta / momentum, one file per optimizer. See `sweep100m/README.md` |
+| `smoke_test/12_throughput_memory.yaml` | throughput + memory test that gave the fast settings (Liger + micro-batch 16, 2.5x) |
+| `smoke_test/13_throughput_ladder.yaml` | throughput vs model size (100M-850M active) and 1 / 2 / 4 nodes |
+| `hyb100m/07_hyb100m_20N.yaml` | older single-budget run (D = 20N), slow settings; superseded by 11 |
 | `data/datamix_v8ml_flagfull_jsc.txt` | v8ml data mix (Megatron `--data-args-path`), made by `data/make_datamix_v8ml_flagfull.py` |
 | `smoke_test/01-04_*.yaml`, `setup_jupiter.sh`, `00_env_check.sh` | older smoke tests on a previous Megatron fork + container; history only, don't use |
 
@@ -26,6 +30,7 @@ results and debugging history is `smoke_test/README.md`.
 | Megatron | `OpenEuroLLM/NVIDIA-Megatron-LM` branch `oellm/v0.19-hybrid` @ `013763961` (detached checkout) |
 | Container | `/e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif` (torch 2.11, TE 2.18, flash-attn 3, fla 0.4.2). Python **must** be `/opt/venv/bin/python` (configs set it) |
 | emerging_optimizers | 0.2.0 in `$OPT_SCALE_BASE/pyext`, put first on `PYTHONPATH` (the container's 0.1.0 makes Megatron silently drop Muon) |
+| liger-kernel | 0.8.0 in `$OPT_SCALE_BASE/pyext` (fused LM-head + cross-entropy, needed for micro-batch 16; without it Megatron silently sets `HAVE_LIGER = False`) |
 | Tokenizer | `/e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent` |
 | Launcher | `pretrain_hybrid.py`, pattern `LELELE*E` x 4 (L = Gated DeltaNet, * = gated attention, E = MoE) |
 
@@ -144,7 +149,11 @@ val loss at step 100 roughly adam 6.4, angular_muown 4.9, muown_classical 5.3.
 ## Guardrails (don't burn compute)
 
 - **Always** `--dry-run` first, then `--array-subset 0`, then the rest.
-- **Always** `--submit-and-exit`: without it the script keeps monitoring and may auto-resubmit.
+- **Always** `--submit-and-exit` for smoke tests: without it the script keeps monitoring and may
+  auto-resubmit. Exception: `hyb100m/11_wsd_ladder` *needs* the monitor (in tmux), see
+  `hyb100m/README.md`.
+- Long runs: checkpoint at least every ~45 min (`save_interval`), and set `exit_duration_in_mins`
+  below the 12 h limit. A crash before the first checkpoint once cost 22 GPU-h.
 - Keep `slurm.sbatch.time` tight: cost cap = nodes x 4 GPUs x time limit.
 - Cost of what you used (live): 
   ```bash

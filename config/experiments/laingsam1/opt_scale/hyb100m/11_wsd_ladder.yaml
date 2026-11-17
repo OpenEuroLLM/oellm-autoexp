@@ -1,0 +1,391 @@
+# @package _global_
+#
+# 100M hybrid MoE, WSD ladder at 1x / 2x / 4x Chinchilla (D = 20N, 40N, 80N) with ONE shared
+# warmup + stable phase per optimizer and a separate cooldown branch per budget
+# (scheme of swagatam/old_dense_50M_50BT_..._simple_stable_decay.yaml, written in the current
+# config format of diana/qwen3_gpt_neox/dense_qwen_150M_gpt_neox.yaml).
+#
+# Per optimizer, 4 jobs (gbs 256 x 4096 = 1,048,576 tokens/step, N = 101,061,472):
+#   stable   : warmup 40 steps, then constant lr, to step 6168 (= start of the 4x cooldown).
+#              Checkpoint every 514 steps (~45 min), only the branch points 1542 / 3084 / 4626 /
+#              6168 are kept (save_retain_interval). ~8.5 h at ~4.8 s/step -> fits in one 12 h job;
+#              if not, it saves + exits cleanly at 11.5 h (exit_duration_in_mins) and the monitor
+#              resubmits it (resumes from the last checkpoint).
+#   decay1x  : loads stable @1542, trains to 1928 (2.02B tokens), last 386 steps decay lr -> 0
+#   decay2x  : loads stable @3084, trains to 3855 (4.04B tokens), last 771 steps decay
+#   decay4x  : loads stable @6168, trains to 7710 (8.08B tokens), last 1542 steps decay
+# Decays wait for their checkpoint (job.start_condition) and are cancelled if the stable job
+# crashes (job.cancel_condition). These conditions are checked by autoexp's MONITOR:
+# do NOT use --submit-and-exit for this config; run it inside tmux (see below).
+#
+# Settings = "defaults" agreed 2026-11-13: AdamW lr 1e-3, beta1 = beta2 = 0.95 (also for the
+# Adam part of the Muon-type optimizers), wd 0.1; Muon / AngularMuown lr 5e-3 (06 settings);
+# muown_classical lr 1e-3, wd 0 (Swagatam).
+# Speed (test 12, 2026-11-16): Liger fused LM-head + cross-entropy + mbs 16 = 2.5x faster than
+# mbs 4 (4.7 vs 11.5 s/step, ~10% MFU), same loss. num_workers 2 (same speed as 4, fewer
+# data-loader processes: their host RAM grows with every step, see test 12 node_mem logs).
+# Safety: memory sampler -> <output dir>/node_mem_<jobid>.log; killed data workers / SIGKILL
+# restart from the last checkpoint (max 3 submissions per job).
+#
+# Cost per optimizer: 8867 steps x ~4.8 s = ~12 node-h = ~47 GPU-h (+ ~0.5 h index build per
+#   decay job: each budget has a different sample count -> rank 0 builds a new index once).
+#   Time caps: stable 12 h per submission (1 expected, max 3), decay1x 1.5 h, decay2x 2.5 h,
+#   decay4x 4 h -> ~55 GPU-h expected per optimizer; ~80 GPU-h cap with 1 stable submission.
+#   Muon-type optimizers: a few % slower.
+# Checkpoints: ~16 GB each; stable keeps 4 (1542 / 3084 / 4626 / 6168) + the latest.
+#
+# Job indices (4 per optimizer: stable, decay1x, decay2x, decay4x):
+#   0-3 adam   4-7 muon   8-11 angular_muown   12-15 muown_classical
+# Run ONE optimizer first (verified with --dry-run: 0-3 = the 4 adam jobs):
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/hyb100m/11_wsd_ladder --dry-run --array-subset 0-3
+#   tmux new -s wsd      # the monitor must keep running: it restarts the stable + releases the decays
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/hyb100m/11_wsd_ladder --array-subset 0-3
+# To STOP: Ctrl-C the monitor FIRST, then scancel (else the monitor restarts a cancelled job).
+#   (detach with Ctrl-b d; re-attach with: tmux attach -t wsd)
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: auto_restart   # monitor resubmits on time limit / crash (resumes from latest ckpt)
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: stable
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  # e.g. hyb100m_adam_lr0.001_b0.95_wd0.1_gbs256_decay2x  (= wandb run name = output dir name)
+  name: "hyb100m_${backend.aux.opt}_lr${backend.megatron.lr}_b${backend.megatron.adam_beta1}_wd${backend.megatron.weight_decay}_gbs${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/hyb100m/${job.name}"
+  log_path: ${slurm.sbatch.error}
+  # = config/job/auto_restart.yaml, but every restart is capped (MaxAttemptsCondition: at most
+  # 3 submissions per job; the stable job needs 2 because of the 12 h limit) so a reproducible
+  # crash/NaN can't loop forever, and without its "inactivity" event (broken in loop code).
+  log_events:
+    - name: finished_training
+      pattern: "[after training is done]"
+      pattern_type: substring
+      action: {class_name: FinishAction, reason: "Training finished"}
+    - name: error
+      pattern: "Exited with exit code 1"
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "exit code 1"}
+    - name: time_limit
+      pattern: "DUE TO TIME LIMIT"
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "time limit"}
+    - name: bus_error
+      pattern: "Unexpected bus error encountered in worker."
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "bus error"}
+    - name: nan_loss
+      pattern: "message='found NaN in local forward loss calculation"
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "NaN loss"}
+    - name: connection_failure
+      pattern: "Application launch failed: Communication connection failure"
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "connection failure"}
+    - name: clean_exit   # exit_duration_in_mins reached (saved first) -> resubmit, resumes from it
+      pattern: "exiting program after"
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "exit duration reached"}
+    - name: host_oom   # data-loader worker / process killed by the kernel OOM killer
+      pattern: "DataLoader worker .* (is killed by signal|exited unexpectedly)|Signal 9 \\(SIGKILL\\)"
+      pattern_type: regex
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "host OOM"}
+    - name: segmentation_fault
+      pattern: "Fatal Python error: Segmentation fault"
+      pattern_type: substring
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "segfault"}
+  state_events:
+    - name: failed
+      transition: ["RUNNING", "FAILED"]
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "job failed"}
+    - name: cancelled
+      transition: ["RUNNING", "CANCELLED"]
+      condition: {class_name: MaxAttemptsCondition, max_attempts: 3}
+      action: {class_name: RestartAction, reason: "job cancelled"}
+
+backend:
+  aux:
+    # Per-user root for Megatron checkout, pyext, logs, outputs, index cache (default = Sam's).
+    # Others: export OPT_SCALE_BASE=/e/scratch/<project>/users/<you>  (see opt_scale/README.md)
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    opt: adam          # overridden by sweep
+    start_iter: 0      # decays: stable checkpoint step they branch from
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern LELELE*ELELELE*ELELELE*ELELELE*E
+      --linear-beta-adam
+      --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+    opt_args: ""       # set by the sweep
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.opt_args}"
+
+  data_integrity_check: false   # MUST stay off (see smoke_test/01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: identical to smoke_test/06_hybrid100m_team_arch.yaml ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: 640
+    ffn_hidden_size: 1920
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: alltoall
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120   # rank 0 builds a new sample index per budget
+
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml (as 04-06) ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${backend.aux.base}/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 2                # test 12: same speed as 4, fewer leaking worker processes
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 16         # with Liger (test 12: 91% GPU memory, 2.5x faster than 4)
+    global_batch_size: 256
+    # Stable phase defaults (decays override in the sweep).
+    train_iters: 6168
+    exit_interval: null
+
+    # --- schedule: WSD, shared 40-step warmup, linear cooldown to 0 ---
+    lr: 1.e-3                  # overridden per optimizer by the sweep
+    min_lr: 0.0
+    lr_warmup_iters: 40
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 0      # stable: no decay
+    clip_grad: 1.0
+    weight_decay: 0.1
+    adam_beta1: 0.95
+    adam_beta2: 0.95
+
+    # Every 240 steps (~20 min, 26 points on the stable curve), 10 x 256 x 4096 = 10.5M tokens
+    # (~15 s per evaluation). (6168//240+1) x 10 = 260 = the old 500 x 20 -> same cached
+    # validation index. Megatron also evaluates once more at the end of every job.
+    eval_interval: 240
+    eval_iters: 10
+    log_interval: 1
+    log_throughput: true
+
+    save: "${job.base_output_dir}/ckpt"
+    load: "${job.base_output_dir}/ckpt"
+    save_interval: 514                     # ~45 min; 6168 = 12 x 514
+    save_retain_interval: 1542             # keeps 1542 / 3084 / 4626 / 6168 (branch points), deletes the rest
+    save_extra_steps: []
+    exit_duration_in_mins: 690             # clean save + exit 30 min before the 12 h limit
+    log_memory_to_tensorboard: true
+    log_params_norm: true
+    # Per-layer MoE metrics as on LUMI (aux loss, router scores, expert utilisation, expert
+    # viability). NOT moe_masked_layer_validation: it draws 8 extra validation batches per eval
+    # that Megatron does not size the validation set for (dataloader 'single' -> runs out at
+    # ~eval 14, crash), and costs ~17x a normal eval (one pass per masked MoE layer).
+    moe_per_layer_logging: true
+    moe_expert_viability_metrics: true
+    ckpt_format: torch_dist
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_project: optimizer_scaling_laws
+    wandb_entity: openeurollm-project   # as on LUMI; offline here, applies when you wandb sync
+
+slurm:
+  # = config/slurm/jupiter.yaml launcher_cmd, prefixed with the background memory sampler of
+  # smoke_test/12 (CPU / HBM per NUMA node, file vs anon pages, 30 largest processes; every 60 s).
+  launcher_cmd: "\
+    mkdir -p ${job.base_output_dir} ; ( while true ; do date +%T ; grep -h -e MemFree -e FilePages -e AnonPages /sys/devices/system/node/node*/meminfo ; grep -e MemAvailable -e Cached /proc/meminfo ; ps -u $USER -o rss=,pid=,comm= --sort=-rss | head -30 ; sleep 60 ; done >> ${job.base_output_dir}/node_mem_$SLURM_JOB_ID.log 2>&1 & ) ;\\\n \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+    ${oc.select:container.runtime,apptainer} exec \
+    ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+    --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    # wandb.init reads WANDB_TAGS (comma-separated, no spaces). Must be in slurm.env (-> `export`
+    # in job.sbatch, inherited by the container); container.env is not rendered on JUPITER and
+    # backend.env goes through `apptainer --env`, which would split the value at the commas.
+    # All Megatron args are also logged as the wandb run config (filterable there anyway).
+    WANDB_TAGS: "jupiter,ladder_v2,hybrid_gdn_moe,hyb100m,wsd,${backend.aux.opt},${stage},lr=${backend.megatron.lr},beta=${backend.megatron.adam_beta1},wd=${backend.megatron.weight_decay},gbs=${backend.megatron.global_batch_size},nodes=${slurm.sbatch.nodes}"
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}   # override: see opt_scale/README.md
+    partition: booster
+    time: "12:00:00"           # stable (JUPITER max = 12 h); others override
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        # 0: AdamW (beta1 = beta2 = 0.95, wd 0.1)
+        - backend.aux.opt: adam
+          backend.megatron.optimizer: adam
+          backend.megatron.lr: 1.e-3
+        # 1: Muon (LUMI settings)
+        - backend.aux.opt: muon
+          backend.megatron.optimizer: muon
+          backend.megatron.lr: 5.e-3
+          backend.megatron.muon_momentum: 0.95
+          backend.megatron.muon_nesterov: true
+          backend.megatron.muon_scale_mode: spectral
+          backend.megatron.muon_coefficient_type: polar_express
+          backend.megatron.muon_fp32_matmul_prec: medium
+          backend.megatron.muon_num_ns_steps: 5
+          backend.megatron.muon_tp_mode: blockwise
+          backend.megatron.muon_split_qkv: true
+          backend.megatron.muon_extra_scale_factor: 0.2
+          backend.megatron.muon_scalar_optimizer: adam
+        # 2: AngularMuown (LUMI settings)
+        - backend.aux.opt: angular_muown
+          backend.megatron.lr: 5.e-3
+          backend.aux.opt_args: >-
+            --optimizer angular_muown
+            --angular-muown-scale-mode spectral
+            --angular-muown-extra-scale-factor 0.2
+            --angular-muown-momentum 0.95
+            --angular-muown-coefficient-type simple
+            --angular-muown-num-ns-steps 5
+            --angular-muown-fp32-matmul-prec medium
+            --angular-muown-u-decay-scale 0.001
+            --angular-muown-u-decay-p 0.0
+        # 3: muown_classical (Swagatam's setting)
+        - backend.aux.opt: muown_classical
+          backend.megatron.lr: 1.e-3
+          backend.megatron.weight_decay: 0.0
+          backend.megatron.muon_split_qkv: true
+          backend.aux.opt_args: >-
+            --optimizer muown_classical
+            --muon-qkv-headwise
+    # Stages: stable + 3 cooldown branches (product with the optimizer group above)
+    - type: list
+      configs:
+        - stage: stable
+        - type: list
+          defaults:
+            backend.megatron.save_extra_steps: []
+            backend.megatron.save_interval: 100000            # only the final checkpoint
+            backend.megatron.save_retain_interval: null
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/ckpt"
+            backend.megatron.ckpt_step: "\\${backend.aux.start_iter}"
+            backend.megatron.override_opt_param_scheduler: true
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/ckpt/iter_\\${oc.eval:'str(\\${backend.aux.start_iter}).zfill(7)'}"
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              # no "Traceback" (team default): the planned 12 h time-limit kill of the stable job
+              # prints one (torchrun SIGTERM) and would cancel the waiting decays.
+              pattern: "FATAL ERROR|OutOfMemoryError"
+          configs:
+            - stage: decay1x
+              backend.aux.start_iter: 1542
+              backend.megatron.train_iters: 1928
+              backend.megatron.lr_wsd_decay_iters: 386
+              slurm.sbatch.time: "01:30:00"   # ~0.5 h + index build
+            - stage: decay2x
+              backend.aux.start_iter: 3084
+              backend.megatron.train_iters: 3855
+              backend.megatron.lr_wsd_decay_iters: 771
+              slurm.sbatch.time: "02:30:00"   # ~1 h + index build
+            - stage: decay4x
+              backend.aux.start_iter: 6168
+              backend.megatron.train_iters: 7710
+              backend.megatron.lr_wsd_decay_iters: 1542
+              slurm.sbatch.time: "04:00:00"   # ~2.1 h + index build; a decay that times out restarts from scratch

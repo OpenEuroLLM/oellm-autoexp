@@ -1,0 +1,279 @@
+# @package _global_
+#
+# Smoke test 13: throughput ladder over model size x nodes (AdamW, real v8ml data).
+# Question: how do TFLOP/s/GPU and MFU grow with model size, how much do the speed settings
+# buy at each size, and what does going to 2 / 4 nodes cost per GPU?
+#
+# Model ladder: the team block (3 Gated DeltaNet + 1 gated attention, each followed by an MoE),
+# 96 experts top-4, expert / shared-expert width h/2, heads h/64 (head dim 128, 2 KV groups),
+# GDN h/64 key + h/32 value heads of dim 64. Width and depth grow together towards the
+# production shape (2048 wide x 10 blocks = Qwen3.5-35B-A3B's 40 mixer layers):
+#   size   width x blocks   active   total   experts per GPU (1 node)
+#   100m    640 x 4          101M    1.0B   all 96 (EP1)   <- identical to 06 / 11
+#   250m    896 x 5          246M    2.5B   all 96 (EP1)
+#   500m   1152 x 6          486M    4.9B   24 (EP4)       <- does not fit with EP1
+#   850m   1408 x 7          845M    8.5B   24 (EP4)
+# Setups (weak scaling: work per GPU fixed, global batch = 256 x nodes; EP stays inside a node):
+#   base_N1  today's settings (= 11), 1 node
+#   fast_N1  + fused kernels + Liger fused LM-head CE + bigger micro-batch where it fits
+#            + HybridEP dispatcher for the EP4 sizes        (UPDATE from test 12's results)
+#   fast_N2  fast, 2 nodes, gbs 512
+#   fast_N4  fast, 4 nodes, gbs 1024
+# Data index reuse (built for 11, took 20 min): train samples = iters x gbs = 6168x256 =
+#   3084x512 = 1542x1024, and validation matched (eval 96x4 / 48x2 / 24x1) -> no rebuild.
+# Read-out per job: median step time after warmup (eval steps excluded), tok/s/GPU, Megatron
+#   TFLOP/s/GPU, own MFU = (6 x active + 6 x h x 262144 + attention) FLOP/token vs 989 TFLOP/s,
+#   peak GPU memory, node_mem_<jobid>.log.
+#
+# Indices (size-major):  100m 0-3   250m 4-7   500m 8-11   850m 12-15
+#                        within a size: +0 base_N1  +1 fast_N1  +2 fast_N2  +3 fast_N4
+# Needs liger-kernel in pyext (see 12). Run AFTER test 12 (memory problem understood, fast
+# settings confirmed). Suggested order:
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/13_throughput_ladder --dry-run
+#   ... --array-subset 0,1,4,5,8,9,12,13 --submit-and-exit      # 1-node ladder (8 jobs, ~27 GPU-h)
+#   ... --array-subset 2,3,14,15 --submit-and-exit             # nodes, ends of the ladder (~36 GPU-h)
+#   ... --array-subset 6,7,10,11 --submit-and-exit             # nodes, middle sizes (optional, ~36 GPU-h)
+# No auto-restart (job: default). Cost: ~45 min per job -> 1 node ~3 GPU-h, 2 nodes ~6, 4 nodes
+# ~12 -> ~100 GPU-h for all 16; cap (time limits) ~200 GPU-h.
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: smoke
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "smoke_ladder_${backend.aux.size}_${backend.aux.setup}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    # --- set by the sweep (size group) ---
+    size: 100m
+    h: 640             # model width
+    blocks: 4          # number of LELELE*E blocks
+    ep: 1              # expert parallel size on one node
+    steps: 150         # measured steps (exit_interval)
+    mbs_base: 4
+    mbs_fast: 8
+    disp_fast: alltoall   # dispatcher of the fast setups (flex = HybridEP, EP4 sizes only)
+    # --- set by the sweep (setup group) ---
+    setup: base_N1
+    fast: 0            # 1 in the fast setups -> picks mbs_fast / disp_fast below
+    speed_args: ""     # flags missing from the autoexp schema
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern ${oc.eval:'"LELELE*E" * ${backend.aux.blocks}'}
+      --linear-beta-adam
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.speed_args}"
+
+  data_integrity_check: false   # MUST stay off (see 01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: the team block, width / depth from backend.aux (100m = identical to 06 / 11) ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: ${backend.aux.h}
+    ffn_hidden_size: ${oc.eval:'3 * ${backend.aux.h}'}
+    num_attention_heads: ${oc.eval:'${backend.aux.h} // 64'}
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: ${oc.eval:'${backend.aux.h} // 64'}
+    linear_num_value_heads: ${oc.eval:'${backend.aux.h} // 32'}
+
+    num_experts: 96
+    moe_ffn_hidden_size: ${oc.eval:'${backend.aux.h} // 2'}
+    moe_shared_expert_intermediate_size: ${oc.eval:'${backend.aux.h} // 2'}
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: ${oc.eval:'"${backend.aux.disp_fast}" if ${backend.aux.fast} else "alltoall"'}
+    moe_flex_dispatcher_backend: hybridep # only used when the dispatcher is flex
+    expert_model_parallel_size: ${backend.aux.ep}
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120
+
+    # --- kernels / numerics ---
+    cross_entropy_loss_fusion: false      # 08: native fusion is slower + uses more memory
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml, exactly as 11 ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${backend.aux.base}/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 4
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: ${oc.eval:'${backend.aux.mbs_fast} if ${backend.aux.fast} else ${backend.aux.mbs_base}'}
+    global_batch_size: 256
+    train_iters: 6168            # = 11 -> same cached train index (x gbs; see header)
+    exit_interval: ${backend.aux.steps}
+
+    # --- AdamW, exactly as 11 (stable phase) ---
+    optimizer: adam
+    lr: 1.e-3
+    min_lr: 0.0
+    lr_warmup_iters: 40
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 0
+    clip_grad: 1.0
+    weight_decay: 0.1
+    adam_beta1: 0.95
+    adam_beta2: 0.95
+
+    eval_interval: 96            # (6168//96+1) x 4 x 256 = 11's validation samples -> same index
+    eval_iters: 4
+
+    log_interval: 1
+    log_throughput: true
+    log_timers_to_tensorboard: true
+    log_memory_to_tensorboard: true   # allocator memory -> separates GPU-allocator growth from host spill
+    log_params_norm: true             # planned for the real runs -> include its cost here
+
+    save: null
+    load: null
+    save_interval: null
+    save_extra_steps: []
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_project: opt_scale_throughput
+
+slurm:
+  # = config/slurm/jupiter.yaml launcher_cmd, prefixed with a background memory sampler
+  # (free memory per NUMA node: node 0 = CPU DRAM, the others = the 4 GPUs' HBM; plus the
+  # 30 largest processes by RSS), every 30 s, into the job's output dir.
+  launcher_cmd: "\
+    mkdir -p ${job.base_output_dir} ; ( while true ; do date +%T ; grep -h -e MemFree -e FilePages -e AnonPages /sys/devices/system/node/node*/meminfo ; grep -e MemAvailable -e Cached /proc/meminfo ; ps -u $USER -o rss=,pid=,comm= --sort=-rss | head -30 ; sleep 30 ; done >> ${job.base_output_dir}/node_mem_$SLURM_JOB_ID.log 2>&1 & ) ;\\\n \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+    ${oc.select:container.runtime,apptainer} exec \
+    ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+    --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    WANDB_TAGS: "ladder,throughput,${backend.aux.size},${backend.aux.setup},mbs=${backend.megatron.micro_batch_size},ep=${backend.aux.ep},nodes=${slurm.sbatch.nodes}"
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}
+    partition: booster
+    time: "01:30:00"             # expected ~45 min; weak scaling -> same for every node count
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    # model size (aux only; the model block above derives everything from h and blocks)
+    - type: list
+      configs:
+        - {backend.aux.size: 100m, backend.aux.h: 640, backend.aux.blocks: 4, backend.aux.ep: 1, backend.aux.steps: 150, backend.aux.mbs_base: 4, backend.aux.mbs_fast: 8, backend.aux.disp_fast: alltoall}
+        - {backend.aux.size: 250m, backend.aux.h: 896, backend.aux.blocks: 5, backend.aux.ep: 1, backend.aux.steps: 100, backend.aux.mbs_base: 2, backend.aux.mbs_fast: 4, backend.aux.disp_fast: alltoall}
+        - {backend.aux.size: 500m, backend.aux.h: 1152, backend.aux.blocks: 6, backend.aux.ep: 4, backend.aux.steps: 60, backend.aux.mbs_base: 2, backend.aux.mbs_fast: 2, backend.aux.disp_fast: flex}
+        - {backend.aux.size: 850m, backend.aux.h: 1408, backend.aux.blocks: 7, backend.aux.ep: 4, backend.aux.steps: 40, backend.aux.mbs_base: 1, backend.aux.mbs_fast: 1, backend.aux.disp_fast: flex}
+    # setup: baseline vs fast, 1 / 2 / 4 nodes (weak scaling: 256 sequences per node per step)
+    - type: list
+      configs:
+        - backend.aux.setup: base_N1
+        - backend.aux.setup: fast_N1
+          backend.aux.fast: 1
+          backend.aux.speed_args: >-
+            --fused-residual-rmsnorm --gdn-fused-out-norm
+            --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+        - backend.aux.setup: fast_N2
+          slurm.sbatch.nodes: 2
+          backend.megatron.global_batch_size: 512
+          backend.megatron.train_iters: 3084
+          backend.megatron.eval_interval: 48
+          backend.megatron.eval_iters: 2
+          backend.aux.fast: 1
+          backend.aux.speed_args: >-
+            --fused-residual-rmsnorm --gdn-fused-out-norm
+            --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+        - backend.aux.setup: fast_N4
+          slurm.sbatch.nodes: 4
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.train_iters: 1542
+          backend.megatron.eval_interval: 24
+          backend.megatron.eval_iters: 1
+          backend.aux.fast: 1
+          backend.aux.speed_args: >-
+            --fused-residual-rmsnorm --gdn-fused-out-norm
+            --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192

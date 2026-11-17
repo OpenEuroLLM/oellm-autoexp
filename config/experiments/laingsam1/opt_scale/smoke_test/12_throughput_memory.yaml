@@ -1,0 +1,274 @@
+# @package _global_
+#
+# Smoke test 12: throughput + memory, 1 node, AdamW, gbs 256. Replaces 09/10 (never run).
+# Same model / data / optimizer settings as hyb100m/11_wsd_ladder.yaml (the real run).
+#
+# Why: 11's stable run crashed at step 1527 (a DataLoader worker was SIGKILLed). Its log shows
+#   - GPU "mem usages" 0.69 flat until the first eval, then +0.12 after each eval + slow creep.
+#   - rank 0 host RSS 94-135 GB (malloc_trim lines) -> 4 ranks + their DataLoader workers can
+#     exceed the node's 488 GB DRAM. On GH200 the 4 x 96 GB HBM are Linux NUMA nodes, so
+#     host memory can spill into GPU memory -> "free GPU memory" shrinks -> kernel OOM killer.
+#   This test checks that hypothesis (node_mem log + allocator memory in tensorboard) and
+#   measures throughput properly (200 steps instead of 50).
+#
+# Every job: train_iters 6168 / exit 200 and eval 96 x 4 -> exactly the train/valid sample
+#   counts of 11 (6168 x 256; (6168//96+1) x 4 = (6168//500+1) x 20 = 260 eval iters)
+#   -> reuses 11's cached data index (building it took 20 min). Evals at steps 96 and 192.
+#   Read-out: median step time over steps 30-200 (eval steps excluded), tok/s/GPU, TFLOP/s,
+#   allocator vs "mem usages" before/after each eval, node_mem_<jobid>.log (free memory per
+#   NUMA node every 30 s + largest processes), loss at step 200.
+#
+# Variants (all math-neutral except mbs, which only changes the summation order):
+#   0 control      = 11's settings, + PyTorch profiler on steps 150-152 (rank 0)
+#   1 workers2     = control with 2 instead of 4 DataLoader workers per rank (host memory)
+#   2 kern         = + fused residual-RMSNorm and GDN out-norm kernels (team settings)
+#   3 liger_mbs4   = + Liger fused LM-head + cross entropy (never builds the 262k-vocab logits)
+#   4 liger_mbs8
+#   5 liger_mbs16
+#   6 deepep_ep4   = control, experts split over the 4 GPUs, DeepEP dispatcher
+#   7 hybridep_ep4 = same with HybridEP (the team's fastest dispatcher on GH200, Swagatam / Korbinian)
+#
+# Variants 3-5 NEED liger-kernel in pyext first (not in the container). Login node:
+#   apptainer exec /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif \
+#     /opt/venv/bin/python -m pip install --no-deps --target $OPT_SCALE_BASE/pyext liger-kernel==0.8.0
+#
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/12_throughput_memory --dry-run
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/12_throughput_memory --array-subset 0 --submit-and-exit
+#   (if 0 trains past step 100:)  ... --array-subset 1-7 --submit-and-exit
+# No auto-restart (job: default): a crash just ends the job.
+# Cost: ~50 min x 4 GPUs = ~3.3 GPU-h per job -> ~27 GPU-h for all 8; cap 8 x 75 min x 4 = 40 GPU-h.
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: smoke
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "smoke_tput3_${backend.aux.variant}_N${slurm.sbatch.nodes}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    variant: control   # overridden by sweep
+    speed_args: ""     # flags missing from the autoexp schema; set by the sweep
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern LELELE*ELELELE*ELELELE*ELELELE*E
+      --linear-beta-adam
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.speed_args}"
+
+  data_integrity_check: false   # MUST stay off (see 01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: identical to 06 / 11 ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: 640
+    ffn_hidden_size: 1920
+    num_attention_heads: 10
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 10
+    linear_num_value_heads: 20
+
+    num_experts: 96
+    moe_ffn_hidden_size: 320
+    moe_shared_expert_intermediate_size: 320
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: alltoall   # sweep (flex in 6)
+    moe_flex_dispatcher_backend: deepep   # only used when the dispatcher is flex (hybridep in 7)
+    expert_model_parallel_size: 1         # sweep (4 in 6)
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120
+
+    # --- kernels / numerics ---
+    cross_entropy_loss_fusion: false      # 08: native fusion is slower + uses more memory
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data: v8ml, exactly as 11 ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${backend.aux.base}/cache/megatron_index
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 4               # sweep (2 in 1)
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 4          # sweep
+    global_batch_size: 256
+    train_iters: 6168            # = 11 -> same cached train index; the run stops at exit_interval
+    exit_interval: 200
+
+    # --- AdamW, exactly as 11 (stable phase) ---
+    optimizer: adam
+    lr: 1.e-3
+    min_lr: 0.0
+    lr_warmup_iters: 40
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 0
+    clip_grad: 1.0
+    weight_decay: 0.1
+    adam_beta1: 0.95
+    adam_beta2: 0.95
+
+    eval_interval: 96            # (6168//96+1) x 4 = 260 eval iters = 11's -> same valid index
+    eval_iters: 4
+
+    log_interval: 1
+    log_throughput: true
+    log_timers_to_tensorboard: true
+    log_memory_to_tensorboard: true   # allocator memory -> separates GPU-allocator growth from host spill
+    log_params_norm: true             # planned for the real runs -> include its cost here
+
+    save: null
+    load: null
+    save_interval: null
+    save_extra_steps: []
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_project: opt_scale_throughput
+
+slurm:
+  # = config/slurm/jupiter.yaml launcher_cmd, prefixed with a background memory sampler
+  # (free memory per NUMA node: node 0 = CPU DRAM, the others = the 4 GPUs' HBM; plus the
+  # 30 largest processes by RSS), every 30 s, into the job's output dir.
+  launcher_cmd: "\
+    mkdir -p ${job.base_output_dir} ; ( while true ; do date +%T ; grep -h -e MemFree -e FilePages -e AnonPages /sys/devices/system/node/node*/meminfo ; grep -e MemAvailable -e Cached /proc/meminfo ; ps -u $USER -o rss=,pid=,comm= --sort=-rss | head -30 ; sleep 30 ; done >> ${job.base_output_dir}/node_mem_$SLURM_JOB_ID.log 2>&1 & ) ;\\\n \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+    ${oc.select:container.runtime,apptainer} exec \
+    ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+    --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    WANDB_TAGS: "hyb100m,throughput,${backend.aux.variant},mbs=${backend.megatron.micro_batch_size},nodes=${slurm.sbatch.nodes}"
+  sbatch:
+    nodes: 1
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}
+    partition: booster
+    time: "01:15:00"             # expected ~50 min (startup + 200 x ~12 s + 2 evals)
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        # 0: control (= 11) + profiler on steps 150-152, rank 0 -> <output dir>/torch_profile/
+        - backend.aux.variant: control
+          backend.megatron.profile: true
+          backend.megatron.use_pytorch_profiler: true
+          backend.megatron.profile_step_start: 150
+          backend.megatron.profile_step_end: 152
+          backend.megatron.profile_ranks: [0]
+        # 1: fewer DataLoader workers (host memory: each worker is a fork of a ~100 GB process)
+        - backend.aux.variant: workers2
+          backend.megatron.num_workers: 2
+        # 2: + team fused kernels
+        - backend.aux.variant: kern
+          backend.aux.speed_args: --fused-residual-rmsnorm --gdn-fused-out-norm
+        # 3-5: + Liger fused LM-head cross entropy, micro-batch 4 / 8 / 16
+        - backend.aux.variant: liger_mbs4
+          backend.megatron.micro_batch_size: 4
+          backend.aux.speed_args: >-
+            --fused-residual-rmsnorm --gdn-fused-out-norm
+            --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+        - backend.aux.variant: liger_mbs8
+          backend.megatron.micro_batch_size: 8
+          backend.aux.speed_args: >-
+            --fused-residual-rmsnorm --gdn-fused-out-norm
+            --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+        - backend.aux.variant: liger_mbs16
+          backend.megatron.micro_batch_size: 16
+          backend.aux.speed_args: >-
+            --fused-residual-rmsnorm --gdn-fused-out-norm
+            --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+        # 6: DeepEP, 24 experts per GPU (from 10_deepep_check.yaml)
+        - backend.aux.variant: deepep_ep4
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.expert_model_parallel_size: 4
+        # 7: HybridEP, 24 experts per GPU (team's choice: Swagatam's 35B-A3B weak scaling, Korbinian's ep_ladder)
+        - backend.aux.variant: hybridep_ep4
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.moe_flex_dispatcher_backend: hybridep
+          backend.megatron.expert_model_parallel_size: 4
