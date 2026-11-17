@@ -43,7 +43,9 @@ import ast
 import os
 import struct
 import sys
+import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 # The member set depends on the dataset CLASS, which is encoded in the prefix as
 # "<hash>-<class>-<split>". GPTDataset and BlendedDataset cache different files
@@ -122,6 +124,19 @@ def npy_problem(path: str) -> str | None:
     return None
 
 
+def check_prefix(cache_dir: str, prefix: str, present: set[str]) -> tuple[str, list[str]]:
+    """Problems of one "<hash>-<class>-<split>" prefix; [] when it is complete and readable."""
+    cls = prefix.split("-")[1] if prefix.count("-") >= 2 else ""
+    members = MEMBERS_BY_CLASS.get(cls, DEFAULT_MEMBERS)
+    reasons = [f"missing {m}" for m in members if m not in present]
+    for member in members:
+        if member.endswith(".npy") and member in present:
+            why = npy_problem(os.path.join(cache_dir, f"{prefix}-{member}"))
+            if why:
+                reasons.append(f"{member}: {why}")
+    return prefix, reasons
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -131,6 +146,16 @@ def main() -> int:
         "--repair",
         action="store_true",
         help="delete every member of each bad prefix so it gets rebuilt",
+    )
+    ap.add_argument(
+        "--jobs",
+        type=int,
+        default=min(64, (os.cpu_count() or 8) * 4),
+        help=(
+            "worker threads for the per-prefix header reads (default: 4 x CPU count, max 64). "
+            "The work is stat + ~128 bytes per .npy, i.e. I/O bound on GPFS: a 182k-file cache "
+            "took tens of minutes serially (2026-11-17). 0/1 = serial."
+        ),
     )
     args = ap.parse_args()
 
@@ -146,23 +171,21 @@ def main() -> int:
                 prefixes[name[: -(len(member) + 1)]].add(member)
                 break
 
-    bad: dict[str, list[str]] = {}
-    for prefix, present in sorted(prefixes.items()):
-        cls = prefix.split("-")[1] if prefix.count("-") >= 2 else ""
-        members = MEMBERS_BY_CLASS.get(cls, DEFAULT_MEMBERS)
-        reasons = [f"missing {m}" for m in members if m not in present]
-        for member in members:
-            if member.endswith(".npy") and member in present:
-                why = npy_problem(os.path.join(args.cache_dir, f"{prefix}-{member}"))
-                if why:
-                    reasons.append(f"{member}: {why}")
-        if reasons:
-            bad[prefix] = reasons
+    started = time.time()
+    items = sorted(prefixes.items())
+    if args.jobs > 1:
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            results = list(pool.map(lambda it: check_prefix(args.cache_dir, it[0], it[1]), items))
+    else:
+        results = [check_prefix(args.cache_dir, p, present) for p, present in items]
+    bad: dict[str, list[str]] = {prefix: reasons for prefix, reasons in results if reasons}
+    elapsed = time.time() - started
 
     print(f"cache dir : {args.cache_dir}")
     print(f"prefixes  : {len(prefixes)}")
     print(f"healthy   : {len(prefixes) - len(bad)}")
     print(f"BAD       : {len(bad)}")
+    print(f"workers   : {args.jobs}   elapsed: {elapsed:.1f} s")
     for prefix, reasons in sorted(bad.items()):
         print(f"  {prefix}")
         for reason in reasons:
