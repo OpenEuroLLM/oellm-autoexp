@@ -1,0 +1,32 @@
+# DK03 (K + rest-dropout 0.3) recall readout: the six critical rows + 24 Belebele.
+# vLLM with tensor parallel: 84B bf16 export (~168 GB) over TP=4 / DP=1 on one 4-GPU node.
+# One launch per checkpoint after the Megatron checkpoint is copied to <export.run_dir> and exported:
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/ckdab_recall_dk03_mn5.yaml \
+#       --set export.run_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/production/dk03_84b \
+#       --set export.step=36400 --set export.name=dk03_fp8_36400
+# Repeat with step/name 36900 and 35900 (paired baseline; the 35900 main run is already on MN5).
+# The additive ckda_kvshare vLLM path has not passed HF parity yet: gate the first launch on
+# vllm_parity.py and fall back to the multi-GPU HF backend if it fails.
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/dk03_84b
+  step: 36400
+  name: dk03_fp8_36400
+
+rows:
+  harnesses: [lm-eval-harness]
+  suite_file: config/eval_tasks/ckdab_recall_full.yaml
+
+lm_eval:
+  workers: 8
+  split_s: 300
+  max_parts: 8
+  engine: {tp: 4, dp: 1, expert_parallel: true, max_num_seqs: 256, request_batch_size: 256}
+  job: {priority: 70}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264

@@ -152,11 +152,24 @@ def set_path(data: dict, dotted: str, value: Any) -> dict:
 @dataclass
 class ModelCode:
     """The oellm_ambitious model-code switches of the vLLM fork (its OELLM_* environment).
-    The defaults are the validated fast settings (experiments 008 / 012)."""
+    The defaults are the validated fast settings (experiments 008 / 012), plus the
+    serving-throughput switches of vLLM PR #2 (OpenEuroLLM/vllm#2, merged 2026-11-17)."""
 
     mhc_impl: Literal["triton", "reference"] = "triton"
     fusion_impl: Literal["triton", "reference"] = "triton"
     decode_kernels: Literal["triton", "reference"] = "triton"
+    # fused decode kernels to leave off: mhc_split / mhc_coeffs cost more than their GEMM on
+    # prefill-sized steps (vLLM PR #2 settings)
+    decode_kernels_off: str = "mhc_split,mhc_coeffs"
+    # PR #2: mixed steps send the decode tokens through the in-place recurrent kernel (+53% gen
+    # with the triton decode kernels; the decode tokens' rounding differs from the chunk kernel)
+    ckda_split: bool = True
+    # PR #2 defaults: four mHC output streams per Triton program (bit-identical, ~2x on
+    # prefill-sized steps), the read with 2 warps, Engram prefill hashes through the Triton
+    # hash kernel (identical to the per-order torch path)
+    mhc_write4: bool = True
+    mhc_read_warps: int = 2
+    engram_hash_prefill: bool = True
     moe_fp8: Literal["w8a16", ""] = "w8a16"
     # load the fp8 routed experts directly as E4M3 (vllm 96194e05c2; needs moe_fp8=w8a16): no bf16 expert stack at
     # load, 23.4 instead of 42.3 GiB per GPU at EP4 -> more KV cache / concurrency; the export's bytes are copied unchanged
@@ -170,6 +183,8 @@ class ModelCode:
     graph_max_rows: int = 256
     vllm_cudagraph: Literal["full_decode", "none", ""] = "full_decode"
     enforce_eager: bool = False          # vLLM enforce_eager (OELLM_VLLM_ENFORCE_EAGER)
+    # lm-eval code tasks send 7 stop strings; vLLM's default cap is 4 (PR #2)
+    vllm_max_stop_strings: int = 64
 
     def env(self) -> dict[str, str]:
         b = lambda x: "1" if x else "0"  # noqa: E731
@@ -177,6 +192,11 @@ class ModelCode:
             "OELLM_MHC_IMPL": self.mhc_impl,
             "OELLM_FUSION_IMPL": self.fusion_impl,
             "OELLM_DECODE_KERNELS": self.decode_kernels,
+            "OELLM_DECODE_KERNELS_OFF": self.decode_kernels_off,
+            "OELLM_CKDA_SPLIT": b(self.ckda_split),
+            "OELLM_MHC_WRITE4": b(self.mhc_write4),
+            "OELLM_MHC_READ_WARPS": str(self.mhc_read_warps),
+            "OELLM_ENGRAM_HASH_PREFILL": b(self.engram_hash_prefill),
             "OELLM_MOE_FP8": self.moe_fp8,
             "OELLM_MOE_FP8_DIRECT": b(self.moe_fp8_direct and self.moe_fp8 == "w8a16"),
             "OELLM_ENGRAM_TABLES": self.engram_tables,
@@ -188,6 +208,7 @@ class ModelCode:
             "OELLM_GRAPH_MAX_ROWS": str(self.graph_max_rows),
             "OELLM_VLLM_CUDAGRAPH": self.vllm_cudagraph,
             "OELLM_VLLM_ENFORCE_EAGER": b(self.enforce_eager),
+            "VLLM_MAX_STOP_STRINGS": str(self.vllm_max_stop_strings),
         }
 
 
@@ -240,10 +261,12 @@ class JobLimits:
 
 
 def _lm_engine() -> Engine:
-    # the fast layout (flag_eval_fast_mn5, experiments 008 / 012): pure expert parallelism over
-    # four engines, one copy of the Engram tables in host memory; ~3x the rows/s of TP4
-    return Engine(tp=1, dp=4, expert_parallel=True, max_num_seqs=256, max_num_batched_tokens=32768,
-                  gpu_memory_utilization=0.85, request_batch_size=256, response_cache=True)
+    # the serving-throughput layout of vLLM PR #2 on one MN5 node (4x H100 64 GB, hd256 export):
+    # DP4 + EP4, one engine per GPU, 2048 concurrent sequences and 3072 batched tokens per node
+    # (even steps across the DP ranks: 2048 is -5%, 4096 is -8%), 0.88 utilization (0.90 leaves
+    # no headroom for the prompt-logprob logits). ~3x the rows/s of TP4.
+    return Engine(tp=1, dp=4, expert_parallel=True, max_num_seqs=2048, max_num_batched_tokens=3072,
+                  gpu_memory_utilization=0.88, request_batch_size=256, response_cache=True)
 
 
 def _grouped_engine(max_model_length: int | None) -> Engine:
@@ -337,11 +360,16 @@ class ExportSpec:
     # production/ckda_branch/<arm>): the export job runs scripts/korbi/hf_export/export_run.sh on it;
     # needs name and step
     run_dir: str | None = None
+    # an explicit resolved config for export_run.sh (default: <run_dir>/current_*.yaml). A surgery
+    # run keeps its checkpoint under <run_dir>/ckpt but its config under <run_dir>/main/.
+    config: str | None = None
 
     @property
     def export_name(self) -> str:
         if self.run_dir and (not self.name or self.step is None):
             raise SpecError("export.run_dir needs export.name and export.step")
+        if self.config and not self.run_dir:
+            raise SpecError("export.config: only for a run_dir export")
         if self.name:
             return self.name
         if self.step is None:

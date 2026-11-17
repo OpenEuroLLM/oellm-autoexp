@@ -12,6 +12,7 @@ VLLM_SOURCE_ID=$(cat submodules/vllm/vllm/model_executor/models/oellm_ambitious.
  submodules/vllm/vllm/model_executor/layers/oellm_decode_kernels.py \
  submodules/vllm/vllm/model_executor/layers/fused_moe/activation.py \
  submodules/vllm/vllm/model_executor/layers/fused_moe/fused_moe.py \
+ submodules/vllm/vllm/model_executor/layers/fused_moe/configs/E=90,N=768,device_name=NVIDIA_H100.json \
  flash-linear-attention/fla/ops/kda/fused_recurrent.py | sha256sum | cut -c1-16)
 VLLM_RUNTIME=/tmp/oellm_vllm032_$VLLM_SOURCE_ID
 mkdir -p "$VLLM_RUNTIME"

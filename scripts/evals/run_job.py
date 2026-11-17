@@ -38,8 +38,10 @@ def export_steps(job: JobSpec, py: str) -> list[Step]:
            "OELLM_EXPORT_MAX_POSITIONS": str(e.max_positions)}
     root = str(Path(job.export_dir).parent)
     if e.run_dir:  # any training run (export_run.sh: export only, into the export dir itself)
-        first = Step(["bash", "scripts/korbi/hf_export/export_run.sh", e.run_dir, str(e.step), job.export_dir], env,
-                     check=True)
+        argv = ["bash", "scripts/korbi/hf_export/export_run.sh", e.run_dir, str(e.step), job.export_dir]
+        if e.config:  # a surgery run: checkpoint under <run>/ckpt, config under <run>/main/
+            argv.append(e.config)
+        first = Step(argv, env, check=True)
     else:
         first = Step(["bash", "scripts/korbi/hf_export/export_main_run_v2.sh", e.model, str(e.step), root], env, check=True)
     steps = [first,

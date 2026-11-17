@@ -1,0 +1,43 @@
+# v4a (first-class V shared-KV attention layers) at the 35900 surgery checkpoint, on the
+# vLLM PR #2 serving layout (DP4 + EP4, one engine per GPU, the PR #2 model-code switches).
+#
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/v4a_v_35900_recall_mn5.yaml
+#
+# The checkpoint is the V surgery of the verified 35900 parent (runs/v4a_v6/ckpt/iter_0035900,
+# docs/recall_surgery_ambitious.md §22.15); its resolved config lives under runs/v4a_v6/main/
+# (the surgery run keeps its checkpoint in <run>/ckpt, the training run writes <run>/main).
+# The six V layers start with a zero output projection, so this export is the parent model with
+# the inserted layers present and inactive: the numbers are the 35900 baseline in the v4a stack,
+# not a readout of trained V layers (those start at the 35905 save).
+#
+# The Engram hash seeds stay pinned to the pre-insertion layer numbers (the V layers do not
+# renumber them), so the export is function-preserving against its 35900 parent.
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6
+  step: 35900
+  name: ambitious_v4a_v_fp8_35900
+  config: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6/main/current_ambitious_v4a_v_main_256.yaml
+
+rows:
+  harnesses: [lm-eval-harness]
+  # the six critical rows (CoQA, Winogrande, SQuAD v2 10-shot) + the CKDA paper's recall suite
+  # (SWDE / FDA / squad_completion) + 24 Belebele
+  suite_file: config/eval_tasks/ckdab_recall_full.yaml
+
+lm_eval:
+  workers: 4
+  split_s: 300
+  max_parts: 8
+  # engine: the PR #2 layout (tp1 x dp4, expert parallel, 2048 seqs / 3072 batched tokens per
+  # node, 0.88 utilization) and the PR #2 model-code switches are the spec defaults
+  job: {priority: 70}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  # a running host holds 264 nodes with a 256-node training step: the export (1 node) and the
+  # four sessions (1 node each) run on the spare nodes, as pool steps
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264

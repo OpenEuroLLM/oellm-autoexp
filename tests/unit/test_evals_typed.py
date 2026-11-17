@@ -207,12 +207,18 @@ def test_evalchemy_and_lm_eval_commands_are_the_old_runners(tmp_path):
     lm = next(u for u in plan.units if u.kind == "lm_eval_session")
     (s,) = commands.unit_commands(plan, lm, [], shard=3)
     a = s.argv
-    for flag, val in [("--tp", "1"), ("--dp", "4"), ("--ep", "1"), ("--max-num-seqs", "256"),
-                      ("--request-batch-size", "256"), ("--shard", "3"), ("--gpu-mem", "0.85"),
+    for flag, val in [("--tp", "1"), ("--dp", "4"), ("--ep", "1"), ("--max-num-seqs", "2048"),
+                      ("--max-num-batched-tokens", "3072"),
+                      ("--request-batch-size", "256"), ("--shard", "3"), ("--gpu-mem", "0.88"),
                       ("--queue", f"{plan.root}/queue_lm"), ("--model", plan.model_dir), ("--root", plan.root)]:
         assert a[a.index(flag) + 1] == val
     assert "--response-cache" in a
     assert s.env["OELLM_ENGRAM_TABLES"] == "uva" and s.env["OELLM_GRAPH_MAX_ROWS"] == "256"
+    # the vLLM PR #2 serving switches (OpenEuroLLM/vllm#2) ride with every harness
+    assert s.env["OELLM_CKDA_SPLIT"] == "1" and s.env["OELLM_MHC_WRITE4"] == "1"
+    assert s.env["OELLM_MHC_READ_WARPS"] == "2" and s.env["OELLM_ENGRAM_HASH_PREFILL"] == "1"
+    assert s.env["OELLM_DECODE_KERNELS_OFF"] == "mhc_split,mhc_coeffs"
+    assert s.env["VLLM_MAX_STOP_STRINGS"] == "64"
 
 
 def test_accelerate_backend_is_lighteval_only(tmp_path):
