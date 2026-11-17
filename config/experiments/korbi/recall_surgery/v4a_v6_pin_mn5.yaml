@@ -1,0 +1,21 @@
+# @package _global_
+# v4a V6 restart with the Engram per-layer seeds pinned to the pre-V layer numbers.
+# Start: V6 35900. New output dir; same data order, saves, validation, and V layers.
+defaults:
+  - v4a_v_main_mn5
+  - _self_
+
+backend:
+  megatron:
+    load: ${aux.kv_root}/runs/v4a_v6/ckpt
+    # Required: the second Engram layer moves from 50 to 53; engram_hash_layer_number
+    # maps it back to seed 50. Without the pin, 35901 starts at 1.262994 instead of 1.1027.
+    engram_hash_per_layer: true
+    kv_share_layers: [10, 27, 44, 62, 79, 96]
+    kv_share_source_layers: [0, 18, 35, 53, 70, 87]
+
+job:
+  name: ambitious_v4a_v6_pin_256
+  base_output_dir: ${aux.kv_root}/runs/v4a_v6_pin/main
+  est_steps: 200833
+  start_condition: null
