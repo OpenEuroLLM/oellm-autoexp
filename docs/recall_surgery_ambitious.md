@@ -4812,3 +4812,31 @@ submission were used.  The **35999** checkpoint remains intact, so the restart p
 is preserved.
 
 Watch `b29b0414c` reports whether q3 starts, loads 35999, and reaches validation.
+
+### 22.21 Engram pin validation and the sync-checkpoint V6 restart
+
+The Engram seed pin is now active in the v4a restart:
+
+- `engram_hash_per_layer: true`
+- `engram_hash_layer_number` maps the inserted layer 53 back to seed layer 50
+- local regression test: `tests/unit/test_engram_pin.py`
+- V6 35900 checkpoint, new output:
+  `.../runs/v4a_v6_pin/main`
+- pool `srun_opts: "--overlap --gres=gpu:4"` (the previous missing
+  `--overlap` caused the `Insufficient GRES` retries)
+
+Validation result at the first logged step:
+
+```
+iteration 35901  lm loss: 1.103468
+```
+
+The unpinned run gave `1.262994`; the pinned run is therefore using the original
+Engram seeds.  The value is within 0.0008 of the planned 1.1027 reference.
+
+Checkpointing is synchronous:
+
+- `async_save: false`
+- `use_persistent_ckpt_worker: false`
+- 35905 save completed at 12:55:05
+- tracker is `35905`
