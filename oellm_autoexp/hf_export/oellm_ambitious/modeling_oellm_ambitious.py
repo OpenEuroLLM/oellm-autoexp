@@ -105,6 +105,18 @@ def _sinkhorn(logits: torch.Tensor, iters: int) -> torch.Tensor:
     return torch.exp(x)
 
 
+_EYES: dict[tuple, torch.Tensor] = {}
+
+
+def _eye_like(x: torch.Tensor) -> torch.Tensor:
+    """The ``[n, n]`` identity on ``x``'s device / dtype (cached: one per V layer per step)."""
+    key = (x.shape[-1], x.device, x.dtype)
+    eye = _EYES.get(key)
+    if eye is None:
+        eye = _EYES[key] = torch.eye(x.shape[-1], device=x.device, dtype=x.dtype)
+    return eye
+
+
 class OellmMHC(nn.Module):
     """``MHCMixer``: coefficients from the RMS-normalised flattened streams."""
 
@@ -833,6 +845,12 @@ class OellmAmbitiousLayer(nn.Module):
     def __init__(self, config: OellmAmbitiousConfig, layer_idx: int) -> None:
         super().__init__()
         self.kind = config.block_types[layer_idx]
+        # v_block_learnable_gate: an inserted V layer's learned residual gate rho (g_v is already folded
+        # into o_proj at export). None for every other layer and for a checkpoint without the gates.
+        self.res_gate = None
+        if self.kind == "kvshare":
+            gate = (getattr(config, "kv_share_res_gate", None) or {}).get(str(layer_idx))
+            self.res_gate = None if gate is None else float(gate)
         self.ldm = config.residual == "ldm"
         if self.ldm:
             self.ldm_mixer = OellmLDMMixer(config)
@@ -904,7 +922,11 @@ class OellmAmbitiousLayer(nn.Module):
             x, pending = self.mhc.read(streams)
             xin = self._norm(x)
         out, new_state = self._mix(xin, state, input_ids, token_mask, attention_mask, keep_state)
-        return self.mhc.write(streams, out, pending), new_state
+        h_post, h_res = pending
+        if self.res_gate is not None:
+            # streams' = (1 - rho) streams + rho (h_res @ streams) + h_post^T out (docs/v4b_plan.md)
+            h_res = torch.lerp(_eye_like(h_res), h_res, self.res_gate)
+        return self.mhc.write(streams, out, (h_post, h_res)), new_state
 
 
 class OellmAmbitiousPreTrainedModel(PreTrainedModel):

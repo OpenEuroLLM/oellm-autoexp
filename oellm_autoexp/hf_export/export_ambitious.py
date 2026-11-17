@@ -312,6 +312,9 @@ def hf_config(m: dict, vocab: int) -> dict:
         # the kvshare layers' input norm (plan() reads it from the checkpoint: the V layer spec before
         # 2026-11-17 built none, docs/recall_surgery_ambitious.md §22.18)
         "kv_share_input_norm": True,
+        # the V layers' learnable residual gates {str(layer): rho} (v_block_learnable_gate); filled from
+        # the checkpoint's own v_gate.res_gate tensors, empty for a checkpoint without them
+        "kv_share_res_gate": {},
         "ckda_branch_serial": bool(m.get("ckda_branch_serial", False)),
         "fla_layer": _fla_layer_spec(m),
         "fla_layer_kronlstm": _kronlstm_layer_spec(m) if "kronlstm" in types else None,
@@ -526,10 +529,30 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         q, z = _split_kvshare(g("self_attention.linear_qkv.weight"), cfg)
         add(hp + "mixer.q_proj.weight", q.to(cast))
         add(hp + "mixer.gate_proj.weight", z.to(cast))
-        add(hp + "mixer.o_proj.weight", g("self_attention.linear_proj.weight").to(cast))
+        # v_block_learnable_gate (docs/v4b_plan.md): g_v is the branch's weight and folds into the output
+        # projection exactly as a ckda_branch's gamma does. rho cannot fold into the mixer's logits (it
+        # pulls h_res toward the identity after the sinkhorn), so it travels in config.json as
+        # kv_share_res_gate and the model applies it to h_res.
+        weight = 1.0
+        if p + "v_gate.out_gate" in t:
+            weight = float(g("v_gate.out_gate").float().reshape(-1)[0])
+        add(hp + "mixer.o_proj.weight", (g("self_attention.linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
         if cfg.get("kv_share_input_norm", True):
             add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        if p + "v_gate.res_gate" in t:
+            iteration = m.get("_ckpt_iteration")
+            if iteration is not None and 35900 <= iteration < 36200:
+                raise ValueError(
+                    f"layer {i}: refusing to export iter {iteration}: the V layers' learnable gates are "
+                    "still opening before 36200, so the export would measure an almost-v4 model, not "
+                    "this arm (docs/v4b_plan.md); export at 36400 / 36900"
+                )
+            rho = float(g("v_gate.res_gate").float().reshape(-1)[0])
+            gates = cfg.setdefault("kv_share_res_gate", {})
+            if str(i) in gates and abs(float(gates[str(i)]) - rho) > 1e-9:
+                raise ValueError(f"layer {i}: kv_share_res_gate {gates[str(i)]} != checkpoint's rho {rho}")
+            gates[str(i)] = rho
     elif kind == "kvshare" and i in folded:
         # a ckda_branch kvshare attention past its hand-over: q / gate / o / q norm of its own, the keys / values
         # of the source attention layer at run time (cfg kv_share_sources); the branch's output weight folded into

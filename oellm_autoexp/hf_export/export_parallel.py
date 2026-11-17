@@ -147,6 +147,24 @@ def plan(ckpt_dir: Path, cfg_fn, table_unit_bytes: int) -> tuple[dict, list[Unit
             out.append(Read(str(Path(ckpt_dir) / si.relative_path), si.offset, si.length, name, dest, tuple(c.sizes)))
         return out
 
+    # the V layers' learnable residual gates (v_block_learnable_gate, docs/v4b_plan.md): 6 one-element
+    # tensors, read here because the config carries them and a forked worker's cfg mutation does not come
+    # back to the parent. g_v folds into o_proj (convert_layer); rho cannot fold into the mixer's logits,
+    # so the model applies it to h_res. A checkpoint where only some V layers have them comes from no
+    # config: fail loudly, as kv_share_input_norm does (§22.18).
+    v = [i for i, c in enumerate(cfg["block_types"]) if c == "kvshare"]
+    have = [i for i in v if f"decoder.layers.{i}.v_gate.res_gate" in keys]
+    if have and len(have) != len(v):
+        raise ValueError(f"kvshare layers {v}: learnable gates on {have} only (a mixed checkpoint)")
+    gates: dict[str, float] = {}
+    for i in have:
+        (r,) = reads(f"decoder.layers.{i}.v_gate.res_gate")
+        with open(r.path, "rb", buffering=0) as f:
+            f.seek(r.offset)
+            buf = f.read(r.nbytes)
+        gates[str(i)] = float(torch.load(io.BytesIO(buf), map_location="cpu", weights_only=True).reshape(-1)[0])
+    cfg["kv_share_res_gate"] = gates
+
     by_layer: dict[int | None, list[str]] = {}
     for name in keys:
         mm = _LAYER.match(name)

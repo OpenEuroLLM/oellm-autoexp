@@ -56,6 +56,10 @@ class OellmAmbitiousConfig(PretrainedConfig):
         # spec before 2026-11-17 built it (TransformerLayerSubmodules defaults input_layernorm to
         # IdentityOp); docs/recall_surgery_ambitious.md §22.18
         kv_share_input_norm: bool = True,
+        # the V layers' learnable residual gates {str(layer index): rho} (v_block_learnable_gate):
+        # streams' = (1 - rho) streams + rho (h_res @ streams) + h_post^T out, with g_v already folded
+        # into o_proj; empty for a checkpoint without the gates (docs/v4b_plan.md)
+        kv_share_res_gate: dict | None = None,
         # serial v4a ckda_kvshare / ckda_attn: the branch sees LayerNorm(CKDA output), not the layer input
         ckda_branch_serial: bool = False,
         # CKDA: the FLA layer spec ({"class", "kwargs"}) as Megatron built it
@@ -138,6 +142,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.xsa_eps = xsa_eps
         self.kv_share_sources = {str(k): int(v) for k, v in (kv_share_sources or {}).items()}
         self.kv_share_input_norm = bool(kv_share_input_norm)
+        self.kv_share_res_gate = {str(k): float(v) for k, v in (kv_share_res_gate or {}).items()}
         self.ckda_branch_serial = bool(ckda_branch_serial)
         self.fla_layer = fla_layer
         self.fla_layer_kronlstm = fla_layer_kronlstm
