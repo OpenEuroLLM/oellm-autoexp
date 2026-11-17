@@ -24,6 +24,11 @@ backend:
     save_interval: 1000000
     non_persistent_save_interval: null
 
+slurm:
+  sbatch:
+    # a 6-step readout on 16 nodes, not the arm's 256 (inherited from v4a_v_main_mn5)
+    nodes: ${aux.nodes}
+
 job:
   name: ambitious_v4b_gate_smoke
   base_output_dir: ${aux.kv_root}/runs/v4b_gate_smoke/main

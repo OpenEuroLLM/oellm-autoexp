@@ -36,6 +36,11 @@ backend:
     async_save: false
     use_persistent_ckpt_worker: false
 
+slurm:
+  sbatch:
+    # the smoke is a readout, not the arm: 16 nodes, the same geometry as v4b_smoke_mn5
+    nodes: ${aux.nodes}
+
 job:
   name: ambitious_v4b_learned_open_smoke
   base_output_dir: ${aux.kv_root}/runs/v4b_learned_open_smoke/main
