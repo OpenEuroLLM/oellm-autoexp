@@ -4887,3 +4887,11 @@ Parity note from the 35900 pair: v4 (`66.0` CoQA F1, `29.02` SQuAD v2 F1, `85.10
 and v4a (`64.9`, `28.62`, `84.98`) agree only to ~0.1-1.1 pp, not bit-exactly. The V layers'
 mHC read / write is an exact identity in real arithmetic but rounds in bf16, and six layers of
 that rounding shift the scores slightly. Any future identity check must allow that tolerance.
+
+**The restart with the fixed spec is coherent.** The V6 surgery checkpoint already carries the
+six `input_layernorm.weight` tensors and their optimizer state (`exp_avg`, `exp_avg_sq`), which
+is exactly the 26 surgery-only keys of the diff above: 6 model + 12 optimizer + 8 optimizer
+packing entries. So the fixed model loads V6 strictly, including the optimizer. At step 0 the
+inserted norm cannot change the function either: every V layer's `o_proj` is still exactly zero,
+so the layer output is zero whatever its input norm does. The step-0 identity with the 35900
+parent therefore holds, and from step 1 the V layers train with the intended normalized input.
