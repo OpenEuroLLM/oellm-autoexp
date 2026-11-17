@@ -14,9 +14,9 @@ for arm in $ARMS; do
   ssh marenostrum_new "mkdir -p $DST/$arm" || exit 1
   for f in config.json model.safetensors; do
     if [ "$f" = "config.json" ]; then
-      ssh jupiter "cat $J/$arm/$f" 2>/dev/null | ssh marenostrum_new "cat > $DST/$arm/$f"
+      ssh -o Compression=no jupiter "cat $J/$arm/$f" 2>/dev/null | ssh -o Compression=no marenostrum_new "cat > $DST/$arm/$f"
     else
-      ssh jupiter "cat $J/$arm/$f" 2>/dev/null | ssh marenostrum_new "cat > $DST/$arm/$f.part && mv $DST/$arm/$f.part $DST/$arm/$f"
+      ssh -o Compression=no jupiter "cat $J/$arm/$f" 2>/dev/null | ssh -o Compression=no marenostrum_new "cat > $DST/$arm/$f.part && mv $DST/$arm/$f.part $DST/$arm/$f"
     fi
   done
   ssh marenostrum_new "ls -l $DST/$arm | tail -2"
@@ -26,7 +26,7 @@ done
 echo "=== tokenizer $(date +%T)"
 ssh marenostrum_new "mkdir -p $DST/tokenizer_gpt_neox_20b"
 for f in $(ssh jupiter "ls /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b/" 2>/dev/null); do
-  ssh jupiter "cat /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b/$f" | ssh marenostrum_new "cat > $DST/tokenizer_gpt_neox_20b/$f"
+  ssh -o Compression=no jupiter "cat /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b/$f" | ssh -o Compression=no marenostrum_new "cat > $DST/tokenizer_gpt_neox_20b/$f"
 done
 ssh marenostrum_new "ls -l $DST/tokenizer_gpt_neox_20b"
 echo "=== ALL DONE $(date +%T)"
