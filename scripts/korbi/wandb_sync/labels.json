@@ -513,5 +513,16 @@
    "35900+"
   ],
   "notes": "V-layer insertion (6 layers at 10/27/44/62/79/96) on the 35900 checkpoint, Engram seeds pinned: loss @35901 1.1035 vs control 1.1027. Inserted layers carry no input norm before 2026-11-17 and their mHC h_res = 0.9802 I + 0.0066 (1 - I), so they are not no-ops (docs/recall_surgery_ambitious.md \u00a722.18)."
+ },
+ "ambitious_v4b_learned_256": {
+  "name": "v4b copy-init + learnable gates",
+  "tags": [
+   "v4b",
+   "V_layers",
+   "copy_init",
+   "learnable_gate",
+   "recall_surgery"
+  ],
+  "notes": "V layers re-inserted from 35900 as copies of their source attention (q/gate/o/q-norm), with two learnable gates g_v (attention write) and rho (h_res mixing), both 0 at insertion -> bit-exact parent at 35900. Gates move ~lr/step: ~0.42 at 36400, ~0.85 at 36900, so the first fair readout is 36900+. Docs: docs/v4b_plan.md \u00a79."
  }
 }

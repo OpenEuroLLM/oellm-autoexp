@@ -20,3 +20,4 @@ ambitious_v4_2ph_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/
 # ended: ambitious_v4_ldm_main	/gpfs/scratch/ehpc533/hybrid_nucleus/production/main_ldm/ambitious_e360_eng80_v4_ldm
 ambitious_v4_cont_main_128	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/runs/main
 ambitious_v4a_v6_pin_256	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6_pin/main
+ambitious_v4b_learned_256	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main
