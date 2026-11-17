@@ -32,8 +32,20 @@ lm_eval:
   workers: 4
   split_s: 300
   max_parts: 8
-  # engine: the PR #2 layout (tp1 x dp4, expert parallel, 2048 seqs / 3072 batched tokens per
-  # node, 0.88 utilization) and the PR #2 model-code switches are the spec defaults
+  # engine: TP1 x DP4 with expert parallelism (the PR #2 layout), but the validated memory
+  # envelope: 256 sequences and 32768 batched tokens per node at 0.85. The PR's 2048 sequences
+  # cost host memory that these nodes do not have: measured step MaxRSS 182 GB at 256 sequences
+  # (validated 2026-11-16) against 416-460 GB at 2048 (2026-11-17 12:23), with the Engram tables
+  # in /dev/shm on top. The PR #2 model-code switches stay.
+  engine:
+    tp: 1
+    dp: 4
+    expert_parallel: true
+    max_num_seqs: 256
+    max_num_batched_tokens: 32768
+    gpu_memory_utilization: 0.85
+    request_batch_size: 256
+    response_cache: true
   model_code:
     # The fp8-direct expert load (the PR's setting) is the first setting that ever ran in the
     # eval path with DP4: two launches OOMed at load (oom_kill; MaxRSS 368 GB with uva tables,
