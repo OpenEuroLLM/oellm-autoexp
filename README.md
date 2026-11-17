@@ -71,6 +71,18 @@ You need to install oellm-autoexp or its requirements in a conda environment to 
 - Use a container built on LEONARDO or JUWELS (MARENOSTRUM has no internet access to you can't build anything there)
 - Copy datasets and tokenizer etc. manually (no web connection on compute and login nodes)
 
+### Pool allocation health (MN5 / pool hosts)
+
+Pool hosts are long-lived Slurm allocations. A node failure can remove a node from
+the job while the pool's run nodelist still pins it; `Insufficient GRES available in
+allocation` then refers to that nodelist, not to the whole allocation. Check capacity
+at 1, 4, 16, 64, 128, and 256 nodes with `--gres=gpu:4`, then compare the successful
+`SLURM_JOB_NODELIST` with the pool's pinned node list. Repair with pool/host
+exclusions and a new pool submission only; never modify, resize, requeue, or cancel
+the existing Slurm job without explicit permission. See
+[docs/pool_allocation.md](docs/pool_allocation.md) for the exact commands and the
+2026-11-17 host007 case.
+
 ## Cluster setup: LEONARDO notes
 For LEONARDO, all should work with a pre-built container image. To build a container image on LEONARDO, please run these commands:
 - Download the pytorch base image from nvcr.io: `singularity build --sandbox --fix-perms --force $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox docker://nvcr.io/nvidia/pytorch:25.10-py3`

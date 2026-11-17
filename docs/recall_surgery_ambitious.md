@@ -4707,3 +4707,106 @@ non-table RSS is ~368 GB: the direct path holds the export's fp8 expert bytes on
 The third launch keeps the PR #2 model-code switches and the DP4/EP4 engine layout and sets
 `moe_fp8_direct: false` (the validated load path, 42.3 instead of 23.4 GiB of experts per
 GPU at EP4). `config/evals/v4a_v_35900_recall_mn5.yaml` records it.
+
+### 22.17 V6 reaches 35999 and saves before validation
+
+The V6 standard continuation ran through the pre-validation window:
+
+- 35986-35999: losses 1.235, 1.212, 1.251, 1.187, 1.172, 1.219, 1.214,
+  1.185, 1.221, 1.174, 1.207, 1.183, 1.150, 1.184
+- 35999: grad norm **0.497**, no skipped or NaN iterations
+- normal step time: **~19.3-19.8 s** at 65-67 TFLOP/s/GPU
+- save started 10:56:51 and completed **10:59:40**
+- `ckpt/iter_0035999/.metadata` is **313 MB**
+- tracker is now **35999**
+
+The next step is the normal Megatron validation at 36000, using the restored
+`full_validation: true`, `eval_interval: 1000`, `eval_iters: 10` settings.  Training
+continues to 236733; there is no 36900 stop.
+
+### 22.18 36000 validation: node failure, automatic retry from 35999
+
+At 36000 the standard validation started and produced the first two fixed-set results:
+
+```
+validation-all   loss 1.291486  PPL 3.638190
+validation-web_en loss 1.947511 PPL 7.011214
+```
+
+The run then failed with a hardware node failure, not a model or validation error:
+
+```
+srun: error: Node failure on as04r3b13
+srun: Terminating StepId=48685344.44
+*** STEP ... CANCELLED ... DUE TO TASK FAILURE ***
+```
+
+The pool did not resubmit a fresh start: it left
+`ambitious_v4a_v_main_256_457a58` pending as `.1293`, which resumes from the
+completed **35999** checkpoint (tracker 35999).  The 35905 and 35999 saves are
+intact, so no training progress was lost.
+
+`moe_act/rms: nan` also appears in the 36000 architecture metrics; the training
+loss and both validation losses are finite, so this remains a diagnostic-only
+issue, not a training NaN.
+
+Watch `bdb821d41` waits for the retry's load and the next 36000 validation result.
+
+### 22.19 Retry failure was a stale pool node, not a Slurm modification
+
+The two automatic retries `.1293` and `.1294` did not start training:
+
+```
+srun: error: Unable to create step for job 48685344:
+  Requested node configuration is not available
+```
+
+`as04r3b13` had failed during the 36000 validation, but the pool's launch list still
+contained it.  The Slurm allocation itself was not modified, requeued, or cancelled;
+the pool's global exclusion list now contains:
+
+```
+as04r3b13
+```
+
+The other four nodes remain host-level exclusions.  The job was resubmitted as
+`ambitious_v4a_v_main_256_457a58_q2`; it will resume from the working **35999**
+checkpoint (313 MB `.metadata`, tracker 35999), so the steps through 35999 are
+preserved.  The 36000 step and its validation will be replayed after the retry.
+
+Watch `b042f3126` reports the new run's load, validation, or an error.
+
+### 22.20 Resubmission after the failed-node/GRES retries
+
+The first retry after the 36000 node failure failed with:
+
+```
+srun: error: Unable to create step for job 48685344:
+  Requested node configuration is not available
+```
+
+The failed node was added to the pool exclusion list, but the next retry
+(`.1296`) failed earlier in the allocation check with:
+
+```
+srun: error: Unable to create step for job 48685344:
+  Insufficient GRES available in allocation
+```
+
+The host's four node-level exclusions were also added to the pool's global exclusion
+list:
+
+```
+as04r3b13
+as05r1b08
+as01r1b09
+as06r2b06
+as07r2b26
+```
+
+The job was resubmitted as `ambitious_v4a_v_main_256_457a58_q3`.  No Slurm job was
+modified, cancelled, requeued, or resized; only pool exclusions and a new pool
+submission were used.  The **35999** checkpoint remains intact, so the restart point
+is preserved.
+
+Watch `b29b0414c` reports whether q3 starts, loads 35999, and reaches validation.
