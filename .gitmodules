@@ -10,7 +10,7 @@
 [submodule "flash-linear-attention"]
 	path = flash-linear-attention
 	url = git@github.com:OpenEuroLLM/ComplexKDA.git
-	branch = main
+	branch = feat/hybrid-kernels
 [submodule "submodules/oellm-eval"]
 	path = submodules/oellm-eval
 	url = git@github.com:kpoeppel/oellm-eval.git
@@ -18,7 +18,7 @@
 [submodule "submodules/cute_kernels"]
 	path = submodules/cute_kernels
 	url = git@github.com:OpenEuroLLM/cute_kernels.git
-	branch = main
+	branch = ldm-recompute
 [submodule "submodules/torchtitan"]
 	path = submodules/torchtitan
 	url = https://github.com/pytorch/torchtitan.git
