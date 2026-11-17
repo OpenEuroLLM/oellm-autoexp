@@ -1,0 +1,95 @@
+# @package _global_
+# Dataset-index prebuild for the v4 continuation pair (v4_cont_mn5), on ONE rank / one GPU, so the
+# 128-node control (and later the 84B arms that share the data recipe) start without building the
+# train index on rank 0. Same pattern as production/data_cache_prebuild_ambitious_mn5: the run's own
+# config + a stand-in model + skip_train.
+#
+# WHY (2026-11-17): the first control attempt (mn5-pool-p264.1261) loaded 35900, printed "building
+# train, validation, and test datasets for GPT ..." and then lost one rank to the host-RAM OOM killer
+# (as01r2b17, rank 3, SIGKILL -9, "Detected 1 oom_kill"); the other ranks died on the C10d store and
+# the run ended rc=1. The 128-node layout has 512 ranks over the same 531-prefix blend, i.e. twice
+# the per-rank index of the proven 256-node / 1024-rank layout, and the batch node also carries the
+# supervisor. Building the index once, on one rank, removes that.
+#
+# The cache key is the data / schedule only -- blend, split, seq, seed, tokenizer, train and eval
+# samples -- all inherited unchanged from v4_cont_mn5, so the key matches the control exactly. The
+# model is a stand-in (not part of the key); skip_train stops after the build. Never touches a
+# checkpoint: load / save null, own output dir, W&B off.
+#
+#   run_autoexp.py --pool <mn5_pool_p264> --submit-and-exit --yes \
+#       --config-name experiments/korbi/recall_surgery/data_cache_prebuild_v4_cont_mn5
+# Afterwards the control can be re-enqueued; it must find the index and go straight to the load.
+defaults:
+  - v4_cont_mn5
+  - _self_
+
+aux:
+  nodes: 1
+  # the inherited sweep group sets backend.megatron.load: ${aux.load_main}, and a sweep group
+  # overrides the top level -- so a plain `load: null` above did not hold and the prebuild tried
+  # to load the 84B 35900 save into the 256-wide stand-in (Size mismatch on word_embeddings,
+  # mn5-pool-p264.1267). Nulling the variable the group interpolates is what actually removes it.
+  load_main: null
+  # a 1-node build must NOT run the runs' relative node check: with one node the thorough
+  # profile judges the node's own slowest GPU against its median (454 vs 602 TFLOP/s = 0.75 x),
+  # excludes the node and exits 86 (mn5-pool-p264.1265 did exactly that, and excluded host007's
+  # batch node as01r1b04). The pool's own allocation preflight already vetted the nodes.
+  node_check: "off"   # quoted: YAML would turn `off` into False, and the template tests the literal string off
+  # own run root: the inherited sweep writes <run_root>/ctrl, which must not be the control's dir
+  run_root: ${aux.kv_root}/prebuild_runs
+
+backend:
+  torchrun_args:
+    nproc_per_node: 1
+  env:
+    WANDB_MODE: disabled
+  megatron:
+    skip_train: true
+    distributed_timeout_minutes: 240
+    # --- stand-in model (not part of the cache key) ---
+    hybrid_layer_pattern: "*E"
+    num_layers: 1
+    kv_share_layers: null
+    kv_share_source_layers: null
+    hidden_size: 256
+    ffn_hidden_size: 512
+    kv_channels: 64
+    num_attention_heads: 4
+    num_query_groups: 2
+    num_experts: 4
+    moe_router_topk: 2
+    expert_model_parallel_size: 1
+    engram_table_size: 1024
+    # --- never a checkpoint ---
+    load: null
+    save: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  # a prebuild that fails must not resume on its own; re-enqueue by hand. The inherited
+  # log/state events act on checkpoint dirs, which this job does not have (load/save null) --
+  # their `${backend.megatron.save}` interpolation is None and fails to parse, so the list is
+  # replaced by the one stop rule the prebuild needs.
+  state_events: []
+  log_events:
+    - name: indices_built
+      pattern: "[after dataloaders are built]"
+      pattern_type: substring
+      match_once: true
+      action: {class_name: CancelAction, reason: "dataset indices built: the prebuild is done"}
+  name: v4_cont_prebuild
+  base_output_dir: ${aux.kv_root}/prebuild_runs/ctrl
+  est_steps: 1
+  est_step_time_s: 2400
+  start_condition: null
+  metadata:
+    # above every science run (the arm is 100): a 1-node prebuild that loses its node to a
+    # 256-node step's restart never finishes, and the control cannot start without the cache
+    pool_priority: 110
+
+slurm:
+  sbatch:
+    time: "02:00:00"

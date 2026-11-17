@@ -383,12 +383,16 @@ class OellmCkdaAttn(nn.Module):
         super().__init__()
         self.ckda = OellmFLALayer(config.fla_layer)
         self.attn = OellmXSAAttention(config)
+        self.serial = bool(getattr(config, "ckda_branch_serial", False))
+        self.hidden_size = config.hidden_size
+        self.norm_eps = config.rms_norm_eps
 
     def forward(self, x: torch.Tensor, state=None, attention_mask=None, keep_state: bool = True):
         s_ckda, s_attn = state if state is not None else (None, None)
         stateless = not keep_state and s_ckda is None and _fast(x)
         y, n_ckda = self.ckda(x, s_ckda, attention_mask, not stateless)
-        b, n_attn = self.attn(x, s_attn, keep_state)
+        attn_x = F.layer_norm(y, (self.hidden_size,), eps=self.norm_eps) if self.serial else x
+        b, n_attn = self.attn(attn_x, s_attn, keep_state)
         new = (n_ckda, n_attn) if keep_state else None
         return y + b, new
 
@@ -403,6 +407,9 @@ class OellmCkdaKVShare(nn.Module):
         super().__init__()
         self.ckda = OellmFLALayer(config.fla_layer)
         self.attn = OellmKVShareAttention(config)
+        self.serial = bool(getattr(config, "ckda_branch_serial", False))
+        self.hidden_size = config.hidden_size
+        self.norm_eps = config.rms_norm_eps
 
     @property
     def kv(self):
@@ -415,7 +422,8 @@ class OellmCkdaKVShare(nn.Module):
     def forward(self, x: torch.Tensor, state=None, attention_mask=None, keep_state: bool = True):
         stateless = not keep_state and state is None and _fast(x)
         y, n_ckda = self.ckda(x, state, attention_mask, not stateless)
-        b, _ = self.attn(x, None, keep_state)
+        attn_x = F.layer_norm(y, (self.hidden_size,), eps=self.norm_eps) if self.serial else x
+        b, _ = self.attn(attn_x, None, keep_state)
         return y + b, (n_ckda if keep_state else None)
 
 

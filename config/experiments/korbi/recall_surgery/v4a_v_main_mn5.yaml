@@ -1,0 +1,61 @@
+# @package _global_
+# v4a-main: first-class V shared-KV attention layers, continuation from the inserted V@35900.
+# 256 nodes on the new 264-node host; same data order as v4 (mbs 1, gbs 1024, ref 512/1).
+defaults:
+  - v4a_serial_main_mn5
+  - _self_
+
+aux:
+  nodes: 256
+  steps: 200833
+  node_check: light
+
+backend:
+  megatron:
+    # 104-layer V pattern: original 98 layers + V after CKDA 9/25/41/58/74/90
+    hybrid_layer_pattern: "*ENLELELELVELELELE*ELELELELVELELELE*ELELELELVELELELEN*ELELELELVELELELE*ELELELELVELELELE*ELELELELVELELELE"
+    num_layers: 104
+    kv_share_layers: [10, 27, 44, 62, 79, 96]
+    kv_share_source_layers: [0, 18, 35, 53, 70, 87]
+    ckda_branch: null
+    ckda_branch_layers: null
+    ckda_branch_serial: false
+    attention_head_temperature: false
+
+    load: ${aux.kv_root}/runs/v4a_v6/ckpt
+    save: ${job.base_output_dir}/ckpt
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    # Standard v4 continuation uses the main run's cache, including validation.
+    data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1
+    micro_batch_size: 1
+    global_batch_size: 1024
+    # No test stop: run the parent train_iters (phase-2 full blend) to 236733.
+    exit_interval: 236733
+    # 35905 is the early save check: the V layers must be an exact no-op at step 0.
+    save_extra_steps: [35905, 35999, 36400, 36900]
+    # v4_cont_mn5 schedule: rolling every 100, persistent only on explicit steps.
+    save_interval: 1000000
+    non_persistent_save_interval: 100
+    async_save: false
+    use_persistent_ckpt_worker: false
+    save_retain_interval: null
+    # Normal v4 validation, restored for the standard continuation.
+    eval_interval: 1000
+    eval_iters: 10
+    eval_global_batch_size: 1024
+    full_validation: true
+
+job:
+  name: ambitious_v4a_v_main_256
+  base_output_dir: ${aux.kv_root}/runs/v4a_v6/main
+  est_steps: 200833
+  start_condition: null
+  metadata:
+    pool_priority: 100
+
+slurm:
+  sbatch:
+    nodes: 256
+    time: "24:00:00"

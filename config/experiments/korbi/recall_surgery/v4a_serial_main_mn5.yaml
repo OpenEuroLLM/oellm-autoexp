@@ -1,0 +1,34 @@
+# @package _global_
+# Big v4a: serial shared-KV attention continuation from the original v4 35900.
+# The data order is the control's: the control runs 128 nodes, mbs 2, gbs 1024,
+# seq 65536, reference sampler 512 / 1.  v4a keeps all of those unchanged and
+# reuses the already-built data cache; only ckda_branch_serial differs from K.
+defaults:
+  - kvshare_k_main_mn5
+  - _self_
+
+aux:
+  # keep the 128-node, 1000-step geometry from kvshare_k_main_mn5
+  nodes: 128
+  steps: 1000
+
+backend:
+  megatron:
+    ckda_branch_serial: true
+    # Same sampler/reference layout as production/kvshare_main/runs/ctrl:
+    # 512 DP x mbs 1 reference, 128 nodes x mbs 2, gbs 1024, seq 65536.
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1
+    data_cache_path: ${aux.kv_root}/runs/data_cache_shared
+    exit_interval: 36900
+    save_extra_steps: [35999, 36400, 36900]
+    save_retain_interval: null
+    eval_interval: 1000000
+    eval_iters: 0
+    full_validation: false
+
+job:
+  name: ambitious_v4a_serial_main
+  base_output_dir: ${aux.run_root}/v4a_main
+  est_steps: 1000
+  start_condition: null

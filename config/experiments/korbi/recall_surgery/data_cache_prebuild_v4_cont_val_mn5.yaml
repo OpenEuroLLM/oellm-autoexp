@@ -1,0 +1,83 @@
+# @package _global_
+# Dataset-index prebuild for the *normal* v4 continuation (v4_cont_mn5): the same recipe with the
+# original run's validation back on (eval_interval 1000, eval_iters 10, eval_global_batch_size 1024,
+# full_validation True, the seven fixed sets). One rank, one GPU, stand-in model, skip_train.
+#
+# Why a second prebuild next to data_cache_prebuild_v4_cont_mn5 (the eval-less one, .1268): the cache
+# key holds each split's num_samples, and validation changes the VALID split's size. The TRAIN split is
+# untouched (train_samples = train_iters x gbs, unchanged), so the train index built by .1268 is reused
+# here -- this run only has to add the valid (and the trivial test) caches for the new key.
+#
+# With full_validation the valid dataset is the whole valid split (training.py
+# get_train_valid_test_num_samples: eval_samples = None), so its size does not depend on eval_iters and
+# this config matches v4_cont_mn5 by construction. Skip_train does not change that branch; it only stops
+# the run from training the stand-in.
+#
+# Run it AFTER the eval-less prebuild has finished, so two builders do not work the same prefixes at
+# once (a partially written train index would then have to be rebuilt):
+#   bash scripts/korbi/recall_surgery/launch_prebuild_v4_cont.sh --val
+defaults:
+  - v4_cont_mn5
+  - _self_
+
+aux:
+  nodes: 1
+  # the inherited sweep group sets backend.megatron.load: ${aux.load_main}, and a sweep group overrides
+  # the top level -- nulling the variable the group interpolates is what actually removes the load
+  load_main: null
+  # a 1-node build must not run the runs' relative node check (a node measured against its own median
+  # is always "0.75x" somewhere); quoted because YAML would turn `off` into False
+  node_check: "off"
+  run_root: ${aux.kv_root}/prebuild_runs_val
+
+backend:
+  torchrun_args:
+    nproc_per_node: 1
+  env:
+    WANDB_MODE: disabled
+  megatron:
+    skip_train: true
+    distributed_timeout_minutes: 300
+    # --- stand-in model (not part of the cache key) ---
+    hybrid_layer_pattern: "*E"
+    num_layers: 1
+    kv_share_layers: null
+    kv_share_source_layers: null
+    hidden_size: 256
+    ffn_hidden_size: 512
+    kv_channels: 64
+    num_attention_heads: 4
+    num_query_groups: 2
+    num_experts: 4
+    moe_router_topk: 2
+    expert_model_parallel_size: 1
+    engram_table_size: 1024
+    # --- never a checkpoint ---
+    load: null
+    save: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  # a prebuild that fails must not resume on its own; re-enqueue by hand
+  state_events: []
+  log_events:
+    - name: indices_built
+      pattern: "[after dataloaders are built]"
+      pattern_type: substring
+      match_once: true
+      action: {class_name: CancelAction, reason: "dataset indices built: the prebuild is done"}
+  name: v4_cont_val_prebuild
+  base_output_dir: ${aux.kv_root}/prebuild_runs_val/ctrl
+  est_steps: 1
+  est_step_time_s: 3600
+  start_condition: null
+  metadata:
+    # above every science run; a 1-node build must not lose its node to a 256-node restart
+    pool_priority: 110
+
+slurm:
+  sbatch:
+    time: "03:00:00"

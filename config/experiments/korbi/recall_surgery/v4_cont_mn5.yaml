@@ -1,0 +1,120 @@
+# @package _global_
+# The v4 continuation from 35900 -- the vanilla (no V layer, no ckda branch) twin of the v4a shared-KV
+# arm `ambitious_v4a_v_main_256`, and from now on also the line that carries the *normal* training on:
+# same start (35900), same data order (reference layout dp 512 x mbs 1, gbs 1024, seq 65536,
+# 128 nodes x mbs 2 == 256 nodes x mbs 1 = the same 1024 samples per step), same exit (36900).
+#
+# VALIDATION is back on, exactly as the original v4 training ran it until 35900 (user 2026-11-17):
+# eval_interval 1000, eval_iters 10, eval_global_batch_size 1024, full_validation True (all seven
+# fixed sets: all / web_en / multilingual / code / math / reasoning / long_64k). train_iters is the
+# parent's 236733, i.e. the full blend, not a limited slice.
+#
+# Note on the cache key: with full_validation the valid dataset is the whole valid split
+# (training.py get_train_valid_test_num_samples: eval_samples = None), so the valid key does not
+# depend on eval_iters -- the validation prebuild matches this config by construction.
+#
+# Saves deviate from the original in one place, deliberately: rolling (async) saves every 100 steps
+# as before, but the persistent saves sit on explicit steps (35999 / 36400 / 36900) instead of every
+# 1000. The original plan put a persistent save exactly on 36000, and the last two 84B attempts died
+# there in a host-RAM oom_kill (`slurm-mn5-pool-p264.0987`, 2026-11-13: "sched an async checkpoint
+# save at 36000" then `exitcode -9`, `Detected 2 oom_kill events`). 35999 buys the same checkpoint
+# one step earlier, before the validation/save boundary.
+#
+# Why this is also the control: small31 (docs/recall_surgery_ambitious.md §14.8) put every
+# single-mechanism arm within +-0.5-2 points of its control while the readout noise is 1.4-3 points,
+# so the V arm cannot be read without it. The ONLY difference to the arm is the six V layers.
+defaults:
+  - kvshare_main_mn5
+  - _self_
+
+aux:
+  arm: main
+  only: [main]
+  nodes: 128
+  steps: 1000
+  # new base folder for this pair (user 2026-11-17)
+  kv_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont
+  run_root: ${aux.kv_root}/runs
+  # the runs' own pre-training node check (off | light | thorough), as the v4a arms use it
+  node_check: thorough
+
+backend:
+  env:
+    FSDP_DCP_LOCAL_LOAD_PLAN: "1"
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
+    MEGATRON_DEBUG_SAVE_TIMING: "1"
+  megatron:
+    # the main run's real (pre-surgery) stack: 98 layers, attention at 0/17/33/50/66/82
+    hybrid_layer_pattern: "*ENLELELELELELELE*ELELELELELELELE*ELELELELELELELEN*ELELELELELELELE*ELELELELELELELE*ELELELELELELELE"
+    num_layers: null
+    kv_share_layers: null
+    kv_share_source_layers: null
+    ckda_branch: null
+    ckda_branch_layers: null
+    ckda_branch_serial: false
+    attention_head_temperature: false
+    # THE MAIN RUN'S OWN CACHE, not the kvshare_k_* family's `${aux.kv_root}/runs/data_cache_shared`:
+    # the recipe is the main run's (seq 65536, split 998,2,0, train_iters 236733, eval 1000/10,
+    # full_validation), and its index for it is already in this directory -- 531/531 train keys and
+    # 538/538 valid keys of the fresh cache were found identical here (2026-11-17). Pointing at the
+    # near-empty kv_root directory made the first attempts rebuild the index and lose a rank to the
+    # host-RAM OOM killer (mn5-pool-p264.1261/.1264). Checked with scripts/check_data_cache.py.
+    data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1
+    micro_batch_size: 2
+    global_batch_size: 1024
+    exit_interval: 36900
+    # rolling (async) saves every 100 steps as the original run had them, but no periodic persistent
+    # save: those land on explicit steps, one before each validation/save boundary would collide
+    save_interval: 1000000
+    save_extra_steps: [35999, 36400, 36900]
+    non_persistent_save_interval: 100
+    async_save: false
+    use_persistent_ckpt_worker: false
+    save_retain_interval: null
+    # validation as the original v4 training ran it until 35900 (main run's own log, .0987)
+    eval_interval: 1000
+    eval_iters: 10
+    eval_global_batch_size: 1024
+    full_validation: true
+
+job:
+  # own run dir, separate from runs/ctrl (which holds the failed attempts' debris and would collide
+  # with a later paired control: two runs of one config must never share ckpt/). NOTE: the inherited
+  # sweep group also sets job.base_output_dir, and a sweep group overrides the top level -- so the
+  # group below is this config's own, with the same settings and the right directory.
+  name: ambitious_v4_cont_main_128
+  base_output_dir: ${aux.kv_root}/runs/main
+  est_steps: 1000
+  metadata:
+    # below the v4a_v V arm (100): the control never preempts the intervention
+    pool_priority: 90
+
+slurm:
+  sbatch:
+    # as the v4a_v arm: one segment finishes the 1000 steps (~10 h incl. startup)
+    time: "24:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        # the vanilla continuation: the main run's 35900 save, nothing added
+        - aux.arm: main
+          job.base_output_dir: ${aux.kv_root}/runs/main
+          job.start_condition:
+            class_name: FileContentCondition
+            path: ${aux.load_tracker}
+            pattern: "^\\s*35900\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: ${aux.load_main}
+          backend.megatron.ckda_branch: null
+          backend.megatron.ckda_branch_layers: null
+          backend.megatron.ckda_branch_kv_source_layers: null
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_rest_dropout: 0.0

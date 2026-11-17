@@ -770,6 +770,24 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "kv_share_layers": MegatronArgMetadata(
+        arg_type=list, default=None,
+        help="First-class V hybrid layers: 0-based layer indices.",
+        choices=None, nargs="+", element_type=int,
+    ),
+    "kv_share_source_layers": MegatronArgMetadata(
+        arg_type=list, default=None,
+        help="Per V layer, the 0-based earlier attention layer whose keys / values it reads.",
+        choices=None, nargs="+", element_type=int,
+    ),
+    "ckda_branch_serial": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Run the ckda_branch after the complex_kda mixer, on LayerNorm(ckda(x)), instead of beside it: out = ckda(x) + m(t) * gamma * branch(LayerNorm(ckda(x))). Same parameters/depth; used by v4a.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "ckda_branch_alpha_end": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -9831,6 +9849,19 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "ckda_branch": MegatronActionSpec(
         option_strings=("--ckda-branch",), action_type="store", nargs=None, const=None, default=None
+    ),
+    "kv_share_layers": MegatronActionSpec(
+        option_strings=("--kv-share-layers",), action_type="store", nargs="+", const=None, default=None,
+    ),
+    "kv_share_source_layers": MegatronActionSpec(
+        option_strings=("--kv-share-source-layers",), action_type="store", nargs="+", const=None, default=None,
+    ),
+    "ckda_branch_serial": MegatronActionSpec(
+        option_strings=("--ckda-branch-serial",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "ckda_branch_alpha_end": MegatronActionSpec(
         option_strings=("--ckda-branch-alpha-end",),

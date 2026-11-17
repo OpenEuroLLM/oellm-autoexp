@@ -1,0 +1,135 @@
+# @package _global_
+# Small-scale training test for v4a: a 2-layer complex_kda hybrid with one serial
+# shared-KV attention branch (layer 1 reads layer 0's K/V). 1 MN5 node, mock data.
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: [base_reference, opensci_ref_130M]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  name: "v4a_serial_smoke"
+  base_output_dir: ${oc.env:OUTPUT_DIR,./output}/${.name}
+
+container:
+  image: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+
+backend:
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels"
+  aux:
+    active_nodes: 1
+    spare_nodes: 0
+  torchrun_args:
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: "0"
+    rdzv_backend: static
+  megatron:
+    mock_data: true
+    data_path: null
+    data_args_path: null
+    split: "949,50,1"
+
+    # 2-layer hybrid: layer 0 = attention, layer 1 = CKDA + serial kvshare branch
+    num_layers: 2
+    hidden_size: 128
+    num_attention_heads: 4
+    num_query_groups: 2
+    kv_channels: 64
+    ffn_hidden_size: 512
+    seq_length: 1024
+    max_position_embeddings: 1024
+    padded_vocab_size: 50304
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b
+    use_tokenizer_model_from_checkpoint_args: false
+    normalization: RMSNorm
+    swiglu: true
+    add_bias_linear: false
+    add_qkv_bias: false
+    qk_layernorm: true
+    attention_output_gate: true
+    exclusive_self_attention: true
+    position_embedding_type: none
+    experimental_attention_variant: complex_kda
+    linear_attention_freq: 2
+    linear_key_head_dim: 32
+    linear_num_key_heads: 4
+    linear_output_gate: lowrank
+    linear_gate_init_style: shipped
+    linear_drop_qkv_silu: true
+    linear_beta_max: 2.0
+    linear_beta_adam: true
+    linear_fla_gate: signed_sigmoid2
+    linear_fla_allow_neg_eigval: true
+    linear_kronlstm_output_gate: lowrank
+
+    ckda_branch: kvshare
+    ckda_branch_serial: true
+    ckda_branch_layers: [1]
+    ckda_branch_kv_source_layers: [0]
+    ckda_branch_num_query_groups: 2
+    ckda_branch_start_iteration: 0
+    ckda_branch_crossfade: false
+    ckda_branch_alpha_hold: 0
+    ckda_branch_alpha_ramp: 0
+    ckda_branch_alpha_end: 1.0
+    ckda_branch_m_start: 1.0
+    ckda_branch_m_ramp: 0
+    ckda_branch_gamma_scale: 1.0
+    ckda_branch_rest_dropout: 0.0
+    attention_head_temperature: false
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    pipeline_model_parallel_layout: null
+    num_layers_per_virtual_pipeline_stage: null
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+    context_parallel_size: 1
+    defer_embedding_wgrad_compute: false
+
+    micro_batch_size: 1
+    global_batch_size: 8
+    train_iters: 10
+    save_interval: 10
+    log_interval: 1
+    eval_interval: 1000
+    eval_iters: 0
+    lr_warmup_iters: 2
+    lr_decay_iters: 10
+    save: ${job.base_output_dir}/checkpoints
+    load: ${backend.megatron.save}
+    non_persistent_ckpt_type: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    enable_ft_package: false
+    calc_ft_timeouts: false
+    cuda_graph_impl: none
+    wandb_project: v4a_serial_smoke
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    account: cns144
+    partition: booster
+    qos: acc_xehpc
+    nodes: 1
+    time: "00:20:00"
+
+sweep:
+  type: product
+  store_sweep_json: false
+  groups:
+    - type: list
+      configs:
+        - stage: all
+          index: 0

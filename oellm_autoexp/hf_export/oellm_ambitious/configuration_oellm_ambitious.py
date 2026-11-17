@@ -52,6 +52,8 @@ class OellmAmbitiousConfig(PretrainedConfig):
         xsa_eps: float = 1e-6,
         # kvshare blocks: {str(layer index): index of the attention layer whose keys / values it reads}
         kv_share_sources: dict | None = None,
+        # serial v4a ckda_kvshare / ckda_attn: the branch sees LayerNorm(CKDA output), not the layer input
+        ckda_branch_serial: bool = False,
         # CKDA: the FLA layer spec ({"class", "kwargs"}) as Megatron built it
         fla_layer: dict | None = None,
         # kronlstm blocks: the FLA KronLSTM layer spec ({"class", "kwargs"})
@@ -131,6 +133,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.exclusive_self_attention = exclusive_self_attention
         self.xsa_eps = xsa_eps
         self.kv_share_sources = {str(k): int(v) for k, v in (kv_share_sources or {}).items()}
+        self.ckda_branch_serial = bool(ckda_branch_serial)
         self.fla_layer = fla_layer
         self.fla_layer_kronlstm = fla_layer_kronlstm
         self.num_experts = num_experts

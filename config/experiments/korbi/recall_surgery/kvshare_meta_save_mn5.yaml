@@ -1,0 +1,21 @@
+# @package _global_
+# Short 32-node save test: 2 steps (35900 -> 35902) at the SAME gbs=1024 as
+# the fast test, so it reuses the existing data cache. Only the final sync
+# checkpoint matters here; 5 steps are unnecessary.
+defaults:
+  - kvshare_meta_mn5
+  - _self_
+
+aux:
+  gbs: 1024
+
+job:
+  name: kvshare_meta_save_${aux.arm}
+  est_steps: 2
+
+backend:
+  megatron:
+    exit_interval: 35902
+    save_extra_steps: [35902]
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1

@@ -1017,6 +1017,16 @@ class MegatronConfig(ConfigInterface):
     # come from checkpoint surgery (scripts/korbi/production/add_ckda_branch.py).
     ckda_branch: Literal["attention", "kronlstm", "kvshare"] | None = None
 
+    # Run the ckda_branch after the complex_kda mixer instead of beside it. The branch then sees
+    # LayerNorm(ckda(x)) and the output is ckda(x) + m(t) * gamma * branch(...). Same parameters,
+    # depth and checkpoint keys; used by the v4a serial post-stitch/continuation variant.
+    kv_share_layers: list[int] | None = None
+    # First-class V hybrid layers: 0-based layer indices.
+    kv_share_source_layers: list[int] | None = None
+    # Per V layer, the 0-based earlier attention layer whose keys / values it reads.
+
+    ckda_branch_serial: bool = False
+
     # 0-based indices (in the decoder's layer list, as the checkpoint keys
     # ``decoder.layers.<i>``) of the complex_kda layers that get the branch.
     ckda_branch_layers: list[int] | None = None

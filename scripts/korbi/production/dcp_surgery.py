@@ -49,22 +49,38 @@ def source_chunk_bytes(meta):
 
 
 def write_surgery(src, dst, md, replace, append_rows=None, *, tag, log=print, chunk_bytes=None,
-                  thread_count=8):
-    """Write ``dst`` = ``src`` with ``replace`` (key -> tensor or picklable object, rewritten whole)
-    and ``append_rows`` (key -> tensor of rows appended after the source's rows of that key).
+                  thread_count=8, rename=None):
+    """Write ``dst`` = ``src`` with ``replace`` (key -> tensor or picklable object, rewritten whole),
+    ``append_rows`` (key -> tensor of rows appended after the source's rows of that key), and
+    ``rename`` (old FQN -> new FQN; metadata-only, the source chunks are retained).
 
-    Tensors are stored in row chunks of ``chunk_bytes`` (default: the median chunk of the same key
-    in the source, else of all source tensors, else 64 MB). ``md`` is the source's metadata.
-    Returns the merged metadata (also written to ``dst/.metadata``).
+    Rename is how a layer insertion shifts ``decoder.layers.<i>`` and its optimizer-state FQNs
+    without rewriting the ~1 TB of existing chunks. New keys (for the inserted layers) come through
+    ``replace``. Tensors are stored in row chunks of ``chunk_bytes`` (default: the median chunk of
+    the same key in the source, else of all source tensors, else 64 MB). ``md`` is the source
+    metadata. Returns the merged metadata (also written to ``dst/.metadata``).
     """
     import torch.distributed.checkpoint as dcp
     from torch.distributed.checkpoint import FileSystemReader, FileSystemWriter
     from torch.distributed.checkpoint.metadata import ChunkStorageMetadata, MetadataIndex, TensorStorageMetadata
 
     append_rows = append_rows or {}
+    rename = dict(rename or {})
     smd = md.state_dict_metadata
     overlap = set(replace) & set(append_rows)
     assert not overlap, overlap
+    for old, new in rename.items():
+        if old not in smd:
+            raise ValueError(f"rename source {old!r} is not in the checkpoint")
+        if new in smd and new not in rename:
+            raise ValueError(f"rename target {new!r} already exists")
+        # A rename source may also be a replace key: an inserted layer can occupy the old
+        # layer's index while the old layer moves to a later index. The old chunks are kept
+        # under the renamed target, and the replace key writes the new layer at the old index.
+        if old in append_rows or new in replace or new in append_rows:
+            raise ValueError(f"rename {old!r} -> {new!r} overlaps replace/append")
+    if len(set(rename.values())) != len(rename):
+        raise ValueError("rename targets must be unique")
     all_sizes = [b for b in (source_chunk_bytes(m) for m in smd.values()) if b]
     fallback = sorted(all_sizes)[len(all_sizes) // 2] if all_sizes else DEFAULT_CHUNK_BYTES
 
@@ -114,8 +130,22 @@ def write_surgery(src, dst, md, replace, append_rows=None, *, tag, log=print, ch
         return info
 
     out = copy.copy(md)
-    out.state_dict_metadata = dict(smd)
-    storage = {k: v for k, v in md.storage_data.items() if k.fqn not in replace}
+    # Rename metadata simultaneously.  Applying the mapping one key at a time loses entries
+    # whenever a target is also a later rename source (a layer insertion shifts 26->28 and
+    # 28->30 at once: writing 26 into 28 first destroys the source-28 metadata before it moves).
+    renamed = {}
+    for old, info in smd.items():
+        new = rename.get(old, old)
+        if new in renamed:
+            raise ValueError(f"rename collision: {old!r} and an earlier key both target {new!r}")
+        renamed[new] = info
+    out.state_dict_metadata = renamed
+    storage = {}
+    for k, v in md.storage_data.items():
+        if k.fqn in replace and k.fqn not in rename:
+            continue
+        fqn = rename.get(k.fqn, k.fqn)
+        storage[MetadataIndex(fqn=fqn, offset=k.offset, index=k.index)] = v
     for key, value in replace.items():  # objects: one item each
         if not isinstance(value, torch.Tensor):
             out.state_dict_metadata[key] = small.state_dict_metadata[key]
@@ -169,7 +199,8 @@ def write_surgery(src, dst, md, replace, append_rows=None, *, tag, log=print, ch
         pickle.dump(out, f)
     n_chunks = len(plan)
     log(f"surgery: {n_link} hard links, {n_copy} cross-device copies, {len(files)} new file(s), "
-        f"{len(replace)} keys rewritten, {len(append_rows)} keys extended, {n_chunks} tensor chunks")
+        f"{len(replace)} keys rewritten, {len(append_rows)} keys extended, {len(rename)} keys renamed, "
+        f"{n_chunks} tensor chunks")
     return out
 
 
@@ -198,7 +229,7 @@ def _selftest_rank(rank, world, port, root, sizes):
     else:  # load the rewritten checkpoint as DTensor shards on `world` ranks
         new_a = torch.randn(16, 4, generator=torch.Generator().manual_seed(8))
         extra = torch.randn(7, 3, generator=torch.Generator().manual_seed(9))
-        want = {"a": new_a, "t": torch.cat([t, extra]), "v": v}
+        want = {"a": new_a, "t": torch.cat([t, extra]), "v_renamed": v}
         sd = {k: distribute_tensor(torch.zeros_like(x), mesh, [Shard(0)]) for k, x in want.items()}
         sd["args"] = None
         reads = []
@@ -246,12 +277,13 @@ def selftest():
         new_a = torch.randn(16, 4, generator=torch.Generator().manual_seed(8))
         extra = torch.randn(7, 3, generator=torch.Generator().manual_seed(9))
         out = write_surgery(src, dst, md, {"a": new_a, "args": argparse.Namespace(kv_channels=256)}, {"t": extra},
-                            tag="selftest", chunk_bytes=2 * 4 * 4)  # 2 rows of a per chunk
+                            tag="selftest", chunk_bytes=2 * 4 * 4, rename={"v": "v_renamed"})  # 2 rows per chunk
         assert len(out.state_dict_metadata["a"].chunks) == 8
         assert out.state_dict_metadata["t"].size[0] == 17
+        assert "v" not in out.state_dict_metadata and "v_renamed" in out.state_dict_metadata
         for world in (2, 3):
             mp.spawn(_selftest_rank, args=(world, _free_port(), root, "load"), nprocs=world, join=True)
-    print("dcp_surgery selftest passed: chunked rewrite + append read back as 2 / 3 rank shards")
+    print("dcp_surgery selftest passed: chunked rewrite + append + metadata rename read back as 2 / 3 rank shards")
 
 
 if __name__ == "__main__":

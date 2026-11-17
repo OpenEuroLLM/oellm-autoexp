@@ -25,7 +25,7 @@ def test_branch_fold_rules():
         branch_fold(_m(_ckpt_iteration=200))
     with pytest.raises(ValueError, match="per-layer KV groups"):
         branch_fold(_m(ckda_branch_num_query_groups=8))
-    with pytest.raises(ValueError, match="attention or kronlstm"):
+    with pytest.raises(ValueError, match="attention, kronlstm or kvshare"):
         branch_fold(_m(ckda_branch="mamba"))
     with pytest.raises(ValueError, match="alpha_end"):
         branch_fold(_m(ckda_branch_alpha_end=0.5))

@@ -1,0 +1,72 @@
+# @package _global_
+# Dataset-index prebuild for the v4a shared-KV (V) arm (v4a_v_main_mn5) -- the "V2" line: 104 layers,
+# V (kvshare) at 10/27/44/62/79/96, from the inserted V@35900. One rank, one GPU, stand-in model,
+# skip_train, node check off.
+#
+# NOTE the guard: the cache key holds only the data / schedule (blend, split, seq, seed, tokenizer,
+# train and eval samples), NOT the model shape. If this arm and the v4_cont control share every one
+# of those, one prebuild serves both and a second builder would write the same files concurrently --
+# so the launcher renders both and refuses to submit when the key matches the control's.
+defaults:
+  - v4a_v_main_mn5
+  - _self_
+
+aux:
+  nodes: 1
+  # quoted: YAML would turn `off` into boolean False, and the template tests the literal string off
+  node_check: "off"
+  # own run root: the inherited sweep writes <run_root>/<arm>, never the arm's own directory
+  run_root: ${aux.kv_root}/prebuild_runs_v4a
+
+backend:
+  torchrun_args:
+    nproc_per_node: 1
+  env:
+    WANDB_MODE: disabled
+  megatron:
+    skip_train: true
+    distributed_timeout_minutes: 240
+    # --- stand-in model (not part of the cache key) ---
+    hybrid_layer_pattern: "*E"
+    num_layers: 1
+    kv_share_layers: null
+    kv_share_source_layers: null
+    hidden_size: 256
+    ffn_hidden_size: 512
+    kv_channels: 64
+    num_attention_heads: 4
+    num_query_groups: 2
+    num_experts: 4
+    moe_router_topk: 2
+    expert_model_parallel_size: 1
+    engram_table_size: 1024
+    # --- never a checkpoint ---
+    load: null
+    save: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  # a prebuild that fails must not resume on its own; re-enqueue by hand. The inherited log/state
+  # events act on checkpoint dirs, which this job does not have (load/save null).
+  state_events: []
+  log_events:
+    - name: indices_built
+      pattern: "[after dataloaders are built]"
+      pattern_type: substring
+      match_once: true
+      action: {class_name: CancelAction, reason: "dataset indices built: the prebuild is done"}
+  name: v4a_v_prebuild
+  base_output_dir: ${aux.kv_root}/prebuild_runs_v4a/main
+  est_steps: 1
+  est_step_time_s: 2400
+  start_condition: null
+  metadata:
+    # above every science run; a 1-node build must not lose its node to a 256-node restart
+    pool_priority: 110
+
+slurm:
+  sbatch:
+    time: "02:00:00"

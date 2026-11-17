@@ -1,0 +1,37 @@
+# @package _global_
+# 32-node checkpoint/metadata test derived from kvshare_main_mn5.
+# Purpose: avoid the 16-node OOM while still testing a real 84B sync save and
+# restart. Use the already-built data caches; do not rebuild datasets.
+defaults:
+  - kvshare_main_mn5
+  - _self_
+
+aux:
+  nodes: 32
+  gbs: 1024
+
+job:
+  name: kvshare_meta_${aux.arm}
+  est_steps: 5
+  start_condition: null
+
+backend:
+  megatron:
+    micro_batch_size: 1
+    exit_interval: 35905
+    save_extra_steps: [35905]
+    save_interval: 100
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+    eval_interval: 1000000
+    eval_iters: 0
+    full_validation: false
+    # Memory: the 16-node attempt failed; recompute all layers and MoE layers.
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 92
+    # Megatron rejects moe_layer_recompute together with full granularity.
+    moe_layer_recompute: false
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1

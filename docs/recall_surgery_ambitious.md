@@ -3884,3 +3884,740 @@ Jobs are enqueued in the existing `mn5_pool_p264` (no new Slurm job, no existing
 `kvshare_main_DK1T_1_c8ddca` (80). The p264 pool has many 264-node hosts pending; when one starts, the 1-node
 surgery runs first, then the 1-node head-temperature step, then control and DK1T at 128 nodes each (258 of 264
 nodes; 6 spare). `mn5_exclude_nodes.txt` is absent, so no `--exclude`; the p264 host preflight handles bad nodes.
+
+---
+
+## 21. Jupiter 256-node DK03: setup, failures, and the clean relaunch (2026-11-16)
+
+This section records the actual Jupiter attempt after the small31 choice, including the failures that cost the day.
+It is written so the next person does not repeat them.
+
+### 21.1 What was run
+
+Host: **`host003`**, Slurm job **`2934756`**, 256 nodes, account `e-ext-2025e02-108`, pool
+`/e/scratch/e-ext-2025e02-108/poeppel1/pools/jupiter_pool_amb84_ext`.
+
+Arm: **DK03** = K-style additive kvshare branches at 9/25/41/58/74/90 (reading K/V from 0/17/33/50/66/82),
+`ckda_branch_rest_dropout: 0.3`, gamma starts at 0, complex_kda stays at full weight. 1000 steps = 35900 -> 36900.
+
+| run | id | nodes | outcome |
+|---|---|---:|---|
+| smoke | `.0018` / `amb84_jsc_DK03_7aa80d` | 256 | **PASS** 5 steps, 35900 -> 35905, saved 35905 |
+| full | `.0019` / `amb84_jsc_DK03_full256_97dc17` | 256 | trained to **35999**, then 36000 validation crash |
+| retries | `.0020`-`.0032` | 256 | startup OOM loop; no training, no saves |
+| clean 1 | `.0033` / `amb84_jsc_DK03_clean256_998b1f` | 256 | started, **TCPStore death**, no training |
+| clean 2 | `.0034` / `amb84_jsc_DK03_clean256_cd96d1` | 256 | same TCPStore death, no training |
+
+Smoke throughput was healthy: **23-24 s/step**, **54-56 TFLOP/s/GPU**, 2,745-2,844 tok/s/GPU. The smoke loss went
+1.458 -> 1.425 -> 1.340 -> 1.270 -> 1.299 and grad norm 3.94 -> 2.27 -> 1.19 -> 0.71 -> 0.55. The earlier "4x slow"
+reading was warmup, not a real regression. 1000 steps fit the 12 h wall.
+
+### 21.2 The 36000 validation crash (`.0019`)
+
+`.0019` trained cleanly through **35999** (loss 1.16-1.27, grad norm 0.14-0.18). At the 36000 validation boundary it
+died with:
+
+```
+CUDA error: misaligned address
+ranks 376 / 983 / 981 / 980
+EXPERT_DATA_PARALLEL_GROUP / DATA_PARALLEL_GROUP_WITH_CP
+```
+
+This is **not OOM**. It is the Megatron validation path, not the training step. The run had already done the useful
+work and then lost it because the config saved only at 36400 / 36900 (`save_interval: 200` would next save at 36100).
+
+**Rule from this failure:** for a short DK03 run, save at **35999** before the validation boundary:
+`save_extra_steps: [35999, 36400, 36900]`, and **disable validation** for the short run:
+`full_validation: false`, `eval_interval` beyond 36900 (e.g. `1000000`), `eval_iters: 0`.
+
+### 21.3 Why `.0020`-`.0032` failed: stale GPU processes, not the config
+
+The pool retried the same job after `.0019`. The retries failed at **model build**, in `MoonEPGroupedMLP`, with:
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB.
+GPU 0 has 95.00 GiB total, 9.69 MiB free.
+Process 2919948 has 66.07 GiB in use.
+```
+
+A stale process from an earlier attempt was still holding GPU 0. `pkill -f pretrain_hybrid.py` was not enough: the
+resident PIDs survived on many nodes. The loop kept restarting into the same 66 GB hole.
+
+Cleanup that actually worked:
+
+1. close the pool (stop new retries); cancel the pool run, not the Slurm host;
+2. on **all 256 nodes**, read `nvidia-smi --query-compute-apps=pid`, then `kill -9` each PID;
+3. re-scan; only 0 processes on every node counts.
+
+The first sweep still found **242 nodes x 4 processes**; the per-PID pass brought it to **256/256 nodes at 0**. Do not
+infer cleanliness from one node or from the pool's `pkill`.
+
+### 21.4 The real blocker in the "clean" runs: wrong load path
+
+After the GPU cleanup, `.0033` and `.0034` both started, printed `world_size 1024`, and then the rank-0 TCPStore
+server disappeared after about **8 minutes**. Every other rank logged:
+
+```
+TCPStore.cpp: Connection reset by peer / Broken pipe
+remote=jpbo-002-20...:20089   (`.0033`)
+remote=jpbo-002-24...:20090   (`.0034`)
+```
+
+The pool marked both `rc 0` because the srun step returned 0. **No iteration ran and no checkpoint was written.**
+Moving the rendezvous master from `jpbo-002-20` to `jpbo-002-24` did not help; the node was not the problem.
+
+The blocker is the **load path in the clean config**:
+
+```
+/e/scratch/e-ext-2025e02-108/poeppel1/ambitious_kvshare/surgery/DK1/ckpt
+```
+
+That directory exists but contains **no `latest_checkpointed_iteration.txt`** (it is empty of the tracker). The valid
+surgery is on fscratch:
+
+```
+/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/kvshare_surgery/DK1/ckpt
+/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/kvshare_surgery/DK1/ckpt/latest_checkpointed_iteration.txt  -> 35900
+```
+
+With `exit_on_missing_checkpoint: true`, rank 0 exits when the load checkpoint tracker is missing; the TCPStore server
+dies with it, and all other ranks see connection resets. The same missing tracker is why the original
+`start_condition` never passed. Removing the condition let the run start, but it could not load. This is path-verified,
+not yet run-verified: the next run is the test.
+
+**Fix:** either populate the e-ext surgery path, or override the load explicitly:
+
+```
+aux.load_surgery=/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/kvshare_surgery/DK1/ckpt
+aux.load_surgery_tracker=/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/kvshare_surgery/DK1/ckpt/latest_checkpointed_iteration.txt
+```
+
+### 21.5 Clean relaunch recipe
+
+The exact shape that should be submitted next (new run root, no collision with failed runs):
+
+```bash
+cd /e/project1/e-sta-openeurollm/poeppel1/Projects/oellm-autoexp-hybrid
+E=/e/scratch/e-ext-2025e02-108/poeppel1/pools/jupiter_pool_amb84_ext
+.venv/bin/python scripts/run_autoexp.py --pool $E --submit-and-exit --yes \
+  --config-name experiments/korbi/recall_surgery/kvshare_main_jupiter \
+  slurm.sbatch.account=e-ext-2025e02-108 \
+  aux.only=[DK03] aux.arm=DK03 aux.nodes=256 aux.gbs=1024 \
+  aux.run_root=/e/scratch/e-ext-2025e02-108/poeppel1/ambitious_kvshare/runs_clean \
+  aux.load_surgery=/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/kvshare_surgery/DK1/ckpt \
+  aux.load_surgery_tracker=/e/fscratch/e-sta-openeurollm/poeppel1/ambitious84/kvshare_surgery/DK1/ckpt/latest_checkpointed_iteration.txt \
+  job.name=amb84_jsc_DK03_clean256 job.start_condition=null \
+  backend.megatron.micro_batch_size=1 \
+  backend.megatron.exit_interval=36900 \
+  backend.megatron.save_extra_steps=[35999,36400,36900] \
+  backend.megatron.eval_interval=1000000 \
+  backend.megatron.full_validation=false \
+  backend.megatron.eval_iters=0
+```
+
+Notes:
+
+* The pool must be **open**; `pool_ctl.py $E open` if a previous close is still in effect.
+* `job.start_condition=null` is safe **only** with the correct fscratch load path. With the empty e-ext path it just
+  starts a run that exits after model build.
+* Do not override `MASTER_ADDR` to "fix" TCPStore. The master death is a symptom; moving it only moves the symptom.
+* `exit_interval=36900` keeps the target; `save_extra_steps` includes 35999 so the validation boundary cannot erase
+  the run again.
+* The same batch layout as the main run is preserved: 256 nodes x mbs 1 = 128 nodes x mbs 2, reference-layout sampler.
+* W&B stays offline (`WANDB_MODE=offline`, project `hybrid_main`, entity `openeurollm-project`, group
+  `main_mhc4_jupiter`); do not sync to `flag_hybrid_experimental` until the run has produced a checkpoint.
+
+### 21.6 Monitoring trap
+
+The first clean monitor exited early because it matched the old `.0032 CANCELLED` line, not the new run. A monitor
+must grep the **new job name or new run id only** (`clean256`, `.0033`, `.0034`), not every line containing `host003`.
+
+Also: **`rc 0` is not proof of success here.** For these runs, require an `iteration 35999` / `iteration 36000` line
+and the 35999 save. `TCPStore`, `Connection reset by peer`, or a completed status with no iteration is a failure.
+
+### 21.7 Readout still planned
+
+When a DK03 run survives to 35999 / 36000 / 36400 / 36900, the readout is the existing 30-row recall suite:
+
+```
+config/eval_tasks/ckdab_recall_full.yaml
+CoQA 0-shot, Winogrande 0-shot, SQuAD v2 10-shot, 24 Belebele languages 5-shot,
+SWDE, FDA, squad_completion 0-shot
+```
+
+Planned Jupiter readout: vLLM, TP=4, DP=1, one 4-GPU eval host (the runner caps TP x DP x replicas at the node's 4
+GPUs), checkpoints:
+
+* **35900** baseline: K surgery on fscratch; no copy needed;
+* **36000** early response: three fast rows only (CoQA, Winogrande, SQuAD v2), because the full 30-row suite is ~9-10 h;
+* **36400 / 36900**: full 30 rows.
+
+### 21.8 State at time of writing (2026-11-16 ~14:45)
+
+* `host003` (`2934756`) is **RUNNING** and idle; the pool is **open**.
+* `.0033` and `.0034` are marked **COMPLETED rc 0** but produced **no training**; the last real training was `.0019`
+  through 35999.
+* The e-ext surgery directory is empty; the fscratch surgery tracker is valid at 35900.
+* No new clean run has passed model load yet. The next submission must use the fscratch load path above.
+* MN5 `p264`: surgery / head-temperature / control / DK1T remain PENDING; no 264-node host has started for them.
+* No existing Slurm job was cancelled, requeued, or resized for this work. The pool-level cancellations only stopped
+  pool retries; `host003`'s Slurm allocation was never changed.
+
+---
+
+## 22. v4a: serial inserted shared-KV attention (design, 2026-11-16)
+
+**Decision.** Do not continue the parallel K intervention as the candidate for the next
+architecture. Stop K while it is still setting up and branch the next experiment as **v4a**:
+six *serial* shared-KV attention layers inserted after the six CKDA branch layers, starting
+from the same verified 35900 surgery. v4a is the architecture we would want to carry forward;
+K remains only the parallel-branch probe that established the attention signal.
+
+### 22.1 Current v4 mixer layout
+
+The 92-layer ambitious v4 model has 48 mixer layers:
+
+* **6 attention layers:** 0, 17, 33, 50, 66, 82;
+* **42 CKDA layers**;
+* attention share at mixer level: 6 / 48 = 12.5 % (7:1).
+
+K adds six attention branches at CKDA layers 9, 25, 41, 58, 74, 90, reading K/V from
+0, 17, 33, 50, 66, 82. The branch is parallel to CKDA on the same normalized input:
+
+```
+K:      A0 ... [C9 + Attn_shared(0)] ... A17 ... [C25 + Attn_shared(17)] ... A33 ...
+```
+
+v4a serializes that branch: the attention runs after the CKDA mixer on
+``LayerNorm(ckda(x))``, and its output is added to ``ckda(x)``:
+
+```
+v4a:    A0 ... [C9 -> Attn_shared(0)] ... A17 ... [C25 -> Attn_shared(17)] ... A33 ...
+```
+
+The implemented v4a keeps the same depth (48 mixer blocks): it is a serial branch inside the
+existing CKDA layer, not a new TransformerLayer. The attention sees the CKDA output instead of
+the CKDA input. The branch has the same query/gate/output/q-norm parameters as K; K/V are
+still read from the named source attention layer, with no KV cache of its own. A true
+extra-depth insertion (54 mixer blocks) is a larger surgery and is not what the current
+`ckda_branch_serial` flag implements.
+
+### 22.2 Ratios
+
+| design | mixer blocks | attention computations | CKDA | attention compute share | attention block share | depth |
+|---|---:|---:|---:|---:|---:|---:|
+| current v4 | 48 | 6 | 42 | 12.5 % | 12.5 % | 48 |
+| K parallel | 48 | 12 | 42 | 22.2 % | 12.5 % | 48 |
+| v4a serial branch | 48 | 12 | 42 | 22.2 % | 12.5 % | 48 |
+| v4a true depth insert (not implemented) | 54 | 12 | 42 | 22.2 % | 22.2 % | 54 |
+
+Neither K nor v4a reaches 25 % / 3:1. The earlier `cgqa` arm reached 25 % by *replacing* six
+CKDA layers, which is not what v4a does. Adding six attention computations without removing
+CKDA gives 12 / 54 = 22.2 %, about 3.5:1. A 25 % attention share with all CKDA retained
+would need roughly 13.5 attention computations in 54 mixer positions.
+
+### 22.3 Parameters, compute, speed
+
+* Parameters are the same as K: one attention block per insertion, with no K/V projections
+  because the source layer's K/V are shared. The serial branch uses a parameter-free
+  ``LayerNorm`` on the CKDA output; there are no new checkpoint keys.
+* Attention FLOPs are the same as K's six branches. K can overlap its branch with CKDA on the
+  same input; v4a adds a sequential dependency inside the layer. Speed should be close, with
+  v4a potentially slightly slower.
+* K and v4a are both function-preserving at gamma 0. v4a changes the order, not the depth, so
+  the same checkpoint and strict loader can be used.
+
+### 22.4 Integration
+
+K is the awkward form: it needs the mixed `ckda_kvshare` HF/vLLM block. v4a is closer to a
+standard attention layer with shared K/V, so it is the better production form. The serial
+branch is now integrated in Megatron: `ckda_branch_serial: true` selects it, with no new
+parameters or depth. It still needs shared-KV source plumbing and v4a export support; it is
+not yet a drop-in HF/vLLM block.
+
+### 22.5 What "v4a" means here
+
+**v4a is a post-stitching variant, and it is trainable.** "Post-stitching" names the
+initialization: the six serial shared-KV attention branches are stitched into the existing
+35900 model, then the model can be evaluated zero-shot or continued with the optimizer. It
+does **not** mean inference-only, and it is not a separate pretraining run from scratch.
+
+An earlier version of this section said inference-only. That was wrong: the serial branch has
+its own gamma and receives gradients, so v4a is a normal trainable continuation. The parallel
+K run was also a training probe; the difference is the computation graph (serial after CKDA
+vs parallel beside it), not whether v4a can train.
+
+At zero branch weight v4a is exactly 35900. To measure the inserted attention it is stitched
+with the intended nonzero branch weight (copied source attention, or a trained donor) and
+then trained or evaluated. A short adaptation is just the first part of the same continuation,
+not a separate `v4a-adapt` arm.
+
+### 22.6 Implementation status
+
+* Megatron now supports `ckda_branch_serial: true`: the branch runs after the CKDA mixer on
+  `LayerNorm(ckda(x))`, with the same branch parameters and no new checkpoint keys. The
+  implementation is `megatron/core/ssm/complex_kda.py` / `transformer_config.py`; the
+  `ckda_branch` parallel path is unchanged.
+* This is a serial branch, not a true extra-depth layer. A 54-block depth insertion remains a
+  separate, larger surgery (layer-spec insertion, index shifting, checkpoint surgery).
+* Remaining for a v4a post-stitch:
+  1. stitch the intended nonzero branch weight (copied source attention, or a trained donor);
+  2. export the serial shared-KV block to HF/vLLM;
+  3. identity and active checks at 35900;
+  4. continue training from the stitched checkpoint, with checkpoints and readouts;
+  5. export/parity and the 30-row recall suite.
+* The existing K pool job was cancelled while it was still setting up. No Slurm job was
+  modified.
+
+### 22.7 Planned v4a post-stitch and continuation
+
+From the verified 35900 checkpoint, on the current 128-node MN5 host:
+
+* six serial attention branches after CKDA 9, 25, 41, 58, 74, 90 (same depth);
+* sources 0, 17, 33, 50, 66, 82, same as K;
+* identity check: zero branch weight reproduces 35900 exactly;
+* active check: stitch the intended nonzero branch weight and verify the native and exported
+  models agree;
+* continue training from the stitched checkpoint (this is a normal optimizer run; v4a is
+  trainable), with checkpoints at the planned steps;
+* export/parity plus the 30-row recall suite for the trained checkpoints, compared against
+  35900.
+
+### 22.8 Tests and current host state
+
+Code integrated in Megatron-LM:
+
+* `transformer_config.py`: `ckda_branch_serial` (default false).
+* `ssm/ckda_branch.py`: `branch_input(config, hidden_states, ckda_out)` returns the layer
+  input in parallel mode and `LayerNorm(ckda_out)` in serial mode.
+* `ssm/complex_kda.py`: the branch receives that selected input; serial mode rejects
+  `ckda_branch_crossfade`.
+* `config/backend/megatron/base_defaults.yaml`: the new flag.
+
+Tests added to `submodules/Megatron-LM/tests/unit_tests/ssm/test_ckda_branch.py`:
+
+* `test_branch_input_parallel_vs_serial` — CPU test; **passed** in the MN5 training
+  container on 2026-11-16.
+* `test_serial_branch_uses_normalized_ckda_output_at_2layer_scale` — two-layer GPU test:
+  the branch sees `LayerNorm(ckda(x))`, not the layer input.
+* `test_serial_branch_adds_after_ckda_at_2layer_scale` — two-layer GPU test: the output is
+  `ckda(x) + gamma * m * branch(...)`.
+* `test_serial_branch_exact_start_and_grad_at_2layer_scale` — gamma 0 is exactly the old
+  layer; both branch and gamma receive gradients when active.
+* `test_serial_branch_rejects_crossfade` — the unsupported combination raises.
+
+The GPU tests are the small-scale version: two layers, hidden 128, four heads, the same
+`ComplexKDA` construction as the 84B stack. They require a GPU node; the MN5 login node has
+no GPU and the local Python is 3.11 (the Megatron test package needs 3.12), so they were not
+run from the login shell.
+
+**Small-scale training passed on MN5 (2026-11-16).** The one-node config
+`config/experiments/tests/v4a_serial_smoke_mn5.yaml` builds a 2-layer hybrid:
+
+* layer 0 attention, layer 1 CKDA with a serial shared-KV branch reading layer 0;
+* hidden 128, four heads, two KV groups, mock data, tokenizer local to MN5;
+* 10 iterations, GBS 8, MBS 1, checkpoint at 10.
+
+Result: `lm loss` 10.85065 -> 10.48518 over 10 steps; `grad norm` 0.53 -> 0.47; saved
+`iter_0000010` with `.metadata` and tracker 10.
+
+The resume config `config/experiments/tests/v4a_serial_resume_mn5.yaml` then loaded iteration
+10, trained 11-15, and saved `iter_0000015` with tracker 15. So v4a is trainable and
+resumable; no inference-only restriction applies.
+
+The current MN5 `host006` allocation is **held** (`pool_ctl hold host006`); it is not
+released. The parallel K job is cancelled; the small v4a training test is the only v4a run
+launched so far.
+
+### 22.9 HF and vLLM support for v4a
+
+Enabled alongside the Megatron flag:
+
+* HF `OellmAmbitiousConfig.ckda_branch_serial` (default false).
+* HF `OellmCkdaKVShare` / `OellmCkdaAttn`: serial mode runs
+  `LayerNorm(ckda(x))` into the branch and returns `ckda(x) + branch(...)`.
+* vLLM `OellmCkdaKVShare` / `OellmCkdaAttn`: the same serial forward.
+* `export_ambitious.py` writes `ckda_branch_serial` into the exported config.
+* The existing branch-weight folding is unchanged; serial v4a uses the same
+  `ckda_kvshare` block type with the new config bit.
+
+This is the code path for later exports and evaluations. It is not yet parity-tested
+end-to-end; the small MN5 training test validates the Megatron side, and the next
+export should run the native-vs-HF/vLLM parity check with `ckda_branch_serial: true`.
+
+### 22.10 Implemented V layer surgery and v4a-main
+
+The final v4a architecture is the **first-class V hybrid layer**, not the serial
+`ckda_branch_serial` probe.
+
+Source layout:
+
+- original 98-layer pattern from the 35900 checkpoint;
+- insert V after the old CKDA layers 9, 25, 41, 58, 74, 90;
+- result: 104 layers, V at 10 / 27 / 44 / 62 / 79 / 96;
+- sources: new attention indices 0 / 18 / 35 / 53 / 70 / 87.
+
+New `V` layers start function-preserving:
+
+* `linear_proj` (output projection) = **zero**;
+* q / gate = random at 0.02;
+* q-norm and input norm = ones;
+* optimizer moments for the new tensors = zero;
+* K/V are borrowed from the source attention layer; the V layer has no k/v
+  projections or KV cache.
+
+The step-0 model therefore computes exactly the 35900 model. This is the
+numerical identity check for the inserted layers.
+
+Checkpoint construction:
+
+```
+scripts/korbi/production/insert_v_layers.py
+  --src .../ambitious_e360_eng80_v4_2ph_hd256/ckpt_rolling/iter_0035900
+  --dst .../kvshare_k_fresh35900_20261116/runs/v4a_v/ckpt/iter_0035900
+```
+
+It shifts 291,312 existing model/optimizer FQNs with the new
+`dcp_surgery.write_surgery(..., rename=...)` metadata-only path, hard-links the
+1.1 TB of existing chunks, and writes 108 new V tensors. The new tracker is
+35900. The V checkpoint is:
+
+```
+/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v/ckpt
+```
+
+`dcp_surgery` now allows a rename source to also be a `replace` key: a new V
+layer can occupy the old layer's index while the old layer moves to its shifted
+index. The rename+replace+append selftest passes.
+
+v4a-main config:
+
+```
+config/experiments/korbi/recall_surgery/v4a_v_main_mn5.yaml
+```
+
+- 256 nodes / 1024 GPUs on the new 264-node host;
+- same data order as v4: MBS 1, GBS 1024, sequence 65536, sampler reference
+  512 / 1, existing `runs/data_cache_shared`;
+- saves at **35905** (early save/identity check), 35999, 36400, 36900;
+- no in-training validation; eval from checkpoints later;
+- V layers in `hybrid_layer_pattern`, `kv_share_layers`, and
+  `kv_share_source_layers`; no `ckda_branch`.
+
+The 2-layer `*V` smoke and the V 35900 surgery are the two preceding gates.
+The 256-node V run is the real v4a-main continuation, not a test-only arm.
+
+### 22.11 V checkpoint fix: the mHC attention mixer
+
+The first V checkpoint was **not loadable**.  DCP strict load stopped in layer 10
+with:
+
+```
+RuntimeError: Missing key in checkpoint state_dict:
+  model.module.decoder.layers.10.mhc_attn_mixer.phi...
+CheckpointException: ranks: dict_keys([0])
+```
+
+`insert_v_layers.py` wrote the new V attention tensors (`linear_qkv`,
+`linear_proj`, `q_layernorm`, `input_layernorm`) but missed the per-sublayer mHC
+attention mixer.  Under `mhc: true` every attention `TransformerLayer` owns
+`mhc_attn_mixer`; a V layer has no MLP mixer.  The missing tensors are:
+
+Model, per V layer:
+
+* `mhc_attn_mixer.phi` `[8192, 24]`
+* `mhc_attn_mixer.b_pre`, `b_post` `[4]`
+* `mhc_attn_mixer.b_res` `[4, 4]`
+* `mhc_attn_mixer.alpha_pre`, `alpha_post`, `alpha_res` `[1]`
+
+Optimizer, per V layer: Adam for `phi`, `b_pre`, `b_post` and the three alpha
+scalars; MuOwn for `b_res` (`g`, `m_g`, `v_g`, `v_norm`, `m_u`).
+
+`scripts/korbi/production/add_v_mhc.py` appends these 144 keys.  It initializes
+the mixer exactly as `MHCMixer.reset_parameters`:
+
+* `phi = 0`
+* `b_pre = logit(1/4) = -1.0986` (uniform read)
+* `b_post = 0` (write-back factor 1)
+* `b_res = 5 I` (identity stream mixer)
+* `alpha_* = 0.01`
+
+The new mixer plus the V layer's zero output projection is still an exact no-op
+at step 0.  The script reads the existing V checkpoint, hard-links all 1,040
+source chunks, rewrites 144 keys, and writes a new `.metadata` (230.9 MB):
+
+```
+.../kvshare_k_fresh35900_20261116/runs/v4a_v/ckpt/iter_0035900   # V1, incomplete
+.../kvshare_k_fresh35900_20261116/runs/v4a_v2/ckpt/iter_0035900  # V2, loadable
+```
+
+V2 metadata: 199,467 keys; all 144 expected mHC keys present; tracker 35900.
+The v4a-main config now loads `runs/v4a_v2/ckpt` and writes to
+`runs/v4a_v2/main`.  The new pool job is `ambitious_v4a_v_main_256_7499d7`.
+
+The earlier `.1262` job used the incomplete V1 and was cancelled before it could
+consume the allocation; `.1254/.1255` were the earlier node-health failures.
+
+### 22.12 The rename-chain metadata bug and the corrected V4 checkpoint
+
+The V1/V2 checkpoints were not only missing the mHC mixer; their metadata had lost
+source keys.  `write_surgery` applied renames in a loop:
+
+```python
+for old, new in rename.items():
+    out.state_dict_metadata[new] = out.state_dict_metadata.pop(old)
+```
+
+For a layer insertion this is a chain: source 26 must move to 28 while source 28
+moves to 30.  Processing 26 first overwrites the not-yet-moved source-28 entry;
+the next step moves that wrong entry, and so on.  V1/V2 had 199,323 keys instead
+of the source's 317,973.  The first strict-load error was layer-28
+`pre_mlp_layernorm.weight`; the V-layer mHC error was only the first visible one.
+
+The fix builds the renamed metadata simultaneously:
+
+```python
+renamed = {}
+for old, info in smd.items():
+    new = rename.get(old, old)
+    if new in renamed:
+        raise ValueError(f"rename collision: {old!r} ... {new!r}")
+    renamed[new] = info
+out.state_dict_metadata = renamed
+```
+
+`tests/unit/test_v_surgery.py::test_rename_chain_preserves_every_key_and_value`
+is the regression test for this bug.
+
+Corrected checkpoint chain:
+
+```
+runs/v4a_v3/ckpt/iter_0035900   98 -> 104 layers, new V attention, fixed rename
+runs/v4a_v4/ckpt/iter_0035900   V3 + 144 mHC model/optimizer tensors
+```
+
+V4 metadata: 248,155,116 bytes, **318,225 keys**, tracker 35900.
+
+#### Conversion verification
+
+`scripts/korbi/production/verify_v_surgery.py` checks the real checkpoint:
+
+```
+PASS metadata: 317973 source keys -> all present after renumbering
+PASS chunks: 1143207 source chunks are 1:1 in file/offset/size
+PASS V keys: 252 model/optimizer tensors for layers [10, 27, 44, 62, 79, 96]
+PASS parameters: 163612050550 -> 163764239128 (+152188578, exactly the six V layers)
+PASS identity: zero output projection, unit norms, zero phi, b_res = 5I
+PASS value: layers.0 self_attention linear_proj source == destination
+ALL CHECKS PASSED
+```
+
+The source total includes both phases in this checkpoint, so the absolute count is
+163.6 B; the meaningful check is the exact V-layer delta of **152,188,578**
+parameters:
+
+* attention qkv / projection / norms: `6 * 25,168,128 = 151,008,768`
+* six mHC mixers: `6 * 196,635 = 1,179,810`
+* total new parameters: `152,188,578`
+
+Unit tests:
+
+```
+python -m pytest -q tests/unit/test_v_surgery.py --no-cov
+```
+
+The real-checkpoint verifier is run with the container:
+
+```
+singularity exec ... python scripts/korbi/production/verify_v_surgery.py \
+  --src .../main_mhc4/.../iter_0035900 \
+  --dst .../runs/v4a_v4/ckpt/iter_0035900 --sample-values
+```
+
+The v4a-main config now loads `runs/v4a_v4/ckpt` and writes
+`runs/v4a_v4/main`; pool job `ambitious_v4a_v_main_256_dbd033` is queued
+(`.1269`).  It is waiting behind the current host007 `v4_cont_prebuild` run; no
+training job is being cancelled.
+
+### 22.13 V5 final checkpoint and standard v4 continuation
+
+The V4 checkpoint exposed one more surgery bug: the V optimizer FQNs had a doubled
+submodule path:
+
+```
+optimizer.0.state.module.module.module.decoder.layers.10.
+  self_attention.self_attention.linear_proj.weight.g
+```
+
+The model key was correct, so the first V4 load failed on the optimizer state, after the
+model keys had passed.  `insert_v_layers.v_tensors` now derives the optimizer prefix at
+the layer level:
+
+```
+optimizer.0.state.module.module.module.decoder.layers.10.self_attention.linear_proj.weight.g
+```
+
+The regression tests assert both the correct key and the absence of
+`self_attention.self_attention`.
+
+Final checkpoint:
+
+```
+.../kvshare_k_fresh35900_20261116/runs/v4a_v5/ckpt/iter_0035900
+```
+
+- 318,225 metadata keys
+- `.metadata` 248,153,112 bytes
+- tracker 35900
+
+Real verification (`verify_v_surgery.py --sample-values`):
+
+```
+PASS metadata: 317973 source keys -> all present after renumbering
+PASS chunks: 1143207 source chunks are 1:1 in file/offset/size
+PASS V keys: 252 model/optimizer tensors for layers [10, 27, 44, 62, 79, 96]
+PASS parameters: 163612050550 -> 163764239128 (+152188578, exactly the six V layers)
+PASS identity: zero output projection, unit norms, zero phi, b_res = 5I
+PASS value: layers.0 q_layernorm source == destination
+ALL CHECKS PASSED
+```
+
+Unit tests: `4 passed, 1 skipped` (the skip is the env-gated real-checkpoint test).
+
+#### Standard continuation, not a 36900 test
+
+The v4a-main config now follows the normal v4 continuation rather than the short test:
+
+- `exit_interval: 236733` (parent train_iters; **no 36900 stop**)
+- validation restored: `eval_interval: 1000`, `eval_iters: 10`,
+  `eval_global_batch_size: 1024`, `full_validation: true`
+- main-run data cache:
+  `/gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared`
+- MBS 1, GBS 1024, seq 65536, sampler reference 512/1
+- saves at **35905** and **35999**, plus 36400 / 36900
+- rolling saves every 100; persistent saves only on the explicit steps
+- `est_steps: 200833`; 24 h segments, resubmitted by the pool until 236733
+
+The new standard job is `ambitious_v4a_v_main_256_888f87`.  The earlier `.1269`
+failed because it loaded the invalid V4 optimizer keys; it was cancelled and replaced.
+Watch `bb6df0277` reports the V5 load or the 35905 save.
+
+### 22.14 Checkpoint args: the 98 -> 104 num_layers mismatch
+
+After all tensors and optimizer states loaded, Megatron still stopped in
+`check_checkpoint_args`:
+
+```
+AssertionError: num_layers value from checkpoint (98) is not equal to the input
+argument value (104).
+```
+
+The DCP metadata has a pickled `args` object in addition to the tensors.  The tensor
+surgery had preserved the source `args`, including `num_layers = 98`, so the live
+104-layer configuration was rejected before the first forward pass.
+
+`scripts/korbi/production/fix_v_args.py` loads that object, sets:
+
+- `num_layers = 104`
+- `hybrid_layer_pattern = <the V pattern>`
+- `kv_share_layers = [10, 27, 44, 62, 79, 96]`
+- `kv_share_source_layers = [0, 18, 35, 53, 70, 87]`
+- `ckda_branch = None`, `ckda_branch_serial = False`, `attention_head_temperature = False`
+
+It replaces only `args`; all tensor chunks are hard-linked.  The final checkpoint is:
+
+```
+.../runs/v4a_v6/ckpt/iter_0035900
+```
+
+The real verifier now also checks `args.num_layers == 104` and prints the V pattern.
+The standard-continuation config loads V6 and writes under `runs/v4a_v6/main`.
+
+### 22.15 V6 is the loadable standard-continuation checkpoint
+
+The V5 tensor/optimizer checkpoint was correct but still failed `check_checkpoint_args`:
+the pickled `args` object had `num_layers = 98`.  `fix_v_args.py` replaces only that
+object, producing:
+
+```
+.../runs/v4a_v6/ckpt/iter_0035900
+```
+
+V6 metadata and verification:
+
+- 318,225 metadata keys
+- `.metadata` 150,471,383 bytes
+- tracker 35900
+- `args.num_layers = 104`
+- `args.hybrid_layer_pattern` = the V pattern
+- all 317,973 source metadata keys preserved
+- 1,143,207 source tensor chunks 1:1 by file/offset/size (the intentionally replaced
+  `args` object is excluded)
+- 252 V-layer model/optimizer keys
+- parameter delta exactly `+152,188,578`
+- identity values and sampled source value pass
+
+The standard-continuation pool job is `ambitious_v4a_v_main_256_457a58`, configured
+with `exit_interval: 236733`, normal validation, the main v4 data cache, and saves at
+35905 / 35999 / 36400 / 36900.  Watch `b4e7ee26d` reports its load and first save.
+
+### 22.16 Engram hash seeds, the vLLM PR #2 merge, and the 35900 v4a eval (2026-11-17)
+
+**The V insertion renumbered the second Engram layer, and that was not function-preserving.**
+The 104-layer pattern puts the Engram layers at indices 2 and 52 (the base 98-layer pattern
+had them at 2 and 49). `HybridStack` numbers its layers `i + 1`, so the second Engram layer
+moved from `layer_number` 50 to 53. With `engram_hash_per_layer: true` (the v4 and v4a
+runs), `engram_hash_multipliers` seeds the n-gram hash multipliers from `layer_number`, so
+the shifted layer hashed different n-grams: the stitched model was **not** an exact copy of
+its 35900 parent, although the parameter and key checks of §22.12 / §22.13 all passed (they
+never ran a forward pass).
+
+Fix, in Megatron and in the export:
+
+* `megatron/core/ssm/engram.py`: `engram_hash_layer_number(config, layer_number)` subtracts
+  the V layers (`kv_share_layers`) below the layer. The hash multipliers (main, sign and
+  aux) use that number; the output scale and the metrics keep the layer's own position.
+* `oellm_autoexp/hf_export/export_ambitious.py`: `engram_hash_layer_number(m, index)` applies
+  the same rule, so `config.json`'s `engram_hash_multipliers` / `engram_sign_multipliers`
+  are those of the pre-insertion layer.
+* Tests: `tests/unit_tests/ssm/test_engram.py::test_v_insertions_keep_the_engram_hash_seeds`
+  and `tests/unit/test_hf_export_engram_seeds.py`.
+
+The rule is automatic: V layers are insertions and never renumber the Engram seeds, so no
+new config flag is needed. The first Engram layer (index 2) is unaffected.
+
+**The running v4a continuation was started before the fix**, on `autoexp_k_fresh35900_20261116`
+(pool job `ambitious_v4a_v_main_256_457a58`, run `mn5-pool-p264.1277`, V6 checkpoint). Its
+Engram layer at index 52 trains with the shifted seeds (`layer_number` 53), so its trained
+checkpoints differ from the base by that one layer's n-gram mapping as well as by the six V
+layers. The 35900 export/eval below is pinned and is an exact copy of the parent; a trained
+checkpoint must be exported with the same code it trained under. If the arm is to be clean
+against the v4 control, restart it from 35900 with the pin (a pool decision, not taken here).
+
+**vLLM integration.** `submodules/vllm` now carries, on a local `oellm/main` branch:
+
+* `f3f54bd3f0` — the serial branch for `ckda_kvshare` / `ckda_attn` (`ckda_branch_serial`:
+  the branch sees `LayerNorm(ckda(x))`), the v4a probe;
+* `ba2a7f365d` — a merge of OpenEuroLLM/vllm#2 (`394bf64d`, maxidl/oellm-serving-throughput):
+  host-sync-free CKDA / KronLSTM prefill, `OELLM_CKDA_SPLIT`, `_mhc_write4`,
+  `OELLM_ENGRAM_HASH_PREFILL`, `_mhc_read` warps, and the tuned `E=90,N=768` H100 fused-MoE
+  config. Measured on one MN5 node (DP4 + EP4): ~8,950 gen tok/s vs ~2,600 on `oellm/main`.
+
+The merge is local; nothing is pushed yet.
+
+**Eval side (`oellm-eval` + `scripts/evals`).** The fast layout is now the PR #2 layout:
+`tp 1 x dp 4`, expert parallel, 2048 sequences and 3072 batched tokens per node, 0.88
+utilization, and the PR #2 model-code switches as spec defaults (`OELLM_CKDA_SPLIT=1`,
+`OELLM_MHC_WRITE4=1`, `OELLM_MHC_READ_WARPS=2`, `OELLM_ENGRAM_HASH_PREFILL=1`,
+`OELLM_DECODE_KERNELS_OFF=mhc_split,mhc_coeffs`, `VLLM_MAX_STOP_STRINGS=64`). The
+response-cache identity in `oellm/runner/lm_eval_queue.py` records all of them plus the
+tuned MoE config, and `setup_vllm_uv.sh` hashes that config into the runtime id.
+
+**The 35900 v4a eval.** `config/evals/v4a_v_35900_recall_mn5.yaml` exports
+`runs/v4a_v6/ckpt/iter_0035900` (the surgery checkpoint; the config comes from
+`runs/v4a_v6/main/`, `export_run.sh` takes it as an optional fourth argument) and runs the
+30-row recall suite (CoQA, Winogrande, SQuAD v2 10-shot, SWDE / FDA / squad_completion and 24
+Belebele) as four 1-node pool sessions plus the 1-node export, on the p264 pool that holds
+the 256-node training host. At 35900 the six V layers have a zero output projection, so the
+numbers are the 35900 baseline in the v4a stack, not a readout of trained V layers; those
+start at the 35905 save.

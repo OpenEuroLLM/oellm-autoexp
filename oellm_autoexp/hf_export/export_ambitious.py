@@ -32,7 +32,8 @@ _KINDS = {"*": "attention", "L": "ckda", "E": "moe", "N": "engram", "K": "kronls
           "-": "mlp",  # -: a dense SwiGLU MLP (the small-scale testbeds, docs/recall_surgery_ambitious.md §14)
           "S": "kvshare",  # S: a ckda_branch kvshare attention (an earlier attention layer's keys / values)
           "A": "ckda_attn",  # A: an additive ckda_branch layer (CKDA + a parallel attention branch)
-          "Q": "ckda_kvshare"}  # Q: an additive kvshare ckda_branch layer (CKDA + a kvshare attention branch)
+          "Q": "ckda_kvshare",  # Q: an additive kvshare ckda_branch layer (CKDA + a kvshare attention branch)
+          "V": "kvshare"}  # V: a first-class shared-KV attention layer
 _MHC = ("phi", "b_pre", "b_post", "b_res", "alpha_pre", "alpha_post", "alpha_res")
 
 # megatron/core/ssm/engram.py
@@ -75,6 +76,14 @@ def engram_hash_multipliers(m: dict, layer_number: int, seed: int = _HASH_SEED) 
 def engram_sign_multipliers(m: dict, layer_number: int) -> list[list[int]]:
     """Megatron ``engram_hash_multipliers(config, layer_number, seed=_SIGN_HASH_SEED)``."""
     return engram_hash_multipliers(m, layer_number, seed=_SIGN_HASH_SEED)
+
+
+def engram_hash_layer_number(m: dict, index: int) -> int:
+    """Megatron ``engram_hash_layer_number``: V layers are insertions and do not renumber the
+    Engram hash seeds. ``index`` is the 0-based decoder index; the result is the 0-based
+    position whose seeds the layer uses (docs/recall_surgery_ambitious.md §22)."""
+    inserted = {int(i) for i in (m.get("kv_share_layers") or [])}
+    return index - sum(1 for i in inserted if i < index)
 
 
 def engram_sign_table_np(m: dict) -> np.ndarray:
@@ -229,7 +238,10 @@ def hf_config(m: dict, vocab: int) -> dict:
     if any(syms[i] != "L" for i in added):
         raise ValueError(f"additive ckda_branch layers {sorted(added)} must be complex_kda (L) layers")
     syms = [("Q" if m.get("ckda_branch") == "kvshare" else "A") if i in added else c for i, c in enumerate(syms)]
-    kv_sources = {}
+    kv_sources = {
+        str(int(l)): int(src)
+        for l, src in zip(m.get("kv_share_layers") or [], m.get("kv_share_source_layers") or [])
+    }
     if (folded or added) and m.get("ckda_branch") == "kvshare":
         # per kvshare layer, the attention layer whose keys / values it reads (ckda_branch_kv_source_layers)
         layers, sources = list(m["ckda_branch_layers"]), list(m["ckda_branch_kv_source_layers"])
@@ -263,6 +275,8 @@ def hf_config(m: dict, vocab: int) -> dict:
     heads = m["num_attention_heads"]
     types = [_KINDS[c] for c in syms]
     engram_layers = [i for i, t in enumerate(types) if t == "engram"]
+    # the seeds stay those of the layer's pre-insertion position (V layers do not count)
+    engram_seed_numbers = {i: engram_hash_layer_number(m, i) + 1 for i in engram_layers}
     sign = bool(engram_layers and m.get("engram_sign_hash"))
     return {
         "architectures": ["OellmAmbitiousForCausalLM"],
@@ -295,6 +309,7 @@ def hf_config(m: dict, vocab: int) -> dict:
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
         "kv_share_sources": kv_sources,
+        "ckda_branch_serial": bool(m.get("ckda_branch_serial", False)),
         "fla_layer": _fla_layer_spec(m),
         "fla_layer_kronlstm": _kronlstm_layer_spec(m) if "kronlstm" in types else None,
         "num_experts": m["num_experts"] if has_moe else 0,
@@ -316,13 +331,13 @@ def hf_config(m: dict, vocab: int) -> dict:
         "engram_conv_kernel_size": int(m.get("engram_conv_kernel_size", 4)),
         "engram_table_sizes": engram_table_sizes(m) if engram_layers else None,
         # HybridModel layer_number = pattern index + 1
-        "engram_hash_multipliers": {str(i): engram_hash_multipliers(m, i + 1) for i in engram_layers},
+        "engram_hash_multipliers": {str(i): engram_hash_multipliers(m, engram_seed_numbers[i]) for i in engram_layers},
         "engram_token_map": bool(m.get("engram_token_map")),
         "engram_gate_signed_sqrt": bool(m.get("engram_gate_signed_sqrt")),
         "engram_conv_prenorm": bool(m.get("engram_conv_prenorm")),
         "engram_sign_hash": sign,
         "engram_sign_table_size": int(m.get("engram_sign_table_size", 8192)),
-        "engram_sign_multipliers": {str(i): engram_sign_multipliers(m, i + 1) for i in engram_layers} if sign else {},
+        "engram_sign_multipliers": {str(i): engram_sign_multipliers(m, engram_seed_numbers[i]) for i in engram_layers} if sign else {},
         "embedding_multiplier": float(m.get("embedding_multiplier") or 1.0),
         "embedding_norm": bool(m.get("embedding_norm")),
         "tie_word_embeddings": not m.get("untie_embeddings_and_output_weights", False),
@@ -489,6 +504,15 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
             weight *= float(g("self_attention.branch_mix.calib").float().reshape(-1)[0])
         add(hp + "mixer.attn.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.attn.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
+    elif kind == "kvshare" and i not in folded:
+        # a first-class V hybrid layer: q / gate / o / q norm of its own on the layer's normalized input;
+        # the source attention layer's keys / values are wired by cfg["kv_share_sources"].
+        q, z = _split_kvshare(g("self_attention.linear_qkv.weight"), cfg)
+        add(hp + "mixer.q_proj.weight", q.to(cast))
+        add(hp + "mixer.gate_proj.weight", z.to(cast))
+        add(hp + "mixer.o_proj.weight", g("self_attention.linear_proj.weight").to(cast))
+        add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
+        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
     elif kind == "kvshare" and i in folded:
         # a ckda_branch kvshare attention past its hand-over: q / gate / o / q norm of its own, the keys / values
         # of the source attention layer at run time (cfg kv_share_sources); the branch's output weight folded into
