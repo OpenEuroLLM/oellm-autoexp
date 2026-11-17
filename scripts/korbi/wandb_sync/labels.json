@@ -524,5 +524,16 @@
    "recall_surgery"
   ],
   "notes": "V layers re-inserted from 35900 as copies of their source attention (q/gate/o/q-norm), with two learnable gates g_v (attention write) and rho (h_res mixing), both 0 at insertion -> bit-exact parent at 35900. Gates move ~lr/step: ~0.42 at 36400, ~0.85 at 36900, so the first fair readout is 36900+. Docs: docs/v4b_plan.md \u00a79."
+ },
+ "ambitious_v4c_ramp_256": {
+  "name": "v4c copy-init + 100-step ramp",
+  "tags": [
+   "v4c",
+   "V_layers",
+   "copy_init",
+   "schedule_ramp",
+   "recall_surgery"
+  ],
+  "notes": "V layers copied from their source attention (v4c_src surgery) and brought in by a 100-step schedule ramp: bit-exact parent at 35900, full branch weight from 36000, gradient proportional to r from step 1. Never export inside [35900, 36000). Docs: docs/v4c_plan.md."
  }
 }
