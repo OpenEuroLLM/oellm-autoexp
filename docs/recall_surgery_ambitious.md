@@ -4888,12 +4888,19 @@ Consequences:
 - A clean v4a arm needs another restart from 35900 with the fixed spec.
 - The 35900 readout stands: every V layer's `o_proj` is exactly zero there, so the missing
   norm cannot change the numbers, and the V6 checkpoint (which has the norm key) exports with
-  `kv_share_input_norm: true` as before.
+  `kv_share_input_norm: true` as before. The pair still differs by 0.1-1.1 pp -- from the
+  inserted layers' mHC residual rewrite above, not from the norm and not from rounding.
 
-Parity note from the 35900 pair: v4 (`66.0` CoQA F1, `29.02` SQuAD v2 F1, `85.10` Belebele)
-and v4a (`64.9`, `28.62`, `84.98`) agree only to ~0.1-1.1 pp, not bit-exactly. The V layers'
-mHC read / write is an exact identity in real arithmetic but rounds in bf16, and six layers of
-that rounding shift the scores slightly. Any future identity check must allow that tolerance.
+Parity note from the 35900 pair: v4 (`66.08` CoQA F1, `29.02` SQuAD v2 F1, `85.10` Belebele)
+and v4a (`64.94`, `28.62`, `84.98`) differ by 0.1-1.1 pp. That is **not** bf16 noise, and an
+inserted layer is **not** a no-op even with `o_proj = 0`: the layer's mHC write replaces the
+residual streams by `h_res . streams + h_post (x) out`, so with `out = 0` the layer still applies
+`h_res` to the streams. Measured from the exported tensors: the inserted layers' init is
+`h_res = 0.9802 I + 0.0066 (1 - I)` and `h_post = 1.0` exactly, i.e. a 2.3% relative rewrite of
+the four residual streams per inserted layer, six times. (Every trained layer stays near the
+same shape -- parent layer 10 has `0.9806` on the diagonal with asymmetric leakage up to
+`0.065` -- so this is the architecture's standard near-identity residual mixing, not a surgery
+artifact.) The mixer's zero output contributes nothing; the residual path is what changes.
 
 **The restart with the fixed spec is coherent.** The V6 surgery checkpoint already carries the
 six `input_layernorm.weight` tensors and their optimizer state (`exp_avg`, `exp_avg_sq`), which
