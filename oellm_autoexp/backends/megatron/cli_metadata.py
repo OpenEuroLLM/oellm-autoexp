@@ -8946,6 +8946,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "v_block_gate_ramp": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Ramp length in iterations of the residual-level gate on every inserted V layer: streams + r(t) * (write - streams), r = clamp((t - v_block_gate_start_iteration) / ramp, 0, 1). 0 (default) gates nothing.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "v_block_gate_start_iteration": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Iteration v_block_gate_ramp counts from: the step the V layers were inserted at.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "v_head_dim": MegatronArgMetadata(
         arg_type=int,
         default=128,
@@ -16734,6 +16750,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "v_block_gate_ramp": MegatronActionSpec(
+        option_strings=("--v-block-gate-ramp",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
+    "v_block_gate_start_iteration": MegatronActionSpec(
+        option_strings=("--v-block-gate-start-iteration",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "v_head_dim": MegatronActionSpec(
         option_strings=("--v-head-dim",), action_type="store", nargs=None, const=None, default=128

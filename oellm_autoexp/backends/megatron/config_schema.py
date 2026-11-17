@@ -1025,6 +1025,14 @@ class MegatronConfig(ConfigInterface):
     kv_share_source_layers: list[int] | None = None
     # Per V layer, the 0-based earlier attention layer whose keys / values it reads.
 
+    v_block_gate_ramp: int = 0
+    # Ramp length in iterations of the residual-level gate on every inserted V layer; 0 (default)
+    # gates nothing, so a config without it behaves exactly as before (v4a). A positive value
+    # writes streams + r(t) * (write - streams), so at r = 0 the layer is an exact identity: no
+    # attention write and no h_res stream mixing. A schedule, not a parameter: no checkpoint key.
+    v_block_gate_start_iteration: int = 0
+    # Iteration the v_block_gate_ramp counts from: the step the V layers were inserted at.
+
     ckda_branch_serial: bool = False
 
     # 0-based indices (in the decoder's layer list, as the checkpoint keys
