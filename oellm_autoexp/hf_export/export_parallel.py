@@ -38,7 +38,13 @@ from pathlib import Path
 
 import torch
 
-from .export_ambitious import convert_layer, convert_nonlayer, export_hf_config, finish_export
+from .export_ambitious import (
+    convert_layer,
+    convert_nonlayer,
+    export_hf_config,
+    finish_export,
+    kv_share_input_norm,
+)
 from .export_q35 import megatron_args
 from .fsdp_dtensor import PREFIX
 
@@ -127,6 +133,9 @@ def plan(ckpt_dir: Path, cfg_fn, table_unit_bytes: int) -> tuple[dict, list[Unit
     if not keys:
         raise ValueError(f"{ckpt_dir}: no '{PREFIX}' model tensors (not an fsdp_dtensor checkpoint?)")
     cfg = cfg_fn(keys["embedding.word_embeddings.weight"].size[0])
+    # the kvshare layers' input norm is a property of the spec the run was built with, so read it
+    # from the checkpoint's own keys (docs/recall_surgery_ambitious.md §22.18)
+    cfg["kv_share_input_norm"] = kv_share_input_norm(keys, cfg)
 
     def reads(name: str, row0: int = 0, chunks=None) -> list[Read]:
         entry, out = keys[name], []

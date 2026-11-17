@@ -839,6 +839,7 @@ class OellmAmbitiousLayer(nn.Module):
         else:
             self.mhc = OellmMHC(config)
         zcg = config.layernorm_zero_centered_gamma
+        self.input_layernorm = None  # Engram normalises internally; a pre-§22.18 V layer has none either
         if self.kind == "attention":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmXSAAttention(config)
@@ -846,7 +847,8 @@ class OellmAmbitiousLayer(nn.Module):
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer)
         elif self.kind == "kvshare":  # a ckda_branch kvshare attention (an earlier attention layer's keys / values)
-            self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
+            if config.kv_share_input_norm:
+                self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmKVShareAttention(config)
         elif self.kind == "kronlstm":  # a ckda_branch KronLSTM (the FLA layer, as Megatron built it)
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
@@ -884,7 +886,7 @@ class OellmAmbitiousLayer(nn.Module):
         return out, new_state
 
     def _norm(self, x):
-        return x if self.kind == "engram" else self.input_layernorm(x)
+        return x if self.input_layernorm is None else self.input_layernorm(x)
 
     def forward(self, streams, state=None, input_ids=None, token_mask=None, attention_mask=None, keep_state=True):
         if self.ldm:  # streams = (x, r, memory, covariance)
@@ -895,7 +897,7 @@ class OellmAmbitiousLayer(nn.Module):
                 self.ldm_mixer.write_site, self.ldm_mixer.next_query, x, out, memory, covariance
             )
             return (x, r, memory, covariance), new_state
-        norm = None if self.kind == "engram" else self.input_layernorm
+        norm = self.input_layernorm
         if _fast(streams) and streams.shape[-2] == 4:
             xin, pending = self.mhc.read(streams, norm)  # the input norm fused into the read
         else:

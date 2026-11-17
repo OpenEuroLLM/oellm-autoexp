@@ -309,6 +309,9 @@ def hf_config(m: dict, vocab: int) -> dict:
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
         "kv_share_sources": kv_sources,
+        # the kvshare layers' input norm (plan() reads it from the checkpoint: the V layer spec before
+        # 2026-11-17 built none, docs/recall_surgery_ambitious.md §22.18)
+        "kv_share_input_norm": True,
         "ckda_branch_serial": bool(m.get("ckda_branch_serial", False)),
         "fla_layer": _fla_layer_spec(m),
         "fla_layer_kronlstm": _kronlstm_layer_spec(m) if "kronlstm" in types else None,
@@ -420,6 +423,18 @@ def routed_experts(t: dict, p: str, cast: torch.dtype, expert_dtype: str) -> dic
     return out
 
 
+def kv_share_input_norm(keys, cfg) -> bool:
+    """Do the kvshare layers have their input norm? Every one of them, or (the V layer spec before
+    2026-11-17) none: ``TransformerLayerSubmodules`` defaults ``input_layernorm`` to ``IdentityOp``
+    and the V layer spec only set it on 2026-11-17 (docs/recall_surgery_ambitious.md §22.18). A
+    checkpoint where only some kvshare layers have one comes from no spec: fail loudly."""
+    v = [i for i, c in enumerate(cfg["block_types"]) if c == "kvshare"]
+    have = [i for i in v if f"decoder.layers.{i}.input_layernorm.weight" in keys]
+    if have and len(have) != len(v):
+        raise ValueError(f"kvshare layers {v}: input norm on {have} only (a mixed checkpoint)")
+    return bool(have) or not v
+
+
 def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, tcast: torch.dtype,
                   expert_dtype: str, table: bool = True) -> None:
     """Decoder layer ``i``'s tensors (training names) -> ``add(hf name, tensor)``. ``table=False``: the
@@ -505,21 +520,16 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         add(hp + "mixer.attn.o_proj.weight", (g(b + "linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.attn.q_norm.weight", g(b + "q_layernorm.weight").to(cast))
     elif kind == "kvshare" and i not in folded:
-        # a first-class V hybrid layer: q / gate / o / q norm of its own on the layer's normalized input;
-        # the source attention layer's keys / values are wired by cfg["kv_share_sources"].
-        if p + "input_layernorm.weight" not in t:
-            raise ValueError(
-                f"layer {i}: kvshare layer without input_layernorm.weight. The V-layer spec before "
-                "2026-11-17 built no input norm (TransformerLayerSubmodules defaults to IdentityOp), "
-                "so those checkpoints carry no norm parameter and cannot be exported faithfully "
-                "(docs/recall_surgery_ambitious.md §22.18)."
-            )
+        # a first-class V hybrid layer: q / gate / o / q norm of its own on the layer's input; the source
+        # attention layer's keys / values are wired by cfg["kv_share_sources"]. The input norm is the V
+        # layer spec's: the pre-2026-11-17 spec built none, and cfg says which checkpoint this is (§22.18)
         q, z = _split_kvshare(g("self_attention.linear_qkv.weight"), cfg)
         add(hp + "mixer.q_proj.weight", q.to(cast))
         add(hp + "mixer.gate_proj.weight", z.to(cast))
         add(hp + "mixer.o_proj.weight", g("self_attention.linear_proj.weight").to(cast))
         add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
-        add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        if cfg.get("kv_share_input_norm", True):
+            add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
     elif kind == "kvshare" and i in folded:
         # a ckda_branch kvshare attention past its hand-over: q / gate / o / q norm of its own, the keys / values
         # of the source attention layer at run time (cfg kv_share_sources); the branch's output weight folded into

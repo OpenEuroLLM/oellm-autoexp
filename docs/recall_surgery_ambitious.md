@@ -4870,18 +4870,25 @@ Fixes:
   `input_layernorm=TENorm` (as `dsa_layer` does), so the surgery's norm key becomes live and
   the export's assumption holds. Regression test:
   `test_ckda_branch.py::test_v_layer_spec_normalizes_its_input`.
-- `oellm_autoexp/hf_export/export_ambitious.py`: a kvshare layer without
-  `input_layernorm.weight` now raises a message that names this cause instead of a bare
-  `KeyError`. Test: `test_hf_export_v_layer.py::test_v_layer_without_input_norm_fails_loudly`.
+- `oellm_autoexp/hf_export/export_ambitious.py`: the exporter reads the flag from the checkpoint
+  itself (`kv_share_input_norm(keys, cfg)`: every kvshare layer has the norm, or none does; a
+  mixed checkpoint from no spec fails loudly) and writes `kv_share_input_norm` into
+  `config.json`. Test: `test_hf_export_v_layer.py`.
+- `configuration_oellm_ambitious.py` / `modeling_oellm_ambitious.py` / the vLLM model:
+  `kv_share_input_norm: false` builds the kvshare layer with no input norm (HF: `None`, so the
+  mHC read's fused-norm kernel gets no norm; vLLM: `nn.Identity`), i.e. the pre-2026-11-17
+  layer exactly.
 
 Consequences:
 
 - The pinned arm (`v4a_v6_pin`) was built without the norm, so its trained V layers read the
-  raw stream. A clean v4a arm needs another restart from 35900 with the fixed spec.
+  raw stream. It is still evaluable: the export detects that (no `input_layernorm.weight` in the
+  checkpoint) and writes `kv_share_input_norm: false`, which HF / vLLM honour. Those numbers
+  measure the arm as trained, which is not the intended architecture.
+- A clean v4a arm needs another restart from 35900 with the fixed spec.
 - The 35900 readout stands: every V layer's `o_proj` is exactly zero there, so the missing
-  norm cannot change the numbers.
-- v4a@36000 cannot be evaluated faithfully: HF / vLLM always normalize a layer's input, so any
-  export of that checkpoint would add a norm Megatron never applied.
+  norm cannot change the numbers, and the V6 checkpoint (which has the norm key) exports with
+  `kv_share_input_norm: true` as before.
 
 Parity note from the 35900 pair: v4 (`66.0` CoQA F1, `29.02` SQuAD v2 F1, `85.10` Belebele)
 and v4a (`64.9`, `28.62`, `84.98`) agree only to ~0.1-1.1 pp, not bit-exactly. The V layers'

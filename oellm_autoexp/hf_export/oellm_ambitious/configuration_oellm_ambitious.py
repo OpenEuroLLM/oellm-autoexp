@@ -52,6 +52,10 @@ class OellmAmbitiousConfig(PretrainedConfig):
         xsa_eps: float = 1e-6,
         # kvshare blocks: {str(layer index): index of the attention layer whose keys / values it reads}
         kv_share_sources: dict | None = None,
+        # a kvshare layer's input norm. False: the layer reads the layer input unnormalised, as the V layer
+        # spec before 2026-11-17 built it (TransformerLayerSubmodules defaults input_layernorm to
+        # IdentityOp); docs/recall_surgery_ambitious.md §22.18
+        kv_share_input_norm: bool = True,
         # serial v4a ckda_kvshare / ckda_attn: the branch sees LayerNorm(CKDA output), not the layer input
         ckda_branch_serial: bool = False,
         # CKDA: the FLA layer spec ({"class", "kwargs"}) as Megatron built it
@@ -133,6 +137,7 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.exclusive_self_attention = exclusive_self_attention
         self.xsa_eps = xsa_eps
         self.kv_share_sources = {str(k): int(v) for k, v in (kv_share_sources or {}).items()}
+        self.kv_share_input_norm = bool(kv_share_input_norm)
         self.ckda_branch_serial = bool(ckda_branch_serial)
         self.fla_layer = fla_layer
         self.fla_layer_kronlstm = fla_layer_kronlstm

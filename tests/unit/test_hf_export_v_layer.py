@@ -4,9 +4,10 @@ A V layer is an attention TransformerLayer with a separate input norm and only q
 ``linear_qkv`` (the source attention layer's keys / values are shared at run time). The export
 must write q / gate / o / q-norm on the layer's normalized input and no k / v projections.
 """
+import pytest
 import torch
 
-from oellm_autoexp.hf_export.export_ambitious import _MHC, _split_kvshare, convert_layer
+from oellm_autoexp.hf_export.export_ambitious import _MHC, _split_kvshare, convert_layer, kv_share_input_norm
 
 HID, HEADS, GROUPS, D = 16, 4, 2, 8
 LAYER = 10
@@ -57,12 +58,27 @@ def test_v_layer_q_and_gate_come_from_the_per_group_qkv_layout():
     assert q.shape == z.shape == (HEADS * D, HID)
 
 
-def test_v_layer_without_input_norm_fails_loudly():
-    """Checkpoints of a V layer built without the input norm cannot be exported faithfully."""
-    import pytest
-
-    t = _tensors()
+def test_v_layer_without_input_norm_exports_no_norm():
+    """A checkpoint of the pre-§22.18 V layer spec has no input norm: the export adds none either."""
+    t, out = _tensors(), {}
     del t[f"decoder.layers.{LAYER}.input_layernorm.weight"]
-    with pytest.raises(ValueError, match="without input_layernorm.weight"):
-        convert_layer(LAYER, t, _cfg(), {}, lambda name, w: None,
-                      torch.float32, torch.float32, "bf16")
+    convert_layer(LAYER, t, _cfg() | {"kv_share_input_norm": False}, {},
+                  lambda name, w: out.__setitem__(name, w), torch.float32, torch.float32, "bf16")
+    hp = f"model.layers.{LAYER}."
+    assert hp + "input_layernorm.weight" not in out
+    assert sorted(out) == sorted(
+        [hp + "mixer.q_proj.weight", hp + "mixer.gate_proj.weight", hp + "mixer.o_proj.weight",
+         hp + "mixer.q_norm.weight"]
+        + [hp + f"mhc.{n}" for n in _MHC]
+    )
+    assert t == {}  # every training tensor of the layer is consumed
+
+
+def test_kv_share_input_norm_reads_the_checkpoint():
+    cfg = _cfg()
+    norm = {f"decoder.layers.{LAYER}.input_layernorm.weight": None}
+    assert kv_share_input_norm(norm, cfg) is True
+    assert kv_share_input_norm({}, cfg) is False
+    # two V layers, the norm on one of them: no V layer spec produced that
+    with pytest.raises(ValueError, match="mixed checkpoint"):
+        kv_share_input_norm(norm, dict(cfg, block_types=cfg["block_types"] + ["kvshare"]))
