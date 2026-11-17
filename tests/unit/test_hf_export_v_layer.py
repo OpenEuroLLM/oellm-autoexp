@@ -82,3 +82,67 @@ def test_kv_share_input_norm_reads_the_checkpoint():
     # two V layers, the norm on one of them: no V layer spec produced that
     with pytest.raises(ValueError, match="mixed checkpoint"):
         kv_share_input_norm(norm, dict(cfg, block_types=cfg["block_types"] + ["kvshare"]))
+
+
+# ------------------------------------------------------------------- v_block_learnable_gate
+#
+# An inserted V layer trained with the two learnable gates carries v_gate.out_gate (g_v) and
+# v_gate.res_gate (rho). g_v folds into o_proj exactly as a ckda_branch's gamma does; rho cannot
+# fold into the mixer's logits (it pulls h_res toward the identity after the sinkhorn), so it is
+# exported in config.json as kv_share_res_gate and the model applies it to h_res.
+
+
+def _gated_tensors(out_gate: float = 0.5, res_gate: float = 0.25):
+    t = _tensors()
+    t[f"decoder.layers.{LAYER}.v_gate.out_gate"] = torch.tensor([out_gate])
+    t[f"decoder.layers.{LAYER}.v_gate.res_gate"] = torch.tensor([res_gate])
+    return t
+
+
+def test_v_layer_folds_g_v_into_o_proj_and_exports_rho():
+    t = _gated_tensors(out_gate=0.5, res_gate=0.25)
+    o_before = t[f"decoder.layers.{LAYER}.self_attention.linear_proj.weight"].float().clone()
+    o_before[0, 0] = 2.0  # not the zero projection of v4a: g_v must scale real weights
+    t[f"decoder.layers.{LAYER}.self_attention.linear_proj.weight"] = o_before
+    cfg, out = _cfg(), {}
+    convert_layer(LAYER, t, cfg, {}, lambda name, w: out.__setitem__(name, w),
+                  torch.float32, torch.float32, "bf16")
+    hp = f"model.layers.{LAYER}."
+    assert torch.allclose(out[hp + "mixer.o_proj.weight"], 0.5 * o_before, atol=1e-6)
+    assert cfg["kv_share_res_gate"] == {str(LAYER): 0.25}
+    assert t == {}  # both gate tensors are consumed (g_v folded, rho in the config)
+
+
+def test_v_layer_export_refuses_the_gate_ramp_window():
+    """A checkpoint inside [35900, 36200) exports an almost-v4 model: refuse it."""
+    for it in (35900, 35905, 36000, 36199):
+        with pytest.raises(ValueError, match="refusing to export iter"):
+            convert_layer(LAYER, _gated_tensors(), _cfg(), {"_ckpt_iteration": it},
+                          lambda name, w: None, torch.float32, torch.float32, "bf16")
+
+
+def test_v_layer_export_allows_a_checkpoint_past_the_ramp():
+    for it in (36200, 36400, 36900):
+        out = {}
+        convert_layer(LAYER, _gated_tensors(), _cfg(), {"_ckpt_iteration": it},
+                      lambda name, w: out.__setitem__(name, w), torch.float32, torch.float32, "bf16")
+        assert f"model.layers.{LAYER}.mixer.o_proj.weight" in out
+
+
+def test_v_layer_without_gates_keeps_the_config_empty_and_the_weight_whole():
+    """A v4a checkpoint has no gates: no fold, no rho, and the guard never fires."""
+    cfg, out = _cfg(), {}
+    convert_layer(LAYER, _tensors(), cfg, {"_ckpt_iteration": 35900},
+                  lambda name, w: out.__setitem__(name, w), torch.float32, torch.float32, "bf16")
+    assert cfg.get("kv_share_res_gate", {}) == {}
+    assert "kv_share_res_gate" not in _cfg()  # the export config starts without it
+
+
+def test_config_class_accepts_the_res_gate_dict():
+    from oellm_autoexp.hf_export.oellm_ambitious.configuration_oellm_ambitious import (
+        OellmAmbitiousConfig,
+    )
+
+    cfg = OellmAmbitiousConfig(kv_share_res_gate={10: 0.25})
+    assert cfg.kv_share_res_gate == {"10": 0.25}
+    assert OellmAmbitiousConfig().kv_share_res_gate == {}
