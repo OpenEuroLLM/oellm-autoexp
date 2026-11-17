@@ -4687,26 +4687,28 @@ srun: error: as07r2b26: task 0: Out Of Memory
 sacct: OUT_OF_ME+  MaxRSS 368573717K  (368 GB)
 ```
 
-The failure is at **load**, before vLLM's "Loading model weights took ..." line, so the request
-settings (`max_num_seqs`) are not involved yet. The step's host memory was
-~160 GB of `uva` Engram tables in /dev/shm plus the load path of four DP ranks. This is the
-first DP4 run with `OELLM_MOE_FP8_DIRECT=1`: every earlier 84B DP4 run (2026-11-16,
-`ambitious_v4_2ph_fp8_1000`) had it off, and the four runs that ever set it are these four.
+The failure is at **load**, before vLLM's "Loading model weights took ..." line. That does
+not exempt the request settings: vLLM allocates its `max_num_seqs`-dependent host buffers
+before the weights load. Four launches, same export, step MaxRSS:
 
-The second launch set `OELLM_ENGRAM_TABLES=mmap` instead and OOMed harder: MaxRSS
-434 GB and 446 GB (mapped table pages count in RSS; `.55`/`.58` at 10:37). The tables are
-therefore not the binding item.
+| launch | tables | fp8 direct | seqs / tokens / util | MaxRSS |
+|---|---|---|---|---|
+| `.1279`-`.1282` (10:23) | uva | on | 2048 / 3072 / 0.88 | 368 GB |
+| `.1283`-`.1286` (10:37) | mmap | on | 2048 / 3072 / 0.88 | 434 / 446 GB |
+| `.1366`-`.1369` (12:23) | uva | off | 2048 / 3072 / 0.88 | 416 / 460 GB |
+| validated `48653415.3` (2026-11-16) | uva | off | 256 / 32768 / 0.85 | **182 GB** |
 
-The binding item is the fp8-direct expert load. The validated 84B DP4 run of 2026-11-16
-(`ambitious_v4_2ph_fp8_1000`, step `48653415.3`) completed with **MaxRSS 182 GB** with
-`uva` tables, `OELLM_LOCAL_EXPERT_LOAD=1`, `max_num_seqs 256` and `OELLM_MOE_FP8_DIRECT`
-off. The v4a runs are the only ones that ever set `OELLM_MOE_FP8_DIRECT=1`, and their
-non-table RSS is ~368 GB: the direct path holds the export's fp8 expert bytes on the host
-(four ranks x their shard) before they reach the GPU.
+So `max_num_seqs` is the binding item: 2048 sequences cost 234-278 GB more host memory than
+256. `mmap` adds ~66 GB of mapped table pages to RSS. The fp8-direct load **reduces** host
+memory by ~50-90 GB at 2048 sequences (23.4 instead of 42.3 GiB of experts per GPU at EP4):
+the first reading of these numbers had that backwards, because the 182 GB reference already
+ran with it off.
 
-The third launch keeps the PR #2 model-code switches and the DP4/EP4 engine layout and sets
-`moe_fp8_direct: false` (the validated load path, 42.3 instead of 23.4 GiB of experts per
-GPU at EP4). `config/evals/v4a_v_35900_recall_mn5.yaml` records it.
+The fifth launch keeps the PR #2 model-code switches and the TP1 x DP4/EP4 layout, and uses
+the validated memory envelope: 256 sequences, 32768 batched tokens, 0.85 utilization, `uva`
+tables, fp8 direct off. `config/evals/v4a_v_35900_recall_mn5.yaml` records it. If the row
+throughput matters more than the envelope, raise `max_num_seqs` only after measuring the
+step's MaxRSS on one node.
 
 ### 22.17 V6 reaches 35999 and saves before validation
 
