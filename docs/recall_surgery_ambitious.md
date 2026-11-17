@@ -4621,3 +4621,25 @@ Belebele) as four 1-node pool sessions plus the 1-node export, on the p264 pool 
 the 256-node training host. At 35900 the six V layers have a zero output projection, so the
 numbers are the 35900 baseline in the v4a stack, not a readout of trained V layers; those
 start at the 35905 save.
+
+#### Export verification (2026-11-17 10:20)
+
+`export_run.sh <runs/v4a_v6> 35900 <out> <runs/v4a_v6/main/current_*.yaml>` (pool step
+`mn5-pool-p264.1278`, rc 0) wrote `hf_exports/ambitious_v4a_v_fp8_35900` (107 shards,
+655.5 GB read, 17.2 s plan, ~5 min). Checks on the result:
+
+```
+block types: 104; V at 10/27/44/62/79/96; attention at 0/18/35/53/70/87; Engram at 2/52
+kv_share_sources: {10:0, 27:18, 44:35, 62:53, 79:70, 96:87}
+Engram layer 2:  seeds of layer_number 3  -> multipliers match
+Engram layer 52: seeds of layer_number 50 -> multipliers match   (the pin, in the export)
+V layer 10 tensors: input_layernorm, mhc.{phi,b_*,\alpha_*}, mixer.{q,gate,o}_proj, q_norm
+                    (no k / v projection, no cache)
+check_export: 2021 model tensors = 2021 stored, missing 0, unexpected 0, shape mismatches 0
+```
+
+The readout is the parent model's by construction: at 35900 every V layer's `o_proj` is
+exactly zero, so the inserted attention contributes zero regardless of the kvshare math.
+Only the load can fail here. From 35905 on the `o_proj` is trained and the kvshare
+attention is part of the model, so those exports need the vLLM↔HF parity gate that §22.9
+still lists as open.
