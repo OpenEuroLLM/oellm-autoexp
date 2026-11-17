@@ -29,6 +29,7 @@ backend:
     load: ${aux.kv_root}/runs/v4b_learned/main/ckpt
     exit_interval: 36406
     arch_metrics_interval: 1
+    log_params_norm: true
     eval_interval: 100000000
     save_extra_steps: []
     save_interval: 1000000

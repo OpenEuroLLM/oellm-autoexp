@@ -31,6 +31,7 @@ backend:
     v_block_learnable_gate: false
     exit_interval: 35906
     arch_metrics_interval: 1
+    log_params_norm: true
     eval_interval: 100000000
     save_extra_steps: []
     save_interval: 1000000
