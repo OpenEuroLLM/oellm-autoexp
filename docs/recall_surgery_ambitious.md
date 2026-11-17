@@ -4909,3 +4909,64 @@ packing entries. So the fixed model loads V6 strictly, including the optimizer. 
 inserted norm cannot change the function either: every V layer's `o_proj` is still exactly zero,
 so the layer output is zero whatever its input norm does. The step-0 identity with the 35900
 parent therefore holds, and from step 1 the V layers train with the intended normalized input.
+
+### 22.19 Readout noise, the recall trajectory, and the reference table (2026-11-17)
+
+All numbers below come from the same aggregator (`$R/agg_evals.py`) over `done/*.ok` markers,
+so they are same-harness and same-suite unless stated otherwise.
+
+**The noise floor is larger than the arm effects.** From the row markers of
+`ambitious_v4_2ph_fp8_36400`: CoQA `f1_stderr,none = 0.01709` (1.71 pp) and Winogrande
+`acc_stderr,none = 0.01306` (1.31 pp). Checkpoint-to-checkpoint swings are larger still:
+CoQA reads 68.21 (13k), 62.90 (21k), 69.68 (35603), 66.08 (35900), 64.82 (36400) for the same
+control arm. So a single checkpoint pair cannot resolve anything below ~2 pp, and the
+"v4a -4.8 pp at 36000" and "v4a +2.3 pp at 36400" are both inside that band.
+
+**Trajectory of the control arm** (step: CoQA F1 / SQuAD v2 F1 / Winogrande / Belebele mean):
+
+```
+ 1000: 41.36 / 17.05 / 57.93 / 30.34      13000: 68.21 / 30.59 / 64.56 / 79.82
+ 3000: 56.32 / 24.86 / 61.64 / 62.14      18000: 65.10 / 31.42 / 62.12 / 80.55
+ 5000: 59.36 / 28.92 / 63.06 / 71.13      23500: 66.13 / 26.89 / 62.51 / 82.90
+ 8000: 63.12 / 29.30 / 63.14 / 76.20      30000: 67.05 / 27.11 / 67.32 / -
+10000: 63.42 / 30.03 / 62.98 / 77.06      35603: 69.68 / 27.86 / 66.93 / 86.11
+                                          35900: 66.08 / 29.02 / 67.01 / 85.10
+                                          36400: 64.82 / 28.23 / 68.43 / 85.77
+```
+
+Reading: Belebele is the only clean curve (30 -> 86, monotone); CoQA stopped improving around
+13k and is noise-dominated since; SQuAD v2 peaked at 18000 (31.42) and drifted to 26-29;
+Winogrande is the one metric still rising late (65.8 at 24k -> 68.4 at 36400, ~1.1 se), and both
+arms rose together, so that is continued training, not the V layers. SWDE / FDA /
+squad_completion exist only at 13000, 21000, 23500 and 35900+, so they have four points in the
+whole run.
+
+**References** (%), same harness for the Qwen rows; the 32B rows come from
+`b1cons_90k` / `b1consTW_300k` `.flag-evals-438.tasks.csv` on JUPITER:
+
+| metric | v4 @36400 | v4a @36400 | 32B @1.5T | 32B @5T | Qwen2.5-32B | Qwen3-14B | Qwen3-30B-A3B | Qwen3.5-35B-A3B |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| CoQA F1 | 64.82 | 67.08 | 79.72 | 81.72 | 76.57 | 73.43 | 73.02 | 74.90 |
+| SQuAD v2 F1 | 28.23 | 28.0* | 39.22 | 42.91 | 38.22 | 38.69 | 38.39 | 38.16 |
+| SQuAD v2 HasAns F1 | 56.4* | 56.5* | 78.55 | 85.95 | 76.49 | 77.43 | 76.32 | 73.20 |
+| Winogrande | 68.43 | 69.30 | 70.32 | 70.56 | 75.85 | 73.80 | 72.45 | 76.01 |
+| Belebele mean (24) | 85.77 | 86.04 | 83.95 | 87.53 | 91.66 | 90.88 | 89.61 | 92.94 |
+| Belebele eng_Latn | 81.33 | 81.00 | 88.89 | 81.78 | 96.22 | 94.67 | 94.00 | 95.11 |
+| SWDE | 82.45 | 81.37 | - | - | 85.24 | 85.69 | 84.61 | 82.90 |
+| FDA | 28.77 | 28.31 | - | - | 28.58 | 30.76 | 30.31 | 27.40 |
+| squad_completion | 57.07 | 56.00 | - | - | 56.13 | 60.72 | 57.71 | 61.93 |
+
+`*` from 7/8 (v4) and 5/8 (v4a) parts with an own scorer, validated to read ~0.5 pp low on the
+complete 36000 row. Caveats: the 32B suite has no SWDE / FDA / squad_completion (the dashes are
+structural); 32B ran harness 0.4.12 against our 0.4.13, and its CoQA (81.7) sits far above
+Qwen2.5-32B under our harness (76.6), so cross-harness CoQA / SQuAD comparisons are softer than
+the Qwen ones; 36400 is ~2.4 T tokens, between 32B@1.5T and 32B@5T, much closer to the former.
+
+**The V branch is still inert.** `o_proj` RMS of the six V layers at 36000 / 36400 against a
+trained attention layer (2.9e-3): 4.7e-5 -> 9.6e-5 (layer 10), 4.2e-5 -> 6.6e-5 (27),
+3.4e-5 -> 4.2e-5 (44), 4.1e-5 -> 3.4e-5 (62), 7.2e-5 -> 5.0e-5 (79), 5.7e-5 -> 3.6e-5 (96).
+Two layers have not grown at all in 400 steps; the branch's residual contribution is ~1e-4
+against a stream of order 1. At `lr = 8.5e-4` Adam should move a consistent-sign parameter by
+`lr` per step, so the 17x shortfall means either a small group multiplier or a sign-noisy
+gradient from the random-init branch. Consequence: at 36k the arm measures "the parent plus six
+near-identity residual rewrites", not the V idea, and parity at 36400 is what that predicts.

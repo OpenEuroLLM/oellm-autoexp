@@ -179,3 +179,51 @@ These need no new allocation and no restart.
 - No edit to `config/experiments/korbi/recall_surgery/v4a_v6_pin_mn5.yaml`.
 - No change to the running job or its Slurm allocation.
 - No v4b submission until the 36900 readout exists.
+
+## 9. Measured status of the implemented gate (2026-11-17, eval side)
+
+What is actually in the tree is the **schedule gate only** (`v4b_gate_mn5.yaml`:
+`v_block_gate_ramp: 300`, `v_block_gate_start_iteration: 35900`), not option A and not
+option B. Read from `transformer_layer.py:1142`:
+
+```python
+written = mixer.write(streams, output, h_post, h_res, ...)
+gate = self._v_block_gate(kind)          # r = clamp((t - 35900) / ramp, 0, 1); None once r >= 1
+return torch.lerp(streams, written, gate)
+```
+
+Consequences that matter for "substantial impact":
+
+- **D1 is fixed bit-exactly.** At `r = 0` the layer returns the incoming streams, so the
+  residual mixing and the attention write are both absent, and the 35900 baseline becomes a
+  true parity check (the 0.1-1.1 pp offset of the v4a pair should disappear).
+- **D2 is delayed, not removed.** `r` multiplies the gradient into every V parameter, so at
+  `r = 0` those gradients are exactly zero and the branch learns nothing for the first steps.
+  After that it is still the same random-init branch with `o_proj = 0`. By 36400 the branch has
+  had ~200 full-gate steps plus a 300-step ramp average, i.e. *less* effective learning than
+  v4a at the same step.
+- **A checkpoint saved inside `[35900, 36200)` must not be exported.** `_v_block_gate` returns
+  `None` when there is no training loop, so the export always writes whole: a mid-ramp
+  checkpoint would silently export a different function than it trained. Export at >= 36200.
+
+Still missing for impact, in priority order:
+
+1. copy-init branch (q / k / v / o + qk-norm from the source attention layer, source input-norm
+   gain folded into `linear_qkv`), so the branch is functional when the gate opens;
+2. a **learnable** zero-init output gate `g_v` (`dL/dg_v = <delta, attn_out> != 0` at 0) instead
+   of the schedule, which has no gradient at all;
+3. `rho = 0` on the residual path, so D1 is exact *and* learnable;
+4. an LR multiplier >= 1 for the V tensors, and a ramp <= 100 steps if a schedule is kept.
+
+Acceptance signal, already instrumented by `_record_v_block_impact` (`vgate/r`, `vgate/delta`
+= `||write - streams|| / ||streams||` per layer), no eval needed:
+
+| `vgate/delta` | reading |
+| --- | --- |
+| <= 1e-4 | inert (v4a's regime: `o_proj` 30-80x below a trained attention layer) |
+| ~1e-3 | noticeable |
+| >= 1e-2 | substantial |
+
+Calibration: a trained attention layer moves ~2-9 % of the stream (`o_proj` RMS 2.9e-3, output
+~0.09 against a stream of order 1-4), so six V layers at trained scale would move 10-50 % of it.
+The ceiling is set by the init and the gradient path, not by the architecture.
