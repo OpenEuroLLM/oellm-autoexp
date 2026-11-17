@@ -4840,3 +4840,50 @@ Checkpointing is synchronous:
 - `use_persistent_ckpt_worker: false`
 - 35905 save completed at 12:55:05
 - tracker is `35905`
+
+### 22.18 The V layer had no input norm, and its trained checkpoints cannot be exported (2026-11-17)
+
+The 36000 export of the pinned v4a arm failed (`rc 1`, `mn5-pool-p264.1384`):
+
+```
+KeyError: 'decoder.layers.10.input_layernorm.weight'
+```
+
+Cause, from the checkpoint metadata of the running arm's save (`v4a_v6_pin/main/ckpt_eval/
+iter_0036000`) against the surgery checkpoint (`v4a_v6/ckpt/iter_0035900`):
+
+- trained save: **318,207** keys, layer 10 has 10 tensors;
+- surgery checkpoint: **318,225** keys, layer 10 has 11;
+- the difference is exactly the six V layers' `input_layernorm.weight` **and** their optimizer
+  state (`exp_avg`, `exp_avg_sq`), 12 model/optimizer keys plus 6 optimizer packing entries.
+
+`TransformerLayerSubmodules.input_layernorm` defaults to `IdentityOp`, and `kvshare_layer` did
+not override it. So the V layer had **no input norm at all**: it attended on the raw residual
+stream, and the `input_layernorm.weight` that `insert_v_layers.py` wrote (ones) was an extra
+checkpoint key that DCP ignored on load and dropped on save. Every other mixer normalizes its
+input, the doc's own description says "on the layer's normalized input", and the HF export
+writes an `input_layernorm` for V layers — so this was a spec bug, not a design choice.
+
+Fixes:
+
+- `megatron/core/models/hybrid/hybrid_layer_specs.py`: `kvshare_layer` sets
+  `input_layernorm=TENorm` (as `dsa_layer` does), so the surgery's norm key becomes live and
+  the export's assumption holds. Regression test:
+  `test_ckda_branch.py::test_v_layer_spec_normalizes_its_input`.
+- `oellm_autoexp/hf_export/export_ambitious.py`: a kvshare layer without
+  `input_layernorm.weight` now raises a message that names this cause instead of a bare
+  `KeyError`. Test: `test_hf_export_v_layer.py::test_v_layer_without_input_norm_fails_loudly`.
+
+Consequences:
+
+- The pinned arm (`v4a_v6_pin`) was built without the norm, so its trained V layers read the
+  raw stream. A clean v4a arm needs another restart from 35900 with the fixed spec.
+- The 35900 readout stands: every V layer's `o_proj` is exactly zero there, so the missing
+  norm cannot change the numbers.
+- v4a@36000 cannot be evaluated faithfully: HF / vLLM always normalize a layer's input, so any
+  export of that checkpoint would add a norm Megatron never applied.
+
+Parity note from the 35900 pair: v4 (`66.0` CoQA F1, `29.02` SQuAD v2 F1, `85.10` Belebele)
+and v4a (`64.9`, `28.62`, `84.98`) agree only to ~0.1-1.1 pp, not bit-exactly. The V layers'
+mHC read / write is an exact identity in real arithmetic but rounds in bf16, and six layers of
+that rounding shift the scores slightly. Any future identity check must allow that tolerance.

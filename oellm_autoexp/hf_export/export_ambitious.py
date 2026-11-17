@@ -507,6 +507,13 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
     elif kind == "kvshare" and i not in folded:
         # a first-class V hybrid layer: q / gate / o / q norm of its own on the layer's normalized input;
         # the source attention layer's keys / values are wired by cfg["kv_share_sources"].
+        if p + "input_layernorm.weight" not in t:
+            raise ValueError(
+                f"layer {i}: kvshare layer without input_layernorm.weight. The V-layer spec before "
+                "2026-11-17 built no input norm (TransformerLayerSubmodules defaults to IdentityOp), "
+                "so those checkpoints carry no norm parameter and cannot be exported faithfully "
+                "(docs/recall_surgery_ambitious.md §22.18)."
+            )
         q, z = _split_kvshare(g("self_attention.linear_qkv.weight"), cfg)
         add(hp + "mixer.q_proj.weight", q.to(cast))
         add(hp + "mixer.gate_proj.weight", z.to(cast))

@@ -55,3 +55,14 @@ def test_v_layer_q_and_gate_come_from_the_per_group_qkv_layout():
     assert torch.equal(z, rows[want_q + hpg].reshape(HEADS * D, -1))
     # the two halves are disjoint and cover the whole [q | gate] block
     assert q.shape == z.shape == (HEADS * D, HID)
+
+
+def test_v_layer_without_input_norm_fails_loudly():
+    """Checkpoints of a V layer built without the input norm cannot be exported faithfully."""
+    import pytest
+
+    t = _tensors()
+    del t[f"decoder.layers.{LAYER}.input_layernorm.weight"]
+    with pytest.raises(ValueError, match="without input_layernorm.weight"):
+        convert_layer(LAYER, t, _cfg(), {}, lambda name, w: None,
+                      torch.float32, torch.float32, "bf16")
