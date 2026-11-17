@@ -14,7 +14,7 @@
 [submodule "submodules/oellm-eval"]
 	path = submodules/oellm-eval
 	url = git@github.com:kpoeppel/oellm-eval.git
-	branch = feat/flag-evals-humaneval-patch
+	branch = feat/node-local-worker
 [submodule "submodules/cute_kernels"]
 	path = submodules/cute_kernels
 	url = git@github.com:OpenEuroLLM/cute_kernels.git
