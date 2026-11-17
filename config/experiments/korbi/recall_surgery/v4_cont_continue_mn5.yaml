@@ -1,0 +1,69 @@
+# @package _global_
+# OPEN-ENDED continuation of the v4 line: same geometry as v4_cont_mn5 (128 nodes x mbs 1, gbs 1024,
+# seq 65536, the main run's dataset cache), but no --exit-interval -- it trains until --train-iters
+# (236733, the parent's full budget) or until it is stopped by hand.
+#
+# Why a separate config and a separate run: --exit-interval is baked into the submitted step, so the
+# running segment (which stops at 36900) cannot be extended. This one waits for that segment's 36900
+# checkpoint (start_condition on the tracker) and takes over.
+#
+# Overlap safety: both this and the experiment segment carry metadata.pool_singleton, so the pool never
+# has two runs of this line active at once -- important because both write runs/main (the same ckpt/,
+# and two writers there would corrupt the tracker).
+#
+# Saves for an open-ended run: rolling (async) every 100 steps as the safety net, and a persistent save
+# every 1000 steps with the main run's retain rule (keep the multiples of 10000, prune the rest) so the
+# disk does not grow by 1.1 TB per save. A save that lands on a validation step is the combination that
+# OOMed on 11-13; the rolling save 100 steps earlier is what makes that recoverable.
+defaults:
+  - v4_cont_mn5
+  - _self_
+
+aux:
+  arm: cont
+  only: [cont]
+  nodes: 128
+  # est only: the run itself is bounded by train_iters (236733), i.e. far beyond any single host
+  steps: 1000
+
+backend:
+  megatron:
+    # no stop point: 0/None means "no --exit-interval"
+    exit_interval: null
+    save_interval: 1000
+    save_retain_interval: 10000
+    non_persistent_save_interval: 100
+    save_extra_steps: []
+
+job:
+  name: ambitious_v4_cont_main_continue
+  # the SAME run dir as the segment it continues: one coherent ckpt/, one log per run
+  base_output_dir: ${aux.kv_root}/runs/main
+  est_steps: 1000
+  est_step_time_s: 31.5
+  start_condition:
+    class_name: FileContentCondition
+    path: ${aux.kv_root}/runs/main/ckpt/latest_checkpointed_iteration.txt
+    pattern: "^\\s*36900\\s*$"
+    mode: regex
+    persistent_pass: true
+  metadata:
+    pool_priority: 90
+    # one run of this line at a time (both write runs/main/ckpt)
+    pool_singleton: v4_cont_main
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: cont
+          job.base_output_dir: ${aux.kv_root}/runs/main
+          backend.megatron.load: ${aux.kv_root}/runs/main/ckpt
+          backend.megatron.ckda_branch: null
+          backend.megatron.ckda_branch_layers: null
+          backend.megatron.ckda_branch_kv_source_layers: null
+          backend.megatron.ckda_branch_crossfade: false
+          backend.megatron.ckda_branch_rest_dropout: 0.0

@@ -18,6 +18,7 @@ Exit 0 = enqueue it; 3 = do not.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -70,9 +71,12 @@ def main(argv: list[str]) -> int:
         if present:
             problems.append(f"branch/temperature flag present in a control: {' '.join(present)}")
 
+    # --expect-load-substring: the experiment segment loads the main run's 35900 rolling save
+    # ("main_mhc4/...ckpt_rolling"); an open-ended continuation instead resumes from its own ckpt/.
     load = v.get("--load", "")
-    if "main_mhc4" not in load or "ckpt_rolling" not in load:
-        problems.append(f"--load is not the main run's 35900 rolling save: {load!r}")
+    want_load = os.environ.get("EXPECT_LOAD_SUBSTRING", "main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/ckpt_rolling")
+    if want_load not in load:
+        problems.append(f"--load {load!r} does not contain {want_load!r}")
 
     expect = {
         "--global-batch-size": "1024",
@@ -80,12 +84,17 @@ def main(argv: list[str]) -> int:
         "--seq-length": "65536",
         "--data-sampler-reference-dp-size": "512",
         "--data-sampler-reference-micro-batch-size": "1",
-        "--exit-interval": "36900",
         # validation as the original v4 training ran it until 35900 (main run's log, .0987)
         "--eval-interval": "1000",
         "--eval-iters": "10",
         "--eval-global-batch-size": "1024",
     }
+    # an open-ended continuation has no --exit-interval (ALLOW_OPEN_ENDED=1)
+    if os.environ.get("ALLOW_OPEN_ENDED") != "1":
+        expect["--exit-interval"] = "36900"
+    elif "--exit-interval" in v:
+        problems.append(f"--exit-interval is set ({v['--exit-interval']}) but the run is meant to be open-ended")
+
     for flag, want in expect.items():
         got = v.get(flag, "<absent>")
         if got != want:
@@ -101,9 +110,17 @@ def main(argv: list[str]) -> int:
         problems.append(f"--save is outside the v4_cont root: {save!r}")
 
     raw = open(render, errors="replace").read().replace("\\\n", " ")
-    for step in ("35999", "36400", "36900"):
-        if step not in raw:
-            problems.append(f"save step {step} missing from the render")
+    if os.environ.get("ALLOW_OPEN_ENDED") == "1":
+        # an open-ended run has no fixed save steps; it must instead carry a rolling safety net and a
+        # periodic persistent save (otherwise a host end could lose everything since the start)
+        for flag, want in (("--save-interval", "1000"), ("--non-persistent-save-interval", "100")):
+            got = v.get(flag, "<absent>")
+            if got != want:
+                problems.append(f"{flag} is {got!r}, expected {want!r} for an open-ended run")
+    else:
+        for step in ("35999", "36400", "36900"):
+            if step not in raw:
+                problems.append(f"save step {step} missing from the render")
 
     pre = values(prebuild)
     print(f"{'cache-key flag':34s} {'control':44s} prebuild")
