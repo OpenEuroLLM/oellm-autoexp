@@ -41,12 +41,23 @@ job:
   base_output_dir: ${aux.kv_root}/runs/main
   est_steps: 1000
   est_step_time_s: 31.5
+  # Start when the experiment segment has reached the paired readout point AND no run of this line is
+  # live any more. The second half is the overlap guard: both runs write runs/main/ckpt, so two writers
+  # would corrupt the tracker. It is a command rather than a file test on one run id, because the pool
+  # re-submits a job under a NEW run id when it has to restart it -- a fixed runs/<rid>/rc would then say
+  # "ended" while a restart was training. Once latched (persistent_pass) it is not re-checked, so the
+  # continuation does not block on itself.
   start_condition:
-    class_name: FileContentCondition
-    path: ${aux.kv_root}/runs/main/ckpt/latest_checkpointed_iteration.txt
-    pattern: "^\\s*36900\\s*$"
-    mode: regex
+    class_name: AndCondition
     persistent_pass: true
+    conditions:
+      - class_name: FileContentCondition
+        path: ${aux.kv_root}/runs/main/ckpt/latest_checkpointed_iteration.txt
+        pattern: "^\\s*36900\\s*$"
+        mode: regex
+      - class_name: ShellCommandCondition
+        command: |
+          python3 -c "import glob,json,os,sys; p='/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264/runs'; live=[d for d in glob.glob(p+'/mn5-pool-p264.*') if not os.path.exists(d+'/rc')]; n=[json.load(open(d+'/run.json')).get('name','') for d in live if os.path.exists(d+'/run.json')]; sys.exit(1 if any(x.startswith('ambitious_v4_cont_main') for x in n) else 0)"
   metadata:
     pool_priority: 90
     # one run of this line at a time (both write runs/main/ckpt)
