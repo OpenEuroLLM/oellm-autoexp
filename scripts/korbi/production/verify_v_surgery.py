@@ -29,7 +29,9 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "submodules" / "Megatron-LM"))
 from add_v_mhc import mixer_tensors  # noqa: E402
-from insert_v_layers import ORIG_PATTERN, INSERT_AFTER, build_pattern, v_tensors  # noqa: E402
+from insert_v_layers import (  # noqa: E402
+    ORIG_PATTERN, INSERT_AFTER, SOURCES, build_pattern, old_index, source_keys, v_tensors,
+)
 
 
 def old_to_new(old: int) -> int:
@@ -74,6 +76,10 @@ def main() -> int:
     ap.add_argument("--src", required=True, type=Path)
     ap.add_argument("--dst", required=True, type=Path)
     ap.add_argument("--sample-values", action="store_true", help="also load one existing tensor pair")
+    ap.add_argument("--init", choices=("random", "copy"), default="random",
+                    help="the init the checkpoint was built with (insert_v_layers.py --init)")
+    ap.add_argument("--sources", default=",".join(map(str, SOURCES)),
+                    help="per V layer, its source attention layer (104-layer index)")
     a = ap.parse_args()
 
     smd = FileSystemReader(a.src).read_metadata()
@@ -149,25 +155,67 @@ def main() -> int:
         return 1
     print(f"PASS parameters: {sp} -> {dp} (+{dp-sp}, exactly the six V layers)")
 
-    # 5. Identity initialization of the new layers.
+    # 5. Initialization of the new layers.
     load_keys = []
     for layer in v_layers:
         load_keys += [
             f"model.module.decoder.layers.{layer}.self_attention.linear_proj.weight",
+            f"model.module.decoder.layers.{layer}.self_attention.linear_qkv.weight",
             f"model.module.decoder.layers.{layer}.self_attention.q_layernorm.weight",
             f"model.module.decoder.layers.{layer}.input_layernorm.weight",
+            f"model.module.decoder.layers.{layer}.v_gate.out_gate",
+            f"model.module.decoder.layers.{layer}.v_gate.res_gate",
         ]
         mm, _ = mixer_tensors(layer)
         load_keys += list(mm)
     sd = {k: torch.empty(d[k].size) for k in load_keys}
     dcp.load(sd, storage_reader=FileSystemReader(a.dst))
-    for layer in v_layers:
-        assert torch.count_nonzero(sd[f"model.module.decoder.layers.{layer}.self_attention.linear_proj.weight"]) == 0
-        assert torch.all(sd[f"model.module.decoder.layers.{layer}.self_attention.q_layernorm.weight"] == 1)
-        assert torch.all(sd[f"model.module.decoder.layers.{layer}.input_layernorm.weight"] == 1)
-        assert torch.count_nonzero(sd[f"model.module.decoder.layers.{layer}.mhc_attn_mixer.phi"]) == 0
-        assert torch.all(sd[f"model.module.decoder.layers.{layer}.mhc_attn_mixer.b_res"] == 5 * torch.eye(4))
-    print("PASS identity: zero output projection, unit norms, zero phi, b_res = 5I")
+    sources = [int(x) for x in a.sources.split(",") if x]
+    if len(sources) != len(v_layers):
+        print(f"FAIL --sources {sources}: one per V layer {v_layers}")
+        return 1
+    src_t = {}
+    if a.init == "copy":
+        olds = [old_index(s) for s in sources]
+        keys = source_keys(olds)
+        want = {k: torch.empty(tuple(smd.state_dict_metadata[k].size)) for k in keys}
+        dcp.load(want, storage_reader=FileSystemReader(a.src), no_dist=True)
+        src_t = {o: {k.split(f"decoder.layers.{o}.", 1)[1].split("self_attention.")[-1]: t
+                     for k, t in want.items() if f"decoder.layers.{o}." in k} for o in olds}
+    for layer, src in zip(v_layers, sources):
+        p = f"model.module.decoder.layers.{layer}."
+        assert torch.count_nonzero(sd[p + "v_gate.out_gate"]) == 0, layer
+        assert torch.count_nonzero(sd[p + "v_gate.res_gate"]) == 0, layer
+        assert torch.count_nonzero(sd[p + "mhc_attn_mixer.phi"]) == 0, layer
+        assert torch.all(sd[p + "mhc_attn_mixer.b_res"] == 5 * torch.eye(4)), layer
+        if a.init == "random":
+            assert torch.count_nonzero(sd[p + "self_attention.linear_proj.weight"]) == 0, layer
+            assert torch.all(sd[p + "self_attention.q_layernorm.weight"] == 1), layer
+            assert torch.all(sd[p + "input_layernorm.weight"] == 1), layer
+        else:
+            att = src_t[old_index(src)]
+            assert torch.equal(sd[p + "self_attention.linear_proj.weight"].float(),
+                               att["linear_proj.weight"].float()), layer
+            assert torch.equal(sd[p + "self_attention.q_layernorm.weight"].float(),
+                               att["q_layernorm.weight"].float()), layer
+            assert torch.all(sd[p + "input_layernorm.weight"] == 1), layer
+            # the fold: W' = W diag(g_attn), the V layer's own input norm staying ones; the source's
+            # norm gain is TE-fused into its linear_qkv (linear_qkv.layer_norm_weight)
+            qkv = sd[p + "self_attention.linear_qkv.weight"].float()
+            src_qkv = att["linear_qkv.weight"].float()
+            g_attn = att["linear_qkv.layer_norm_weight"].float()
+            per = (2 * (16 // 2) + 2) * 256  # the source's rows per KV group: [q | gate | k | v]
+            folded = torch.cat(
+                [src_qkv[g * per:g * per + 2 * (16 // 2) * 256] for g in range(2)], 0
+            ) * g_attn[None, :]
+            assert qkv.shape == folded.shape, (qkv.shape, folded.shape)
+            assert torch.allclose(qkv, folded, atol=1e-6), layer
+    if a.init == "random":
+        print("PASS identity: zero output projection, unit norms, zero phi, b_res = 5I")
+    else:
+        print("PASS copy init: q / gate / o / q-norm are the source attention layer's, input-norm gain "
+              "folded into linear_qkv, zero gates, b_res = 5I")
+    print("PASS gates: v_gate.out_gate = v_gate.res_gate = 0 on every V layer")
 
     # 6. A real existing tensor is value-identical.
     if a.sample_values:
