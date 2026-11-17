@@ -30,6 +30,10 @@ defaults:
 aux:
   arm: main
   only: [main]
+  # 128 nodes x mbs 1 = the main run's per-GPU activation footprint. gbs stays 1024, so Megatron runs
+  # 2 micro-batches per step (1024 / (512 dp x 1)) -- one 64k sequence each, exactly v4's micro-batch.
+  # mbs 2 would put two 64k sequences in one micro-batch, i.e. twice the activations, and the backward
+  # OOMed in the recompute path (mn5-pool-p264.1287).
   nodes: 128
   steps: 1000
   # new base folder for this pair (user 2026-11-17)
@@ -40,6 +44,7 @@ aux:
 
 backend:
   env:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     FSDP_DCP_LOCAL_LOAD_PLAN: "1"
     MEGATRON_DEBUG_LOAD_TIMING: "1"
     MEGATRON_DEBUG_SAVE_TIMING: "1"
@@ -62,7 +67,7 @@ backend:
     data_cache_path: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
     data_sampler_reference_dp_size: 512
     data_sampler_reference_micro_batch_size: 1
-    micro_batch_size: 2
+    micro_batch_size: 1
     global_batch_size: 1024
     exit_interval: 36900
     # rolling (async) saves every 100 steps as the original run had them, but no periodic persistent
