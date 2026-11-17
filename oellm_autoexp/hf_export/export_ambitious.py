@@ -426,6 +426,10 @@ def routed_experts(t: dict, p: str, cast: torch.dtype, expert_dtype: str) -> dic
     return out
 
 
+V_GATE_MIN_EXPORT = 0.05
+"""A V layer's learnable output gate below this is still nearly closed (an almost-v4 readout)."""
+
+
 def kv_share_input_norm(keys, cfg) -> bool:
     """Do the kvshare layers have their input norm? Every one of them, or (the V layer spec before
     2026-11-17) none: ``TransformerLayerSubmodules`` defaults ``input_layernorm`` to ``IdentityOp``
@@ -534,20 +538,33 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         # pulls h_res toward the identity after the sinkhorn), so it travels in config.json as
         # kv_share_res_gate and the model applies it to h_res.
         weight = 1.0
+        iteration = m.get("_ckpt_iteration")
         if p + "v_gate.out_gate" in t:
             weight = float(g("v_gate.out_gate").float().reshape(-1)[0])
+            # the learnable gate is exported faithfully at any value, but a nearly closed branch makes
+            # the export an almost-v4 readout, which is misleading (docs/v4b_plan.md §9)
+            if abs(weight) < V_GATE_MIN_EXPORT:
+                raise ValueError(
+                    f"layer {i}: refusing to export iter {iteration}: g_v = {weight:g} is below "
+                    f"{V_GATE_MIN_EXPORT:g}, so the branch is still nearly closed and the export would "
+                    "measure an almost-v4 model. Export once the gate has opened."
+                )
         add(hp + "mixer.o_proj.weight", (g("self_attention.linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))
         if cfg.get("kv_share_input_norm", True):
             add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
+        # the schedule ramp's window: the layer is only partly inserted inside it, so an export there
+        # would measure a different model than the arm trained (docs/v4b_plan.md §9). Read from the run's
+        # config, so a 100-step ramp (v4c) and a 300-step one (v4b_gate) are both handled.
+        ramp = int(m.get("v_block_gate_ramp") or 0)
+        ramp_start = int(m.get("v_block_gate_start_iteration") or 0)
+        if ramp > 0 and iteration is not None and ramp_start <= iteration < ramp_start + ramp:
+            raise ValueError(
+                f"layer {i}: refusing to export iter {iteration}: the V layers' schedule ramp runs "
+                f"[{ramp_start}, {ramp_start + ramp}), so the export would measure a partially "
+                "inserted model, not this arm (docs/v4b_plan.md §9). Export at or after the ramp's end."
+            )
         if p + "v_gate.res_gate" in t:
-            iteration = m.get("_ckpt_iteration")
-            if iteration is not None and 35900 <= iteration < 36200:
-                raise ValueError(
-                    f"layer {i}: refusing to export iter {iteration}: the V layers' learnable gates are "
-                    "still opening before 36200, so the export would measure an almost-v4 model, not "
-                    "this arm (docs/v4b_plan.md); export at 36400 / 36900"
-                )
             rho = float(g("v_gate.res_gate").float().reshape(-1)[0])
             gates = cfg.setdefault("kv_share_res_gate", {})
             if str(i) in gates and abs(float(gates[str(i)]) - rho) > 1e-9:

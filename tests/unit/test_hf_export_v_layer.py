@@ -113,18 +113,22 @@ def test_v_layer_folds_g_v_into_o_proj_and_exports_rho():
     assert t == {}  # both gate tensors are consumed (g_v folded, rho in the config)
 
 
-def test_v_layer_export_refuses_the_gate_ramp_window():
-    """A checkpoint inside [35900, 36200) exports an almost-v4 model: refuse it."""
-    for it in (35900, 35905, 36000, 36199):
-        with pytest.raises(ValueError, match="refusing to export iter"):
-            convert_layer(LAYER, _gated_tensors(), _cfg(), {"_ckpt_iteration": it},
+def test_v_layer_export_refuses_a_nearly_closed_gate():
+    """A branch whose g_v is still ~0 exports an almost-v4 model: refuse it, whatever the iteration.
+
+    The guard is the gate value, not a fixed iteration: the learnable gates open at Adam's scalar
+    step, so where they are depends on the arm, not on a constant window.
+    """
+    for gate in (0.0, 0.01, -0.03):
+        with pytest.raises(ValueError, match="nearly closed"):
+            convert_layer(LAYER, _gated_tensors(out_gate=gate), _cfg(), {"_ckpt_iteration": 36400},
                           lambda name, w: None, torch.float32, torch.float32, "bf16")
 
 
-def test_v_layer_export_allows_a_checkpoint_past_the_ramp():
-    for it in (36200, 36400, 36900):
+def test_v_layer_export_allows_an_open_gate():
+    for gate in (0.5, -0.5, 1.0):
         out = {}
-        convert_layer(LAYER, _gated_tensors(), _cfg(), {"_ckpt_iteration": it},
+        convert_layer(LAYER, _gated_tensors(out_gate=gate), _cfg(), {"_ckpt_iteration": 36400},
                       lambda name, w: out.__setitem__(name, w), torch.float32, torch.float32, "bf16")
         assert f"model.layers.{LAYER}.mixer.o_proj.weight" in out
 
@@ -146,3 +150,29 @@ def test_config_class_accepts_the_res_gate_dict():
     cfg = OellmAmbitiousConfig(kv_share_res_gate={10: 0.25})
     assert cfg.kv_share_res_gate == {"10": 0.25}
     assert OellmAmbitiousConfig().kv_share_res_gate == {}
+
+
+def test_schedule_ramp_window_is_refused_from_the_run_config():
+    """A checkpoint inside the schedule ramp exports a different model than the arm trained.
+
+    The window comes from the run's own `v_block_gate_ramp` / `v_block_gate_start_iteration`, so a
+    100-step ramp (v4c) is refused at 36050 and allowed at 36000+100, and a 300-step one (v4b_gate)
+    is refused at 36100.
+    """
+    import pytest
+
+    t = _tensors() | {f"decoder.layers.{LAYER}.v_gate.res_gate": torch.zeros(1)}
+    cfg = _cfg() | {"kv_share_input_norm": True}
+
+    def export(iteration, ramp, start=35900):
+        m = {"_ckpt_iteration": iteration, "v_block_gate_ramp": ramp,
+             "v_block_gate_start_iteration": start}
+        convert_layer(LAYER, dict(t), cfg, m, lambda name, w: None,
+                      torch.float32, torch.float32, "bf16")
+
+    with pytest.raises(ValueError, match="schedule ramp runs"):
+        export(35950, 100)          # inside a 100-step ramp [35900, 36000)
+    export(36000, 100)              # at the ramp's end: allowed
+    with pytest.raises(ValueError, match="schedule ramp runs"):
+        export(36100, 300)          # inside a 300-step ramp [35900, 36200)
+    export(35950, 0)                # no ramp: allowed

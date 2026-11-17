@@ -300,3 +300,36 @@ Never export a checkpoint inside [35900, 36200). With the learnable gates the ex
 construction (the gates are parameters, not a schedule), but a checkpoint there has the gates still
 opening, so the export measures an almost-v4 model. Export at 36400 / 36900; `convert_layer` refuses
 the window loudly.
+
+## 10. v4c: the ramp variant (implemented), and the gate gain (deferred)
+
+v4b's learnable gates are correct but slow: they move at Adam's scalar step, so `g_v` reads ~0.085
+at 35999, ~0.42 at 36400 and ~0.85 at 36900. The branch matrices' gradient is `proportional to g_v`,
+so inside any window we can afford they barely adapt from "weights trained for depth 0" toward
+"useful at depth 10" -- and the measured cost of an unadapted branch is +0.0001 nats at `g_v = 0.085`,
+extrapolating to ~+0.001 at full weight.
+
+v4c therefore replaces the learnable gate with a **100-step schedule ramp** and reuses the copy-init
+surgery:
+
+| file | what it does |
+| --- | --- |
+| `config/experiments/korbi/recall_surgery/v4c_surgery_mn5.yaml` | the copy-init surgery into `runs/v4c_src` (same script as v4b's, its own tree) |
+| `config/experiments/korbi/recall_surgery/v4c_ramp_mn5.yaml` | the arm: `v_block_gate_ramp: 100` from 35900, learnable gate off, loads `runs/v4c_src/ckpt` |
+| `config/experiments/korbi/recall_surgery/v4c_smoke_mn5.yaml` | 6 steps, arch metrics and parameter norms every step, with the acceptance numbers |
+
+Properties: exact identity at 35900 (`r = 0`); full branch weight from 36000; the copied matrices get
+gradient `proportional to r` from step 1, so they can adapt immediately. Saves at 35905 / 35999 /
+36000 / 36100 / 36400 / 36900, rolling every 100.
+
+**Eval discipline:** never export inside `[35900, 36000)`. The exporter now derives that window from
+the run's own `v_block_gate_ramp` / `v_block_gate_start_iteration`, and for learnable gates it refuses
+per layer when `|g_v| < 0.05` (a nearly closed branch is an almost-v4 readout).
+
+**What the ramp does not do:** it forces the branch open, so `rho` / `g_v` cannot close it if the
+duplicate hurts. The follow-up, only worth building if the ramp shows the branch helping, is a
+constant gain on the gate parameter -- `g_v = 8 * raw` with `raw` zero-init, so one Adam step moves
+`g_v` by `8 * lr` -- which keeps self-regulation *and* opens in ~150 steps. It needs three things,
+which is why it is deferred: a Megatron config field with default 1.0 (so v4b's stored gate values keep
+their meaning), the autoexp schema and generated CLI metadata for that field, and the same gain in the
+exporter's `g_v` fold, each with a unit test.

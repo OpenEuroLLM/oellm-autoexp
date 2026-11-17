@@ -23,6 +23,8 @@ defaults:
 
 backend:
   megatron:
+    # v4c's own copy-init tree (v4c_surgery_mn5); v4b_learned_mn5 points at v4b_src
+    load: ${aux.kv_root}/runs/v4c_src/ckpt
     # the learnable gates are mutually exclusive with the ramp; the copy-init checkpoint has no gate
     # parameters, which is exactly what this variant builds
     v_block_learnable_gate: false

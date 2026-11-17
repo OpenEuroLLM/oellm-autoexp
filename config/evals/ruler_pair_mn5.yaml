@@ -1,0 +1,57 @@
+# RULER long-context pair on the 36900 exports (matched steps, both exports already on disk).
+# 36 rows: niah_single_1/2/3, niah_multikey_1/2/3, niah_multivalue, niah_multiquery, ruler_vt
+# at 4096 / 8192 / 16384 / 32768 tokens (config/eval_tasks/ruler_long_32k.yaml).
+#
+# Why RULER: the training validation at 37000 shows v4a better on long_64k by 0.0135 nats
+# (1.2442 vs 1.2577) while every short set is a hair worse -- and the recall suite is entirely
+# short-context, so it cannot see this. RULER scores move in whole percentage points, so unlike the
+# recall suite it is not noise-limited.
+#
+#   # v4 control at 36900 (this file's default)
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/ruler_pair_mn5.yaml
+#
+#   # v4a pinned at 36900
+#   ... --set export.name=ambitious_v4a_v6_pin_fp8_36900 \
+#       --set export.run_dir=/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6_pin/main \
+#       --set export.config=.../v4a_v6_pin/main/current_ambitious_v4a_v6_pin_256.yaml
+#
+# Envelope: the recall suite's 256 sequences / 32768 batched tokens cannot hold a 32k prompt, so
+# this spec runs 8 sequences and 65536 batched tokens, and keeps moe_fp8_direct on (23.4 GiB/GPU of
+# weights instead of 42.3 -- the recall runs OOM-looped without it). The lm-eval session must use the
+# export's window (spec check: max_model_length must be null), so vLLM fits the KV cache to the
+# remaining memory instead of us reserving a window.
+# split_s: 0 is required: a RULER row IS one context length (its own TaskManager).
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/runs/main
+  step: 36900
+  name: ambitious_v4_2ph_fp8_36900
+  config: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/runs/main/current_ambitious_v4_cont_main_128.yaml
+
+rows:
+  harnesses: [lm-eval-harness]
+  suite_file: config/eval_tasks/ruler_long_32k.yaml
+
+lm_eval:
+  workers: 4
+  split_s: 0
+  max_parts: 1
+  engine:
+    tp: 1
+    dp: 4
+    expert_parallel: true
+    max_num_seqs: 8
+    max_num_batched_tokens: 65536
+    gpu_memory_utilization: 0.85
+    request_batch_size: 8
+    response_cache: true
+  model_code:
+    moe_fp8_direct: true
+  job: {priority: 70}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
