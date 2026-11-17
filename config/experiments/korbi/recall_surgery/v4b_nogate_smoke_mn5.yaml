@@ -1,0 +1,46 @@
+# @package _global_
+# v4b gate-off twin: the same copy-init checkpoint, same 6 steps / 16 nodes, but the learnable gate
+# is OFF (v_block_learnable_gate false), so the V layers write their whole mHC delta from step 1 --
+# the v4a write, on a working copy-initialized branch. This is the attribution control the eval agent
+# asked for: v4b is v4a + gate + input norm, so a difference against v4a cannot be credited to the
+# gate; against this twin it can.
+#
+# WHAT IT MEASURES
+#   grad norm at 35901: v4a reads 2.454 against the control's 0.167 (15x) with the forward equal to
+#     8e-4 -- dL/d o_proj = delta (x) attn_out with an oversized attn_out from the V layer reading
+#     the raw stream. This twin inherits the fixed spec (the V layer's input norm is live) and a
+#     copy-initialized attention, so it reads the branch's true scale:
+#       ~0.17  the input norm was the amplifier, and the gate is irrelevant to the spike
+#       ~2.4   the norm fix is not in effect (check that the checkpoint carries input_layernorm)
+#   lm loss at 35901: no longer the control's, because the branch is fully on with trained weights.
+#     Record it; it is the "no gate" reference for the gate's own effect.
+#   vgate/* metrics: absent, by construction (no gate module in this arm).
+#
+# The checkpoint carries v_gate.out_gate / v_gate.res_gate; without the flag the model builds no gate
+# module and DCP tolerates the extra keys (as it did the pre-2026-11-17 input norm, §22.18).
+defaults:
+  - v4b_learned_mn5
+  - _self_
+
+aux:
+  nodes: 16
+  steps: 6
+
+backend:
+  megatron:
+    v_block_learnable_gate: false
+    exit_interval: 35906
+    arch_metrics_interval: 1
+    eval_interval: 100000000
+    save_extra_steps: []
+    save_interval: 1000000
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: ambitious_v4b_nogate_smoke
+  base_output_dir: ${aux.kv_root}/runs/v4b_nogate_smoke/main
+  est_steps: 6
+  metadata:
+    pool_priority: 5

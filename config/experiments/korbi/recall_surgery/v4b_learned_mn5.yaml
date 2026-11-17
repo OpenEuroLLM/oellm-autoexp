@@ -1,0 +1,47 @@
+# @package _global_
+# v4b (copy-init): v4a's six inserted V layers, but the branch is a copy of its source attention
+# layer and two learnable gates replace the schedule (docs/v4b_plan.md, option A).
+#
+# Checkpoint (new tree, the 35900 save is only read):
+#   insert_v_layers.py --init copy   q / gate / o / q-norm from source attention 0/18/35/53/70/87,
+#                                    the source's input-norm gain folded into the linear_qkv columns
+#                                    (W' = W diag(g_attn), the V layer's own input norm stays ones)
+#   add_v_mhc.py                     the six V layers' mHC attention mixer (phi 0, b_res 5 I)
+#
+# At 35900 both gates are 0, so the model is the 35900 parent bit-exactly:
+#     streams' = (1 - rho) * streams + rho * (h_res @ streams) + h_post^T (g_v * out)
+# From step 1 both gates move by ~lr per step while the branch is already a working attention:
+#     g_v  = v_gate.out_gate   on the attention write
+#     rho  = v_gate.res_gate   on the h_res stream mixing
+# A schedule cannot do that (it has no gradient). The copy also gives MuOwn the row directions it
+# needs: a zero o_proj leaves W = g * v / ||v|| with g = 0, i.e. no direction and no gradient at all,
+# so the v4a branch could not move.
+#
+# OPEN-ENDED (user 2026-11-17): no --exit-interval of its own -- the run trains to the parent's
+# train_iters and is ended by hand. Persistent saves at 35905 / 35999 / 36400 / 36900, rolling
+# every 100 steps.
+#
+# EVAL DISCIPLINE: never export a checkpoint inside [35900, 36200). The gates are still opening
+# there, so the export measures an almost-v4 model, not the arm. Export at >= 36400.
+defaults:
+  - v4a_v6_pin_mn5
+  - _self_
+
+backend:
+  megatron:
+    # the copy-init surgery of the same 35900 checkpoint (a new output tree, nothing edited in place)
+    load: ${aux.kv_root}/runs/v4b_src/ckpt
+    # g_v on the write, rho on the stream mixing; both 0 at insertion (mutually exclusive with the
+    # v_block_gate_ramp schedule, which stays 0 here)
+    v_block_learnable_gate: true
+    v_block_gate_ramp: 0
+    save_extra_steps: [35905, 35999, 36400, 36900]
+    save_interval: 1000000
+    non_persistent_save_interval: 100
+
+job:
+  name: ambitious_v4b_learned_256
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned/main
+  metadata:
+    # the intervention, as v4a_v6_pin: it never waits behind a control
+    pool_priority: 100

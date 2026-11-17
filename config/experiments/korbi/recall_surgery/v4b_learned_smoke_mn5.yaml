@@ -1,0 +1,53 @@
+# @package _global_
+# v4b copy-init smoke: 16 nodes, 6 steps from 35900, arch metrics on every step.
+#
+# ACCEPTANCE (eval agent 2026-11-17, measured on the running arms). Both gates are exactly 0 at
+# 35900, so the six V layers are an exact identity and the step is the CONTROL's, not v4a's:
+#
+#   35901  lm loss = 1.102695   the control's value on the same batch. v4a reads 1.103468; the
+#                              +0.00077 nats is the static cost of the six h_res mixings, which a
+#                              closed gate removes. A smoke that accepts 1.1035 here would pass a
+#                              state where the gate is not actually closed.
+#   35902  lm loss ~= 1.102929  (control again; v4a jumped to 1.5907)
+#   35901  grad norm ~= 0.167   (control). v4a reads 2.454 there -- 15x -- with the forward equal
+#                              to 8e-4: that is dL/d o_proj = delta (x) attn_out with an oversized
+#                              attn_out from the V layer reading the raw stream. With the input norm
+#                              live and the gate closed, the V branch contributes no gradient at
+#                              all, so ~0.167 is the number to expect. ~2.4 means something is
+#                              writing the branch despite the gate.
+#   [arch] vgate/out   0.0 at 35901, then ~8.5e-4, 1.7e-3, ... (Adam moves a scalar by ~lr per step)
+#   [arch] vgate/res   the same, on the residual path
+#   [arch] vgate/delta 0.0 at 35901 (exactly: the layer moves nothing). The v4a layer's own delta is
+#                      0.0229 at init and that is ALL residual mixing, so the branch becomes visible
+#                      as delta above that floor: ~0.03 = branch comparable to the mixing,
+#                      >= 0.05 = substantial. Never judge on a bare 1e-2 (the mixing alone passes it).
+#
+# A dropped CLI flag shows up as a missing vgate/* metric; a wrong resume iteration as a loss that is
+# not the control's. The six steps cannot see the gate opening (r stays <= 0.02): use the gate-off
+# twin (v4b_nogate_smoke_mn5, the attribution control) and the gate-open smoke
+# (v4b_learned_open_smoke_mn5, from 36400). No persistent save: this run only reads.
+defaults:
+  - v4b_learned_mn5
+  - _self_
+
+aux:
+  nodes: 16
+  steps: 6
+
+backend:
+  megatron:
+    exit_interval: 35906
+    arch_metrics_interval: 1
+    eval_interval: 100000000
+    save_extra_steps: []
+    save_interval: 1000000
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: ambitious_v4b_learned_smoke
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned_smoke/main
+  est_steps: 6
+  metadata:
+    pool_priority: 5

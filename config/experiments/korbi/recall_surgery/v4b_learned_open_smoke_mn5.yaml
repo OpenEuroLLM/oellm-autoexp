@@ -1,0 +1,44 @@
+# @package _global_
+# v4b gate-open smoke: the main arm's 36400 persistent save, 6 more steps, arch metrics on every step.
+# The 6-step smoke from 35900 cannot see the gate opening (the gates are <= 0.02 there); this one reads
+# the opened state, where the branch is visible above the residual-mixing floor.
+#
+# WHAT IT MUST SHOW (eval agent 2026-11-17)
+#   [arch] vgate/out  ~0.42   (500 steps x ~8.5e-4: the gate opens itself at Adam's scalar step)
+#   [arch] vgate/res  the same order, on the residual path
+#   [arch] vgate/delta  the branch's visibility. The floor is 0.0229 (the V layers' own h_res mixing at
+#                     init); ~0.03 = the branch is comparable to the mixing, >= 0.05 = substantial.
+#                     Below the floor means the gate is still closed or mis-scaled.
+#   lm loss            below the parent's 35900 value if the arm is competitive; the 6 steps are only
+#                     a readout, the real numbers come from the 36400 / 36900 recall evals.
+#
+# LAUNCH DISCIPLINE: run this only while the main run's persistent tracker holds 36400 (between the
+# 36400 and 36900 saves). For another start, override the stop:
+#   ++backend.megatron.exit_interval=<iteration + 6>
+# No persistent save, no validation, its own output directory: the main run's checkpoint is only read.
+defaults:
+  - v4b_learned_mn5
+  - _self_
+
+aux:
+  nodes: 16
+  steps: 6
+
+backend:
+  megatron:
+    load: ${aux.kv_root}/runs/v4b_learned/main/ckpt
+    exit_interval: 36406
+    arch_metrics_interval: 1
+    eval_interval: 100000000
+    save_extra_steps: []
+    save_interval: 1000000
+    non_persistent_save_interval: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: ambitious_v4b_learned_open_smoke
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned_open_smoke/main
+  est_steps: 6
+  metadata:
+    pool_priority: 5
