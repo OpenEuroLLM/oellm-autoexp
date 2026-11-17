@@ -158,6 +158,17 @@ def cmd_sbatch(argv: list[str]) -> int:
         a = argv[i]
         if a == "--parsable":
             parsable = True
+        elif a == "--test-only":
+            # a dry run: predict a start and submit nothing. The prediction is the offset in
+            # $FAKESLURM_TEST_START_S seconds (default 0 = "would start at once"), which lets a
+            # test steer the successor admission control.
+            offset = float(os.environ.get("FAKESLURM_TEST_START_S", "0") or 0)
+            when = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() + offset))
+            print(
+                f"sbatch: Job 999999 to start at {when} using 1 processors on nodes n0 "
+                "in partition debug"
+            )
+            return 0
         elif a.startswith("--") and "=" in a:
             k, v = a[2:].split("=", 1)
             cli[k] = v

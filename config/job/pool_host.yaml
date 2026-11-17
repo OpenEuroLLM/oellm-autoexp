@@ -43,6 +43,19 @@ pool_host:
   successor_test_start: false
   successor_test_interval_s: 600
   successor_lead_s: 900
+  # Successor ADMISSION CONTROL: every poll, compare the start a new host would get
+  # (`sbatch --test-only`, corrected by the bias the pool measured itself) with the block end
+  # (run host start + handover_min_age_s). Submit once that start is past
+  # block end + successor_wait_margin_s; park (hold) or cancel a queued host whose start would
+  # fall inside the block, and release it once the block is over. A host that starts early
+  # anyway hands its allocation back in ~3 s (AUTOEXP_NOT_BEFORE_TS in supervisor.sh).
+  # Set successor_delay_s=0 when this is on: the delay gate would suppress the submission.
+  successor_admission: false
+  successor_wait_margin_s: 900
+  successor_cancel_floor_s: 14400
+  successor_debounce: 2
+  successor_min_pending_s: 300
+  successor_est_ttl_s: 240
   hold_runs: false
   stop_grace_s: 120
   preempt_grace_s: 900

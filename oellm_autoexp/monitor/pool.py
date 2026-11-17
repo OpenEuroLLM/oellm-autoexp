@@ -158,6 +158,34 @@ class PoolHostConfig:
     successor_test_start: bool = False
     successor_test_interval_s: float = 600.0
     successor_lead_s: float = 900.0
+    # Successor ADMISSION CONTROL (closed loop, replaces successor_test_start/successor_delay_s):
+    # every poll the monitor asks SLURM what start a new host would get (`sbatch --test-only`,
+    # corrected by the bias it measured itself) and compares it with the block end (run host
+    # start + handover_min_age_s):
+    #   * submit once that start lies after the block end plus `successor_wait_margin_s` (a
+    #     guard against the estimator's own error) -- the host then ages in the queue instead of
+    #     starting inside the block;
+    #   * a queued host whose start would fall inside the block is cancelled (its queue age is
+    #     lost with it -- `scontrol hold` is no alternative: JUPITER resets a held job's
+    #     priority to 0 and it does not age, probe 2026-11-17 19:57-21:00);
+    #   * a decision must hold for `successor_debounce` polls, and a queued host is left alone
+    #     within `successor_min_pending_s` of its submission.
+    # A host that starts early anyway is given back by the supervisor in ~3 s
+    # (AUTOEXP_NOT_BEFORE_TS). JUPITER 2026-11-17: `--test-only` was hours late, so the estimate
+    # is only trusted after the measured bias is removed.
+    successor_admission: bool = False
+    # the predicted start must be at least this far past the block end before a host is
+    # submitted (guard against the estimator's error: JUPITER 2026-11-17 it was hours late)
+    successor_wait_margin_s: float = 900.0
+    # a queued host whose predicted start is earlier than block end - this is hopeless for the
+    # handover and is parked/cancelled (0: never, only submit decisions are gated)
+    successor_cancel_floor_s: float = 14400.0
+    # consecutive polls a submit/wait decision must hold
+    successor_debounce: int = 2
+    # no hold/cancel within this many seconds of a host's submission
+    successor_min_pending_s: float = 300.0
+    # reuse a `--test-only` estimate for this long
+    successor_est_ttl_s: float = 240.0
     # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
     # nothing to run is released at once instead of after idle_exit_s, and no new host is
     # submitted; hosts already queued stay queued (they keep their queue age). For a cluster in a bad state (JUPITER 2026-11-08:
@@ -1269,6 +1297,7 @@ class PoolManager:
         cfg = layout.load_config()
         _atomic_write(layout.monitor_alive, f"{os.getpid()} {now:.0f}\n")
         state = layout.load_state()
+        self._warn_admission_conflicts(cfg, state)
         self._process_requests(loop, layout, state)
 
         runs = [
@@ -1585,11 +1614,32 @@ class PoolManager:
             own = [h for h in current if not h.adopted]
             missing = min(missing, max(0, cfg.max_own_hosts - len(own)))
         # One host at a time while one is still waiting for its sbatch.
-        if missing > 0 and not any(not h.submitted for h in current):
-            if waited >= backoff and not self._successor_held(
+        if cfg.successor_admission:
+            gate_open = self._admission(
+                loop,
+                layout,
+                cfg,
+                state,
+                running,
+                [h for h in current if not h.info and not h.retiring],
+                busy,
+                create_account,
+                now,
+            )
+        else:
+            gate_open = not self._successor_held(
                 layout, cfg, state, running, busy, create_account, now
-            ):
-                state["last_host_id"] = self._create_host(loop, layout, cfg, create_account)
+            )
+        if missing > 0 and not any(not h.submitted for h in current):
+            if waited >= backoff and gate_open:
+                adm = state.get("admission") or {}
+                hid = self._create_host(
+                    loop, layout, cfg, create_account, not_before=adm.get("not_before")
+                )
+                state["last_host_id"] = hid
+                if cfg.successor_admission:
+                    # remember what was predicted, to measure the estimator's bias at the start
+                    adm.setdefault("est_at_submit", {})[hid] = adm.get("last_est")
                 state["last_host_created_ts"] = now
             elif failures:
                 LOGGER.info(
@@ -2242,8 +2292,186 @@ class PoolManager:
             return None
         return parse_test_only_start(out.stdout + out.stderr)
 
+    # --- successor admission control (cfg.successor_admission) ---------------
+    def _start_estimate(
+        self, layout: PoolLayout, cfg: PoolHostConfig, state: dict, account: str | None, now: float
+    ) -> float | None:
+        """Predicted start of a NEW host, with the pool's measured estimate
+        bias removed.
+
+        `sbatch --test-only` was hours late on JUPITER (2026-11-17: it said 15:51 while the
+        host started within minutes), so the raw number is corrected by the median of
+        (actual start - estimate at submission) over the hosts that started meanwhile.
+        """
+        adm = state.setdefault("admission", {})
+        key = account or "-"
+        cache = adm.setdefault("est", {})
+        entry = cache.get(key) or {}
+        if now - float(entry.get("ts") or 0.0) >= cfg.successor_est_ttl_s:
+            cache[key] = entry = {"ts": now, "est": self._test_start_estimate(layout, account)}
+        est = entry.get("est")
+        if est is None:
+            return None
+        bias = adm.get("bias")
+        if bias is not None:
+            est += float(bias)
+        return est
+
+    def _record_estimate_bias(self, layout: PoolLayout, state: dict, hosts: list[HostView]) -> None:
+        """Compare the estimate taken at submission with the start that really
+        happened."""
+        adm = state.setdefault("admission", {})
+        pending = adm.setdefault("est_at_submit", {})
+        samples = adm.setdefault("bias_samples", [])
+        for host in hosts:
+            if host.hid not in pending or not host.start_ts:
+                continue
+            est = pending.pop(host.hid)
+            if est is None:
+                continue
+            samples.append(host.start_ts - float(est))
+            del samples[:-20]
+        if samples:
+            adm["bias"] = sorted(samples)[len(samples) // 2]
+
+    @staticmethod
+    def _warn_admission_conflicts(cfg: PoolHostConfig, state: dict) -> None:
+        """Say it ONCE when two successor mechanisms are configured at the same
+        time.
+
+        These knobs are live and easy to leave behind: the older delay gate would silently
+        suppress every submission the admission control wants to make, and the older dry-run
+        gate would be dead code. Better a loud line than a pool that looks configured and
+        never queues a successor.
+        """
+        if not cfg.successor_admission:
+            return
+        problems = []
+        if cfg.successor_delay_s > 0:
+            problems.append(
+                f"successor_delay_s={cfg.successor_delay_s:.0f} holds the submission back until "
+                "the run host is that old: set it to 0 for admission control"
+            )
+        if cfg.successor_test_start:
+            problems.append("successor_test_start is ignored while successor_admission is on")
+        if not problems:
+            return
+        key = "|".join(problems)
+        if state.get("admission_warned") == key:
+            return
+        state["admission_warned"] = key
+        LOGGER.warning("[pool %s] successor settings: %s", cfg.name, "; ".join(problems))
+
+    def _admission_manage_queued(
+        self,
+        loop: MonitorLoop,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        state: dict,
+        queued: list[HostView],
+        block_end: float,
+        est: float | None,
+        now: float,
+    ) -> None:
+        """Park, release or cancel the hosts already waiting in the queue."""
+        for host in queued:
+            if now >= block_end:
+                continue
+            submitted_ts = float(host.record.runtime.start_ts or 0.0)
+            if submitted_ts and now - submitted_ts < cfg.successor_min_pending_s:
+                continue
+            if est is None or cfg.successor_cancel_floor_s <= 0:
+                continue
+            if est >= block_end - cfg.successor_cancel_floor_s:
+                continue
+            # predicted to start far inside the block: it cannot serve this handover
+            LOGGER.info(
+                "[pool %s] cancelling queued host %s (job %s): predicted start %s is before %s",
+                cfg.name,
+                host.hid,
+                host.record.runtime.runtime_job_id,
+                time.strftime("%H:%M", time.localtime(est)),
+                time.strftime("%H:%M", time.localtime(block_end - cfg.successor_cancel_floor_s)),
+            )
+            self._cancel_host_record(loop, host)
+            host.retiring = True
+
+    def _admission(
+        self,
+        loop: MonitorLoop,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        state: dict,
+        running: list[HostView],
+        queued: list[HostView],
+        busy: set[str],
+        account: str | None,
+        now: float,
+    ) -> bool:
+        """Estimate-driven successor admission: may a new host be submitted now?
+
+        The block end (run host start + handover_min_age_s) is the earliest moment a
+        successor may take the run. A host submitted so that it starts AFTER that moment
+        ages in the queue for free; one that would start before it only burns an
+        allocation. Both the submission and the hosts already queued are steered by the
+        same estimate, every poll.
+        """
+        adm = state.setdefault("admission", {})
+        adm["last_est"] = None
+        self._record_estimate_bias(
+            layout, state, list(self._hosts.get(str(layout.root), {}).values())
+        )
+        run_hosts = [h for h in running if h.hid in busy]
+        if not run_hosts and busy and running:
+            # a handover: the run is leaving a retiring host for the newest live one
+            run_hosts = [max(running, key=lambda h: h.start_ts)]
+        if not run_hosts:
+            # nothing trains: nothing to protect
+            adm["not_before"] = None
+            return True
+        block_end = max(h.start_ts for h in run_hosts) + cfg.handover_min_age_s
+        adm["not_before"] = block_end
+        est = self._start_estimate(layout, cfg, state, account, now)
+        adm["last_est"] = est
+        self._admission_manage_queued(loop, layout, cfg, state, queued, block_end, est, now)
+        if now >= block_end:
+            adm["streak"] = 0
+            LOGGER.info(
+                "[pool %s] admission: block over (since %s): submitting a successor",
+                cfg.name,
+                time.strftime("%H:%M", time.localtime(block_end)),
+            )
+            return True
+        if est is None:
+            LOGGER.warning(
+                "[pool %s] admission: no start estimate (sbatch --test-only failed): "
+                "falling back to the successor gate",
+                cfg.name,
+            )
+            return not self._successor_held(layout, cfg, state, running, busy, account, now)
+        threshold = block_end + cfg.successor_wait_margin_s
+        wanted = est >= threshold
+        streak = int(adm.get("streak") or 0)
+        adm["streak"] = streak + 1 if wanted else 0
+        LOGGER.info(
+            "[pool %s] admission: predicted start %s, block ends %s, threshold %s: %s",
+            cfg.name,
+            time.strftime("%H:%M", time.localtime(est)),
+            time.strftime("%H:%M", time.localtime(block_end)),
+            time.strftime("%H:%M", time.localtime(threshold)),
+            "submit" if wanted else "wait",
+        )
+        if not wanted:
+            return False
+        return adm["streak"] >= max(1, int(cfg.successor_debounce))
+
     def _create_host(
-        self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig, account: str | None = None
+        self,
+        loop: MonitorLoop,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        account: str | None = None,
+        not_before: float | None = None,
     ) -> str:
         from oellm_autoexp.monitor.loop import JobRecord, JobRuntime
 
@@ -2254,6 +2482,13 @@ class PoolManager:
         env = dict(base.slurm.env or {})
         env["AUTOEXP_POOL_DIR"] = str(layout.root)
         env["AUTOEXP_POOL_HOST"] = hid
+        if not_before:
+            # earliest moment this allocation may take the run (block end of the host that
+            # trains it now). The supervisor gives the allocation back in ~3 s if SLURM starts
+            # it earlier anyway -- a 516-node host released after 3 s costs ~120 core-h, after
+            # 50 s (one monitor poll) ~2,000 (JUPITER 2026-11-17, jutil: exact seconds, no
+            # minimum quantum).
+            env["AUTOEXP_NOT_BEFORE_TS"] = f"{int(not_before)}"
         sbatch = copy.deepcopy(base.slurm.sbatch)
         # The new allocation avoids every node known to be bad NOW: the host
         # config's own list (its exclude_file re-read, e.g. the JUPITER fleet list

@@ -372,6 +372,21 @@ set_state idle
 ledger "-" "host start nodes=$NUM_NODES"
 log "up: job ${SLURM_JOB_ID:-?}, $NUM_NODES node(s), pool $POOL"
 
+# Successor admission control: the monitor may submit a host well before the block time of the
+# host that trains the run, so that it ages in the queue instead of starting at once. If SLURM
+# starts it anyway (an estimate that was wrong, a queue that drained), the allocation cannot be
+# used -- it would only be released. Give it back at once, before the precheck and before a
+# monitor poll: ~3 s of 516 nodes (~120 core-h) instead of ~50 s (~2,000 core-h), JUPITER
+# 2026-11-17. The `exited` marker keeps the monitor from counting this as a failed start.
+NOT_BEFORE=${AUTOEXP_NOT_BEFORE_TS:-}
+NOT_BEFORE=${NOT_BEFORE%%.*}
+if [ -n "$NOT_BEFORE" ] && [ "$(now)" -lt "$NOT_BEFORE" ]; then
+  log "started $((NOT_BEFORE - $(now)))s before the handover time ($(date -d @"$NOT_BEFORE" +%FT%T)): releasing at once"
+  ledger "-" "host exit: early start, $(date -d @"$NOT_BEFORE" +%FT%T) is the earliest handover: released"
+  atomic "$H/exited" "early start before the handover time"
+  exit 0
+fi
+
 # runs of this host: rid -> pid of its background run_one; the nodes of each in $H/inuse/<rid>
 declare -A RUN_PID=()
 mkdir -p "$H/inuse"

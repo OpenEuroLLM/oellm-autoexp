@@ -108,6 +108,14 @@ that successors started every 3–4 min and the run ping-ponged between fresh al
 * `successor_delay_s` (default 0): the `keep_pending` successor is queued only once the running
   host is this old. 0 is right for long queues (maximum age priority). For short queues, set it to
   about `wall time - expected queue wait`.
+* `successor_admission` (default off): instead of a fixed lead, every poll compares the start a
+  new host would get (`sbatch --test-only`, corrected by the bias the pool measured) with the
+  block end. Submit once that start is past the block end plus `successor_wait_margin_s`; a queued
+  host whose start would fall inside the block is cancelled (its queue age goes with it: a
+  `scontrol hold` is no alternative, JUPITER resets a held job's priority to 0 and it does not
+  age). Set `successor_delay_s: 0` with it.
+  A host that starts early anyway hands the allocation back in ~3 s: `_create_host` bakes
+  `AUTOEXP_NOT_BEFORE_TS` into its env and `supervisor.sh` exits at once (JUPITER 2026-11-17).
 
 Hosts still waiting in the queue that are no longer needed (`keep_pending` lowered, work gone)
 are cancelled.

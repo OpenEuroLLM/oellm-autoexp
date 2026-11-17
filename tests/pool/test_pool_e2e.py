@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
-from tests.pool.harness import PoolEnv
+from tests.pool.harness import REPO, PoolEnv
 
 pytestmark = pytest.mark.skipif(
     not (shutil.which("bash") and shutil.which("pgrep")), reason="needs bash and pgrep"
@@ -202,8 +204,6 @@ def test_runs_execute_in_the_directory_they_were_enqueued_from(pool, tmp_path):
     """MareNostrum runs from synced snapshots: a job enqueued from a new snapshot must run
     there, not in the directory the host was submitted from (job.metadata.pool_workdir,
     default the enqueuing process's working directory)."""
-    import shlex
-
     snapshot = tmp_path / "autoexp_new_snapshot"
     snapshot.mkdir()
     pool.create_pool(*FAST)
@@ -264,8 +264,9 @@ def test_host_accounts_race_and_the_first_account_keeps_its_successor(pool):
 
 
 def test_fallback_hosts_keeps_several_queued_in_every_account(pool):
-    """fallback_hosts=2 with keep_pending=3: nothing runs yet, so 1 + 3 hosts are wanted, two
-    queued in each account (JUPITER 2026-11-04: two aging 516-node hosts on e-sta and e-ext)."""
+    """fallback_hosts=2 with keep_pending=3: nothing runs yet, so 1 + 3 hosts
+    are wanted, two queued in each account (JUPITER 2026-11-04: two aging
+    516-node hosts on e-sta and e-ext)."""
     pool.create_pool(
         *FAST,
         "job.pool_host.keep_pending=3",
@@ -288,9 +289,10 @@ def test_fallback_hosts_keeps_several_queued_in_every_account(pool):
 
 
 def test_no_queued_host_is_cancelled_when_one_starts(pool):
-    """cancel_surplus_queued=false: when a fallback-account host starts, the first account's
-    share shrinks, but its queued hosts are kept and nothing new is submitted beyond the target
-    (JUPITER 2026-11-05: host013 lost its queue age this way)."""
+    """cancel_surplus_queued=false: when a fallback-account host starts, the
+    first account's share shrinks, but its queued hosts are kept and nothing
+    new is submitted beyond the target (JUPITER 2026-11-05: host013 lost its
+    queue age this way)."""
     pool.create_pool(
         *FAST,
         "job.pool_host.keep_pending=3",
@@ -437,9 +439,12 @@ def test_attach_packs_runs_into_a_running_allocation_and_leaves_it_alive(pool, t
 
 
 def test_replacing_an_adopted_supervisor_keeps_the_allocation(pool, tmp_path):
-    """Swapping the supervisor of an idle adopted / attached host for new code: SIGKILL its step
-    and drop its info / alive / state files. The monitor starts a new supervisor into the SAME
-    allocation (never releases or cancels it), and the next run goes there."""
+    """Swapping the supervisor of an idle adopted / attached host for new code:
+    SIGKILL its step and drop its info / alive / state files.
+
+    The monitor starts a new supervisor into the SAME allocation (never
+    releases or cancels it), and the next run goes there.
+    """
     import subprocess
 
     wd = tmp_path / "alloc"
@@ -486,8 +491,9 @@ def test_replacing_an_adopted_supervisor_keeps_the_allocation(pool, tmp_path):
 
 
 def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
-    """The second, independent fail-safe: registered for adoption but the hook is missing ->
-    the monitor cancels the job adopt_hook_timeout_s after it starts."""
+    """The second, independent fail-safe: registered for adoption but the hook
+    is missing -> the monitor cancels the job adopt_hook_timeout_s after it
+    starts."""
     wd = tmp_path / "user_snapshot"
     wd.mkdir()
     pool.create_pool(*FAST, "job.pool_host.adopt_hook_timeout_s=5")
@@ -506,10 +512,13 @@ def test_an_adopted_job_whose_hook_does_not_engage_is_cancelled(pool, tmp_path):
 
 
 def test_a_singleton_job_moves_to_the_larger_pool_and_never_runs_twice(pool):
-    """job.metadata.pool_singleton across two pools (two monitors): the job runs on 1 node in
-    the small pool; when the large pool gets a host, the small pool's run is superseded (its
-    job cancelled after a graceful save) and the job continues on 2 nodes in the large pool from
-    that checkpoint. At no time do two runs of the job run."""
+    """job.metadata.pool_singleton across two pools (two monitors): the job
+    runs on 1 node in the small pool; when the large pool gets a host, the
+    small pool's run is superseded (its job cancelled after a graceful save)
+    and the job continues on 2 nodes in the large pool from that checkpoint.
+
+    At no time do two runs of the job run.
+    """
     import json as _json
     import subprocess
     import sys
@@ -1118,9 +1127,13 @@ def test_a_crashed_run_s_leftover_gpu_memory_keeps_the_next_run_off_its_node(poo
 
 
 def test_settle_excludes_nothing_when_more_nodes_are_busy_than_settle_max_exclude(pool):
-    """JUPITER 2026-11-04/05/06: leftovers of a crashed run held the GPUs of 457-512 nodes and the
-    settle check excluded them all -- the requeued run never fitted. Beyond settle_max_exclude busy
-    nodes the check is not trusted: nothing is excluded and the next run starts."""
+    """JUPITER 2026-11-04/05/06: leftovers of a crashed run held the GPUs of
+    457-512 nodes and the settle check excluded them all -- the requeued run
+    never fitted.
+
+    Beyond settle_max_exclude busy
+    nodes the check is not trusted: nothing is excluded and the next run starts.
+    """
     import subprocess
 
     pool.create_pool(
@@ -1149,9 +1162,13 @@ def test_settle_excludes_nothing_when_more_nodes_are_busy_than_settle_max_exclud
 
 
 def test_a_draining_node_is_used_only_when_the_healthy_ones_are_not_enough(pool):
-    """JUPITER 2026-11-09 20:53: an admin set a node of host075 draining for work the next day;
-    the supervisor counted it unusable, 511 of 512, and the host sat idle. A draining node keeps
-    working for the allocation: it comes last, taken only when the healthy nodes run short."""
+    """JUPITER 2026-11-09 20:53: an admin set a node of host075 draining for
+    work the next day; the supervisor counted it unusable, 511 of 512, and the
+    host sat idle.
+
+    A draining node keeps
+    working for the allocation: it comes last, taken only when the healthy nodes run short.
+    """
     pool.create_pool(*FAST, "job.pool_host.min_hosts=1", "job.pool_host.idle_exit_s=600")
     pool.start_monitor()
     info = pool.layout.host_dir("host001") / "info.env"
@@ -1172,9 +1189,12 @@ def test_a_draining_node_is_used_only_when_the_healthy_ones_are_not_enough(pool)
 
 
 def test_the_supervisor_follows_a_shrunk_allocation(pool):
-    """A host shrunk with `scontrol update JobId=.. NodeList=..` keeps its start-time
-    SLURM_JOB_NODELIST; refresh_alloc (feat/hybrid-v0.19 fcdeecfd) reads the live allocation, so
-    info.env and the usable count follow it and no run gets a removed node."""
+    """A host shrunk with `scontrol update JobId=..
+
+    NodeList=..` keeps its start-time SLURM_JOB_NODELIST; refresh_alloc
+    (feat/hybrid-v0.19 fcdeecfd) reads the live allocation, so info.env
+    and the usable count follow it and no run gets a removed node.
+    """
     pool.env["POOL_ALLOC_REFRESH_S"] = "1"
     pool.create_pool(*FAST, "slurm.sbatch.nodes=3")
     pool.enqueue("a", "aux.iters=40", "aux.tick=0.1")
@@ -1210,3 +1230,40 @@ def test_a_node_slurm_reports_down_is_skipped_by_the_next_run(pool):
     state = pool.run_state(second)
     assert (state.started["job"], state.started["nodes"]) == (jid, f"n{jid}-1")
     assert pool.layout.exclude_nodes.read_text().strip() == ""  # nobody had to exclude it
+
+
+def test_the_supervisor_gives_back_an_allocation_that_starts_too_early(pool):
+    """Successor admission control: the monitor submits a successor long before the block time
+    of the host that trains the run, so that it ages in the queue. When SLURM starts it anyway
+    (a wrong estimate, or a queue that drains), the allocation cannot be used -- the supervisor
+    must hand it back at once, before the precheck and before a monitor poll: ~3 s of 516 nodes
+    instead of ~50 s (JUPITER 2026-11-17, jutil: exact seconds, no minimum quantum)."""
+    pool.create_pool()
+    hdir = pool.layout.host_dir("host001")
+    hdir.mkdir(parents=True, exist_ok=True)
+    env = {
+        **pool.env,
+        "SLURM_JOB_ID": "424242",
+        "SLURM_JOB_NODELIST": "n1,n2",
+        "SLURM_NNODES": "2",
+        "SLURM_JOB_NUM_NODES": "2",
+        # what _create_host bakes in: the earliest moment this host may take the run
+        "AUTOEXP_NOT_BEFORE_TS": str(int(time.time()) + 600),
+    }
+    t0 = time.time()
+    proc = subprocess.run(
+        ["bash", str(REPO / "scripts" / "pool" / "supervisor.sh"), str(pool.pool_dir), "host001"],
+        env=env,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    took = time.time() - t0
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    assert took < 20, f"the allocation was held {took:.1f}s instead of being given back at once"
+    assert (hdir / "exited").exists(), "the monitor must see an intentional exit, not a lost host"
+    assert "early start" in (hdir / "exited").read_text()
+    ledger = (pool.pool_dir / "ledger.tsv").read_text()
+    assert "host exit: early start" in ledger
+    assert not list((pool.pool_dir / "runs").glob("*/started")), "no run may start on that host"

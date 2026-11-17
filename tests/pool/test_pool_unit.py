@@ -1304,3 +1304,110 @@ def test_format_slurm_time():
     assert format_slurm_time(1800) == "0:30:00"
     assert format_slurm_time(86400 + 61) == "1-00:01:01"
     assert parse_slurm_time(format_slurm_time(43200)) == 43200
+
+
+# --- successor admission control (successor_admission) ----------------------
+def _admission_env(env, monkeypatch, estimate, host_age_s, **extra):
+    """One host trains the run (started host_age_s ago, block 1 h), then
+    keep_pending is raised to 1 so the pool wants a successor.
+
+    `estimate` is a 1-element list so a test can
+    change the predicted start between polls.
+    """
+    meta = env.layout.load_meta()
+    settings = {
+        "handover": True,
+        "keep_pending": 0,
+        "handover_min_age_s": 3600,
+        "successor_admission": True,
+        "successor_debounce": 1,
+        "successor_wait_margin_s": 900,
+        "successor_cancel_floor_s": 600,
+        "successor_min_pending_s": 0,
+        "successor_est_ttl_s": 0,
+    }
+    settings.update(extra)
+    meta["config"].update(settings)
+    env.layout.write_meta(meta)
+    calls = []
+
+    def fake(layout, account):
+        calls.append(account)
+        return estimate[0]
+
+    monkeypatch.setattr(PoolManager, "_sbatch_test_start", staticmethod(fake))
+    env.add_run("train")
+    env.poll(2)
+    assert len(env.hosts()) == 1, "nothing trains yet: the first host is submitted without a probe"
+    hid = env.host_up(env.hosts()[0], start_ts=time.time() - host_age_s)
+    env.poll()
+    env.start_run(env.rec("train").runtime.runtime_job_id, hid)
+    meta["config"].update(keep_pending=1)
+    env.layout.write_meta(meta)
+    return calls
+
+
+def test_admission_submits_when_the_predicted_start_is_past_the_block(env, monkeypatch):
+    # a long queue: the host would start well after the block, so it ages there for free
+    _admission_env(env, monkeypatch, [time.time() + 5000], host_age_s=600)
+    env.poll(2)
+    assert len(env.hosts()) == 2, "a host predicted to start after the block must be submitted"
+
+
+def test_admission_waits_while_the_predicted_start_is_inside_the_block(env, monkeypatch):
+    # an empty cluster: it would start at once, inside the block -> pure waste
+    calls = _admission_env(env, monkeypatch, [time.time() + 60], host_age_s=600)
+    env.poll(3)
+    assert len(env.hosts()) == 1, "a host predicted to start inside the block must not be submitted"
+    assert calls, "the estimate was not asked"
+
+
+def test_admission_debounces_a_single_poll_decision(env, monkeypatch):
+    estimate = [time.time() + 60]  # inside the block: wait
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_debounce=2)
+    estimate[0] = time.time() + 5000  # the queue got long: submit, but only after 2 polls
+    env.poll()
+    assert len(env.hosts()) == 1, "one poll is not enough with debounce 2"
+    env.poll()
+    assert len(env.hosts()) == 2
+
+
+def test_admission_cancels_a_queued_host_that_would_start_inside_the_block(env, monkeypatch):
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600)
+    env.poll(2)
+    assert len(env.hosts()) == 2
+    queued = env.hosts()[1]
+    # the queue drained: it would now start inside the block, far from the handover moment
+    estimate[0] = time.time() + 60
+    env.poll(2)
+    assert env.rec(queued.job_id).runtime.final_state == "cancelled"
+    assert (env.layout.host_dir(queued.definition.metadata["pool_host_id"]) / "exited").exists(), (
+        "the cancellation must be marked as intentional, not as a failed start"
+    )
+
+
+def test_admission_bakes_the_not_before_time_into_a_submitted_host(env, monkeypatch):
+    _admission_env(env, monkeypatch, [time.time() + 5000], host_age_s=600)
+    env.poll(2)
+    new = env.hosts()[1]
+    not_before = float(new.definition.slurm.env["AUTOEXP_NOT_BEFORE_TS"])
+    run_start = float(
+        (env.layout.host_dir(env.hosts()[0].definition.metadata["pool_host_id"]) / "info.env")
+        .read_text()
+        .split("START_TS=")[1]
+        .split()[0]
+    )
+    assert not_before == pytest.approx(run_start + 3600, abs=2), (
+        "the supervisor must give the allocation back if it starts before the block ends"
+    )
+
+
+def test_admission_warns_when_the_old_delay_gate_is_still_set(env, monkeypatch, caplog):
+    """The knobs are live and easy to leave behind: successor_delay_s would silently suppress
+    every submission the admission control wants to make."""
+    _admission_env(env, monkeypatch, [time.time() + 5000], host_age_s=600, successor_delay_s=7200)
+    with caplog.at_level("WARNING"):
+        env.poll(2)
+    assert "suppresses the submission" in caplog.text or "holds the submission back" in caplog.text
+    assert len(env.hosts()) == 1, "the old delay gate still wins until it is set to 0"

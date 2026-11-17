@@ -48,6 +48,7 @@ and the run continues on the successor.
 | `handover` | true | a newer live allocation takes over the run, and the old one is released |
 | `handover_min_age_s` | 3600 | no switch before the old allocation has run 1 h. With short queues, successors start within minutes; without this the run would ping-pong. |
 | `successor_delay_s` | 0 | queue the successor at once: maximum age. Raise it only if the queue is short. |
+| `successor_admission` | false | closed loop instead of the fixed lead: submit only when `sbatch --test-only` predicts a start past the block end (+ margin, estimate corrected by the bias the pool measured), park/cancel a queued host that would start inside the block, release it when the block is over. Set `successor_delay_s: 0` when it is on. |
 | `preempt_grace_s` | 1800 | must exceed the checkpoint save time, with margin. Measure it. |
 | `min_remaining_s` | 1800 | no run starts on an allocation with less left: startup plus one save interval |
 | `host_stale_s` | 1800 | a RUNNING host whose supervisor heartbeat is older than this is cancelled |
@@ -139,7 +140,7 @@ shell running it. Use the PID from `ps`, or `pgrep -f` with a pattern that is no
 command line.
 
 **Packing small runs (`max_runs_per_host`, default 1).** With `max_runs_per_host: N` a host runs up
-to N runs side by side, each on its own nodes (e.g. three 8-node runs on a 33-node host). The monitor
+to N runs side by side, each on its own nodes (for example three 8-node runs on a 33-node host). The monitor
 assigns by free nodes. The supervisor starts each run as soon as its nodes are free and records them
 in `<host>/inuse/<rid>`. A run that does not fit waits until enough nodes are free. Per-run stops
 (`stop`, `preempt`, `max_runtime_s`) affect only that run: the stop relay signals only launchers whose
@@ -160,6 +161,8 @@ releases the allocation as usual. Config: `experiments/korbi/pool/mn5_pool_pack3
 | Event | What happens | Where you see it |
 |---|---|---|
 | Successor allocation starts | after `handover_min_age_s`, the old host preempts its run (checkpoint) and releases itself; the job resumes on the new host; a new successor is queued | ledger `host exit: exit requested: handover ...`; monitor log `handover: retiring` |
+| Successor started inside the block (wrong estimate, drained queue) | its supervisor hands the allocation back at once, before the precheck (~0.1-3 s, not a monitor poll) | ledger `host exit: early start, ... is the earliest handover: released`; monitor log `admission: predicted start ...` |
+| Successor would start inside the block while queued | with `successor_admission`: the queued host is cancelled (a hold is no alternative: JUPITER resets a held job's priority to 0 and it does not age) | monitor log `cancelling queued host ... predicted start ...` |
 | Host reaches its wall clock | USR1 → graceful stop → requeue → the job continues on the successor | run `rc` `0 preempted`; host COMPLETED (not TIMEOUT) |
 | Run crashes (CUDA/NCCL error, exception) | the job's own policy: restart hooks (fault scan → exclusions), then a new run, normally in the SAME allocation | monitor log `Action executed ... RestartAction`; `NCCL peer scan of pool run ...` |
 | Node fails, no `--no-kill` | SLURM ends the allocation → `host_lost` → requeue on the successor or a new host, from the last periodic checkpoint | run `rc` `-1 host_lost`; host NODE_FAIL |
