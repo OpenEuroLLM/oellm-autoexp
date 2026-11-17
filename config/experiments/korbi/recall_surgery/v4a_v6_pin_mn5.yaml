@@ -19,3 +19,6 @@ job:
   base_output_dir: ${aux.kv_root}/runs/v4a_v6_pin/main
   est_steps: 200833
   start_condition: null
+
+slurm:
+  srun_opts: "--gres=gpu:4"
