@@ -1,0 +1,18 @@
+# @package _global_
+# The 25000 restart's full Engram package (hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5: clip_grad 1.0, row-norm cap
+# 13 -> 7 over 1000 steps from 25000) with DeepSeek-V4.1's Sinkhorn-balanced momentum update for the tables ("sink5":
+# --engram-table-optimizer sinkhorn, Megatron f05a44c25 on oellm/v4main-diag, lr x 5) instead of Adam x 1. The table
+# state stays compatible: exp_avg is the momentum, exp_avg_sq kept unused. Screen screen5engopt_s3 (session -2f, 11-10,
+# step ~2050): sink5 +1.0 ... +2.5 mnat vs Adam x 1 in every window since 750, rows largest and still growing.
+# Snapshot autoexp_v4hd256p2sink5.
+defaults:
+  - hybrid_ambitious_v4_2ph_hd256_p2r25k_rowcap_mn5
+  - _self_
+
+backend:
+  megatron:
+    engram_table_optimizer: sinkhorn
+    engram_lr_mult: 5.0
+    sinkhorn_lr_ratio: 0.18
+    sinkhorn_momentum: 0.95
+    sinkhorn_iters: 11
