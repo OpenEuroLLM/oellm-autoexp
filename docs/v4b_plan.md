@@ -1,7 +1,9 @@
 # v4b plan: bringing the V attention in without a first-step transient
 
-Status: plan only. No main config is edited. The running arm `v4a_v6_pin` is not
-touched. v4b is a contingency if v4a does not catch up.
+Status: **option A is implemented and enqueued** (2026-11-17, §9): copy-init surgery, two learnable
+gates (`g_v` on the attention write, `rho` on the residual mixing), open-ended run on host008. The
+running `v4a_v6_pin` arm is not touched. The diagnosis below (§1-§8) is the plan as written before
+the arm existed and is kept as the record.
 
 ## 1. Is the inserted V layer a no-op? No.
 
@@ -227,3 +229,74 @@ Acceptance signal, already instrumented by `_record_v_block_impact` (`vgate/r`, 
 Calibration: a trained attention layer moves ~2-9 % of the stream (`o_proj` RMS 2.9e-3, output
 ~0.09 against a stream of order 1-4), so six V layers at trained scale would move 10-50 % of it.
 The ceiling is set by the init and the gradient path, not by the architecture.
+
+## 9. Implemented v4b: copy-init plus two learnable gates (2026-11-17)
+
+The arm is option A with the schedule replaced by parameters, on host008.
+
+### 9.1 What changed
+
+| part | change | file |
+| --- | --- | --- |
+| surgery | `insert_v_layers.py --init copy`: q / gate rows, output projection and q-norm gain copied from the source attention layer (0 / 18 / 35 / 53 / 70 / 87), the source's input-norm gain folded into the `linear_qkv` columns (`W' = W diag(g_attn)`, the V layer's own norm stays ones), MuOwn state from the fold | `scripts/korbi/production/insert_v_layers.py` |
+| gates | `v_gate.out_gate` = g_v and `v_gate.res_gate` = rho, one element each, 0 at insertion, Adam state written by the surgery | same, `add_v_mhc.py`, `fix_v_args.py` |
+| write | `streams' = (1 - rho) * streams + rho * (h_res @ streams) + h_post^T (g_v * out)`: the output is scaled before the existing write kernel and the mixer is pulled toward the identity (`lerp(I, h_res, rho)`), so there is no extra pass over the streams | `transformer_layer.py` (`VBlockGate`, `_mhc_write`) |
+| config | `v_block_learnable_gate: true`, `v_block_gate_ramp: 0` (the two are mutually exclusive), open-ended, saves at 35905 / 35999 / 36400 / 36900 | `config/.../v4b_learned_mn5.yaml` |
+| export | g_v folds into `o_proj` (as a branch's gamma does), rho travels as `kv_share_res_gate` and the model applies it to `h_res`; the export refuses a checkpoint inside [35900, 36200) | `export_ambitious.py`, `export_parallel.py`, the HF model |
+
+### 9.2 Why the copy-init is not cosmetic: MuOwn on a zero matrix
+
+`insert_v_layers.py` wrote `linear_proj.weight = 0` with row magnitude `g = 0`. Under
+`muown_classical` (`W = g * v / ||v||`):
+
+```
+u      = W / clamp(|g|)          # 0 / eps = 0
+grad_g = <grad_W, u>             # = 0
+grad_u = g * (grad_W - u grad_g) # = 0
+W'     = g * u_step / ||u_step|| # = 0
+```
+
+so the tensor is starved of both its direction and its magnitude, and `W` cannot move. The repo
+already says it: `add_ckda_branch.py` — *"an o_proj at 0 would leave MuOwn without row directions"*.
+The measurement on the running arm agrees on the size of the effect: o_proj RMS `4.7e-5 -> 9.6e-5`
+at 36000 -> 36400 against `2.9e-3` for a trained attention layer (60x short), and two of the six
+layers did not grow at all in 400 steps. Either way the conclusion is the same: the branch had no
+usable gradient, so v4a never measured attention capacity. The copy gives MuOwn a non-zero row norm
+and a direction at step 0.
+
+### 9.3 Acceptance (measured on the running arms)
+
+Both gates are 0 at 35900, so step 35901 must be the **control's**, not v4a's:
+
+| readout | value | meaning |
+| --- | --- | --- |
+| 35901 lm loss | **1.102695** | control. v4a reads 1.103468; the +0.00077 is the static cost of the six `h_res` mixings, which a closed gate removes |
+| 35902 lm loss | ~1.102929 | control (v4a jumped to 1.5907) |
+| 35901 grad norm | ~0.167 | control. v4a reads 2.454 (15x) with the forward equal to 8e-4: `dL/d o_proj = delta (x) attn_out` with an oversized `attn_out` from the raw-stream input |
+| vgate/out, vgate/res | 0 at 35901, then ~8.5e-4 / step | Adam's scalar step |
+| vgate/delta | 0 at 35901; ~0.03 = branch comparable to the mixing, >= 0.05 = substantial | the v4a layer's own delta is 0.0229 at init and that is ALL residual mixing: never judge on a bare 1e-2 |
+
+A 6-step smoke cannot see the gate opening (<= 0.02 there). Two more readouts:
+
+- `v4b_nogate_smoke_mn5`: the same copy-init checkpoint with `v_block_learnable_gate: false`, so the
+  branch writes whole from step 1. The attribution control: v4b is v4a + gate + input norm, so a
+  difference against v4a cannot be credited to the gate, but a difference against this twin can. Its
+  grad norm at 35901 answers whether the input norm was the amplifier (~0.17) or the fix is not in
+  effect (~2.4).
+- `v4b_learned_open_smoke_mn5`: from the 36400 save, 6 steps, where the gates are open (~0.42).
+
+### 9.4 LR group
+
+The V layer's parameters are `SelfAttention` parameters and `mark_softmax_attention_params` marks
+them `is_softmax_attention`. With `attention_lr_mult = 1.0` (the resolved v4 config, and no
+`v_lr_mult` exists) no attention group is created, so the V tensors run in the default group at the
+shared `lr = 8.5e-4`. That is the same lr as a trained attention layer's, and the smoke log's
+`param_group` lines are the check. No ramp: the gates pace themselves, and the schedule's 300-step
+ramp is gone with the schedule.
+
+### 9.5 Eval discipline
+
+Never export a checkpoint inside [35900, 36200). With the learnable gates the export is faithful by
+construction (the gates are parameters, not a schedule), but a checkpoint there has the gates still
+opening, so the export measures an almost-v4 model. Export at 36400 / 36900; `convert_layer` refuses
+the window loudly.
