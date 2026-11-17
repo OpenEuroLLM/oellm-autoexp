@@ -242,3 +242,6 @@ outputs/data_cache/*
 
 # Local archive of the pre-ComplexKDA flash-linear-attention checkout (panini), not a submodule.
 flash-linear-attention-legacy/
+
+# Coding-agent scratch: per-session background task output and delegate results.
+.pi/
