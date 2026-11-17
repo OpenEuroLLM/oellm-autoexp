@@ -1033,6 +1033,14 @@ class MegatronConfig(ConfigInterface):
     v_block_gate_start_iteration: int = 0
     # Iteration the v_block_gate_ramp counts from: the step the V layers were inserted at.
 
+    v_block_learnable_gate: bool = False
+    # Learnable gates on every inserted V layer instead of the v_block_gate_ramp schedule: the layer
+    # writes (1 - rho) streams + rho (h_res @ streams) + h_post^T (g_v out), with g_v and rho both 0
+    # at insertion (exact identity) and both carrying a gradient at step 0, so the gates open
+    # themselves while the copy-initialized branch is already a working attention. Checkpoint tensors
+    # (v_gate.out_gate / v_gate.res_gate, Adam state); the export folds them into linear_proj / h_res.
+    # Mutually exclusive with a positive v_block_gate_ramp.
+
     ckda_branch_serial: bool = False
 
     # 0-based indices (in the decoder's layer list, as the checkpoint keys

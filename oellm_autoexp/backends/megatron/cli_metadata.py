@@ -8962,6 +8962,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "v_block_learnable_gate": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Learnable gates on every inserted V layer instead of the v_block_gate_ramp schedule: streams' = (1 - rho) * streams + rho * (h_res @ streams) + h_post^T (g_v * out), with g_v (v_gate.out_gate) and rho (v_gate.res_gate) both 0 at insertion (exact identity) and both carrying a gradient at step 0, so they open themselves while the copy-initialized branch is already a working attention. Mutually exclusive with a positive v_block_gate_ramp.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "v_head_dim": MegatronArgMetadata(
         arg_type=int,
         default=128,
@@ -16764,6 +16772,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0,
+    ),
+    "v_block_learnable_gate": MegatronActionSpec(
+        option_strings=("--v-block-learnable-gate",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "v_head_dim": MegatronActionSpec(
         option_strings=("--v-head-dim",), action_type="store", nargs=None, const=None, default=128
