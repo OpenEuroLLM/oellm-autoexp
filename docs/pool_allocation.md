@@ -129,7 +129,7 @@ selection, not a pool retry.  The pool host `host007` was pinned by excluding
 every allocation node outside that set:
 
 ```
-as07r5b04
+as07r2b24
 as07r5b05
 as07r5b06
 as07r5b08
@@ -137,6 +137,11 @@ as07r5b09
 as07r5b10
 as07r5b12
 ```
+
+`as07r5b04` replaces `as07r2b24`: the generated run `EXCLUDE` list already
+contained `as07r2b24`, so a pinned set containing it leaves only 255 usable
+nodes and the supervisor returns `insufficient_nodes` without creating a step.
+`as07r5b04` was checked with four GPUs and used instead.
 
 The resulting 256-node set was tested directly:
 
