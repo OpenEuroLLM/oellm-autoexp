@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 import os
 
@@ -174,6 +175,7 @@ class MegatronBackend(BaseBackend):
                 pass
 
     def build_launch_command(self) -> str:
+        self._ensure_checkpoint_dir()
         ckpt_convert_format = getattr(self.config.megatron, "ckpt_convert_format", None)
         if not ckpt_convert_format:
             return self.config.full_cmd
@@ -187,6 +189,20 @@ class MegatronBackend(BaseBackend):
             skip_defaults=True,
         )
         return f"{self.config.dist_cmd} {' '.join(training_args)}"
+
+    def _ensure_checkpoint_dir(self) -> None:
+        """Create the checkpoint ``save`` directory ahead of the run.
+
+        Megatron-LM writes ``<save>/progress.txt`` at the very start of
+        training, before it ever saves a checkpoint, so the directory must
+        already exist. The orchestrator only creates ``job.base_output_dir``
+        (as a side effect of rendering the sbatch script there), so the
+        nested ``checkpoints`` directory is otherwise missing on a job's
+        first run and training crashes immediately with a FileNotFoundError.
+        """
+        save_dir = getattr(self.config.megatron, "save", None)
+        if save_dir:
+            Path(save_dir).mkdir(parents=True, exist_ok=True)
 
     def _filter_megatron_args(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._schema_only:
