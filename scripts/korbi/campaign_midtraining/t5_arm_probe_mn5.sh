@@ -12,10 +12,12 @@ set -euo pipefail
 arm=$1; policy=$2; shift 2
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
 D=/gpfs/projects/ehpc533/users/korbip/data
-run=$R/production/t5_s3_sparse/$arm
-ckpt=$run/ckpt/iter_0001500
-[ -d "$ckpt" ] || { echo "no step-1500 checkpoint under $run" >&2; exit 1; }
-out=$R/hf_exports/t5_s3_${arm}_1500
+# T5_RUN_DIR / T5_STEP / T5_EXPORT: another run and step (default: the step-5 arm at 1500)
+run=${T5_RUN_DIR:-$R/production/t5_s3_sparse/$arm}
+step=${T5_STEP:-1500}
+ckpt=$run/ckpt/iter_$(printf %07d "$step")
+[ -d "$ckpt" ] || { echo "no step-$step checkpoint under $run" >&2; exit 1; }
+out=$R/hf_exports/${T5_EXPORT:-t5_s3_${arm}_1500}
 probe_out=$R/campaign_midtraining/t5_probe${T5_PROBE_TAG:-}/$arm  # T5_PROBE_TAG: e.g. _long
 config=$(readlink -f "$(ls -t "$run"/current_*.yaml | head -1)")
 tok=$(python - "$config" <<'PY'
