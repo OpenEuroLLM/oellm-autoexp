@@ -102,6 +102,8 @@ def test_park_and_promote_the_whole_pool(env, capsys):
     # parking twice changes nothing
     assert _nice(env, "park", apply=True) == 0 and len(env.q.updates) == 1
     capsys.readouterr()
+    assert _nice(env, "promote") == 0
+    assert "priority 1 -> its natural priority (hidden while floored at 1)" in capsys.readouterr().out
     assert _nice(env, "promote", apply=True) == 0
     assert env.q.prio(env.j_wait) == 95101, "Nice=0 gives the natural priority back"
     assert not marker.exists()

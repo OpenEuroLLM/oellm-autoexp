@@ -712,10 +712,15 @@ def cmd_nice(layout: PoolLayout, args, slurm=_slurm) -> int:
         if job["state"] != "PENDING":
             print(f"  {hid}  job {jid}: {job['state']}, left alone (nice only orders the queue)")
             continue
-        expect = max(1, job["priority"] + job["nice"] - want)
         same = job["nice"] == want
+        if same:
+            expect = "unchanged"
+        elif job["priority"] <= 1 and want < job["nice"]:
+            expect = "its natural priority (hidden while floored at 1)"
+        else:
+            expect = f"~{max(1, job['priority'] + job['nice'] - want)}"
         print(f"  {hid}  job {jid}: nice {job['nice']} -> {want}  priority {job['priority']} -> "
-              f"{'unchanged' if same else f'~{expect}'}")
+              f"{expect}")
         if not same:
             change.append((hid, jid, job))
     pool_wide = not named
