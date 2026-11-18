@@ -216,6 +216,12 @@ class PoolHostConfig:
     # the user's go (AGENTS.md 2026-11-03); a host that starts on a bad node is caught by the
     # preflight / NODE_CHECK on its own nodes instead.
     refresh_queued_excludes: bool = False
+    # nodes a RUNNING host's allocation lost (SLURM drops a failed node from a `--no-kill` job:
+    # "srun: error: Node failure on <node>", p264 host007 264 -> 259 on 2026-11-17/18) are marked
+    # dead on the host, so a supervisor that never refreshes its allocation stops handing them
+    # out ("Requested node configuration is not available", 10-25 failed runs per lost node).
+    # Seconds between two checks of a host (one squeue each); 0 = off. Reads SLURM, edits nothing.
+    alloc_check_s: float = 120.0
     # VERIFIED handover (with `handover`): the runs on the old host are stopped (checkpoint) and
     # restart on the new, verified host while the old allocation stays; it is released once every
     # moved run is healthy there (handover_healthy_steps matches of handover_healthy_pattern in
@@ -351,6 +357,7 @@ def removed_nodes(info: dict[str, str], live: list[str] | None) -> list[str]:
 
 
 _REFUSED_CHECKED: dict[str, set[str]] = {}  # pool root -> runs already checked for a refused step
+_ALLOC_CHECKED: dict[tuple[str, str], float] = {}  # (pool root, host) -> last allocation check
 
 # A run step SLURM refused to create on its node: the node takes no step of this allocation (its
 # GRES held by a step SLURM never released after a job resize, 2026-11-06: p134c host006
@@ -1447,6 +1454,28 @@ class PoolManager:
                                      cfg.name, ",".join(new), rid, refused[1], rhost)
 
         check_refused()
+
+        # 2c. nodes a running host's allocation lost (a failed node SLURM dropped from the
+        #     --no-kill job): dead on the host, so no run is sent there again, also by a
+        #     supervisor that still lists them (one started before refresh_alloc)
+        if cfg.alloc_check_s > 0:
+            for host in live:
+                key = (str(layout.root), host.hid)
+                if not host.info.get("NODELIST"):
+                    continue
+                if now - _ALLOC_CHECKED.get(key, 0.0) < cfg.alloc_check_s:
+                    continue
+                _ALLOC_CHECKED[key] = now
+                jid = (
+                    host.adopted
+                    or host.info.get("SLURM_JOB_ID")
+                    or host.record.runtime.runtime_job_id
+                )
+                gone = removed_nodes(host.info, live_job_nodes(jid))
+                new = mark_dead(layout, host.hid, gone, f"no longer in job {jid}'s allocation")
+                if new:
+                    LOGGER.error("[pool %s] %s left %s's allocation (job %s): marked dead",
+                                 cfg.name, ",".join(new), host.hid, jid)
 
         # 3. queue
         queued = []

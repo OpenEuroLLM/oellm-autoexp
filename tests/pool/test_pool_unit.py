@@ -24,6 +24,7 @@ from oellm_autoexp.monitor.pool import (
     add_run_exclude,
     check_fits_host,
     create_or_update_pool,
+    dead_nodes,
     parse_slurm_time,
     pool_tag,
     read_env_file,
@@ -834,6 +835,51 @@ def test_removed_nodes_are_the_info_nodes_the_allocation_lost():
     assert removed_nodes(info, ["a1", "a2", "a3", "a4"]) == []
     assert removed_nodes(info, None) == [], "no answer from SLURM: nothing is taken away"
     assert removed_nodes({}, ["a1"]) == []
+
+
+def _lost_node_env(tmp_path, monkeypatch, answer, **cfg):
+    """One running host (info.env NODELIST=a,b) whose allocation SLURM reports as ``answer``."""
+    import oellm_autoexp.monitor.pool as pool_mod
+
+    monkeypatch.chdir(REPO)
+    calls = []
+    monkeypatch.setattr(pool_mod, "live_job_nodes", lambda jid: calls.append(jid) or answer)
+    env = Env(tmp_path, **cfg)
+    env.add_run("a")
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0])
+    return env, hid, calls
+
+
+def test_a_node_the_allocation_lost_is_marked_dead(tmp_path, monkeypatch):
+    """SLURM dropped a failed node from the --no-kill job ("Node failure on b"): an old
+    supervisor still lists it, so the monitor marks it dead on the host -- exclude_nodes for the
+    supervisor, the run's own EXCLUDE for the run it assigns next (p264 host007, 2026-11-18)."""
+    env, hid, _ = _lost_node_env(tmp_path, monkeypatch, ["a"])
+    env.poll()
+    assert dead_nodes(env.layout, hid) == ["b"]
+    hdir = env.layout.host_dir(hid)
+    assert "b" in (hdir / "exclude_nodes").read_text().split()
+    rid = env.rec("a").runtime.runtime_job_id
+    assert env.assigned(hid) == [rid]
+    excl = read_env_file(env.layout.run_dir(rid) / "meta.env").get("EXCLUDE", "")
+    assert "b" in excl.split(","), excl
+
+
+def test_no_slurm_answer_marks_no_node_dead(tmp_path, monkeypatch):
+    env, hid, calls = _lost_node_env(tmp_path, monkeypatch, None)
+    env.poll()
+    assert calls, "the allocation was asked for"
+    assert dead_nodes(env.layout, hid) == []
+
+
+def test_the_allocation_check_is_throttled_and_can_be_off(tmp_path, monkeypatch):
+    env, hid, calls = _lost_node_env(tmp_path, monkeypatch, ["a", "b"], alloc_check_s=3600)
+    env.poll(3)
+    assert len(calls) == 1, "one squeue per host per alloc_check_s"
+    env2, hid2, calls2 = _lost_node_env(tmp_path / "off", monkeypatch, ["a"], alloc_check_s=0)
+    env2.poll(2)
+    assert calls2 == [] and dead_nodes(env2.layout, hid2) == []
 
 
 def test_add_run_exclude_appends_once_and_keeps_the_other_values(tmp_path):
