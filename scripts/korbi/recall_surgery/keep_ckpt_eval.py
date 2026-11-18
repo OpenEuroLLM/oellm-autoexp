@@ -69,6 +69,17 @@ def mirror(run_dir: str, iteration: int) -> str:
     return f"{name}: mirrored ({got} file(s), link count {links})"
 
 
+def trim(run_dir: str, keep: int) -> int:
+    """Drop the oldest ckpt_eval mirrors beyond `keep` (the data is the only copy left)."""
+    ev = os.path.join(run_dir, "ckpt_eval")
+    dirs = sorted(d for d in os.listdir(ev) if d.startswith("iter_") and os.path.isdir(os.path.join(ev, d)))
+    removed = 0
+    for name in dirs[:-keep] if keep > 0 else []:
+        shutil.rmtree(os.path.join(ev, name), ignore_errors=True)
+        removed += 1
+    return removed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True, help="e.g. .../production/v4_cont/runs/main")
@@ -83,6 +94,13 @@ def main() -> int:
     ap.add_argument("--interval", type=float, default=60.0)
     ap.add_argument("--budget", type=float, default=0.0, help="seconds; 0 = run until stopped")
     ap.add_argument("--once", action="store_true", help="one pass over the current tracker, then exit")
+    ap.add_argument(
+        "--keep",
+        type=int,
+        default=0,
+        help="keep only the newest N mirrors (0 = unlimited). Each archived step is a real "
+        "1.1 TB on disk once the source is pruned, so an uncapped archive needs a plan.",
+    )
     args = ap.parse_args()
 
     run_dir = os.path.abspath(args.run_dir)
@@ -106,6 +124,10 @@ def main() -> int:
                     return 4
         else:
             print(f"[{time.strftime('%H:%M:%S')}] no tracker yet in {run_dir}/ckpt", flush=True)
+        if args.keep > 0:
+            trimmed = trim(run_dir, args.keep)
+            if trimmed:
+                print(f"[{time.strftime('%H:%M:%S')}] trimmed {trimmed} old mirror(s) (keep {args.keep})", flush=True)
         if args.once:
             return 0
         if args.budget and time.time() - t0 >= args.budget:
