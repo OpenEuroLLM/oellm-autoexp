@@ -101,17 +101,130 @@ def parse_policy(text):
     decode = kw.pop("decode", None)
     tail = kw.pop("tail", 128)
     share = bool(kw.pop("share", 0))
+    oracle = bool(kw.pop("oracle", 0))  # the selector replaced by the oracle at its own granularity (variants)
     if name in VARIANTS:
         branch = kw.pop("branch", 1)
         if name == "nsa":  # one branch alone (gates saturated): a converted model without trained gates
             kw["gate_init"] = tuple(30.0 if i == branch else -30.0 for i in range(3))  # --variant-params overrides
-        out = {"name": text, "kind": name, "cfg": VARIANTS[name](**kw)}
+        out = {"name": text, "kind": name, "cfg": VARIANTS[name](**kw), "oracle": oracle}
     else:
         out = {"name": text, "kind": "sparse", "cfg": ps.PageSparseConfig(selector=name, **kw), "share": share}
     if decode == "token":
         out["decode_cfg"] = dataclasses.replace(out["cfg"], select_block=1)
         out["tail"] = tail
     return out
+
+
+class SelectionDiag:
+    """Selection diagnostics (sparse-attention audit, Phase A): for each attention call of a sparse policy, the
+    dense attention mass (mean over the query heads) that the method's own selection captures -- the raw
+    window / sink plus its selected units (NSA / page selectors: 64-token pages, CSA2: compressed entries' tokens,
+    LSA: bucket members) -- next to the oracle's: the top units by that same mass, at the method's granularity
+    and budget. Anchor queries only (each selection block's first). ``swap``: the method's scores are replaced
+    by the oracle's (the oracle-swap NLL). Hooked into sparse_variants' ``diag`` and AttentionPolicy.sparse."""
+
+    def __init__(self, every: int = 4):
+        self.every = every
+        self.swap = False
+        self.key = None  # (policy name, layer)
+        self.rows = defaultdict(list)  # key -> [n, 3] tensors (window / sink, + own, + oracle)
+
+    @staticmethod
+    def _base(pr, pos, window, page, sink_pages):
+        """Mass of the raw sink pages and the window (pages from the query's page - window / page on)."""
+        cs = torch.nn.functional.pad(pr.cumsum(-1), (1, 0))  # cs[:, i] = mass of tokens < i
+        sink = sink_pages * page
+        lo = ((pos // page - window // page) * page).clamp(min=0)
+        lo = torch.maximum(lo, torch.full_like(lo, sink))
+        hi = pos + 1
+        win = (cs.gather(1, hi[:, None]) - cs.gather(1, torch.minimum(lo, hi)[:, None]))[:, 0]
+        return cs[:, min(sink, pr.shape[1])] + win.clamp(min=0)
+
+    @staticmethod
+    def _unit_mass(pr, unit, n_units):
+        L = pr.shape[1]
+        if unit[0] == "page":
+            pg = unit[1]
+            padded = torch.nn.functional.pad(pr, (0, n_units * pg - L)) if n_units * pg > L else pr[:, : n_units * pg]
+            return padded.view(pr.shape[0], n_units, pg).sum(-1)
+        if unit[0] == "entry":
+            m = unit[1]
+            return pr[:, : n_units * m].view(pr.shape[0], n_units, m).sum(-1)
+        mem, ok = unit[1], unit[2]  # members
+        return (pr[:, mem.clamp(max=L - 1)] * ok.to(pr.dtype)).sum(-1)
+
+    def _anchors(self, pos, select_block):
+        B = max(1, int(select_block))
+        loc = torch.arange(pos.numel(), device=pos.device)
+        rows = loc[(pos % B == 0) | (loc == 0)]
+        return rows if self.swap else rows[:: self.every]
+
+    def record(self, base, own, oracle):
+        self.rows[self.key].append(torch.stack([base, base + own, base + oracle], -1).float().cpu())
+
+    @torch.no_grad()
+    def scores(self, kind, sc, q, k, pos, scale, cfg, unit, n):
+        """sparse_variants hook: sc [rows, units] (-inf: not a candidate) for queries q [1, hq, rows, d] at
+        absolute positions pos; returns sc, or the oracle's scores on the anchor rows with ``swap``."""
+        rows = self._anchors(pos, getattr(cfg, "select_block", 1))
+        if rows.numel() == 0:
+            return sc
+        pr = ps._causal_probs(q[:, :, rows].float(), k.float(), pos[rows], scale)[0].mean(0)  # [n, L]
+        mass = self._unit_mass(pr, unit, sc.shape[-1])
+        cand = torch.isfinite(sc[rows])
+        if kind == "nsa":  # NSA's importances mark no candidates: its selection branch's (sinks .. window)
+            sel_cfg = ps.PageSparseConfig(selector="indexer", page=cfg.page, window=cfg.select_window,
+                                          sink_pages=cfg.sink_pages)
+            cand = cand & ps.candidate_mask(rows.numel(), sc.shape[-1], 0, sel_cfg, sc.device, pos=pos[rows])
+        nn_ = min(int(n), sc.shape[-1])
+        own = sc[rows].topk(nn_, -1).indices
+        own_m = (mass.gather(-1, own) * cand.gather(-1, own)).sum(-1)
+        orc = mass.masked_fill(~cand, -1.0).topk(nn_, -1).indices
+        orc_m = (mass.gather(-1, orc) * cand.gather(-1, orc)).sum(-1)
+        window = max(int(cfg.window), int(getattr(cfg, "select_window", 0)))
+        base = self._base(pr, pos[rows], window, cfg.page, cfg.sink_pages)
+        self.record(base, own_m, orc_m)
+        if not self.swap:
+            return sc
+        out = sc.clone()
+        out[rows] = mass.masked_fill(~cand, float("-inf")).to(sc.dtype)
+        return out
+
+    @torch.no_grad()
+    def page_selection(self, q, k, cfg, q_offset, scale, selection):
+        """Page selectors (AttentionPolicy.sparse): the captured mass of a returned selection (tokens, valid),
+        per KV group with per_group, and the page oracle's at the same budget."""
+        groups = selection if isinstance(selection, list) else [selection]
+        g = len(groups)
+        pos = q_offset + torch.arange(q.shape[2], device=q.device)
+        rows = self._anchors(pos, cfg.select_block)
+        if rows.numel() == 0:
+            return
+        hq = q.shape[1]
+        for gi, (tok, ok) in enumerate(groups):
+            qg = q[:, gi * hq // g: (gi + 1) * hq // g] if g > 1 else q
+            kg = k[:, gi: gi + 1] if g > 1 else k
+            pr = ps._causal_probs(qg[:, :, rows].float(), kg.float(), pos[rows], scale)[0].mean(0)  # [n, L]
+            t, o = tok[0, rows].clamp(min=0), ok[0, rows]
+            captured = (pr.gather(-1, t.clamp(max=pr.shape[1] - 1)) * o).sum(-1)
+            base = self._base(pr, pos[rows], cfg.window, cfg.page, cfg.sink_pages)
+            P = -(-pr.shape[1] // cfg.page)
+            mass = self._unit_mass(pr, ("page", cfg.page), P)
+            cand = ps.candidate_mask(len(pos), P, q_offset, cfg, q.device)[rows]
+            orc = (mass.masked_fill(~cand, -1.0).topk(min(cfg.topk, P), -1))
+            orc_m = (orc.values.clamp(min=0)).sum(-1)
+            self.record(base, captured - base, orc_m)
+
+    def summary(self):
+        out = {}
+        for (name, li), parts in self.rows.items():
+            x = torch.cat(parts)
+            out.setdefault(name, {})[str(li)] = {"anchors": int(x.shape[0]), "window_sink": float(x[:, 0].mean()),
+                                                 "own": float(x[:, 1].mean()), "oracle": float(x[:, 2].mean())}
+        for name, layers in out.items():
+            vals = list(layers.values())
+            layers["mean"] = {k: sum(v[k] for v in vals) / len(vals) for k in ("window_sink", "own", "oracle")}
+        return out
 
 
 class AttentionPolicy:
@@ -132,6 +245,8 @@ class AttentionPolicy:
         self.tail_end = None  # absolute end of a prompt whose final selection block selects per token
         self.variant_state = None  # trained NSA / CSA2 parameters {attention ordinal: state} (--variant-params)
         self.shared = {}  # share=1: the first attention layer's selections, by (mode, offset, queries)
+        self.diag = None  # SelectionDiag (--diag / oracle=1 policies)
+        self.record = False  # --diag: record the captured mass of every sparse policy
         self.attn_layers = []
         self.losses = defaultdict(list)
         for i, layer in enumerate(model.model.layers):
@@ -139,6 +254,14 @@ class AttentionPolicy:
                 layer.mixer.forward = types.MethodType(self._forward(i), layer.mixer)
                 self.attn_layers.append(i)
                 self.n += 1
+
+    def _attach(self, mod, li, p):
+        """The diagnostics of this call on a variant module (None: no recording, no swap)."""
+        if self.diag is None or not (self.record or p.get("oracle")):
+            mod.diag = None
+            return
+        self.diag.key, self.diag.swap = (p["name"], li), bool(p.get("oracle"))
+        mod.diag = self.diag
 
     def add_indexers(self, model, heads=4, dim=64, page=64, lr=1e-3):
         for i, layer in enumerate(model.model.layers):
@@ -179,6 +302,10 @@ class AttentionPolicy:
                     # the HF device map spreads the layers over GPUs: the source layer's selection to this one's
                     sel = tuple(t.to(k.device) if torch.is_tensor(t) else t for t in self.shared[key])
                     o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, selection=sel, **kw)
+            elif self.diag is not None and self.record and cfg.selector in ps.PAGE_SELECTORS:
+                o, sel = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, return_selection=True, **kw)
+                self.diag.key, self.diag.swap = (p["name"], li), False
+                self.diag.page_selection(q[:, :, r0:r1], k, cfg, past + r0, scale, sel)
             else:
                 o = ps.page_sparse_attention(q[:, :, r0:r1], k, v, cfg, **kw)
             parts.append(o)
@@ -219,7 +346,15 @@ class AttentionPolicy:
         scale = q.shape[-1] ** -0.5
         cfg = p["cfg"]
         if p["kind"] == "lsa":
-            mod = sv.LSA(cfg)
+            mkey = (p["name"], li)
+            if mkey not in self.modules:  # D-LSA (latent=1): the trained maps of the arm (--variant-params)
+                m = sv.LSA(cfg, k.shape[1], q.shape[-1]) if cfg.latent else sv.LSA(cfg)
+                if cfg.latent and self.variant_state is not None:
+                    m.load_state_dict(self.variant_state[self.attn_layers.index(li)])
+                self.modules[mkey] = m.to(k.device).float()
+            mod = self.modules[mkey]
+            mod.cfg = cfg
+            self._attach(mod, li, p)
             ikey = ("lsa", p["name"], li)
             idx = None if fresh else self.index_keys.get(ikey)
             span = cfg.pool * cfg.block
@@ -232,8 +367,11 @@ class AttentionPolicy:
                     c, mem, ok, last = self._cat_index(idx[:4], (c, mem, ok, last))
                 idx = (c, mem, ok, last, nblk)
                 self.index_keys[ikey] = idx
+            if cfg.latent:  # the maps are fp32
+                return mod(q.float(), k.float(), v.float(), past, scale, None if idx is None else idx[:4]).to(q.dtype)
             return mod(q, k, v, past, scale, None if idx is None else idx[:4])
         mod = self.module(li, p, x, q.shape[-1], q.shape[1], k.shape[1])
+        self._attach(mod, li, p)
         built_cfg, mod.cfg = mod.cfg, cfg  # this part's config (decode / tail: per token)
         try:
             return self._variant_module(li, p, mod, q, k, v, x, past, fresh, scale)
@@ -546,6 +684,9 @@ def main():
     p.add_argument("--indexers", default="", help="indexers.pt of an earlier run (instead of --train-indexer)")
     p.add_argument("--train-csa2", type=int, default=0, help="documents for the CSA2 indexer warm-up (0: off)")
     p.add_argument("--csa2", default="", help="csa2.pt of an earlier run (instead of --train-csa2)")
+    p.add_argument("--diag", action="store_true",
+                   help="record the attention mass each sparse policy's selection captures vs the oracle's (diag.json)")
+    p.add_argument("--diag-every", type=int, default=4, help="--diag: every n-th anchor query")
     p.add_argument("--variant-params", default="",
                    help="variants.pt of a trained s3 arm (extract_variant_params.py): NSA / CSA2 parameters")
     args = p.parse_args()
@@ -577,6 +718,16 @@ def main():
             pol.indexers[int(li)].load_state_dict(sd)
     if args.variant_params:
         pol.variant_state = {int(k): v for k, v in torch.load(args.variant_params)["state"].items()}
+        if any(x["kind"] == "sparse" and x["cfg"].selector == "indexer" for x in policies) and not pol.indexers:
+            # a trained page-indexer arm: its indexers are the variant parameters (core_attention.indexer.*)
+            first = pol.variant_state[0]
+            heads = first["wq.weight"].shape[0] // first["wk.weight"].shape[0] if "wq.weight" in first else 4
+            pol.add_indexers(model, heads, first["wk.weight"].shape[0] if "wk.weight" in first else 64, 64)
+            for ordinal, li in enumerate(pol.attn_layers):
+                pol.indexers[li].load_state_dict(pol.variant_state[ordinal])
+    if args.diag or any(x.get("oracle") for x in policies):
+        pol.diag = SelectionDiag(args.diag_every)
+        pol.record = args.diag
     csa2 = [x for x in policies if x["kind"] == "csa2"]
     if csa2 and args.train_csa2 and (args.docs or args.tiny):
         train_csa2(model, pol, csa2[0], args, args.out)
@@ -599,6 +750,13 @@ def main():
         pick, sc = score_choice(model, torch.randint(3, 50_000, (1, 3000)), [[5, 6, 7], [8, 9], [10]], args.chunk,
                                 pol)
         print(f"[probe] tiny choice scoring ok: {pick} {[round(x, 3) for x in sc]}", flush=True)
+    if pol.diag is not None and pol.diag.rows:
+        diag = pol.diag.summary()
+        (args.out / "diag.json").write_text(json.dumps(diag, indent=1))
+        for name, layers in diag.items():
+            m = layers["mean"]
+            print(f"[diag] {name}: window+sink {m['window_sink']:.3f}, own selection {m['own']:.3f}, "
+                  f"oracle {m['oracle']:.3f}", flush=True)
     write_summary(args.out, nll, ret)
     print(f"[probe] done in {time.time() - t0:.0f}s", flush=True)
 
