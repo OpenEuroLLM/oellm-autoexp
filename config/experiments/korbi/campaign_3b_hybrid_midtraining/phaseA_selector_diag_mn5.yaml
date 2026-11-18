@@ -1,0 +1,58 @@
+# @package _global_
+# Sparse-attention audit, Phase A steps 3-5 (docs/campaign_3b_hybrid_midtraining.md, plan 2026-11-18): on every
+# trained 2000-step arm at step 3000 (t11 / t15, and the dense reference t8 base), 64k NLL on 8 held-out long
+# documents (position-binned) with (a) the arm's own selector, (b) the oracle at the SAME granularity and budget
+# (page selectors: selector oracle; NSA / CSA2 / LSA / D-LSA: oracle=1 replaces their unit scores by the dense
+# attention mass per unit), (c) dense attention; and --diag: per layer, the dense attention mass the own vs the
+# oracle selection captures (diag.json). One MN5 node per arm (t5_arm_probe_mn5.sh: HF export + variant params).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/phaseA_selector_diag_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t5_arm_probe_mn5
+  - _self_
+
+aux:
+  name: phaseA_diag_${aux.arm}
+  run_dir: ""
+  export_name: phaseA_${aux.arm}_3000
+  bench: "T5_PROBE_TAG=_phaseA T5_RUN_DIR=${aux.run_dir} T5_STEP=3000 T5_EXPORT=${aux.export_name} bash scripts/korbi/campaign_midtraining/t5_arm_probe_mn5.sh ${aux.arm} '${aux.policy}' --tasks nll --nll-docs 8 --diag"
+
+job:
+  metadata:
+    pool_priority: 80
+
+slurm:
+  sbatch:
+    time: "03:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dense
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t8_s3_mtp_quality/base
+          aux.policy: "dense/page_mean:topk=32,per_group=1,page=64,sink_pages=1,window=512,select_block=64/oracle:topk=32,per_group=1,page=64,sink_pages=1,window=512,select_block=64"
+        - aux.arm: page_mean_pg
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/page_mean_pg
+          aux.policy: "page_mean:topk=32,per_group=1,page=64,sink_pages=1,window=512,select_block=64/oracle:topk=32,per_group=1,page=64,sink_pages=1,window=512,select_block=64/dense"
+        - aux.arm: nsa
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/nsa
+          aux.policy: "nsa:block=32,stride=16,topk=32,select_window=512,page=64,sink_pages=1,window=512,select_block=64/nsa:block=32,stride=16,topk=32,select_window=512,oracle=1,page=64,sink_pages=1,window=512,select_block=64/dense"
+        - aux.arm: csa2
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/csa2
+          aux.policy: "csa2:compress=4,topk_entries=512,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,oracle=1,page=64,sink_pages=1,window=512,select_block=64/dense"
+        - aux.arm: csa2_warm
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/csa2_warm_s2
+          aux.policy: "csa2:compress=4,topk_entries=512,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,oracle=1,page=64,sink_pages=1,window=512,select_block=64/dense"
+        - aux.arm: lsa
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/lsa
+          aux.policy: "lsa:pool=4,block=512,buckets=32,topk=32,page=64,sink_pages=1,window=512,select_block=64/lsa:pool=4,block=512,buckets=32,topk=32,oracle=1,page=64,sink_pages=1,window=512,select_block=64/dense"
+        - aux.arm: dlsa
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t15_s3_sparse_learned/dlsa_s2
+          aux.policy: "lsa:pool=4,block=512,buckets=32,topk=32,latent=1,page=64,sink_pages=1,window=512,select_block=64/lsa:pool=4,block=512,buckets=32,topk=32,latent=1,oracle=1,page=64,sink_pages=1,window=512,select_block=64/dense"
+        - aux.arm: indexer
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t15_s3_sparse_learned/indexer_s2
+          aux.policy: "indexer:topk=32,page=64,sink_pages=1,window=512,select_block=64/oracle:topk=32,page=64,sink_pages=1,window=512,select_block=64/dense"
