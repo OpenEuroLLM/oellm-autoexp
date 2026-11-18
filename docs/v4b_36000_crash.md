@@ -125,3 +125,30 @@ Run `1579` trained continuously past the crash point: 494 steps to iteration 364
 `misaligned`, at 19.8–19.9 s/step. Persistent checkpointing is complete: `ckpt/iter_0036400` holds
 1027 entries with 327,342,598 B of metadata, the persistent tracker is at 36400 and the rolling
 tracker at 36300. Arch metrics, six validation losses and rolling plus persistent saves are all on.
+
+## 10. Node rule: always 256, best nodes available (user 2026-11-18)
+
+The arm runs on **256 nodes**, no more and no fewer. Health is not checked at startup
+(`NODE_CHECK=off`), so a degrading node shows up as a hang, and the response is a swap, not a
+smaller run.
+
+**Diagnose.** Probe every node of the step; a healthy node answers a one-rank step within seconds.
+
+```bash
+for n in <nodes>; do timeout 15 srun --jobid=<host job> --overlap -N1 -w $n /bin/true \
+    >/dev/null 2>&1 && echo "OK   $n" || echo "DEAD $n"; done
+```
+
+**Then, in this order:**
+
+1. **A dead node needs no exclusion entry.** Slurm already removes it, and listing it in
+   `<host>/exclude_nodes` as well counts it twice: the pool then reports `only 255 usable` and the
+   run cannot start. This is exactly what happened with `as02r1b04`.
+2. **If `usable` is below 256**, release the healthiest excluded node: probe it first, then take the
+   highest per-GPU compute rank from the host bench. That is how `as05r5b10` (rank 65/264) and
+   `as04r1b17` (rank 210/264) were released.
+3. **If `usable` is above 256**, exclude the worst excluded-able node by compute rank, or the one with
+   an observed interconnect verdict.
+
+Never let `usable` sit below 256: the pool fails every attempt with `insufficient_nodes` and the arm
+silently stops training.
