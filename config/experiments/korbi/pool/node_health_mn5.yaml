@@ -28,6 +28,11 @@ job:
   est_step_time_s: 120
 
 slurm:
+  # The bench is one srun step inside an allocation that already runs a step (the pool host's
+  # batch step), so without --overlap Slurm refuses it with "Insufficient GRES available in
+  # allocation" -- host007 2026-11-18, runs .1703-.1705. The key is slurm.srun_opts (not
+  # slurm.sbatch.srun_opts, which lands in the SBATCH header and never reaches the srun line).
+  srun_opts: "--overlap --gres=gpu:4"
   sbatch:
     nodes: 1
     time: "00:15:00"
