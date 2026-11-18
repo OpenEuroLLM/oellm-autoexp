@@ -41,7 +41,11 @@ backend:
     # node then trip the kernel OOM-killer (exitcode -9), which is how v4c died at 36000. 35999 is not
     # exportable either (the exporter refuses [35900, 36200)).
     save_extra_steps: [35905, 36400, 36900]
-    save_interval: 1000000
+    # A persistent checkpoint every 1000 steps (36000, 37000, 38000, ...). This does not double up
+    # with the rolling save: the persistent branch is `if (iteration % save_interval == 0 or
+    # iteration in save_extra_steps)` and the rolling one is the `elif`, so a step that is both a
+    # multiple of 1000 and of 100 saves once, persistently.
+    save_interval: 1000
     non_persistent_save_interval: 100
 
 job:
