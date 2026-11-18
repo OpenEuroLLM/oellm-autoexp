@@ -1411,3 +1411,58 @@ def test_admission_warns_when_the_old_delay_gate_is_still_set(env, monkeypatch, 
         env.poll(2)
     assert "suppresses the submission" in caplog.text or "holds the submission back" in caplog.text
     assert len(env.hosts()) == 1, "the old delay gate still wins until it is set to 0"
+
+
+def test_admission_learns_the_bias_from_a_host_that_left_the_live_cache(env, monkeypatch):
+    """A host that starts and is released within one poll drops out of the live
+    cache; its sample must still correct the estimate (JUPITER 2026-11-17
+    22:00-22:10: four such hosts)."""
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600)
+    env.poll(2)
+    new = env.hosts()[1]
+    hid = new.definition.metadata["pool_host_id"]
+    state = env.layout.load_state()
+    state.setdefault("admission", {})["est_at_submit"] = {hid: time.time() + 5000}
+    env.layout.write_state(state)
+    # the host started, was released at once, and is gone from the cache
+    started = time.time()
+    (env.layout.host_dir(hid) / "info.env").write_text(f"START_TS={int(started)}\n")
+    (env.layout.host_dir(hid) / "exited").write_text("early start before the handover time\n")
+    env.poll()
+    adm = env.layout.load_state()["admission"]
+    assert adm["bias_samples"], "no bias sample was taken from the host directory"
+    assert adm["bias"] < -3000, f"bias {adm['bias']} does not reflect the late estimate"
+    assert "retry_after" in adm, "an early start must arm the retry cool-down"
+
+
+def test_admission_does_not_loop_after_an_early_start(env, monkeypatch):
+    """One early start is acceptable; submit -> release -> submit is not."""
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600)
+    env.poll(2)
+    assert len(env.hosts()) == 2
+    state = env.layout.load_state()
+    state.setdefault("admission", {})["retry_after"] = time.time() + 600
+    env.layout.write_state(state)
+    # even a long queue may not trigger another submission during the cool-down
+    estimate[0] = time.time() + 9000
+    env.poll(3)
+    assert len(env.hosts()) == 2, "a successor was submitted inside the retry cool-down"
+
+
+def test_admission_never_cancels_a_host_that_has_already_started(env, monkeypatch):
+    """JUPITER 2026-11-18 11:35:30: host209 was still in the queued list for
+    one poll after SLURM started it, and the admission cancel killed a live
+    allocation 7 s in."""
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600)
+    env.poll(2)
+    queued = env.hosts()[1]
+    hid = queued.definition.metadata["pool_host_id"]
+    # the supervisor is up: SLURM started this host and wrote info.env / alive
+    env.host_up(queued)
+    estimate[0] = time.time() + 60  # would start far inside the block
+    env.poll(2)
+    assert not env.rec(queued.job_id).runtime.final_state, "a live host was cancelled"
+    assert not (env.layout.host_dir(hid) / "exited").exists()

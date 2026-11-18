@@ -184,6 +184,9 @@ class PoolHostConfig:
     successor_debounce: int = 2
     # no hold/cancel within this many seconds of a host's submission
     successor_min_pending_s: float = 300.0
+    # after a host was released for starting too early, submit nothing for this long (the loop
+    # of submit -> early start -> release -> submit is what costs allocations, not one event)
+    successor_retry_s: float = 600.0
     # reuse a `--test-only` estimate for this long
     successor_est_ttl_s: float = 240.0
     # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
@@ -2317,20 +2320,49 @@ class PoolManager:
             est += float(bias)
         return est
 
-    def _record_estimate_bias(self, layout: PoolLayout, state: dict, hosts: list[HostView]) -> None:
+    def _record_estimate_bias(
+        self, layout: PoolLayout, cfg: PoolHostConfig, state: dict, now: float
+    ) -> None:
         """Compare the estimate taken at submission with the start that really
-        happened."""
+        happened.
+
+        The start comes from the host's own directory, not from the live
+        host cache: a host that starts and is released within one poll
+        leaves that cache before its sample is taken, which is exactly
+        the case this correction exists for (JUPITER 2026-11-17
+        22:00-22:10: four hosts were submitted and released for starting
+        too early while the estimate stayed uncorrected). A release for
+        starting early also arms the retry cool-down, so submit ->
+        release -> submit cannot loop.
+        """
         adm = state.setdefault("admission", {})
         pending = adm.setdefault("est_at_submit", {})
         samples = adm.setdefault("bias_samples", [])
-        for host in hosts:
-            if host.hid not in pending or not host.start_ts:
+        for hid in list(pending):
+            try:
+                start = float(read_env_file(layout.host_dir(hid) / "info.env").get("START_TS") or 0)
+            except (OSError, ValueError):
                 continue
-            est = pending.pop(host.hid)
+            if not start:
+                continue
+            est = pending.pop(hid)
             if est is None:
                 continue
-            samples.append(host.start_ts - float(est))
+            samples.append(start - float(est))
             del samples[:-20]
+            exited = layout.host_dir(hid) / "exited"
+            try:
+                reason = exited.read_text() if exited.exists() else ""
+            except OSError:
+                reason = ""
+            if "early start" in reason:
+                adm["retry_after"] = now + cfg.successor_retry_s
+                LOGGER.info(
+                    "[pool %s] host %s started too early and was released: no successor for %.0fs",
+                    cfg.name,
+                    hid,
+                    cfg.successor_retry_s,
+                )
         if samples:
             adm["bias"] = sorted(samples)[len(samples) // 2]
 
@@ -2377,6 +2409,17 @@ class PoolManager:
         for host in queued:
             if now >= block_end:
                 continue
+            hdir = layout.host_dir(host.hid)
+            # A host SLURM has just started is still in this list until its supervisor writes
+            # info.env: cancelling it then kills a live allocation (JUPITER 2026-11-18 11:35:30:
+            # host209 started 11:35:31, this cancel killed it 7 s later). Only a job SLURM still
+            # reports as PENDING, with no supervisor on it, may be cancelled.
+            if (
+                host.status not in (None, "PENDING")
+                or (hdir / "info.env").exists()
+                or (hdir / "alive").exists()
+            ):
+                continue
             submitted_ts = float(host.record.runtime.start_ts or 0.0)
             if submitted_ts and now - submitted_ts < cfg.successor_min_pending_s:
                 continue
@@ -2418,9 +2461,7 @@ class PoolManager:
         """
         adm = state.setdefault("admission", {})
         adm["last_est"] = None
-        self._record_estimate_bias(
-            layout, state, list(self._hosts.get(str(layout.root), {}).values())
-        )
+        self._record_estimate_bias(layout, cfg, state, now)
         run_hosts = [h for h in running if h.hid in busy]
         if not run_hosts and busy and running:
             # a handover: the run is leaving a retiring host for the newest live one
@@ -2431,6 +2472,14 @@ class PoolManager:
             return True
         block_end = max(h.start_ts for h in run_hosts) + cfg.handover_min_age_s
         adm["not_before"] = block_end
+        retry_after = float(adm.get("retry_after") or 0.0)
+        if now < retry_after and now < block_end:
+            LOGGER.info(
+                "[pool %s] admission: waiting until %s after an early start",
+                cfg.name,
+                time.strftime("%H:%M:%S", time.localtime(retry_after)),
+            )
+            return False
         est = self._start_estimate(layout, cfg, state, account, now)
         adm["last_est"] = est
         self._admission_manage_queued(loop, layout, cfg, state, queued, block_end, est, now)
