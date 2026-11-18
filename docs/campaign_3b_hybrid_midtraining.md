@@ -1521,6 +1521,51 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     seed noise) at an equal token budget. KV size is not a criterion (user 2026-11-18: the hybrid with shared KV
     already keeps the KV cache small).
 
+- **2026-11-18, Phase A results: the "fancy" methods each had a concrete flaw in our setup**
+  - **Reference parity** (three audits against the public code, identical weights / inputs; scripts in the
+    session scratchpad, findings here):
+    - *page_mean* picks exactly MoBA's blocks (outputs 5e-7 apart). It lacks InfLLM-v2's overlapping max-pooled
+      block scores (mainly retrieval: a match straddling a page boundary can fall out of the top 32).
+    - *NSA* matches fla-org's naive reference to float precision and degenerates to dense exactly. Setup flaw:
+      the matrix optimizer (muown) trains NSA's new matrices; its zero-initialised gate rows jump to a fixed norm
+      after one step, its mean-initialised compressor rotates by a fixed angle per step.
+    - *CSA2* matches DeepSeek's V4 / V4.1 math to float64. Design flaw: an entry's logit is the mean of its m
+      tokens' logits (no + log m) and averaged keys have ~0.49x the members' RMS, so the softmax gives entries
+      ~32 % of the dense mass on their region; a NoPE retrofit has no parameter that can fix this (V4 trains
+      with a post-compression norm and a learnable sink). Smaller: the indexer KL was not detached from the
+      residual stream; indexer 4 x 64 vs 64 x 128.
+    - *LSA* bucket scoring matches the reference. Bug: buckets were selectable only once their whole 2048-token
+      cluster block ended before the window, so ~1000 tokens before the window (976 on average at 64k) were
+      unreachable for 93-96 % of queries (the reference: cluster block = window). Also 8x coarser buckets than
+      the paper, a variable budget, k-means instead of Ward.
+  - **Diagnostics on the trained 2000-step arms at 3000** (`phaseA_selector_diag_mn5`; HF probe, 64k NLL on 8
+    long documents; gap = own selector vs the same model with dense attention; captured = dense attention mass
+    the selection covers, window + sink included):
+
+    | arm | gap, own | gap, oracle at its granularity | gap, positions 0-4k | captured own / oracle |
+    |---|---:|---:|---:|---:|
+    | page_mean_pg | +0.063 | +0.056 | +0.004 | 0.41 / 0.50 |
+    | learned page indexer | +0.064 | +0.063 | +0.004 | 0.42 / 0.49 |
+    | NSA | +0.123 | +0.105 | +0.050 | 0.28 / 0.46 |
+    | CSA2 | +0.081 | +0.078 | +0.010 | 0.52 / 0.60 |
+    | LSA / D-LSA | +0.101 / +0.102 | +0.095 / +0.097 | +0.027 / +0.030 | 0.48 / 0.56 |
+
+    - *NSA:* the worst selection (0.28 captured) and a loss even at short positions, where page selection loses
+      nothing. Its trained compressor is orthogonal to the mean pooling it started from (cos(ck, init) 0.00-0.10;
+      cv -0.21 / -0.65) and its zero-init gate rows have norms 0.36-1.38: the optimizer flaw, measured.
+    - *CSA2:* the selection is the best (0.52 captured) yet the loss is the second worst, and the oracle barely
+      helps (+0.003): the selector is not the problem, the entries' representation / weighting is.
+    - *LSA:* the oracle (restricted to the same reachable buckets) helps little; the loss at short positions
+      (+0.027) is the unreachable tokens just before the window.
+    - *Page selectors:* the oracle gains only 0.007 -- at a 2048-token budget the granularity, not the selector,
+      sets their gap.
+  - **Fixes in Megatron** (with tests; 65 sparse-variant + attention tests pass): `page_sparse_selector_adam`,
+    CSA2 `page_sparse_csa2_entry_bias` / `_entry_rms` (flex + reference; m identical tokens + log m == dense
+    exactly) and a detached indexer input, LSA `page_sparse_lsa_visibility: block` (flex + reference + D-LSA
+    loss), selector `page_maxpool` (InfLLM-v2 scores). Phase B (`t16_s3_sparse_fixed_mn5`: nsa_adam, csa2_fix,
+    lsa_fix, page_maxpool_pg) and the zero-training checks (`phaseA_fix_probe_mn5`) are queued on the hosts'
+    buffer nodes.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
