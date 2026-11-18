@@ -222,6 +222,11 @@ class PoolHostConfig:
     # out ("Requested node configuration is not available", 10-25 failed runs per lost node).
     # Seconds between two checks of a host (one squeue each); 0 = off. Reads SLURM, edits nothing.
     alloc_check_s: float = 120.0
+    # `#SBATCH --nice` of every NEW host this monitor submits (pool_ctl park / promote of the whole
+    # pool set it): a parked pool's successors are queued parked too. Nice subtracts 1:1 from the
+    # SLURM priority (floor 1) and resets nothing (docs/mn5_renice.md); 0 = no --nice line.
+    # Existing jobs are never re-niced by the monitor (pool_ctl park --apply, with the user's go).
+    submit_nice: int = 0
     # VERIFIED handover (with `handover`): the runs on the old host are stopped (checkpoint) and
     # restart on the new, verified host while the old allocation stays; it is released once every
     # moved run is healthy there (handover_healthy_steps matches of handover_healthy_pattern in
@@ -1477,6 +1482,20 @@ class PoolManager:
                     LOGGER.error("[pool %s] %s left %s's allocation (job %s): marked dead",
                                  cfg.name, ",".join(new), host.hid, jid)
 
+        # 2d. a parked host (pool_ctl park: low priority, not a gate) that started anyway: backfill
+        #     or no better candidate. It is used like any host; the marker goes, the ledger keeps it.
+        for host in live:
+            parked = layout.host_dir(host.hid) / "control" / "parked"
+            if parked.exists():
+                note = (_read(parked) or "").strip()
+                parked.unlink(missing_ok=True)
+                jid = host.info.get("SLURM_JOB_ID") or host.record.runtime.runtime_job_id
+                with open(layout.ledger, "a") as fh:
+                    fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{host.hid}\t{jid}\t-\t"
+                             f"started while parked ({note})\n")
+                LOGGER.warning("[pool %s] parked host %s (job %s) started anyway (%s)",
+                               cfg.name, host.hid, jid, note)
+
         # 3. queue
         queued = []
         for record in runs:
@@ -2541,6 +2560,8 @@ class PoolManager:
             sbatch_set(sbatch, "exclude", ",".join(excluded))
         if account:
             sbatch_set(sbatch, "account", account)
+        if cfg.submit_nice:
+            sbatch_set(sbatch, "nice", int(cfg.submit_nice))
         slurm = replace(
             base.slurm,
             name=name,
@@ -2569,12 +2590,13 @@ class PoolManager:
         )
         loop._store.upsert(record)
         LOGGER.info(
-            "[pool %s] created host %s (%s nodes%s%s)",
+            "[pool %s] created host %s (%s nodes%s%s%s)",
             cfg.name,
             hid,
             sbatch.nodes,
             f", account {account}" if account else "",
             f", {len(excluded)} node(s) excluded" if excluded else "",
+            f", nice {cfg.submit_nice}" if cfg.submit_nice else "",
         )
         return hid
 

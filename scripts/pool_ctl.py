@@ -17,6 +17,9 @@ the pool's files directly and are picked up by the supervisors.
   pool_ctl.py <pool_dir> pin <run> <host> | unpin <run>  a queued run waits for that host only
   pool_ctl.py <pool_dir> freeze | unfreeze <host> no new run on the host, never released (resize prep)
   pool_ctl.py <pool_dir> shrink <host> --keep N  plan a resize of a frozen host to N nodes; --apply does it
+  pool_ctl.py <pool_dir> park [<host> ...]       plan parking pending hosts (Nice: priority 1); --apply
+  pool_ctl.py <pool_dir> promote [<host> ...]    plan Nice=0 again (full priority back); --apply
+  pool_ctl.py <pool_dir> queue                   all my pending jobs per account / QOS, in SLURM's order
 
 Resizing a host (2026-11-10): `freeze` it, wait until no run is active on it (or preempt them), then
 `shrink --keep N --apply`, then `unfreeze`. A step running during `scontrol update NodeList=` stays
@@ -25,6 +28,13 @@ RESIZING and keeps its GPUs after it ends ("Insufficient GRES" for every later s
 run holds, and free non-excluded nodes up to N; it writes the removed nodes into <host>/exclude_nodes and
 <host>/inuse/zz_shrunk_removed_nodes (old supervisors keep their start-time node list) before the update.
 A resize changes a SLURM job: only with the user's explicit go (AGENTS.md).
+
+Parking hosts (2026-11-18, docs/mn5_renice.md): `park` sets Nice=250000 on pending hosts (priority 1,
+behind every job in the partition), `promote` sets Nice=0 (the exact priority back; age kept growing).
+It is no gate: a parked job still starts by backfill or when nothing else wants the nodes, and the
+first of a fully parked group still takes the next free QOS slot. Without host ids both act on every
+pending host of the pool and set its submit_nice (the hosts the monitor queues later). Plan by
+default; --apply re-nices existing SLURM jobs: only with the user's explicit go (AGENTS.md).
 """
 
 from __future__ import annotations
@@ -98,6 +108,7 @@ def cmd_status(layout: PoolLayout, _args) -> int:
         f"min_hosts={cfg.min_hosts} handover={cfg.handover} idle_exit_s={cfg.idle_exit_s:.0f}"
     )
     print("\nhosts:")
+    queued = _slurm_jobs(list(_host_jobs(layout).values()))  # nice / priority, {} without squeue
     for hdir in sorted(layout.hosts_dir.glob("host*")):
         info = read_env_file(hdir / "info.env")
         st = (hdir / "state").read_text().split() if (hdir / "state").exists() else []
@@ -131,6 +142,11 @@ def cmd_status(layout: PoolLayout, _args) -> int:
             f"started {_fmt_ts(info.get('START_TS'))}  heartbeat {_age(hdir / 'alive'):<6} "
             f"state {' '.join(st[:2]) or '-':<22} control {controls}"
             + (f"  exited: {exited}" if exited else "")
+            + (
+                f"  nice {queued[slurm_id]['nice']} priority {queued[slurm_id]['priority']}"
+                if queued.get(slurm_id, {}).get("state") == "PENDING"
+                else ""
+            )
         )
     print("\nruns:")
     for rdir in sorted(layout.runs_dir.iterdir() if layout.runs_dir.exists() else []):
@@ -604,6 +620,168 @@ def cmd_shrink(layout: PoolLayout, args, slurm=_slurm) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- park / promote (2026-11-18)
+# Nice subtracts 1:1 from the SLURM priority, floored at 1; the highest priority MareNostrum 5
+# computes is 210500 (age 100000 + fairshare 100000 + job size 10000 + QOS 500), so this parks any
+# job at priority 1. Nothing else changes (submit / accrue time, age keeps growing) and Nice=0
+# gives the exact priority back; users cannot go below 0 (docs/mn5_renice.md).
+PARK_NICE = 250_000
+
+
+def _host_jobs(layout: PoolLayout) -> dict[str, str]:
+    """host id -> SLURM job id of the pool's hosts whose record is still open."""
+    session_dir = Path(layout.load_meta().get("session_dir", ""))
+    out: dict[str, str] = {}
+    for path in sorted(session_dir.glob("*.job.json")) if session_dir.is_dir() else []:
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        md = (record.get("definition") or {}).get("metadata") or {}
+        runtime = record.get("runtime") or {}
+        if (
+            md.get("pool_role") == "host"
+            and Path(str(md.get("pool_dir", ""))).absolute() == layout.root
+            and runtime.get("runtime_job_id")
+            and not runtime.get("final_state")
+        ):
+            out[md["pool_host_id"]] = str(runtime["runtime_job_id"])
+    return out
+
+
+def _slurm_jobs(job_ids, slurm=_slurm) -> dict[str, dict]:
+    """job id -> {state, nice, priority} for the jobs SLURM still knows ({} on no answer)."""
+    if not job_ids:
+        return {}
+    try:
+        text = slurm(["squeue", "-h", "-j", ",".join(job_ids), "-o", "%i|%T|%y|%Q"])
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) == 4 and parts[0]:
+            try:
+                out[parts[0]] = {"state": parts[1], "nice": int(parts[2]), "priority": int(parts[3])}
+            except ValueError:
+                continue
+    return out
+
+
+def _ledger(layout: PoolLayout, hid: str, jid: str, text: str) -> None:
+    with open(layout.ledger, "a") as fh:
+        fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t{hid}\t{jid}\t-\t{text}\n")
+
+
+def _set_submit_nice(layout: PoolLayout, nice: int) -> None:
+    meta = layout.load_meta()
+    meta["config"] = {**(meta.get("config") or {}), "submit_nice": nice}
+    meta["updated"] = time.time()
+    layout.write_meta(meta)
+
+
+def cmd_nice(layout: PoolLayout, args, slurm=_slurm) -> int:
+    """park / promote: the PENDING hosts of the pool (or the named ones) to Nice=--nice / Nice=0.
+
+    Plan by default; --apply runs `scontrol update JobId=.. Nice=..` (an edit of an existing SLURM
+    job: only with the user's go, AGENTS.md), reads the value back, writes <host>/control/parked and
+    a ledger line. Without named hosts it also sets the pool's submit_nice, so the hosts the
+    monitor queues later follow. Running jobs are left alone (nice no longer matters there).
+    """
+    want = int(args.nice) if args.cmd == "park" else 0
+    if want < 0:
+        print("negative nice needs root on SLURM", file=sys.stderr)
+        return 1
+    hosts = _host_jobs(layout)
+    named = list(args.hosts)
+    missing = [h for h in named if h not in hosts]
+    if missing:
+        print(f"no open SLURM job for host(s): {' '.join(missing)}", file=sys.stderr)
+        return 1
+    targets = {h: hosts[h] for h in (named or sorted(hosts))}
+    jobs = _slurm_jobs(list(targets.values()), slurm)
+    if targets and not jobs:
+        print("no answer from squeue", file=sys.stderr)
+        return 1
+    change = []
+    for hid, jid in targets.items():
+        job = jobs.get(jid)
+        if job is None:
+            print(f"  {hid}  job {jid}: not in the queue any more, left alone")
+            continue
+        if job["state"] != "PENDING":
+            print(f"  {hid}  job {jid}: {job['state']}, left alone (nice only orders the queue)")
+            continue
+        expect = max(1, job["priority"] + job["nice"] - want)
+        same = job["nice"] == want
+        print(f"  {hid}  job {jid}: nice {job['nice']} -> {want}  priority {job['priority']} -> "
+              f"{'unchanged' if same else f'~{expect}'}")
+        if not same:
+            change.append((hid, jid, job))
+    pool_wide = not named
+    cfg = layout.load_config()
+    if pool_wide and cfg.submit_nice != want:
+        print(f"  submit_nice {cfg.submit_nice} -> {want} (hosts the monitor submits from now on)")
+    if not args.apply:
+        print("plan only (--apply re-nices the SLURM jobs: only with the user's go)")
+        return 0
+    if pool_wide:
+        _set_submit_nice(layout, want)
+    rc = 0
+    for hid, jid, job in change:
+        slurm(["scontrol", "update", f"JobId={jid}", f"Nice={want}"])
+        now = _slurm_jobs([jid], slurm).get(jid)
+        if now is None or now["nice"] != want:
+            print(f"  {hid}  job {jid}: nice is {now['nice'] if now else 'unknown'} after the "
+                  f"update, {want} expected", file=sys.stderr)
+            rc = 1
+            continue
+        marker = layout.host_dir(hid) / "control" / "parked"
+        if want:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"nice={want} ts={time.time():.0f}\n")
+        else:
+            marker.unlink(missing_ok=True)
+        _ledger(layout, hid, jid, f"{args.cmd} nice {job['nice']} -> {want}, priority "
+                f"{job['priority']} -> {now['priority']}")
+        print(f"  {hid}  job {jid}: nice {want}, priority {now['priority']}")
+    return rc
+
+
+def cmd_queue(layout: PoolLayout, _args, slurm=_slurm) -> int:
+    """All of the user's pending jobs, per account / QOS, in SLURM's order (priority, then job id),
+    with the running count; '*' = this pool's hosts, 'P' = parked (nice > 0). Read-only."""
+    try:
+        pending = slurm(["squeue", "-h", "--me", "-t", "PD", "-o", "%i|%j|%y|%Q|%a|%q|%D|%r"])
+        running = slurm(["squeue", "-h", "--me", "-t", "R", "-o", "%a|%q"])
+    except OSError as exc:
+        print(f"squeue failed: {exc}", file=sys.stderr)
+        return 1
+    mine = set(_host_jobs(layout).values())
+    groups: dict[tuple[str, str], list[list[str]]] = {}
+    for line in pending.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) == 8:
+            groups.setdefault((parts[4], parts[5]), []).append(parts)
+    n_running: dict[tuple[str, str], int] = {}
+    for line in running.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) == 2:
+            n_running[(parts[0], parts[1])] = n_running.get((parts[0], parts[1]), 0) + 1
+    for (account, qos), jobs in sorted(groups.items()):
+        jobs.sort(key=lambda p: (-int(p[3] or 0), int(p[0].split("_")[0] or 0)))
+        parked = sum(1 for p in jobs if int(p[2] or 0) > 0)
+        print(f"{account} / {qos}: {len(jobs)} pending ({parked} parked), "
+              f"{n_running.get((account, qos), 0)} running")
+        for p in jobs:
+            flags = ("*" if p[0] in mine else " ") + ("P" if int(p[2] or 0) > 0 else " ")
+            print(f"  {flags} {p[0]:<10} {p[1]:<28} nice {p[2]:>7} priority {p[3]:>7} "
+                  f"nodes {p[6]:>4}  {p[7]}")
+        if jobs and parked == len(jobs):
+            print("  (all parked: the first of them still takes the next free slot)")
+    return 0
+
+
 def cmd_set(layout: PoolLayout, args) -> int:
     meta = layout.load_meta()
     config = dict(meta.get("config") or {})
@@ -722,6 +900,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--accept-gpu-leak", action="store_true",
                    help="resize although run steps are active (their nodes' GPUs stay reserved)")
     p.set_defaults(func=cmd_shrink)
+    for name in ("park", "promote"):
+        p = sub.add_parser(
+            name,
+            help=("lower the SLURM priority of pending hosts (Nice; plan, --apply does it)"
+                  if name == "park" else "Nice=0 again: the full priority back (plan; --apply)"),
+        )
+        p.add_argument("hosts", nargs="*", help="host ids; none = every pending host + submit_nice")
+        if name == "park":
+            p.add_argument("--nice", type=int, default=PARK_NICE)
+        p.add_argument("--apply", action="store_true", help="scontrol update Nice (user's go)")
+        p.set_defaults(func=cmd_nice)
+    sub.add_parser("queue", help="the user's pending jobs per account / QOS in SLURM's order"
+                   ).set_defaults(func=cmd_queue)
     args = parser.parse_args(argv)
     layout = PoolLayout(args.pool_dir)
     if not layout.exists():
