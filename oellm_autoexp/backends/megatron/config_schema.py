@@ -801,6 +801,30 @@ class MegatronConfig(ConfigInterface):
     # (page_sparse_indexer_loss_coeff; with page_sparse_dense_forward as its warm-up).
     page_sparse_lsa_latent: bool = False
 
+    # lsa: which buckets a query may select. "window": buckets whose whole cluster block ends
+    # before the query's window (up to page_sparse_lsa_pool x page_sparse_lsa_block tokens
+    # before the window are unreachable); "block": the reference's rule -- buckets of cluster
+    # blocks closed before the query's own block, their members inside the raw window skipped
+    # (audit 2026-11-18). Use a cluster span equal to the window.
+    page_sparse_lsa_visibility: str = "window"
+
+    # csa2: added to every compressed entry's logit. An entry's logit is the mean of its m
+    # tokens' logits, so the softmax under-weights compressed context;
+    # log(page_sparse_compress) restores the m tokens' share for redundant ones (audit
+    # 2026-11-18).
+    page_sparse_csa2_entry_bias: float = 0.0
+
+    # csa2: rescale each compressed entry key to its members' mean RMS (averaging roughly
+    # halves it).
+    page_sparse_csa2_entry_rms: bool = False
+
+    # The sparse-attention selector's own parameters (NSA compressors / gates, CSA2
+    # compression weights and indexer, D-LSA maps, the page indexer) on Adam instead of the
+    # matrix optimizer (Muon / MuOwn): orthogonalised updates move zero-initialised matrices
+    # to a fixed norm after one step whatever the gradient (audit 2026-11-18: NSA's gate
+    # rows).
+    page_sparse_selector_adam: bool = False
+
     # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
     # is the polar forget gate's init cap without its angle.
     linear_kronlstm_forget_offset: float = 0.0
@@ -1017,30 +1041,50 @@ class MegatronConfig(ConfigInterface):
     # come from checkpoint surgery (scripts/korbi/production/add_ckda_branch.py).
     ckda_branch: Literal["attention", "kronlstm", "kvshare"] | None = None
 
-    # Run the ckda_branch after the complex_kda mixer instead of beside it. The branch then sees
-    # LayerNorm(ckda(x)) and the output is ckda(x) + m(t) * gamma * branch(...). Same parameters,
-    # depth and checkpoint keys; used by the v4a serial post-stitch/continuation variant.
+    # First-class ``V`` hybrid layers: 0-based layer indices, paired with
+    # ``kv_share_source_layers``.
     kv_share_layers: list[int] | None = None
-    # First-class V hybrid layers: 0-based layer indices.
+
+    # For each ``kv_share_layers`` entry, the 0-based earlier attention layer whose keys /
+    # values the V layer reads. A V layer is a shared-KV attention layer in the pattern, not a
+    # ckda_branch.
     kv_share_source_layers: list[int] | None = None
-    # Per V layer, the 0-based earlier attention layer whose keys / values it reads.
 
+    # Ramp length, in iterations, of the residual-level gate on every inserted ``V`` layer. 0
+    # (the default) gates nothing: the layer writes its whole mHC delta from step 0, which is
+    # what v4a does. A positive value writes ``streams + r(t) * (write - streams)`` with
+    # ``r(t) = clamp((t - v_block_gate_start_iteration) / ramp, 0, 1)``, so at ``r = 0`` the
+    # inserted layer is an exact identity -- no attention write and no ``h_res`` stream mixing
+    # -- and both ramp in together. The gate is a schedule, not a parameter: nothing is added
+    # to the checkpoint, and the lerp is skipped once ``r`` reaches 1, so an export past the
+    # ramp carries no gate. See docs/v4b_plan.md.
     v_block_gate_ramp: int = 0
-    # Ramp length in iterations of the residual-level gate on every inserted V layer; 0 (default)
-    # gates nothing, so a config without it behaves exactly as before (v4a). A positive value
-    # writes streams + r(t) * (write - streams), so at r = 0 the layer is an exact identity: no
-    # attention write and no h_res stream mixing. A schedule, not a parameter: no checkpoint key.
+
+    # Iteration the ``v_block_gate_ramp`` counts from: the step the V layers were inserted at.
     v_block_gate_start_iteration: int = 0
-    # Iteration the v_block_gate_ramp counts from: the step the V layers were inserted at.
 
+    # Learnable gates on every inserted ``V`` layer instead of the ``v_block_gate_ramp``
+    # schedule. The layer writes ``(1 - rho) * streams + rho * (h_res @ streams) + h_post^T
+    # (g_v * out)``: ``g_v`` (``v_gate.out_gate``) scales the attention write and ``rho``
+    # (``v_gate.res_gate``) the ``h_res`` stream mixing. Both are one-element parameters, 0 at
+    # insertion, so the layer is an exact identity at step 0. Unlike a schedule, both gates
+    # get a gradient at step 0 (``dL/dg_v = <delta, h_post^T out>`` with a copy-initialized
+    # branch whose output is not zero, ``dL/drho = <delta, h_res @ streams - streams>``), so
+    # they open themselves while the branch is already a working attention: 300 steps adapt a
+    # working path instead of bootstrapping a random one. A convex combination of two doubly
+    # stochastic mixers stays doubly stochastic, so the residual stays norm-preserving for
+    # every ``rho``. The gates are checkpoint tensors (Adam state); the export folds ``g_v``
+    # into ``linear_proj`` and ``rho`` into the mixer's ``h_res``. Mutually exclusive with a
+    # positive ``v_block_gate_ramp``. See docs/v4b_plan.md.
     v_block_learnable_gate: bool = False
-    # Learnable gates on every inserted V layer instead of the v_block_gate_ramp schedule: the layer
-    # writes (1 - rho) streams + rho (h_res @ streams) + h_post^T (g_v out), with g_v and rho both 0
-    # at insertion (exact identity) and both carrying a gradient at step 0, so the gates open
-    # themselves while the copy-initialized branch is already a working attention. Checkpoint tensors
-    # (v_gate.out_gate / v_gate.res_gate, Adam state); the export folds them into linear_proj / h_res.
-    # Mutually exclusive with a positive v_block_gate_ramp.
 
+    # Run the ``ckda_branch`` after the complex_kda mixer instead of beside it. The branch
+    # then receives ``LayerNorm(ckda(x))`` and the layer computes ``out = ckda(x) + m(t) *
+    # gamma * branch(LayerNorm(ckda(x)))``. ``gamma`` is still one learned scalar per layer
+    # and is 0 at insertion, so the layer is function-preserving at zero. This is a serial
+    # *branch* inside the existing layer, not an extra depth layer: the layer count and the
+    # checkpoint layout are unchanged. It exists so the post-stitch v4a variant can be
+    # evaluated without changing the model depth (docs/recall_surgery_ambitious.md §22).
     ckda_branch_serial: bool = False
 
     # 0-based indices (in the decoder's layer list, as the checkpoint keys

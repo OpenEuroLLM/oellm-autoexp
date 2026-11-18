@@ -770,24 +770,6 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
-    "kv_share_layers": MegatronArgMetadata(
-        arg_type=list, default=None,
-        help="First-class V hybrid layers: 0-based layer indices.",
-        choices=None, nargs="+", element_type=int,
-    ),
-    "kv_share_source_layers": MegatronArgMetadata(
-        arg_type=list, default=None,
-        help="Per V layer, the 0-based earlier attention layer whose keys / values it reads.",
-        choices=None, nargs="+", element_type=int,
-    ),
-    "ckda_branch_serial": MegatronArgMetadata(
-        arg_type=bool,
-        default=False,
-        help="Run the ckda_branch after the complex_kda mixer, on LayerNorm(ckda(x)), instead of beside it: out = ckda(x) + m(t) * gamma * branch(LayerNorm(ckda(x))). Same parameters/depth; used by v4a.",
-        choices=None,
-        nargs=0,
-        element_type=None,
-    ),
     "ckda_branch_alpha_end": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -890,6 +872,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help='Dropout on everything but the ckda_branch branches ("the rest"), in training only: the complex_kda term of the branch layers (inside the branch mix, before the branch is added) and the outputs of every other attention, complex_kda and MLP sublayer (at the mHC write); the branches and the Engram layers are not dropped. Forces the model to carry information through the new branches while the rest is unreliable (small31 arm D, docs/recall_surgery_ambitious.md §14.8). Needs the mHC residual (mhc).',
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "ckda_branch_serial": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Run the ``ckda_branch`` after the complex_kda mixer instead of beside it. The branch then receives ``LayerNorm(ckda(x))`` and the layer computes ``out = ckda(x) + m(t) * gamma * branch(LayerNorm(ckda(x)))``. ``gamma`` is still one learned scalar per layer and is 0 at insertion, so the layer is function-preserving at zero. This is a serial *branch* inside the existing layer, not an extra depth layer: the layer count and the checkpoint layout are unchanged. It exists so the post-stitch v4a variant can be evaluated without changing the model depth (docs/recall_surgery_ambitious.md §22).",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "ckda_branch_start_iteration": MegatronArgMetadata(
@@ -3909,6 +3899,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         choices=None,
         nargs=None,
         element_type=None,
+    ),
+    "kv_share_layers": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="First-class ``V`` hybrid layers: 0-based layer indices, paired with ``kv_share_source_layers``.",
+        choices=None,
+        nargs="+",
+        element_type=int,
+    ),
+    "kv_share_source_layers": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="For each ``kv_share_layers`` entry, the 0-based earlier attention layer whose keys / values the V layer reads. A V layer is a shared-KV attention layer in the pattern, not a ckda_branch.",
+        choices=None,
+        nargs="+",
+        element_type=int,
     ),
     "langrl_env_config": MegatronArgMetadata(
         arg_type=str,
@@ -6956,6 +6962,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_csa2_entry_bias": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="csa2: added to every compressed entry's logit. An entry's logit is the mean of its m tokens' logits, so the softmax under-weights compressed context; log(page_sparse_compress) restores the m tokens' share for redundant ones (audit 2026-11-18).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "page_sparse_csa2_entry_rms": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="csa2: rescale each compressed entry key to its members' mean RMS (averaging roughly halves it).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "page_sparse_csa2_topk_entries": MegatronArgMetadata(
         arg_type=int,
         default=512,
@@ -7052,6 +7074,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_lsa_visibility": MegatronArgMetadata(
+        arg_type=str,
+        default="window",
+        help='lsa: which buckets a query may select. "window": buckets whose whole cluster block ends before the query\'s window (up to page_sparse_lsa_pool x page_sparse_lsa_block tokens before the window are unreachable); "block": the reference\'s rule -- buckets of cluster blocks closed before the query\'s own block, their members inside the raw window skipped (audit 2026-11-18). Use a cluster span equal to the window.',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "page_sparse_nsa_block": MegatronArgMetadata(
         arg_type=int,
         default=32,
@@ -7122,6 +7152,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Page-sparse attention for the self-attention layers (experimental_attention_variant/page_sparse.py): every query attends to the sink pages, a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense, window, page_mean, quest, oracle, token_topk, compress_mean (CSA2-like), indexer (a learned PageIndexer) -- ONE selection per token for all heads. None: the configured core attention.",
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "page_sparse_selector_adam": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="The sparse-attention selector's own parameters (NSA compressors / gates, CSA2 compression weights and indexer, D-LSA maps, the page indexer) on Adam instead of the matrix optimizer (Muon / MuOwn): orthogonalised updates move zero-initialised matrices to a fixed norm after one step whatever the gradient (audit 2026-11-18: NSA's gate rows).",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "page_sparse_share_source": MegatronArgMetadata(
@@ -8949,7 +8987,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "v_block_gate_ramp": MegatronArgMetadata(
         arg_type=int,
         default=0,
-        help="Ramp length in iterations of the residual-level gate on every inserted V layer: streams + r(t) * (write - streams), r = clamp((t - v_block_gate_start_iteration) / ramp, 0, 1). 0 (default) gates nothing.",
+        help="Ramp length, in iterations, of the residual-level gate on every inserted ``V`` layer. 0 (the default) gates nothing: the layer writes its whole mHC delta from step 0, which is what v4a does. A positive value writes ``streams + r(t) * (write - streams)`` with ``r(t) = clamp((t - v_block_gate_start_iteration) / ramp, 0, 1)``, so at ``r = 0`` the inserted layer is an exact identity -- no attention write and no ``h_res`` stream mixing -- and both ramp in together. The gate is a schedule, not a parameter: nothing is added to the checkpoint, and the lerp is skipped once ``r`` reaches 1, so an export past the ramp carries no gate. See docs/v4b_plan.md.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -8957,7 +8995,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "v_block_gate_start_iteration": MegatronArgMetadata(
         arg_type=int,
         default=0,
-        help="Iteration v_block_gate_ramp counts from: the step the V layers were inserted at.",
+        help="Iteration the ``v_block_gate_ramp`` counts from: the step the V layers were inserted at.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -8965,7 +9003,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "v_block_learnable_gate": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Learnable gates on every inserted V layer instead of the v_block_gate_ramp schedule: streams' = (1 - rho) * streams + rho * (h_res @ streams) + h_post^T (g_v * out), with g_v (v_gate.out_gate) and rho (v_gate.res_gate) both 0 at insertion (exact identity) and both carrying a gradient at step 0, so they open themselves while the copy-initialized branch is already a working attention. Mutually exclusive with a positive v_block_gate_ramp.",
+        help="Learnable gates on every inserted ``V`` layer instead of the ``v_block_gate_ramp`` schedule. The layer writes ``(1 - rho) * streams + rho * (h_res @ streams) + h_post^T (g_v * out)``: ``g_v`` (``v_gate.out_gate``) scales the attention write and ``rho`` (``v_gate.res_gate``) the ``h_res`` stream mixing. Both are one-element parameters, 0 at insertion, so the layer is an exact identity at step 0. Unlike a schedule, both gates get a gradient at step 0 (``dL/dg_v = <delta, h_post^T out>`` with a copy-initialized branch whose output is not zero, ``dL/drho = <delta, h_res @ streams - streams>``), so they open themselves while the branch is already a working attention: 300 steps adapt a working path instead of bootstrapping a random one. A convex combination of two doubly stochastic mixers stays doubly stochastic, so the residual stays norm-preserving for every ``rho``. The gates are checkpoint tensors (Adam state); the export folds ``g_v`` into ``linear_proj`` and ``rho`` into the mixer's ``h_res``. Mutually exclusive with a positive ``v_block_gate_ramp``. See docs/v4b_plan.md.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -9874,19 +9912,6 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     "ckda_branch": MegatronActionSpec(
         option_strings=("--ckda-branch",), action_type="store", nargs=None, const=None, default=None
     ),
-    "kv_share_layers": MegatronActionSpec(
-        option_strings=("--kv-share-layers",), action_type="store", nargs="+", const=None, default=None,
-    ),
-    "kv_share_source_layers": MegatronActionSpec(
-        option_strings=("--kv-share-source-layers",), action_type="store", nargs="+", const=None, default=None,
-    ),
-    "ckda_branch_serial": MegatronActionSpec(
-        option_strings=("--ckda-branch-serial",),
-        action_type="store_true",
-        nargs=0,
-        const=True,
-        default=False,
-    ),
     "ckda_branch_alpha_end": MegatronActionSpec(
         option_strings=("--ckda-branch-alpha-end",),
         action_type="store",
@@ -9977,6 +10002,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.0,
+    ),
+    "ckda_branch_serial": MegatronActionSpec(
+        option_strings=("--ckda-branch-serial",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "ckda_branch_start_iteration": MegatronActionSpec(
         option_strings=("--ckda-branch-start-iteration",),
@@ -12513,6 +12545,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "kv_lora_rank": MegatronActionSpec(
         option_strings=("--kv-lora-rank",), action_type="store", nargs=None, const=None, default=32
+    ),
+    "kv_share_layers": MegatronActionSpec(
+        option_strings=("--kv-share-layers",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=None,
+    ),
+    "kv_share_source_layers": MegatronActionSpec(
+        option_strings=("--kv-share-source-layers",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=None,
     ),
     "langrl_env_config": MegatronActionSpec(
         option_strings=("--langrl-env-config",),
@@ -15093,6 +15139,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=4,
     ),
+    "page_sparse_csa2_entry_bias": MegatronActionSpec(
+        option_strings=("--page-sparse-csa2-entry-bias",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
+    ),
+    "page_sparse_csa2_entry_rms": MegatronActionSpec(
+        option_strings=("--page-sparse-csa2-entry-rms",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "page_sparse_csa2_topk_entries": MegatronActionSpec(
         option_strings=("--page-sparse-csa2-topk-entries",),
         action_type="store",
@@ -15177,6 +15237,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=4,
     ),
+    "page_sparse_lsa_visibility": MegatronActionSpec(
+        option_strings=("--page-sparse-lsa-visibility",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="window",
+    ),
     "page_sparse_nsa_block": MegatronActionSpec(
         option_strings=("--page-sparse-nsa-block",),
         action_type="store",
@@ -15239,6 +15306,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "page_sparse_selector_adam": MegatronActionSpec(
+        option_strings=("--page-sparse-selector-adam",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "page_sparse_share_source": MegatronActionSpec(
         option_strings=("--page-sparse-share-source",),
