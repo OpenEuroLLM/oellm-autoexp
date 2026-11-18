@@ -35,7 +35,12 @@ backend:
     # v_block_gate_ramp schedule, which stays 0 here)
     v_block_learnable_gate: true
     v_block_gate_ramp: 0
-    save_extra_steps: [35905, 35999, 36400, 36900]
+    # One save per boundary step. 35999 is deliberately absent: the rolling save at 36000
+    # (non_persistent_save_interval: 100) is one step later, and two async saves one step apart keep
+    # the first state-dict copy resident while the second doubles it -- four ranks at ~70 GB each per
+    # node then trip the kernel OOM-killer (exitcode -9), which is how v4c died at 36000. 35999 is not
+    # exportable either (the exporter refuses [35900, 36200)).
+    save_extra_steps: [35905, 36400, 36900]
     save_interval: 1000000
     non_persistent_save_interval: 100
 

@@ -104,11 +104,24 @@ metrics and validation on.
 
 ## 8. Remaining risks
 
+- **Two saves one step apart can OOM the node.** The v4c agent measured it: a save at 35999 followed
+  one step later by the save at 36000 keeps the first async state-dict copy resident while the second
+  doubles it, and four ranks at ~70 GB each trip the kernel OOM-killer (`exitcode: -9`). One save per
+  boundary step is the rule, so `save_extra_steps` is now `[35905, 36400, 36900]` — 35999 is dropped
+  and the rolling save at 36000 covers that boundary (35999 is not exportable anyway).
 - **The eager path costs speed.** Measured on v4c, which now takes it on every step
-  (`arch_metrics_interval: 1`): 20.8 s/step vs 19.6 s, about 6%. v4b pays it only every 500 steps.
+  (`arch_metrics_interval: 1`): 20.8 s/step vs 19.6 s, about 6%. v4b pays it only every 500 steps;
+  measured 19.8–19.9 s/step against 19.4 before the fix.
 - **v4c was the more exposed arm, not the less.** With metrics active every step it ran the unfused
   forward on every step, so the fix matters more there. It is applied in `autoexp_v4c` too.
 - **The crash wedges a host.** A fault leaves the process in an uninterruptible call; the step must
   be reaped before the host is usable again.
 - **The node budget is exactly 256 of 264.** Any further exclusion makes a 256-node run unplaceable.
   Preflight is off, so a degrading node is not removed automatically.
+
+## 9. Confirmed in production
+
+Run `1579` trained continuously past the crash point: 494 steps to iteration 36493 with 0
+`misaligned`, at 19.8–19.9 s/step. Persistent checkpointing is complete: `ckpt/iter_0036400` holds
+1027 entries with 327,342,598 B of metadata, the persistent tracker is at 36400 and the rolling
+tracker at 36300. Arch metrics, six validation losses and rolling plus persistent saves are all on.
