@@ -1572,6 +1572,16 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     compression weights became peaked (row norms up to 3.7 from zero init), so an entry is close to one picked
     token -- the RMS rescale changes nothing because the norm already matches. CSA2 learned to undo the
     averaging; whether + log m from the start helps is t16 csa2_fix's question, not answerable at inference.
+  - **Two s3 blockers fixed before Phase B could train (2026-11-18):**
+    - *Data:* the s3 mix (`flag_decon_v2_agenttok_without_ot_datamix_mn5.txt`) broke on 2026-11-16, when
+      training-data-collection moved its files into `megatron-lm/openeurollm-256k/`: 100 of the 125 links in
+      `data/flag-decon-v2-agenttok` dangle. t16 uses the v4b / main-run mix (`datamix_v8ml_opt81_8k64k_stage2_mn5.txt`,
+      531 prefixes, all present, same tokenizer); the main run's mix is unaffected. t16 has its own dense and
+      page_mean_pg references (validation comes from the mix).
+    - *Code:* Megatron 1f7bcd072 made `_mhc_read` call every stream mixer with `eager=`; only the mHC mixer took
+      it, so every LDM model (the s3 testbed) failed at its first forward. Fixed in 8a2cec93b (LDM / IAT / routed
+      / AttnRes mixers accept it; test).
+    - t16 (6 arms, snapshot phaseB3) trains: page_maxpool_pg at ~6 s / step.
 
 ## References
 
