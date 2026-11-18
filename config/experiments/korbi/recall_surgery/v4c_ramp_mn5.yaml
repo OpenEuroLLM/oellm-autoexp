@@ -23,22 +23,56 @@ defaults:
 
 backend:
   megatron:
-    # v4c's own copy-init tree (v4c_surgery_mn5); v4b_learned_mn5 points at v4b_src
-    load: ${aux.kv_root}/runs/v4c_src/ckpt
+    # Resume from this arm's OWN output tree, not from the surgery source. The source is only
+    # needed for the very first step into the tree (it is already copied in at 35905). With
+    # --load on the output tree, a requeue or preempt resumes at the newest checkpoint the arm
+    # wrote (35990 with the extra step below) instead of replaying from 35900: Megatron loads
+    # --load as given and does not prefer the save dir on its own, which is why a load on
+    # v4c_src/ckpt restarted at 35901 even though 35905 existed here.
+    load: ${aux.kv_root}/runs/v4c_ramp/main/ckpt
     # the learnable gates are mutually exclusive with the ramp; the copy-init checkpoint has no gate
     # parameters, which is exactly what this variant builds
     v_block_learnable_gate: false
     v_block_gate_ramp: 100
     v_block_gate_start_iteration: 35900
-    # 36000 and 36100 on top of v4b's steps: the first checkpoints with the branch at full weight
-    save_extra_steps: [35905, 35999, 36000, 36100, 36400, 36900]
+    # 35990 is the stop point: a save just before the 36000 boundary, so a preempt there costs
+    # nothing and the restart resumes at 35990. 36000 and 36100: the first checkpoints with the
+    # branch at full weight, and the first the exporter accepts (it refuses [35900, 36000)).
+    #
+    # NO 35999. Measured 2026-11-18: a save at 35999 followed one step later by a save at 36000
+    # doubles the resident state-dict copy (reserved 10.3 -> 22.5 GB per rank, host RSS 70.7 GB
+    # per rank, four ranks per node) and the node OOM-killer SIGKILLs a rank (`exitcode: -9`) at
+    # 36000 -- that killed runs .1580, .1584 and .1592. v4b passes 36000 with a single save at
+    # 35999; v4c keeps the one at 36000 because only that checkpoint is exportable.
+    # 36992: the iteration `.1630` had reached when node as02r3b11 failed at 15:37 on 2026-11-18.
+    # A node failure kills the ranks without a graceful shutdown, so no checkpoint was written
+    # there and the restart would replay 36901..36992 (~30 min). Saving 36992 makes the replay
+    # pay once instead of on every future restart.
+    save_extra_steps: [35905, 35990, 36000, 36100, 36400, 36900, 36992]
     non_persistent_save_interval: 100
+    # Arch metrics every 100 steps (user's choice; v4b samples at 500). Interval 1 was needed to
+    # watch the ramp open,
+    # but after 36000 the gate is dropped (`_v_block_gate` returns None) so `vgate/r` and
+    # `vgate/delta` are no longer recorded at all -- measured 2026-11-18: 0 vgate lines after
+    # 36000. What interval 1 still costs is the eager mHC path on every step: 21.25 s/step vs
+    # 19.45 s/step with metrics off, +9.2 %. The ramp itself is already captured (vgate/r
+    # 0.05 -> 0.99 across 35906..35999).
+    arch_metrics_interval: 100
 
 job:
   name: ambitious_v4c_ramp_256
   base_output_dir: ${aux.kv_root}/runs/v4c_ramp/main
   metadata:
     pool_priority: 100
+
+aux:
+  # No pre-training node bench for this arm (v4b runs with it off too). The allocation is 260 live
+  # nodes and the hardware exclusions already leave exactly 256, so every "light" (slow matmul)
+  # node the bench excludes makes the run impossible: 2026-11-18 the bench excluded as01r1b11,
+  # then as04r3b26, and each time the next submission died with `insufficient_nodes`. Slow nodes
+  # cost ~2.5 % of step time, which is cheaper than not running. Real hardware faults are still
+  # excluded by hand and by the guard that follows Slurm's own node removals.
+  node_check: "off"
 
 # What this variant does NOT fix, and what it would cost (code, not config):
 #   - it forces the branch open (no self-regulation): if the duplicate hurts, rho/g_v cannot close it;
