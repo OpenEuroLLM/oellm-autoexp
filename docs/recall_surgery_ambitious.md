@@ -5037,3 +5037,43 @@ long-context win.
 Caveats: one checkpoint pair (36900); n = 100 per RULER row with no stderr; this is the first RULER
 run on the stack. The cheap confirmation is to re-run just the four `niah_multiquery` rows at 36400
 (or with more samples) and see whether the 4096 gap reproduces.
+
+### 22.21 v4b and v4c: the first readouts, and the branch's measured size
+
+The recall suite on the new arms, against the control at the *same* step (all rows, both arms;
+`moe_fp8_direct: true` — the envelope without it OOM-loops):
+
+| metric | v4b @36000 | control @36000 | v4c @36000 | v4b @36400 | control @36400 |
+| --- | --- | --- | --- | --- | --- |
+| CoQA F1 / EM | 65.53 / 50.02 | 66.69 / 50.85 | 67.24 / 51.60 | 67.13 / 51.25 | 64.82 / 48.80 |
+| SQuAD v2 F1 / EM / HasAns | 27.99 / 22.45 / 55.32 | 27.29 / 21.87 / 53.60 | 25.94 / 20.80 / 50.99 | 27.64 / 21.81 / 54.82 | 28.23 / 22.46 / 56.09 |
+| Winogrande | 68.03 | 67.25 | 66.85 | 69.46 | 68.43 |
+| Belebele mean / eng | 85.36 / 78.56 | 85.36 / 78.78 | 84.14 / 80.00 | 86.05 / 82.00 | 85.77 / 81.33 |
+| SWDE | 82.36 | 81.28 | 81.91 | 83.71 | 82.45 |
+| FDA | 30.85 | 30.76 | 31.22 | 27.77 | 28.77 |
+| squad_completion | 57.88 | 56.77 | 58.58 | 56.33 | 57.07 |
+
+Mean `arm - control`: **v4b @36000 +0.4 pp, v4c @36000 -0.2 pp, v4b @36400 +0.3 pp**. Every delta is
+within 1.4 se (CoQA 1.71 pp, Winogrande 1.31 pp).
+
+**v4c @36000 is the load-bearing row**: the 100-step ramp puts the copied branch at `r = 1.0` from
+36000, i.e. a *full-weight* attention, and the suite still reads parity. So shared-KV attention
+capacity does not move this suite even when it is fully switched on -- the readouts that can still
+change the verdict are later ones, where the copied matrices have had hundreds of steps to adapt.
+
+**How big the branch actually is** (v4b @36000, arch metrics + exported weights):
+
+- `vgate/out` = **0.0117** (mean `g_v`: the branch is at 1.2 % of full weight), `vgate/res` =
+  **-0.0088** (`rho` negative: the mixer is pushed 0.9 % *past* the identity, i.e. the model cancels
+  part of the 2.3 % mixing), `vgate/delta` = **0.0077** (the layer moves the residual 0.77 %, below
+  the 2.29 % all-mixing floor).
+- the exported (folded) `o_proj` is 6.6e-6 ... 1.5e-4 against its source layer's 1.9e-3 ... 6.7e-3,
+  i.e. **0.4-2.5 %** of what a trained attention layer writes.
+- the copied `q` is at the source's scale (1.29e-2 ... 1.58e-2 vs 1.42e-2), whereas v4a's `q` had
+  collapsed to 1.9e-4 ... 2.8e-4 (50-75x below) -- same output magnitude, completely different
+  content: v4b's small write is a *selective* attention, v4a's was an almost uniform average.
+
+So the gates are not crawling up at `n * lr` (mean 0.012 at 36000, layer 62 at 0.021): the optimizer
+settles them low, consistent with a copy-branch at full weight costing ~+0.001 nats. That is the
+self-regulation working, and it is also why v4b cannot test the branch: only the v4c ramp puts it at
+1.0.
