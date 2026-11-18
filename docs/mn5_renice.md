@@ -79,17 +79,23 @@ Full `scontrol show job` before and after the round trip differs only in
 - Priority returns exactly to baseline plus age accrual (91228 -> 91245, +17 = the age
   delta). Nothing is lost by parking and reverting.
 
-Derived field that did move: `Reason`.
+Derived field that did move: `Reason`, briefly.
 
 ```
 before      : QOSMaxJobsPerUserLimit
 Nice=1000   : Priority
-Nice=0 back : None
+Nice=0 back : None, then Priority
+16:39:38    : QOSMaxJobsPerUserLimit again
 ```
 
-`Reason` is recomputed by the scheduler, so this is cosmetic, not a state reset. Other
-pending jobs in `acc` show both `QOSMaxJobsPerUserLimit` (16) and `Priority` (6) at the
-same time, so both strings occur in this queue.
+The change is transient. Each `scontrol update` forces a scheduler pass, which rewrites
+`Reason`. One full cycle later the string returned to `QOSMaxJobsPerUserLimit` and stayed
+there for the rest of the 7-minute watch. So `Reason` churn is cosmetic, not a state reset.
+Other pending jobs in `acc` show both strings at the same time (16 x
+`QOSMaxJobsPerUserLimit`, 6 x `Priority`).
+
+Priority after the revert grew only with age, in 5-minute steps: 91245 (16:38) -> 91263
+(16:40) -> 91298 (16:45). This matches the `PriorityCalcPeriod=00:05:00` cadence.
 
 ## Implications for park / promote
 
