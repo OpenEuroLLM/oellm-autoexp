@@ -94,16 +94,7 @@ sweep:
   store_sweep_json: true
   filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
   groups:
-    - type: list
-      configs:
-        - aux.ctx: c64k
-          aux.seq: 65536
-          aux.gbs: 512
-          backend.megatron.context_parallel_size: 1
-        - aux.ctx: c256k
-          aux.seq: 262144
-          aux.gbs: 128
-          backend.megatron.context_parallel_size: 4
+    # variants outer, contexts inner: each variant's 64k / 256k pair is enqueued together, dense first
     - type: list
       configs:
         - aux.variant: dense
@@ -136,3 +127,13 @@ sweep:
           backend.megatron.page_sparse_lsa_block: 128
           backend.megatron.page_sparse_lsa_buckets: 8
           backend.megatron.page_sparse_lsa_visibility: block
+    - type: list
+      configs:
+        - aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 512
+          backend.megatron.context_parallel_size: 1
+        - aux.ctx: c256k
+          aux.seq: 262144
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 4
