@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import json
 import logging
 import re
@@ -541,13 +542,15 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         iteration = m.get("_ckpt_iteration")
         if p + "v_gate.out_gate" in t:
             weight = float(g("v_gate.out_gate").float().reshape(-1)[0])
-            # the learnable gate is exported faithfully at any value, but a nearly closed branch makes
-            # the export an almost-v4 readout, which is misleading (docs/v4b_plan.md §9)
+            # the learnable gate exports faithfully at any value, but a nearly closed branch makes the
+            # export an almost-v4 readout: warn (a readout, not a refusal -- the numbers stay valid for
+            # the model as it is), docs/v4b_plan.md §9
             if abs(weight) < V_GATE_MIN_EXPORT:
-                raise ValueError(
-                    f"layer {i}: refusing to export iter {iteration}: g_v = {weight:g} is below "
-                    f"{V_GATE_MIN_EXPORT:g}, so the branch is still nearly closed and the export would "
-                    "measure an almost-v4 model. Export once the gate has opened."
+                print(
+                    f"[export] WARNING layer {i} (iter {iteration}): g_v = {weight:g} < "
+                    f"{V_GATE_MIN_EXPORT:g}, so this export is an almost-v4 readout: the branch is at "
+                    f"{100 * abs(weight):.1f} % of its full weight",
+                    file=sys.stderr,
                 )
         add(hp + "mixer.o_proj.weight", (g("self_attention.linear_proj.weight").float() * weight).to(cast))
         add(hp + "mixer.q_norm.weight", g("self_attention.q_layernorm.weight").to(cast))

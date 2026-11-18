@@ -113,16 +113,18 @@ def test_v_layer_folds_g_v_into_o_proj_and_exports_rho():
     assert t == {}  # both gate tensors are consumed (g_v folded, rho in the config)
 
 
-def test_v_layer_export_refuses_a_nearly_closed_gate():
-    """A branch whose g_v is still ~0 exports an almost-v4 model: refuse it, whatever the iteration.
+def test_v_layer_export_warns_on_a_nearly_closed_gate(capsys):
+    """A branch whose g_v is still ~0 exports an almost-v4 model: warn, do not refuse.
 
-    The guard is the gate value, not a fixed iteration: the learnable gates open at Adam's scalar
-    step, so where they are depends on the arm, not on a constant window.
+    The number is valid for the model as it is (the gate is folded exactly); it is only a readout
+    warning. The gate value, not a fixed iteration, decides -- the gates open at Adam's scalar step.
     """
     for gate in (0.0, 0.01, -0.03):
-        with pytest.raises(ValueError, match="nearly closed"):
-            convert_layer(LAYER, _gated_tensors(out_gate=gate), _cfg(), {"_ckpt_iteration": 36400},
-                          lambda name, w: None, torch.float32, torch.float32, "bf16")
+        out = {}
+        convert_layer(LAYER, _gated_tensors(out_gate=gate), _cfg(), {"_ckpt_iteration": 36400},
+                      lambda name, w: out.__setitem__(name, w), torch.float32, torch.float32, "bf16")
+        assert f"model.layers.{LAYER}.mixer.o_proj.weight" in out
+    assert capsys.readouterr().err.count("almost-v4 readout") == 3
 
 
 def test_v_layer_export_allows_an_open_gate():
