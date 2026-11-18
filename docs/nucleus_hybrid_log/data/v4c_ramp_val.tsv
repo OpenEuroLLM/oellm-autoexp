@@ -1,0 +1,2 @@
+step	tokens	val_all	val_code	val_long_64k	val_math	val_multilingual	val_reasoning	val_web_en
+36000	2415919104000	1.212057	0.788316	1.252672	0.546659	1.665838	0.495467	1.872634
