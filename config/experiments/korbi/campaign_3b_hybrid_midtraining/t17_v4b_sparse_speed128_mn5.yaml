@@ -1,0 +1,138 @@
+# @package _global_
+# Sparse-attention speed at main-run scale (user 2026-11-18: 128-node speed tests of the variants with context
+# parallelism, intra-node CP first, 64k and 256k first). The v4b main run (v4b_learned_mn5: 84B-A2.9B-E80B, mHC-4,
+# head dim 256, 2 KV groups, NoPE, six V layers sharing their source's K / V, Megatron-FSDP, EP 4, full recompute,
+# document masking) on 128 nodes as a test:
+#   - fresh init, no checkpoint load and no saves (speed only), no node check (host007 just had a thorough one)
+#   - 30 steps, one attempt; tokens / step equal across contexts (512 x 64k = 128 x 256k = 33.5M)
+#   - data: the held-out long-document set v8ml-valid/long_64k (~70M tokens, every document >= 64k; 89 >= 128k,
+#     23 >= 256k), so a 256k sample holds a few long documents and the selection actually prunes keys
+#   - contexts: c64k = 64k, CP 1 (DP 512); c256k = 256k, CP 4 inside a node (DP 128)
+#   - variants: the t16 arms (dense = TE attention, the production path)
+# Sparse budget as t11 / t16: page 64, top 32 pages + window 512 + 1 sink page (~2.6k keys / query), block-wise
+# selection per 64 queries, one packed flex call per layer. Every variant equals single-rank at CP 2 / 4
+# (Megatron a3ff571d7: tests/unit_tests/transformer/test_page_sparse_attention.py::test_flex_cp_matches_single_rank).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t17_v4b_sparse_speed128_mn5 \
+#       'aux.only=[dense_c64k,dense_c256k]' --yes
+defaults:
+  - ../recall_surgery/v4b_learned_mn5
+  - _self_
+
+aux:
+  suite: t17_v4b_sparse_speed128
+  ctx: c64k
+  variant: dense
+  arm: ${aux.variant}_${aux.ctx}
+  only: []
+  nodes: 128
+  node_check: "off"
+  seq: 65536
+  gbs: 512
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t17_v4b_sparse_speed128
+
+backend:
+  megatron:
+    load: null
+    exit_on_missing_checkpoint: false
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    save_extra_steps: []
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: 30
+    log_interval: 1
+    eval_interval: 1000000
+    eval_iters: 0
+    full_validation: false
+    fixed_valid_data_path: null
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    data_args_path: null
+    data_path: [/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document]
+    seq_length: ${aux.seq}
+    micro_batch_size: 1
+    global_batch_size: ${aux.gbs}
+    eval_global_batch_size: ${aux.gbs}
+    page_sparse_page: 64
+    page_sparse_topk: 32
+    page_sparse_window: 512
+    page_sparse_sink_pages: 1
+    page_sparse_select_block: 64
+    page_sparse_flex_q_block: 64
+    page_sparse_backend: flex
+    page_sparse_packed_flex: true
+
+job:
+  name: t17_speed128_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  start_condition: null
+  est_steps: 30
+  est_step_time_s: 40.0
+  metadata:
+    pool_singleton: null
+    # ahead of the t16 trainings (60): the speed tests are the priority on host007
+    pool_priority: 70
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "speed test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    nodes: 128
+    time: "01:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 512
+          backend.megatron.context_parallel_size: 1
+        - aux.ctx: c256k
+          aux.seq: 262144
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 4
+    - type: list
+      configs:
+        - aux.variant: dense
+          backend.megatron.page_sparse_selector: null
+        - aux.variant: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: csa2_fix
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 32
+          backend.megatron.page_sparse_indexer_dim: 128
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_csa2_entry_bias: 1.3862944
+          backend.megatron.page_sparse_csa2_entry_rms: true
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.variant: nsa_adam
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.variant: lsa_fix
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
