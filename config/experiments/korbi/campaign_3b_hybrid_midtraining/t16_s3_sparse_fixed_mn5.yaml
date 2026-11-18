@@ -69,3 +69,6 @@ sweep:
         - aux.arm: page_maxpool_pg
           backend.megatron.page_sparse_selector: page_maxpool
           backend.megatron.page_sparse_per_group: true
+          # resumes from its own step-2000 save (host006 was released at step 2539 on 2026-11-18); the other arms
+          # start from the shared step-1000 checkpoint
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t16_s3_sparse_fixed/page_maxpool_pg/ckpt
