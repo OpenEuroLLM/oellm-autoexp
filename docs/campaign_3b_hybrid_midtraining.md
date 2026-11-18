@@ -1582,6 +1582,32 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       it, so every LDM model (the s3 testbed) failed at its first forward. Fixed in 8a2cec93b (LDM / IAT / routed
       / AttnRes mixers accept it; test).
     - t16 (6 arms, snapshot phaseB3) trains: page_maxpool_pg at ~6 s / step.
+  - **Speed at main-run scale, t17 (`t17_v4b_sparse_speed128_mn5`, 2026-11-18, p264 host007).** The v4b shape
+    (84B-A2.9B-E80B, mHC-4, head dim 256, V layers, Megatron-FSDP, EP 4, full recompute, document masking), fresh
+    init, 128 nodes, 30 steps; median of steps 8-30. Data: v8ml-valid/long_64k (documents >= 64k); tokens per step
+    equal across contexts (512 x 64k = 128 x 256k); 256k uses CP 4 inside a node. Before the runs: every variant on
+    the flex path equals one rank at CP 2 / 4 (Megatron a3ff571d7), with one exception: a select block that
+    straddles a CP chunk boundary takes the chunk's first query as anchor (causal, but not the one-rank selection;
+    fix = all-gather the <= 2 anchor queries per document, needed before CP training on packed documents).
+
+    | arm | 64k, CP 1 | 256k, CP 4 | memory (256k) |
+    |---|---:|---:|---:|
+    | dense (TE) | 18.5 s (3,544 tok/s/GPU) | 34.1 s (1,924) | 0.89 |
+    | page_mean_pg | **16.7 s (-10 %)** | **29.0 s (-15 %)** | 0.82 |
+    | page_maxpool_pg | 20.4 s (+10 %; steps alternate 17.7 / 20.4) | 34.9 s (+2 %) | |
+    | lsa_fix | 23.1 s (+25 %) | not run | |
+    | nsa_adam | 109 s (x 5.9) | not run | |
+    | csa2_fix | OOM at step 3 (50 s / step) | not run | |
+
+    - Dense pays 15.6 s per step for 64k -> 256k at equal tokens; page_mean_pg removes a third of it at 256k, and
+      long_64k documents are mostly < 256k, so single 256k+ documents would widen the gap.
+    - page_maxpool's max-pooled window scores (4P + 1 per query block) cost more than the attention they save.
+    - LSA / NSA / CSA2 run the per-document variant path (separate flex calls, no packed kernel): their numbers
+      measure that implementation, not the methods. A winner on quality needs a packed path before its speed counts.
+    - 256k arms of the per-document variants were cancelled (expected OOM, user 2026-11-18); 512k / 1M (CP 8 / 16,
+      inter-node) only for dense vs page_mean_pg, later and on a fresh allocation.
+    - Host: host007 shrunk 259 -> 28 nodes afterwards (frozen + empty, slow-GPU nodes excluded first,
+      `pool_ctl shrink --apply`); t16 continues there (page_maxpool_pg resumed from its step-2000 save).
 
 ## References
 
