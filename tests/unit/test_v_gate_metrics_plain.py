@@ -3,8 +3,9 @@
 The 36000 crash of v4b: ``vgate.out_gate`` is a one-element FSDP2 ``DTensor``. Its local shard is
 empty on all but one data-parallel rank, and a shard view into the flat parameter buffer faults
 the vectorized metric kernels with ``CUDA error: misaligned address``. The fix records through
-``_plain_gate`` (``full_tensor`` + ``contiguous``) and wraps the whole recording so a diagnostic
-can never kill a run.
+``_plain_gate`` (``to_local`` + ``contiguous``) and wraps the whole recording so a diagnostic
+can never kill a run. Gathering instead is a second, independent fault source: a collective
+issued from inside the forward while the parameter all-gather is in flight.
 
 These tests pin the three pieces that make that true:
 
@@ -47,14 +48,22 @@ class _DTensorLike:
         return self._local
 
 
-def test_plain_gate_gathers_the_dtensor_and_returns_a_contiguous_tensor():
-    full = torch.tensor([0.25])
-    param = _DTensorLike(full, local=torch.empty(0))
+def test_plain_gate_reads_the_local_shard_and_never_gathers():
+    """A gather from inside the forward is the fault: an empty local shard is the correct input."""
+    param = _DTensorLike(torch.tensor([0.25]), local=torch.empty(0))
     out = tl._plain_gate(param)
-    assert param.gathered == 1, "a DTensor gate must be all-gathered, not read through its shard"
-    assert out.shape == (1,) and out.is_contiguous()
-    assert torch.equal(out, full)
-    assert out.data_ptr() != 0
+    assert param.localised == 1
+    assert param.gathered == 0, "full_tensor is a collective inside the forward and faults"
+    assert out.is_contiguous()
+    assert out.numel() == 0, "this rank owns no element; collect reconstructs the value"
+
+
+def test_plain_gate_returns_the_value_on_the_rank_that_owns_it():
+    param = _DTensorLike(torch.tensor([0.25]), local=torch.tensor([0.25]))
+    out = tl._plain_gate(param)
+    assert param.gathered == 0
+    assert out.is_contiguous() and out.numel() == 1
+    assert out.item() == pytest.approx(0.25)
 
 
 def test_plain_gate_accepts_a_plain_parameter_and_makes_it_contiguous():
