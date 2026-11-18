@@ -1482,6 +1482,45 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     selection over raw 64-token pages is the method; page_mean_pg (parameter-free, per KV group) is the default,
     a learned page indexer the alternative if selection cost at 1M+ calls for a small learned index.
 
+- **2026-11-18, plan: why does the naive page selection beat NSA / CSA2 / LSA? (user: be suspicious of the
+  implementation or the setup; there is time and compute)**
+  - **Already established.** The ranking reproduces across seeds (gap to dense within seed, steps 1250 / 1500:
+    page_mean +0.020 / +0.022 and +0.024 / +0.018, NSA +0.039 / +0.034 and +0.035 / +0.043, CSA2 +0.067 / +0.059 and
+    +0.070 / +0.072; seed noise on a gap ~±0.005), so it is systematic, not noise. The recipe matches
+    DeepSeek-V4's (V4 §4.2.2: dense for the first 1T tokens, CSA/HCA introduced at 64K after a short indexer
+    warm-up, sparse for the rest; V4.1's CSA2 is trained from scratch at 64K). The literature does not
+    contradict us: NSA compares only against training-free Quest / H2O / InfLLM; MoBA (= our page_mean, Kimi
+    production) only against full attention; InfLLM-v2 (parameter-free mean-pooled blocks, KV shared with
+    dense, group-summed scores ~ our page_mean_pg) beats trained NSA in the dense -> sparse switch (RULER 32k
+    82.6 vs 59.9, LongBench 42.5 vs 37.1).
+  - **Phase A -- implementation audit and diagnostics** (days, < 100 GPU-h, mostly inference on the t11 / t15
+    checkpoints):
+    1. numerical parity against the public reference code with identical weights / inputs (scores, top-k,
+       compressed entries, outputs, gradients): DSA / CSA (DeepSeek V3.2 / V4 inference code), NSA (fla-org
+       native-sparse-attention), LSA (Prefrontal-AI), page selection (MoBA, InfLLM-v2); one table of bugs vs
+       deliberate differences;
+    2. degenerate-case tests for every method (budget >= context, or compression 1: exactly dense attention);
+    3. oracle swap on the trained checkpoints: each method's selector replaced by the exact top-k by attention
+       mass at its own granularity (CSA entries, NSA blocks, LSA buckets) -- oracle ~ own: the granularity /
+       compression costs the loss; oracle ~ page_mean: the selector is weak;
+    4. selection quality per layer (dense attention mass captured) and usage stats (NSA gate values, init
+       (-3, +3, -3); LSA bucket truncation; whether CSA's compression weights left the mean);
+    5. position-binned loss on long documents (the gaps must sit at long positions, not short ones).
+  - **Phase B -- hidden hyperparameters** (s3, 2000-step arms paired with dense / page_mean_pg, ~100 GPU-h each,
+    ~12-15 arms): CSA indexer capacity (ours 4 x 64, V4 64 x 128), indexer lr x 10 and a 1000-step warm-up (V3.2),
+    detached indexer input, m = 2 vs 4, window 128 vs 512, V4's overlapping compressor + HCA; NSA neutral gate
+    init, top-16 vs 32, separate per-branch KV (paper) vs shared; LSA hierarchical search, member cap.
+  - **Phase C -- setup confounds and an external anchor** (~1-2k GPU-h): two hypotheses specific to our models,
+    (1) NoPE: entries that average tokens (CSA, NSA compression, HCA) lose order inside the entry, raw-page
+    selection does not; (2) the 7:1 hybrid: CKDA already supplies compressed / local context, so the attention
+    layers' job is exact retrieval, which compression gives up. From-scratch matrix (~0.5-1B, 8k -> 32k, ~30B
+    tokens): dense / page_mean / NSA / CSA+HCA x {pure transformer, RoPE} / {7:1 hybrid, NoPE}. Anchor: the
+    published claims (NSA >= dense natively; InfLLM-v2 > NSA in conversion) must reproduce in the pure / RoPE
+    cell, or our implementation is suspect.
+  - **Decision rule:** switch away from page_mean_pg only if a tuned, faithful method beats it by > 0.01 (2x the
+    seed noise) at an equal token budget. KV size is not a criterion (user 2026-11-18: the hybrid with shared KV
+    already keeps the KV cache small).
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
