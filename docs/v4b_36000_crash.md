@@ -152,3 +152,18 @@ for n in <nodes>; do timeout 15 srun --jobid=<host job> --overlap -N1 -w $n /bin
 
 Never let `usable` sit below 256: the pool fails every attempt with `insufficient_nodes` and the arm
 silently stops training.
+
+**Exclusion criteria, in order of severity:**
+
+1. **Dead** — fails a one-rank `srun … /bin/true` probe. Example: `as02r1b04`.
+2. **Interconnect flap** — the log shows `NCCL WARN NET/IB : mlx5_N:1 Got non-fatal async event:
+   port active(9)` for that node. Non-fatal, so the run survives, but the link came back and the
+   collective traffic through it is unreliable. Examples: `as02r1b10`, `as02r1b08`.
+3. **Interconnect verdict** — a GPU group below 0.75 × median bandwidth in a node-health check.
+   Example: `as03r1b06`, `as07r5b27`.
+4. **Compute** — a GPU below 0.75 × median matmul TFLOP/s. Lowest priority: it costs speed, not
+   correctness. Examples: `as04r1b07`, `as04r1b08`, `as05r4b19`.
+
+Put host008 exclusions in **`<host>/exclude_nodes` only**. The same node in the pool-level
+`exclude_nodes` as well is counted twice: the pool then reports `only 255 usable` for a 256-node run
+and nothing starts, even though the host has enough good nodes.
