@@ -92,7 +92,7 @@ running, and continue only the best of v4 / v4b / v4c after the matched 38,000 e
 | D GQA restart, pools, LDM | 10-25 → 10-29 | silent MHA bug; sub-Slurm pools; LDM chosen after the rematch; expert collapse |
 | E Size vote, v2, v3 | 10-30 → 11-01 | pab; 84B-A2.9B-E80B; QB fails at scale; bias + global aux; 4k/16k/64k curriculum; v3 (LDM) unstable |
 | F v4_2ph main run | 11-02 → 11-08 | mHC-4, 8k → 64k; 256 nodes; spectral cap + z-loss; head dim 256; inference / eval stack |
-| G Hardening, recall gap | 11-09 → 11-13 | per-layer diagnostics; 64k phase; Engram package; sparse-attention T-series; CKDA-branch and recall surgeries |
+| G Hardening, recall gap | 11-09 → 11-13 | per-layer diagnostics; **8k → 64k switch at 23,691**; **Engram row-norm cap + clip + lr ×1 at 25k**; sparse-attention T-series; CKDA-branch and recall surgeries |
 | H Testbeds, V layers | 11-14 → 11-18 | JUPITER testbeds; 84B on JUPITER; main run stops at 36,000; v4a → v4b / v4c; sparse audit |
 
 ---
@@ -399,10 +399,49 @@ v4_2ph lineage by step:
 | 14,900 | 11-07 | ~1T tokens (train 1.176, matching the 11-04 forecast of 1.18) |
 | 18,578 | 11-08 | 256 nodes on p264. A flapping IB port (as07r2b24) had slowed steps to 15.75 + spikes; excluded → 14.9 s |
 | 22,304 | 11-09 | restart for per-layer grad-norm diagnostics. Spikes come from layer-0 attention and the Engram tables (~60 % of spike norm²) |
-| 23,691 | 11-09 | **phase 2: 64k**, 17.2 s/step (−13 %). Cause: attention straggler on long documents, one sequence per rank |
-| 25,000 | 11-10 | **Engram package** (user, "all in one go at 25k"): own grad clip 1.0, lr ×5 → ×1, row-norm cap 13 → 7. Sinkhorn ×5 screened (+1–2.5 mnat) and not deployed |
+| 23,691 | 11-09 | **8k → 64k context switch** (phase 2: gbs 8192 × 8k → 1024 × 64k, same 67M tokens/step, opt81 stage-2 data). 17.2 s/step (−13 %): attention straggler on long documents, one sequence per rank. Train loss +0.013 at first (1.138 → 1.151) |
+| 25,000 | 11-10 | **Engram row-norm cap 13 → 7** + own Engram grad clip 1.0 + Engram lr ×5 → ×1 (user, "all in one go at 25k"); details below |
 | 32,105 / 32,462 | 11-11 | GPU faults, automatic retries from rolling saves |
 | 35,900 / 36,000 | 11-13 | host OOM at the persistent save (~70 GB/rank) killed nodes; the pool marked all nodes dead. **Main run stopped**; continued only through the V-layer arms from the 35,900 save |
+
+**The 8k → 64k switch (step 23,691, 11-09 ~21:00).**
+- Planned since 11-02. The phase-1 document set holds exactly 1.59T tokens (23,691 steps).
+- On 11-09 the user considered postponing the switch to 2T (step ~29,800) for "one clear second phase".
+  Moving it would have repeated ~26 % of the stage-1 documents or needed a re-split, so the user kept
+  23,691: "maybe we should just keep going".
+- The two interventions were deliberately separated: the user put the Engram restart at 25k, not 24k,
+  "so we can distinguish the effect of the ctx extension and the stabilization".
+- Validation long_64k improved from 1.363 at 20k to 1.295 at 24k and 1.247 at 35k.
+- The −13 % throughput comes from one 64k sequence per rank, so the longest document sets the step time.
+  Only sparse or linear attention fixes that (§4.12).
+
+**The Engram row-norm cap (step 25,000, 11-10).**
+- **Why.** The 11-09 diagnostics showed the Engram tables carrying ~60 % of the gradient-spike norm² and
+  leading most spikes at the end of phase 1.
+  - Nothing normalizes between the Engram output and the residual stream or the LM head, so a few heavy
+    rows feed in directly. At checkpoint 24,000: mean row norm 4.37, p99.999 7.03, max 9.5 / 12.8.
+  - Engram lr ×5 had been copied from DS-V4.1, where it scales a Sinkhorn-balanced update. Our Adam took
+    5–18× larger steps than intended.
+- **What (user, 11-09/10, "all Engram fixes in one go at 25k").** The restart happened exactly at
+  25,000; it was queued at 04:19 and started at 10:16 on host004.
+  - Per-row L2 norm cap ramped from 13 to 7 over 1000 steps (≈ the p99.999 of the checkpoint;
+    DS-V4.1-like magnitudes). Megatron `7c67b1193`.
+  - Separate Engram gradient clip 1.0 (`--engram-clip-grad`, `d2081946c`), so table spikes no longer
+    clip the dense model's update.
+  - `engram_lr_mult` 5 → 1.
+  - A Sinkhorn ×5 table optimizer (DS-V4.1 style) was screened at s3 (+1.9 to +2.7 mnat vs Adam) and not
+    deployed. An untested Adam → Sinkhorn resume was the other reason.
+  - From 11-10 on, continuations use `p2cont` (latest checkpoint).
+- **Effect.**
+  - A transient at 25,006–25,036: grad norm up to 20.8, loss +0.003 at peak, +0.0009 on average.
+  - Train loss 1.141 (24.9–25.0k) → 1.138 (25.0–25.1k).
+  - By 26.1k the cap touches only ~10.3k of 1.247B rows per step (0.0008 %); max pre-cap norm 7.003.
+  - Grad-norm spikes > 1 became more frequent (2.8 % → ~5–7 % of steps), but smaller. The Engram-led
+    share fell from 69 % to 49 %, and the own clip isolates them from the dense update.
+  - The user still saw heavy spiking at 26k (11-10). The later spikes come from layer-0 attention, and
+    the QK-norm gains already bound logits at ~20.
+  - Open from this thread: a loss penalty on capped rows (a real downward gradient), the Sinkhorn
+    optimizer, and converting the first MoE layer to dense.
 
 **Ambitious vs conservative, loss.** v4 losses are recalibrated to q35's flag mix: opt81 trains
 ~0.09–0.11 nats lower at equal tokens.
@@ -591,6 +630,7 @@ mHC (keeps only ~½ of the gain), and fp16 LDM storage (+0.003, 11-10).
 | axis | sequence of decisions |
 |---|---|
 | Optimizer | AdamW (round 1) → angular MuOwn (10-17, −0.11) → hidden u-decay found → **classical Muown, no WD** (10-24) → embedding / router WD 0 (11-02) → Engram Adam lr ×1 (11-10). Residual mixers lr ×0.25; CKDA β on Adam (v3+). |
+| Engram | unmatched test (R3) → 20–34 % of parameters replacing experts (R5) → 30 % in production (10-22) → 40B with 216 experts (v1, 10-24) → **80B, [2,3,4]-grams + sign hash** (10-31, unscreened) → accent-preserving map tested, not adopted (11-07) → **row-norm cap 13 → 7, own grad clip 1.0, lr ×5 → ×1** (25k, 11-10) → kept untouched (user 11-15: no fade or damp) |
 | Mixer | KDA "wins" (misconfigured CKDA) → **CKDA always** (10-17) → GDN / Qwen3.5-like, KronLSTM / CKLSTM, triadic all rejected → CKDA confirmed 10-23 |
 | Ratio | 3:1 → 5:1 (10-18, half the KV for +0.005) → **7:1 attention-first** (10-22/23, long context) → +6 V layers (22 % effective attention, v4a / b / c, 11-16) |
 | Attention | NoPE + qk-norm + XSA + output gate; head dim 128 (fairness, 10-17) → **256** at 9,815; GQA 2 (the flag was silently off until 10-26); SSMax no; log-n at eval only |

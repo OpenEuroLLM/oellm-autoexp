@@ -60,8 +60,8 @@ a2.plot(x2, y2, color=ORANGE, lw=1.8, label="conservative q35 (flag-decon-v1, ra
 rec = [(0.067, 1.639), (0.268, 1.416), (0.537, 1.344), (1.0, 1.290), (1.07, 1.284)]
 a2.plot([r[0] for r in rec], [r[1] for r in rec], ls="none", marker="o", ms=7, color=BLUE, mfc=SURFACE, mew=2,
         label="v4 recalibrated to q35's data mix")
-events = [(5909, "256 nodes"), (9815, "cap + z-loss,\nhead dim 256"), (23691, "64k phase"),
-          (25000, "Engram\npackage"), (35900, "V-layer arms\nbranch here")]
+events = [(5909, "256 nodes"), (9815, "cap + z-loss,\nhead dim 256"), (23691, "8k → 64k\ncontext"),
+          (25000, "Engram row-norm\ncap 13→7, clip,\nlr ×1"), (35900, "V-layer arms\nbranch here")]
 for i, (s, lab) in enumerate(events):
     xx = s * 67108864 / 1e12
     a2.axvline(xx, color=GRID, lw=1, zorder=0)

@@ -26,7 +26,8 @@ bars = [
     ("Ambitious\n(main run)", "10-28 09:00", "10-29 12:00", "LDM", BLUE, LDM),
     ("Ambitious\n(main run)", "10-30 12:00", "10-31 20:00", "v2", BLUE, LDM),
     ("Ambitious\n(main run)", "10-31 20:25", "11-01 22:45", "v3", BLUE, LDM),
-    ("Ambitious\n(main run)", "11-02 01:30", "11-13 20:00", "v4_2ph 84B-A2.9B (mHC-4)  →  step 36,000 ≈ 2.4T tok", BLUE, None),
+    ("Ambitious\n(main run)", "11-02 01:30", "11-09 20:40", "v4_2ph 84B (mHC-4), 8k context", BLUE, None),
+    ("Ambitious\n(main run)", "11-09 20:40", "11-13 20:00", "64k → 36,000", "#1c5cab", None),
     ("Ambitious\n(main run)", "11-17", "11-19", "", BLUE, None),
     ("Ambitious\nside arms", "11-02", "11-04 10:00", "v4_ldm", VIOLET, LDM),
     ("Ambitious\nside arms", "11-09 12:00", "11-10 12:00", "", VIOLET, None),
@@ -49,8 +50,8 @@ decisions = [
     ("11-03", "No-Slurm-mutation policy"),
     ("11-04", "q35 ended; v4 → 256 nodes"),
     ("11-05", "spectral cap + z-loss; head dim 256"),
-    ("11-09", "64k phase 2 from 23,691"),
-    ("11-10", "Engram package at 25k"),
+    ("11-09", "8k → 64k context switch at step 23,691"),
+    ("11-10", "Engram row-norm cap 13→7 + own clip, lr ×1 (25k)"),
     ("11-16", "V-layer insertion (v4a)"),
     ("11-17", "v4b copy-init + gates; v4c ramp"),
     ("11-18", "sparse-attention audit"),
@@ -65,7 +66,7 @@ for lane, s, e, lab, col, hatch in bars:
     ax.broken_barh([(x0, x1 - x0)], (y[lane] - H / 2, H), facecolors=col, edgecolor=SURFACE,
                    linewidth=2, hatch=hatch, alpha=0.92)
     if lab:
-        dark = col in (BLUE, VIOLET)
+        dark = col in (BLUE, VIOLET, "#1c5cab")
         w = x1 - x0
         longest = max(len(t) for t in lab.split("\n"))
         if longest * CH + 0.25 < w and not hatch:
@@ -101,12 +102,13 @@ ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
 ax.grid(axis="y", visible=False)
 ax.spines["left"].set_visible(False)
 ax.tick_params(axis="y", length=0)
-ax.legend(handles=[Patch(facecolor=BLUE, label="ambitious main run"),
+ax.legend(handles=[Patch(facecolor=BLUE, label="ambitious main run (8k)"),
+                   Patch(facecolor="#1c5cab", label="ambitious main run (64k)"),
                    Patch(facecolor=VIOLET, label="ambitious side arms (surgery / LDM)"),
                    Patch(facecolor=ORANGE, label="conservative q35"),
                    Patch(facecolor=AQUA, label="small-scale screens / tests"),
                    Patch(facecolor="white", edgecolor=INK2, hatch=LDM, label="LDM residual")],
-          loc="upper center", bbox_to_anchor=(0.5, -0.09), ncol=5, frameon=False, fontsize=8.2)
+          loc="upper center", bbox_to_anchor=(0.5, -0.09), ncol=6, frameon=False, fontsize=8.0)
 ax.set_title("Nucleus hybrid campaign, 2026-10-14 → 11-18: runs and key decisions", loc="left",
              fontsize=11.5, color=INK, pad=8)
 
