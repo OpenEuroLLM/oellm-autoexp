@@ -1,0 +1,57 @@
+# @package _global_
+# Sparse-attention audit, Phase B (docs/campaign_3b_hybrid_midtraining.md, 2026-11-18): each method retrained with
+# the flaw the reference audit found fixed, on t11's schedule (ctxlen4n_s3 s64k step 1000 -> 3000, validation every
+# 500 steps on the same samples; dense reference t8_s3_mtp_quality/base, old arms t11_s3_sparse_fair/*):
+#   nsa_adam        -- NSA as in t11 with its own parameters on Adam (page_sparse_selector_adam): the matrix
+#                      optimizer moved its zero-initialised gate rows to a fixed norm after one step;
+#   csa2_fix        -- entry logits + log 4 and entry keys at their members' RMS (the softmax under-weighted the
+#                      compressed context), indexer input detached (code default now), indexer 32 x 128 (V4.1),
+#                      selector on Adam;
+#   lsa_fix         -- cluster span = window (pool 4 x block 128 = 512) and the reference's visibility (~1000
+#                      tokens before the window were unreachable), 8 buckets of 64 tokens, top 32 (2048 tokens);
+#   page_maxpool_pg -- page selection per KV group with InfLLM-v2's overlapping max-pooled page scores.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t16_s3_sparse_fixed_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t11_s3_sparse_fair_mn5
+  - _self_
+
+aux:
+  suite: t16_s3_sparse_fixed
+
+job:
+  metadata:
+    pool_priority: 60
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: nsa_adam
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.arm: csa2_fix
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 32
+          backend.megatron.page_sparse_indexer_dim: 128
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_csa2_entry_bias: 1.3862944
+          backend.megatron.page_sparse_csa2_entry_rms: true
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.arm: lsa_fix
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+        - aux.arm: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
