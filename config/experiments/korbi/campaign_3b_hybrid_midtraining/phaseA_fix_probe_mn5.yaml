@@ -1,0 +1,33 @@
+# @package _global_
+# Sparse-attention audit, Phase A: zero-training checks of the two design flaws the reference audit found, on the
+# trained 2000-step arms at 3000 (64k NLL, 8 long documents, --diag):
+#   csa2 / csa2_warm -- entry logits + log 4 (entry_bias=1.386) and entry keys back to their members' RMS
+#                       (entry_rms=1): does the under-weighted compressed context cost the loss?
+#   lsa              -- visibility=block (the reference's rule) instead of the ~1000 unreachable tokens before
+#                       the window (partial here: this arm's cluster span is 2048 > the window).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/phaseA_fix_probe_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - phaseA_selector_diag_mn5
+  - _self_
+
+aux:
+  name: phaseA_fix_${aux.arm}
+  bench: "T5_PROBE_TAG=_phaseAfix T5_RUN_DIR=${aux.run_dir} T5_STEP=3000 T5_EXPORT=${aux.export_name} bash scripts/korbi/campaign_midtraining/t5_arm_probe_mn5.sh ${aux.arm} '${aux.policy}' --tasks nll --nll-docs 8 --diag"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: csa2
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/csa2
+          aux.policy: "csa2:compress=4,topk_entries=512,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,entry_bias=1.386,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,entry_bias=1.386,entry_rms=1,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,entry_rms=1,page=64,sink_pages=1,window=512,select_block=64"
+        - aux.arm: csa2_warm
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/csa2_warm_s2
+          aux.policy: "csa2:compress=4,topk_entries=512,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,entry_bias=1.386,page=64,sink_pages=1,window=512,select_block=64/csa2:compress=4,topk_entries=512,entry_bias=1.386,entry_rms=1,page=64,sink_pages=1,window=512,select_block=64"
+        - aux.arm: lsa
+          aux.run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t11_s3_sparse_fair/lsa
+          aux.policy: "lsa:pool=4,block=512,buckets=32,topk=32,page=64,sink_pages=1,window=512,select_block=64/lsa:pool=4,block=512,buckets=32,topk=32,visibility=block,page=64,sink_pages=1,window=512,select_block=64"
