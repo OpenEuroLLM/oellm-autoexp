@@ -14,6 +14,7 @@ the pool's files directly and are picked up by the supervisors.
   pool_ctl.py <pool_dir> close | open            stop / resume submitting hosts
   pool_ctl.py <pool_dir> set key=value ...       change pool settings (live), e.g. keep_pending=1
   pool_ctl.py <pool_dir> exclude <node> ...      never launch a run on these nodes again
+  pool_ctl.py <pool_dir> pin <run> <host> | unpin <run>  a queued run waits for that host only
   pool_ctl.py <pool_dir> freeze | unfreeze <host> no new run on the host, never released (resize prep)
   pool_ctl.py <pool_dir> shrink <host> --keep N  plan a resize of a frozen host to N nodes; --apply does it
 
@@ -451,6 +452,44 @@ def cmd_hold(layout: PoolLayout, args) -> int:
     return 0
 
 
+def cmd_pin(layout: PoolLayout, args) -> int:
+    """pin / unpin a queued run to one host: it then waits for that host instead of taking the
+    newest free one.
+
+    The pin is ``runs/<rid>/pin_host``, which the monitor reads on every pass (a record field
+    would be overwritten by the monitor's own writes). A pinned run that its host cannot fit
+    waits there; no other host takes it.
+    """
+    active, misses = resolve_target(layout, args.run)
+    if not active:
+        for line in misses:
+            print(f"nothing to pin: {line}", file=sys.stderr)
+        return 1
+    if len(active) > 1:
+        print(f"{args.run} names {len(active)} active jobs: {active}", file=sys.stderr)
+        return 1
+    job_id = active[0]
+    for record in _pool_jobs(layout):
+        if record.get("job_id") != job_id:
+            continue
+        rid = (record.get("runtime") or {}).get("runtime_job_id")
+        if not rid:
+            break
+        path = layout.run_dir(rid) / "pin_host"
+        if args.cmd == "pin":
+            if not layout.host_dir(args.host).exists():
+                print(f"no such host: {args.host}", file=sys.stderr)
+                return 1
+            path.write_text(f"{args.host}\n")
+            print(f"{rid}: pinned to {args.host}")
+        else:
+            path.unlink(missing_ok=True)
+            print(f"{rid}: pin cleared")
+        return 0
+    print(f"no active run for {job_id}", file=sys.stderr)
+    return 1
+
+
 def cmd_freeze(layout: PoolLayout, args) -> int:
     """freeze / unfreeze a host: a frozen host gets no new run and is never released by the
     monitor (pool.PoolManager._frozen); its running runs continue."""
@@ -653,6 +692,14 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help="never release / release again a host (see cmd_hold)")
         p.add_argument("host")
         p.set_defaults(func=cmd_hold)
+    for name in ("pin", "unpin"):
+        p = sub.add_parser(
+            name, help="pin a queued run to one host / clear the pin (runs/<rid>/pin_host)"
+        )
+        p.add_argument("run", help="job id, job name, or any run id of the job")
+        if name == "pin":
+            p.add_argument("host")
+        p.set_defaults(func=cmd_pin)
     p = waiting(sub.add_parser("drain"))
     p.add_argument("hosts", nargs="*")
     p.set_defaults(func=cmd_request("drain"))

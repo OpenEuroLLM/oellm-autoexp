@@ -270,6 +270,23 @@ def _mtime(path: Path) -> float | None:
         return None
 
 
+def host_allows_pin(pin: str, hid: str) -> bool:
+    """Whether a run pinned to ``pin`` may take host ``hid`` (``""`` = not pinned)."""
+    return not pin or pin == hid
+
+
+def _read_pin(layout: PoolLayout, rid: str) -> str:
+    """The host a run is pinned to (``pool_ctl pin``), or ``""`` for none.
+
+    A marker file, not record metadata: the monitor rewrites the job records every pass, so an
+    edited record field would be clobbered, while the run directory is read fresh each tick.
+    """
+    try:
+        return (layout.run_dir(rid) / "pin_host").read_text().strip()
+    except OSError:
+        return ""
+
+
 def read_env_file(path: Path) -> dict[str, str]:
     """Parse the ``KEY=value`` files the supervisor writes (values may be
     shell-quoted)."""
@@ -1448,6 +1465,7 @@ class PoolManager:
                         rid,
                         int(meta.get("NODES", "1") or 1),
                         str(md.get("pool_singleton") or ""),
+                        _read_pin(layout, rid),
                         record.job_id,
                     )
                 )
@@ -1519,8 +1537,10 @@ class PoolManager:
             for item in list(queued):
                 if len(active) >= max_runs:
                     break
-                _, _, rid, nodes, singleton, job_id = item
+                _, _, rid, nodes, singleton, pin, job_id = item
                 use_excl = run_meta(rid)[1]
+                if not host_allows_pin(pin, host.hid):
+                    continue  # pool_ctl pin: this run may only take that host
                 cap = free + (free_excl if use_excl else 0)
                 if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
                     claim = (
