@@ -1565,6 +1565,13 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     loss), selector `page_maxpool` (InfLLM-v2 scores). Phase B (`t16_s3_sparse_fixed_mn5`: nsa_adam, csa2_fix,
     lsa_fix, page_maxpool_pg) and the zero-training checks (`phaseA_fix_probe_mn5`) are queued on the hosts'
     buffer nodes.
+  - **Zero-training checks on the trained arms** (`phaseA_fix_probe_mn5`, same probe; gap to the same model with
+    dense attention): CSA2 as trained +0.081, + log 4 entry bias +0.100 (worse), RMS-rescaled entry keys +0.081
+    (no change); CSA2 with warm-up +0.088 -> +0.110 with the bias; LSA +0.101 -> +0.096 with visibility=block
+    (partial: trained with a 2048-token cluster span). The trained CSA2 has adapted to its entry weighting: its
+    compression weights became peaked (row norms up to 3.7 from zero init), so an entry is close to one picked
+    token -- the RMS rescale changes nothing because the norm already matches. CSA2 learned to undo the
+    averaging; whether + log m from the start helps is t16 csa2_fix's question, not answerable at inference.
 
 ## References
 
