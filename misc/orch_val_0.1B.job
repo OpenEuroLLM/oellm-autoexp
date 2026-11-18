@@ -13,4 +13,4 @@ source /leonardo_work/OELLM_prod2026/users/donutu00/init.sh
 
 cd /leonardo_work/OELLM_prod2026/users/donutu00/oellm-autoexp
 
-echo y | python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/leo/qwen3_dense_0.21B_sweep_v1 --submit-and-exit
+echo y | python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/leo/qwen3_dense_0.21B --submit-and-exit

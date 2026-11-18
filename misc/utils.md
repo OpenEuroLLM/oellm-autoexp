@@ -8,15 +8,15 @@
 ## Training run:
 
 0.1B:
-`uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/training/lumi/qwen3_dense_0.21B_sweep_v2 --submit-and-exit`
+`uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/training/lumi/qwen3_dense_0.21B --submit-and-exit`
 
 ## Validation run:
 
 0.4B_ne:
-`uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/lumi/qwen3_dense_0.71B_sweep_v2 --submit-and-exit`
+`uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/lumi/qwen3_dense_0.71B --submit-and-exit`
 
 0.1B_ne:
-`uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/lumi/qwen3_dense_0.21B_sweep_v2 --submit-and-exit`
+`uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/lumi/qwen3_dense_0.21B --submit-and-exit`
 
 ## Monitor:
 0.1B:

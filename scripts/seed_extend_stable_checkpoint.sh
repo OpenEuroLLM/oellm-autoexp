@@ -1,7 +1,7 @@
 #!/bin/sh
 # Seeds a brand-new stable job's checkpoint dir from an older, shorter stable
 # run's checkpoints, so training resumes from that run's furthest point
-# instead of iteration 0 -- for combos where hp_grid/v2's
+# instead of iteration 0 -- for combos where the HP selection's
 # checkpoint_status=extend_stable (a stable run exists but didn't reach the
 # new target token budget yet).
 #
@@ -23,7 +23,7 @@
 # Usage: seed_extend_stable_checkpoint.sh <source_checkpoints_dir> <target_checkpoints_dir>
 #
 # The caller renders this command through an unquoted shell interpolation
-# (see the ShellCommandCondition in qwen3_dense_0.9B_ne_lumi_train_v2.yaml --
+# (see the stable stage's ShellCommandCondition in config/sweep/multilingual_scaling/training/ --
 # quoting isn't an option there since the value round-trips through Hydra's
 # CLI override grammar first). When source is the empty string, the shell
 # drops that argument entirely instead of passing an empty positional param,

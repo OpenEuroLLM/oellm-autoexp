@@ -12,14 +12,15 @@ only covers how that grammar is *used* here.
 
 ## Layout
 
-- `training/v1/`, `validation/v1/` — initial HP grid derived from the English
-  scaling experiments.
-- `training/v2/`, `validation/v2/` — adjusted HP grid following initial
-  results, since the initial centers were not optimal. Also introduces
-  `aux.skip_stable_launch` for combos that reuse an already-trained stable
-  checkpoint from v1 instead of retraining one.
-- `common.yaml` (validation) — base val config; sets `load` to the matching
-  training run's checkpoint dir by default (see GROUP 2 below).
+- `training/qwen3_dense_<size>.yaml` — the single, complete HP grid for one
+  model size: every `(lr, gbsz)` combo ever planned, with what is already
+  trained marked so that launching it only submits what is missing (see
+  [The merged grid](#the-merged-grid)).
+- `validation/qwen3_dense_<size>.yaml` — its validation counterpart; GROUP 1
+  mirrors the training file entry-for-entry.
+- `experiments/multilingual_scaling/validation/common.yaml` — base val config;
+  sets `load` to the matching training run's checkpoint dir by default (see
+  GROUP 2 below).
 
 Each file is named `qwen3_dense_<size>.yaml`, where `<size>` is the
 **Porian/total** parameter count (`0.21B`, `0.39B`, `0.71B`, `1.26B`) —
@@ -28,7 +29,54 @@ architecture file uses (e.g. this `0.21B` grid pairs with that dir's `0.1B_ne`
 architecture). See
 [experiments/multilingual_scaling/README.md](../../experiments/multilingual_scaling/README.md#what-ne-and-porian-mean)
 for why the two differ. Consumers select a grid via the `defaults:` path, e.g.
-`/sweep/multilingual_scaling/training/v2@sweep: qwen3_dense_0.21B`.
+`/sweep/multilingual_scaling/training@sweep: qwen3_dense_0.21B`; the leaf
+experiment configs are
+`experiments/multilingual_scaling/{training,validation}/<cluster>/qwen3_dense_<size>.yaml`.
+
+## The merged grid
+
+Until 2026-11-03 each size had three grids, `v1` (initial grid from the
+English scaling runs, trained on Leonardo/MN5), `v2` and `v3` (re-centred
+grids, trained on LUMI). Each version only listed the batch of combos
+launched in that round, and they disagreed for many combos (stable horizon,
+`split`, `micro_batch_size`, tier). They were merged into the single file per
+size with these rules, checked against what exists in
+`/scratch/project_465002530/multilingual_scaling/<ne>/training` and the
+cross-cluster loss records in `dense_multilingual_models_scaling_results`:
+
+- **One GROUP 1 entry per stable trajectory** `(lr, gbsz, stable horizon)`.
+  When a combo has several real stable runs (e.g. a Leonardo `stable300BT` and
+  a LUMI `stable80BT`), each gets its own entry. Sibling lookup goes by GROUP 1
+  entry index, so each decay resolves to its own entry's stable. A decay belongs
+  to the stable it actually loaded from (its `config-*.yaml`), else to the
+  latest version that listed it. Stable horizons that only existed in a config
+  and never on disk were dropped.
+- **Tier** of each decay budget = the tier in the latest version that listed
+  it; `stable_launch_tier` = the first non-empty tier (rule above).
+- **`aux.done_tokens_set`** (training only) = decay budgets already trained on
+  any cluster (val/train loss recorded, or final checkpoint on LUMI). The
+  training filter never submits them. Leonardo/MN5 decays have no logs on
+  LUMI, so `finish_condition` alone would resubmit them. The seven 0.1B
+  decays trained from hybrid checkpoints (losses removed 2026-11-03) are *not*
+  in this set, so they get rerun.
+- **Dropped budgets** — planned in v1/v2, never trained, and not re-selected
+  by v3's HP selection — are not in any tier set; the per-entry comment lists
+  them. Stables with no decay left are kept as a comment block at the end of
+  GROUP 1 (not launched, not evaluated).
+- **`aux.skip_stable_launch: true`** whenever no pending decay needs the stable
+  to train further (all its pending branch checkpoints already exist, or
+  nothing is pending).
+- **`split`** = what the still-to-run jobs of that entry need. Finished jobs are
+  never resubmitted, so their historical split only lives in the comments.
+  Seven 0.1B LUMI stables switched from `99,1,0` to `100,0,0` around iter
+  22–25k (v2 config change, 2026-07-28); their comments record the switch iter.
+- **`micro_batch_size`** = the latest version's value (it only changes nodes /
+  gradient accumulation, not the run's identity).
+
+To add work later: append budgets to an entry's tier sets (or add a new entry
+for a new stable), and move budgets into `aux.done_tokens_set` once trained.
+Never edit `split` or `aux.tokens` of an entry whose stable already has
+checkpoints.
 
 ## The shape of one sweep: hyperparameters × stages
 
@@ -76,7 +124,9 @@ Each entry is one `(lr, gbsz)` pair from the design CSV, grouped visually by
 | `aux.tokens` | this combo's max decay token budget (what `stable` trains to) |
 | `aux.center_tokens_set` / `cross_tokens_set` / `diagonal_tokens_set` | per-tier Python-set-literal *strings* of decay budgets this combo runs at that grid position; their union is the combo's full allowed decay set. Strings (not YAML lists) so they interpolate verbatim into the `oc.eval` filter, which then parses them as a Python `set` literal |
 | `aux.stable_launch_tier` | the tier whose invocation submits this combo's stable — the *first* tier (in `center → cross → diagonal` order) with a non-empty token set for this combo. Keeps `priority_tier=center` from eagerly queuing big stables (e.g. gbsz=512) whose decays only live in `cross`/`diagonal` |
-| `aux.skip_stable_launch` (v2 training only) | `true` for combos whose stable checkpoint already exists from v1 (see `checkpoint_reuse_run=...` comments) — the decays for that combo branch off the existing checkpoint instead of the sweep resubmitting/continuing training on it. Defaults to `false` in the group's `defaults:` block |
+| `aux.skip_stable_launch` (training only) | `true` when the entry's stable needs no further training (see [The merged grid](#the-merged-grid)) — its decays branch off the existing checkpoints instead of the sweep resubmitting/continuing training on it. Defaults to `false` in the group's `defaults:` block |
+| `aux.done_tokens_set` (training only) | Python-set-literal string of decay budgets already trained on any cluster; the filter never submits them. Defaults to `"set()"` |
+| `aux.extend_stable_source` (training only) | checkpoints dir of an older, shorter stable to seed this stable from (see below). Defaults to `""` (no-op) |
 | `aux.max_tokens` (validation only) | a second, never-overridden copy of `aux.tokens` — GROUP 2's decay/branch/end stages override `aux.tokens` per-stage, so this field lets the filter compare a stage's budget against the combo's own max (see `end` dedup below) |
 | `split` | train/val/test split for this combo's stable run and every decay branching off it. Must match whatever split actually produced the existing checkpoint history for this `(lr, gbsz)` pair — Megatron rebuilds the shuffled sample index from `split`, and a mismatch causes a discontinuity at resume. Per-combo overrides are commented inline where they apply |
 
@@ -119,10 +169,11 @@ job.start_condition:    # wait for that branching checkpoint to exist
 job.cancel_condition:   # cancel if the stable sibling's log shows a fatal error
 ```
 
-### Extending a stable run past its original budget (v2 training, rare)
+### Extending a stable run past its original budget (training, rare)
 
-A few v2 combos raise a combo's `aux.tokens` past what was already trained
-under v1 instead of training a fresh stable from iteration 0. For those,
+An entry can raise `aux.tokens` past what an older, shorter stable of the
+same `(lr, gbsz)` already trained, instead of training a fresh stable from
+iteration 0 (currently only 1.26B `lr=5e-4, gbsz=256`, 120BT → 300BT). For those,
 `aux.extend_stable_source` (Group 1, per-combo) points at the older, shorter
 stable run's checkpoints dir. The Group 2 stable stage's `job.start_condition`
 runs `scripts/seed_extend_stable_checkpoint.sh` to symlink every `iter_*` the
@@ -203,8 +254,10 @@ Every file's `filter` combines two or three checks, ANDed together:
    survives iff its `aux.tokens` is a member of the tier's own
    `*_tokens_set` (for `tier=all`, the union of all three). This is what
    lets `priority_tier=center|cross|diagonal` launch a disjoint subset of
-   the full job list — see [Usage](#usage) below. (v2 training only) a
-   `stable` point additionally requires `not aux.skip_stable_launch`.
+   the full job list — see [Usage](#usage) below. (Training only) a
+   `stable` point additionally requires `not aux.skip_stable_launch`, and a
+   non-`stable` point requires its `aux.tokens` not to be in
+   `aux.done_tokens_set`.
 2. **Warmup-ratio guard** (defensive, currently a no-op):
    `lr_warmup_iters / train_iters < 0.3`. No current combo is close to
    tripping this; it exists so a future short-budget addition doesn't
@@ -252,14 +305,11 @@ minus however many of those budgets equal the combo's own max. The
 stable and decay/branch/end counts, so their per-tier totals sum to the
 `priority_tier=all` total.
 
-As a concrete example, `training/v1/qwen3_dense_0.1B_ne.yaml` has 20 combos:
-200 pre-filter points → 20 stable + 81 decay = 101 jobs, split as 4 stables
-+ 9 decays (`center`, 13 jobs), 10 stables + 36 decays (`cross`, 46 jobs),
-6 stables + 36 decays (`diagonal`, 42 jobs). Other files' exact counts
-depend on their own combo list — re-derive with
-`python scripts/run_autoexp.py --config-name=<this file> --dry-run` rather
-than trusting a hardcoded table, since combos get added/removed between v1
-and v2 (see `REMOVED`/`checkpoint_reuse_run` comments in the v2 files).
+In training, `aux.skip_stable_launch` and `aux.done_tokens_set` then remove
+everything already trained, so a launch only submits the pending work listed
+in the per-entry comments ("to train" / "rerun"). Re-derive exact counts with
+`python scripts/run_autoexp.py --config-name=<leaf config> --dry-run` rather
+than trusting a hardcoded table.
 
 ## Usage
 
@@ -298,12 +348,17 @@ would otherwise round to 0.
   "simplify" a combo's `*_tokens_set` to a contiguous range.
 - **`split` must match training history**, not just look reasonable — see
   the GROUP 1 table above. Changing it for an existing combo breaks resume.
-- **`skip_stable_launch` (v2 training) only affects training.** The
-  validation sweep always evaluates `stable` regardless of which training
-  invocation actually submitted it — job-name resolution finds the
-  checkpoint either way. `validation/v2` GROUP 1 intentionally does not
-  carry the field over from `training/v2` for this reason.
-- **`validation/v2` GROUP 1 must stay in sync with `training/v2`**: same
-  combos, same `aux.tokens` and `*_tokens_set` values per combo, since those
+- **`skip_stable_launch` / `done_tokens_set` only affect training.** The
+  validation sweep always evaluates every listed checkpoint regardless of
+  which cluster or invocation trained it — job-name resolution finds the
+  checkpoint either way, and `finish_condition` skips already-evaluated
+  points. Points whose checkpoint is not on this cluster (e.g. Leonardo-only
+  decays) simply wait on their `FileExistsCondition` and are never submitted.
+- **`validation/` GROUP 1 must stay in sync with `training/`**: same entries
+  in the same order, same `aux.tokens` and `*_tokens_set` values, since those
   gate which decay/branch/end checkpoints get evaluated and `aux.tokens`
-  must match the training combo's max for job-name checkpoint resolution.
+  must match the training stable's horizon for job-name checkpoint resolution.
+- **A job name can refer to two independent models.** Leonardo/MN5 and LUMI
+  runs with the same name are different models (different init/data
+  pipeline). Entries whose pending decays branch off a LUMI-trained stable
+  while some done decays came from Leonardo/MN5 carry a `WARNING` comment.
