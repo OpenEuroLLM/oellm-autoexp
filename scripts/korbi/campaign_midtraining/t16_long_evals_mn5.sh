@@ -48,6 +48,8 @@ case $task in
           --out "$out" --lengths $L --depths far=0.05 mid=0.5 near=0.95 --shots 3 --n 30 ;;
   retr_long) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
           --out "$out" --lengths 131072 262144 --n 21 --tasks passkey kv ;;
+  retr_long60) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths 131072 262144 --n 60 --tasks passkey kv ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"
