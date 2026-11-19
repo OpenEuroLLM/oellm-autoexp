@@ -19,6 +19,8 @@ The selection code is Megatron's own -- ``page_sparse.py`` and ``sparse_variants
   reusing the selection of their block's first query, which in generation is often filler before the question
   (selection carries no gradient, so this only changes which pages the asking tokens read; the long-context probe
   did the same with decode=token, tail=128).
+* inference option ``OELLM_SPARSE_TOPK``: the number of selected pages (LSA: buckets, NSA: selection pages) instead of
+  the trained page_sparse_topk -- a larger budget at long context without retraining.
 """
 
 from __future__ import annotations
@@ -53,8 +55,9 @@ class OellmSparseAttention(nn.Module):
     def __init__(self, sa: dict, hidden: int, num_heads: int, num_kv: int, head_dim: int):
         super().__init__()
         sel = sa["page_sparse_selector"]
+        topk = int(os.environ.get("OELLM_SPARSE_TOPK") or _get(sa, "page_sparse_topk", 32))
         self.cfg = PageSparseConfig(
-            selector=sel, page=_get(sa, "page_sparse_page", 64), topk=_get(sa, "page_sparse_topk", 32),
+            selector=sel, page=_get(sa, "page_sparse_page", 64), topk=topk,
             window=_get(sa, "page_sparse_window", 512), sink_pages=_get(sa, "page_sparse_sink_pages", 1),
             compress=_get(sa, "page_sparse_compress", 4), hier_group=_get(sa, "page_sparse_hier_group", 0),
             hier_topk=_get(sa, "page_sparse_hier_topk", 0), select_block=_get(sa, "page_sparse_select_block", 1),
