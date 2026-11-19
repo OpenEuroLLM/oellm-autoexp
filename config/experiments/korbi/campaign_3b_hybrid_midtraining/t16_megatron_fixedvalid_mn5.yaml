@@ -1,0 +1,81 @@
+# @package _global_
+# Megatron side of the t16 parity check: each arm's step-3000 checkpoint evaluates the seeded 32-sample subset of
+# v8ml-valid/long_64k at 64k (t16_hf_parity_mn5.sh builds it) as a fixed validation set -- train_iters = the
+# checkpoint's step, so the run loads, evaluates and exits; nothing is saved. Compared with the HF exports' loss on
+# the same samples (paired_valid_check). The arms' sparse settings as in t16 (its own list: t16's carries resume
+# overrides). 4 nodes per arm, the training layout:
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t16_megatron_fixedvalid_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t16_s3_sparse_fixed_mn5
+  - _self_
+
+aux:
+  suite: t16_megatron_fixedvalid
+  parity_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t16_parity
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t16_s3_sparse_fixed/${aux.arm}/ckpt
+    ckpt_step: 3000
+    train_iters: 3000
+    exit_interval: 3000
+    diag_consumed_train_samples: null
+    save: null
+    save_interval: null
+    eval_interval: 1
+    eval_iters: 1
+    fixed_valid_data_path: ["${aux.parity_root}/v8ml-valid-long64k-sub32/long_64k_text_document"]
+    fixed_valid_seq_lengths: [65536]
+
+job:
+  name: t16_megatron_fixedvalid_${aux.arm}
+  est_steps: 1
+  est_step_time_s: 900.0
+  start_condition:  # the subset (built by the first HF parity job)
+    class_name: FileExistsCondition
+    path: ${aux.parity_root}/v8ml-valid-long64k-sub32/long_64k_text_document.idx
+    persistent_pass: true
+  state_events:
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (parity eval: no retry)"}
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dense
+          backend.megatron.page_sparse_selector: null
+        - aux.arm: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.arm: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.arm: lsa_fix
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+        - aux.arm: csa2_fix
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 32
+          backend.megatron.page_sparse_indexer_dim: 128
+          backend.megatron.page_sparse_csa2_entry_bias: 1.3862944
+          backend.megatron.page_sparse_csa2_entry_rms: true
+        - aux.arm: nsa_adam
+          backend.megatron.page_sparse_selector: nsa
+          backend.megatron.page_sparse_nsa_block: 32
+          backend.megatron.page_sparse_nsa_stride: 16
+          backend.megatron.page_sparse_nsa_select_window: 512
