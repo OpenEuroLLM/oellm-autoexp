@@ -7002,6 +7002,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "page_sparse_dense_layers": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="0-based decoder layer indices (like ``kv_share_layers``) whose self-attention stays dense (the configured core attention) under ``page_sparse_selector``; e.g. the first attention layer of an attention-first hybrid.",
+        choices=None,
+        nargs="+",
+        element_type=int,
+    ),
     "page_sparse_flex_q_block": MegatronArgMetadata(
         arg_type=int,
         default=64,
@@ -15181,6 +15189,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "page_sparse_dense_layers": MegatronActionSpec(
+        option_strings=("--page-sparse-dense-layers",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=None,
     ),
     "page_sparse_flex_q_block": MegatronActionSpec(
         option_strings=("--page-sparse-flex-q-block",),

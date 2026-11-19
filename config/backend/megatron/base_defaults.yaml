@@ -870,6 +870,7 @@ page_sparse_csa2_entry_bias: 0.0  # csa2: added to every compressed entry's logi
 page_sparse_csa2_entry_rms: false  # csa2: rescale each compressed entry key to its members' mean RMS (averaging roughly halves it).
 page_sparse_csa2_topk_entries: 512  # csa2: selected compressed entries (page_sparse_compress tokens each); page_sparse_window = the raw SWA.
 page_sparse_dense_forward: false  # indexer warm-up: the LM keeps dense attention while the indexer learns the dense page mass.
+page_sparse_dense_layers: null  # 0-based decoder layer indices (like ``kv_share_layers``) whose self-attention stays dense (the configured core attention) under ``page_sparse_selector``; e.g. the first attention layer of an attention-first hybrid.
 page_sparse_flex_q_block: 64  # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
 page_sparse_hier_group: 0  # Hierarchical (coarse-to-fine) page selection: pages per group, scored first (0: flat).
 page_sparse_hier_topk: 8  # Hierarchical selection: groups kept per query (pages are chosen only within them).

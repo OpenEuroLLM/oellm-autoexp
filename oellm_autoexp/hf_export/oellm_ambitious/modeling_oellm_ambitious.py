@@ -80,10 +80,13 @@ def _past_mask(s: int, total: int):
     return causal_lower_right(s, total)
 
 
-def _sparse(config, num_heads: int, num_kv: int, head_dim: int):
-    """config.sparse_attention (the run's page_sparse_* arguments) -> its OellmSparseAttention, or None (dense)."""
+def _sparse(config, num_heads: int, num_kv: int, head_dim: int, layer_idx: int | None = None):
+    """config.sparse_attention (the run's page_sparse_* arguments) -> its OellmSparseAttention, or None (dense; also
+    for the layers in page_sparse_dense_layers, 0-based like layer_idx)."""
     sa = getattr(config, "sparse_attention", None)
     if not sa or not sa.get("page_sparse_selector"):
+        return None
+    if layer_idx is not None and layer_idx in (sa.get("page_sparse_dense_layers") or ()):
         return None
     return OellmSparseAttention(sa, config.hidden_size, num_heads, num_kv, head_dim)
 
@@ -288,7 +291,7 @@ class OellmXSAAttention(nn.Module):
     head dim, XSA (subtract each head's projection onto its own value) and the sigmoid output gate
     (``exclusive_self_attention`` fuses both), then ``linear_proj``."""
 
-    def __init__(self, config: OellmAmbitiousConfig) -> None:
+    def __init__(self, config: OellmAmbitiousConfig, layer_idx: int | None = None) -> None:
         super().__init__()
         h, d = config.hidden_size, config.head_dim
         self.nh, self.nkv, self.d = config.num_attention_heads, config.num_key_value_heads, d
@@ -309,7 +312,7 @@ class OellmXSAAttention(nn.Module):
         self.keep_kv, self.last_kv = False, None
         self.rope_theta = getattr(config, "rope_theta", None)
         # page_sparse_selector (sparse_attention.py): the cache slot is then (k, v, selection state)
-        self.sparse = _sparse(config, self.nh, self.nkv, d)
+        self.sparse = _sparse(config, self.nh, self.nkv, d, layer_idx)
 
     def _rope(self, q: torch.Tensor, k: torch.Tensor, past: int):
         """RoPE as Megatron applies it (rotate_half, non-interleaved, inv_freq = theta^(-2i/d) over the full head
@@ -475,7 +478,7 @@ class OellmKVShareAttention(nn.Module):
     tokens (``kv``, set by the model before each call: [b, nkv, S, d] incl. the past), XSA against the
     source's value of each token. No state of its own (the source's cache holds the keys / values)."""
 
-    def __init__(self, config: OellmAmbitiousConfig) -> None:
+    def __init__(self, config: OellmAmbitiousConfig, layer_idx: int | None = None) -> None:
         super().__init__()
         h, d = config.hidden_size, config.head_dim
         self.nh, self.nkv, self.d = config.num_attention_heads, config.num_key_value_heads, d
@@ -487,7 +490,7 @@ class OellmKVShareAttention(nn.Module):
         self.q_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
         self.kv = None
         # page_sparse_selector: selects with its own queries over the source's keys (its state: the selection's)
-        self.sparse = _sparse(config, self.nh, self.nkv, d)
+        self.sparse = _sparse(config, self.nh, self.nkv, d, layer_idx)
 
     def forward(self, x: torch.Tensor, state=None, keep_state: bool = True, raw=None):
         if self.kv is None:
@@ -893,14 +896,14 @@ class OellmAmbitiousLayer(nn.Module):
         self.input_layernorm = None  # Engram normalises internally; a pre-§22.18 V layer has none either
         if self.kind == "attention":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
-            self.mixer = OellmXSAAttention(config)
+            self.mixer = OellmXSAAttention(config, layer_idx)
         elif self.kind == "ckda":
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer)
         elif self.kind == "kvshare":  # a ckda_branch kvshare attention (an earlier attention layer's keys / values)
             if config.kv_share_input_norm:
                 self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
-            self.mixer = OellmKVShareAttention(config)
+            self.mixer = OellmKVShareAttention(config, layer_idx)
         elif self.kind == "kronlstm":  # a ckda_branch KronLSTM (the FLA layer, as Megatron built it)
             self.input_layernorm = OellmRMSNorm(config.hidden_size, config.rms_norm_eps, zcg)
             self.mixer = OellmFLALayer(config.fla_layer_kronlstm)

@@ -178,3 +178,11 @@ def test_token_select_mode_is_per_token_selection(name, monkeypatch):
     torch.testing.assert_close(out[:, :26], ref_blk(x, None, True, raw=raw)[0][:, :26], atol=1e-10, rtol=1e-10)
     # every decode token = the select_block-1 model's output at that position
     torch.testing.assert_close(out[:, 30:], one_att(x, None, True, raw=raw)[0][:, 30:], atol=1e-10, rtol=1e-10)
+
+
+def test_dense_layers_stay_dense():
+    """page_sparse_dense_layers (0-based layer indices, as Megatron's): those layers' attention is dense."""
+    cfg = _cfg(dict(BASE, **VARIANTS["page_mean_pg"], page_sparse_dense_layers=[0]))
+    assert OellmXSAAttention(cfg, 0).sparse is None
+    assert OellmKVShareAttention(cfg, 1).sparse is not None
+    assert OellmXSAAttention(cfg).sparse is not None  # no layer index: as before
