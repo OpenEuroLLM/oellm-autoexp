@@ -1758,6 +1758,20 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
   - **CSA2 decision (2026-11-19, user):** not adopted. Its 4x KV saving is available more cheaply: host offload of a
     page method (~100x less GPU memory, no extra quality cost) and FP8 KV (2x); CSA2 is the worst or second-worst arm
     in every quality eval and slower than dense in training.
+  - **Retrieval at 128k / 256k with 60 per cell (retr_long60, 2026-11-19; token-mode selection for the sparse arms,
+    dense without):**
+
+    | arm | multi-key 128k | multi-key 256k | passkey 128k | passkey 256k |
+    |---|---:|---:|---:|---:|
+    | dense | 0.63 | 0.87 | 1.00 | 1.00 |
+    | page_maxpool_pg | 0.42 | 0.67 | 1.00 | 1.00 |
+    | lsa_fix | 0.37 | 0.43 | 1.00 | 1.00 |
+    | csa2_fix | 0.17 | 0.28 | 0.95 | 0.87 |
+
+    (n = 60, standard error ~0.06.) page_maxpool_pg >= LSA at both lengths, clearly at 256k; with its smaller loss gap
+    (+0.015 vs +0.028 at 64k) and equal QA, **page_maxpool_pg is the recommended selector** for the long-context
+    switch (token-mode selection at inference, host-RAM + FP8 KV for decode). LSA remains the fastest decode scorer
+    (0.25 vs 0.54 ms per layer at 1M) if page_maxpool's scoring cost matters.
 
 ## References
 
