@@ -1692,6 +1692,27 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       block-wise, served with per-token selection at the prompt's end and in decode; open before the switch:
       quality at 128k-256k and the 1M single-GPU decode cost vs a compressing method (CSA2).
 
+  - **Decode cost at 128k-1M on one consumer GPU (2026-11-19, RTX 3090 Ti 24 GB; decode_cost_bench.py).** One
+    attention layer with v4b's shapes (16 query heads, 2 KV heads x 256), batch 1, decode caches as a server keeps
+    them (page means / compressed entries), budget as trained (top 32 pages + sink + window 512; CSA2 m = 4, top 512
+    entries, indexer 32 x 128). ms per step / GPU memory of the layer:
+
+    | method | 128k | 256k | 512k | 1M | GPU MB at 1M | host -> GPU per step |
+    |---|---:|---:|---:|---:|---:|---:|
+    | dense | 0.37 | 0.67 | 1.28 | 2.53 | 2048 | -- |
+    | page_mean (KV on GPU) | 0.23 | 0.23 | 0.23 | 0.33 | 2064 | -- |
+    | page_mean, KV in host RAM (pages gathered on the host, PCIe) | 0.60 | 0.59 | 0.69 | 0.66 | 17 | 4 MB |
+    | page_mean hierarchical (groups of 16, top 8) | 0.44 | 0.61 | 0.50 | 0.54 | 2065 | -- |
+    | csa2, compressed KV + window only | 0.22 | 0.23 | 0.34 | 0.51 | 577 | -- |
+
+    - v4b per token at 1M (6 KV layers, 12 attending layers incl. the V layers): dense ~30 ms / 12.3 GB KV;
+      page_mean ~4 ms / 12.3 GB; page_mean + host KV ~8 ms / ~0.1 GB GPU (12 GB host, 48 MB PCIe per token);
+      csa2 ~6 ms / 3.5 GB.
+    - Page scoring is cheap (0.2 ms per layer at 1M), so hierarchical / sublinear selection (LSA) gains nothing at
+      these sizes. CSA2's advantage is memory (4x), not speed: its indexer over L/4 entries (0.47 ms at 1M with
+      32 x 128 heads) costs more than page_mean's whole step. Page selection + host KV gives ~100x less GPU memory at
+      4x dense's speed (unoptimized: synchronous host gather) -- the §3.2 plan holds.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
