@@ -674,6 +674,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "branch_resume_from_save": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="A branch run (--load another run's checkpoint, pinned by --ckpt-step and --diag-consumed-train-samples): once --save holds a checkpoint, load that instead and drop both pins, so restarts (time limits, node failures) resume the branch, not the branch point.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "cache_mla_latents": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9835,6 +9843,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "branch_resume_from_save": MegatronActionSpec(
+        option_strings=("--branch-resume-from-save",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "cache_mla_latents": MegatronActionSpec(
         option_strings=("--cache-mla-latents",),

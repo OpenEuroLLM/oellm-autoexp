@@ -4476,6 +4476,11 @@ class MegatronConfig(ConfigInterface):
     # training.
     diag_consumed_train_samples: int | None = None
 
+    # A branch run (--load another run's checkpoint, pinned by --ckpt-step and --diag-
+    # consumed-train-samples): once --save holds a checkpoint, load that instead and drop both
+    # pins, so restarts (time limits, node failures) resume the branch, not the branch point.
+    branch_resume_from_save: bool = False
+
     # Number of top logits to save.
     logits_save_top_k: int | None = None
 

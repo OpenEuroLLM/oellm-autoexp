@@ -84,6 +84,7 @@ bias_swiglu_fusion: true  # Disable bias and swiglu fusion, the fusion is availa
 biencoder_projection_dim: 0  # Size of projection head used in biencoder (paper default: 128)
 biencoder_shared_query_context_model: false  # Whether to share the parameters of the query and context models or not
 block_data_path: null  # Where to save/load BlockData to/from
+branch_resume_from_save: false  # A branch run (--load another run's checkpoint, pinned by --ckpt-step and --diag-consumed-train-samples): once --save holds a checkpoint, load that instead and drop both pins, so restarts (time limits, node failures) resume the branch, not the branch point.
 cache_mla_latents: false  # If set caches the mla down projected latents with mla flash decode.
 calc_ft_timeouts: false  # If set, FT package will try to automatically compute the timeouts. Note: This feature is for Nvidia internal use only.
 calculate_per_token_loss: false  # Whether cross entropy loss is calculated over the actual number of non-padded tokens in the global batch, versus the default behavior of assuming all tokens are non-padded.
