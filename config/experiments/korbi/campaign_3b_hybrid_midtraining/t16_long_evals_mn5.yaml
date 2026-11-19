@@ -53,3 +53,11 @@ sweep:
         - aux.task: retr
         - aux.task: retr_tok
         - aux.task: mdqa3_tok
+        - aux.task: nll_long
+        - aux.task: nll_long_tok
+        - aux.task: mdqa3_128k
+        - aux.task: mdqa3_128k_tok
+        - aux.task: mdqa3_256k
+        - aux.task: mdqa3_256k_tok
+        - aux.task: retr_long
+        - aux.task: retr_long_tok

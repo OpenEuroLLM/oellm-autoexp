@@ -9,7 +9,7 @@
 #         4k-64k, exact match (retrieval_gen.py)
 # One MN5 node:
 #
-#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr>[_tok] [step]
+#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr|nll_long|mdqa3_128k|mdqa3_256k|retr_long>[_tok] [step]
 set -euo pipefail
 arm=$1; task=$2; step=${3:-3000}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
@@ -35,6 +35,14 @@ case $task in
           --out "$out" --lengths 8192 32768 65536 --depths far=0.05 mid=0.5 near=0.95 only --shots 3 --n 60 ;;
   retr) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
           --out "$out" --lengths 4096 8192 16384 32768 65536 --n 30 ;;
+  # beyond the training length (the s3 testbed trains at 64k): 128k / 256k, separate jobs per length
+  nll_long) python scripts/korbi/campaign_midtraining/nll_by_position.py --model "$model" \
+          --docs "$D/v8ml-valid/long_64k_text_document" --out "$out/nll.json" --lengths 131072 262144 --docs-n 8 ;;
+  mdqa3_128k|mdqa3_256k) L=$([ $task = mdqa3_128k ] && echo 131072 || echo 262144)
+        python scripts/korbi/campaign_midtraining/multidoc_qa.py --model "$model" --squad "$DS/squad/dev-v2.0.json" \
+          --out "$out" --lengths $L --depths far=0.05 mid=0.5 near=0.95 --shots 3 --n 30 ;;
+  retr_long) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths 131072 262144 --n 21 --tasks passkey kv ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"

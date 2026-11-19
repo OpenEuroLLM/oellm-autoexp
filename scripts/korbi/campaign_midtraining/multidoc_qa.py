@@ -78,7 +78,9 @@ def build(tok, q, paras, length: int, depth, rng: random.Random, shots=()):
     shot_texts = [paras[spid][1] for _, spid, _, _ in shots]
     used = sum(len(tok(t, add_special_tokens=False).input_ids) + 8 for t in [gold_text] + shot_texts)
     docs = []
-    for k in others if depth is not None else []:
+    # contexts longer than the distractor pool (SQuAD dev holds ~160k tokens of other articles): the pool repeated
+    pool = (others * (1 + length // 100_000)) if depth is not None else []
+    for k in pool:
         n = len(tok(paras[k][1], add_special_tokens=False).input_ids) + 8
         if used + n > budget:
             break
