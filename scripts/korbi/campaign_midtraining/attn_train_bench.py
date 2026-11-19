@@ -5,6 +5,7 @@ L tokens (packed THD), v4b's shapes (hidden 2048, 16 query heads, 2 KV heads x 2
 backward (median) and the peak memory; an out-of-memory is reported as such.
 
     attn_train_bench.py [--lengths 65536 131072] [--arms dense page_mean_pg page_maxpool_pg lsa_fix csa2_fix nsa]
+                        [--profile N]   # also the N most expensive CUDA kernels of one timed step per arm
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ def main() -> None:
     ap.add_argument("--kv", type=int, default=2)
     ap.add_argument("--dim", type=int, default=256)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--profile", type=int, default=0, help="print the N most expensive CUDA ops of one step")
     a = ap.parse_args()
 
     from megatron.core import parallel_state
@@ -104,6 +106,13 @@ def main() -> None:
                         att(q, k, v, packed_seq_params=psp).sum().backward()
                 row["ms"] = timed(step)
                 row["peak_gb"] = torch.cuda.max_memory_allocated() / 2**30
+                if a.profile:
+                    from torch.profiler import ProfilerActivity, profile
+                    with profile(activities=[ProfilerActivity.CUDA]) as prof:
+                        step()
+                        torch.cuda.synchronize()
+                    print(f"[profile] {arm} L={L}\n" + prof.key_averages().table(
+                        sort_by="cuda_time_total", row_limit=a.profile, max_name_column_width=90), flush=True)
             except torch.OutOfMemoryError:
                 row["oom"] = True
             except Exception as e:  # noqa: BLE001 -- report and continue with the next arm
