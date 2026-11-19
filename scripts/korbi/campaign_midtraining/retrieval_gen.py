@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "downstream"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def main() -> None:
@@ -33,6 +34,7 @@ def main() -> None:
     ap.add_argument("--tasks", nargs="+", default=["passkey", "kv", "vt"])
     a = ap.parse_args()
 
+    import long_generate
     import prepare_tasks as pt
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -63,10 +65,7 @@ def main() -> None:
             ctx = r["items"][0]["ctx"]
             gold = tok.decode(r["items"][0]["cont"]).strip()
             t0 = time.time()
-            with torch.no_grad():
-                out = model.generate(torch.tensor([ctx], device=model.device), max_new_tokens=10, do_sample=False,
-                                     eos_token_id=eos, pad_token_id=eos)
-            text = tok.decode(out[0, len(ctx):], skip_special_tokens=True)
+            text = tok.decode(long_generate.greedy(model, ctx, 10, eos), skip_special_tokens=True)
             m = re.search(r"\d{5}", text)
             rec = {"task": r["task"], "qid": r["qid"], "tokens": len(ctx), "gold": gold, "pred": text.strip()[:40],
                    "correct": bool(m and m.group(0) == gold), "depth": r.get("depth"), "asked_pos": r.get("asked_pos"),

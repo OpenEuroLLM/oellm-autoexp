@@ -75,3 +75,25 @@ def test_logits_to_keep_returns_the_last_positions():
     torch.testing.assert_close(model(ids, logits_to_keep=1).logits, full[:, -1:], atol=1e-5, rtol=1e-5)  # a GEMM over fewer rows rounds differently
     torch.testing.assert_close(model(ids, logits_to_keep=3).logits, full[:, -3:], atol=1e-5, rtol=1e-5)
     assert model(ids, labels=ids, logits_to_keep=1).logits.shape[1] == 19
+
+
+def test_chunked_greedy_equals_generate():
+    """scripts/korbi/campaign_midtraining/long_generate.greedy (chunked prefill through the cache, then cached decode;
+    a one-shot 256k prefill does not fit a 64 GB GPU) gives generate()'s greedy tokens, with sparse attention."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "scripts/korbi/campaign_midtraining/long_generate.py"
+    spec = importlib.util.spec_from_file_location("long_generate", path)
+    lg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lg)
+    torch.manual_seed(0)
+    cfg = OellmAmbitiousConfig(
+        vocab_size=97, hidden_size=32, num_hidden_layers=2, num_attention_heads=4, head_dim=8,
+        num_key_value_heads=2, block_types=["attention", "attention"], residual="mhc", mhc_expansion_rate=4,
+        rms_norm_eps=1e-5, qk_layernorm=True, sparse_attention=SPARSE)
+    model = OellmAmbitiousForCausalLM(cfg).eval()
+    ids = torch.randint(0, 97, (1, 45), generator=torch.Generator().manual_seed(3))
+    with torch.no_grad():
+        ref = model.generate(ids, max_new_tokens=10, do_sample=False)[0, 45:].tolist()
+    assert lg.greedy(model, ids[0].tolist(), 10, None, chunk=13) == ref

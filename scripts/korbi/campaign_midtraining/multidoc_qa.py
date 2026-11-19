@@ -109,8 +109,13 @@ def main() -> None:
     ap.add_argument("--max-new-tokens", type=int, default=32)
     a = ap.parse_args()
 
+    import sys
+
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import long_generate
 
     a.out.mkdir(parents=True, exist_ok=True)
     samples = a.out / "samples.jsonl"
@@ -146,11 +151,8 @@ def main() -> None:
                     ids, gi, ndocs = build(tok, q, paras, length, dval, random.Random(f"{a.seed}:{length}:{dname}:{i}"),
                                            shots)
                     t0 = time.time()
-                    x = torch.tensor([ids], device=model.device)
-                    with torch.no_grad():
-                        out = model.generate(x, max_new_tokens=a.max_new_tokens, do_sample=False, eos_token_id=eos,
-                                             pad_token_id=eos)
-                    pred = tok.decode(out[0, len(ids):], skip_special_tokens=True).strip().split("\n")[0].strip()
+                    gen = long_generate.greedy(model, ids, a.max_new_tokens, eos)  # chunked prefill + cached decode
+                    pred = tok.decode(gen, skip_special_tokens=True).strip().split("\n")[0].strip()
                     golds = q[3]
                     r = {"length": length, "depth": dname, "i": i, "prompt_tokens": len(ids), "gold_doc": gi,
                          "docs": ndocs, "question": q[2], "golds": golds, "pred": pred,
