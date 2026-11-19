@@ -1,0 +1,61 @@
+# @package _global_
+# Long-context training with sparse attention: t16's dense and page_maxpool_pg arms continued from their step-3000
+# saves at 256k (CP 4 on 4 nodes, 4 x 256k = 1M tokens per step as at 64k) for 500 steps -- does the sparse arm keep
+# its gap, and what does a 256k step cost in the whole model? Validation at 256k (the mix's split).
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_s3_sparse_256k_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t16_s3_sparse_fixed_mn5
+  - _self_
+
+aux:
+  suite: t18_s3_sparse_256k
+  seq: 262144
+  gbs: 4
+
+backend:
+  megatron:
+    micro_batch_size: 1
+    context_parallel_size: 4
+    ckpt_step: 3000
+    diag_consumed_train_samples: null  # 256k samples are another index: no position carried over from 64k
+    train_iters: 3500
+    exit_interval: 3500
+    eval_interval: 250
+    save_interval: 250
+    branch_resume_from_save: true
+
+job:
+  metadata:
+    pool_priority: 40  # below every main-run job (v4b: 150)
+  est_step_time_s: 12.0
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "lost its node -- resume", exclude_file: "${slurm.exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: FinishAction, reason: "lost its node again"}
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "pool run limit -- resume from the exit save"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (no retry)"}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dense
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t16_s3_sparse_fixed/dense/ckpt
+        - aux.arm: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t16_s3_sparse_fixed/page_maxpool_pg/ckpt

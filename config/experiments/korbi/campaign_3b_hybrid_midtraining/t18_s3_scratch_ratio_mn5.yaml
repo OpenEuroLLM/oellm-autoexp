@@ -1,0 +1,66 @@
+# @package _global_
+# Sparse attention makes attention cheap at long context: does a hybrid with MORE attention layers pay off then?
+# The s3 testbed from scratch at 64k (as ctxlen4n_s3 s64k: constant lr 0.0018, no warm-up) for 3000 steps (3.1B
+# tokens) on the v8ml mix, 2 x 2 arms on the same data:
+#   r7_dense / r7_pmp  -- the s3 pattern (3 attention : 21 CKDA, attention-first), dense / page_maxpool_pg
+#   r3_dense / r3_pmp  -- 6 attention : 18 CKDA ('*ELELELE' x 6), dense / page_maxpool_pg
+# (r3 has a few more parameters than r7: an attention layer is larger than a CKDA layer -- report both counts.)
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_s3_scratch_ratio_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - t16_s3_sparse_fixed_mn5
+  - _self_
+
+aux:
+  suite: t18_s3_scratch_ratio
+
+backend:
+  megatron:
+    load: ${backend.megatron.save}  # empty at the start (from scratch); a restart resumes the arm's own save
+    ckpt_step: null
+    diag_consumed_train_samples: null
+    override_opt_param_scheduler: false
+    train_iters: 3000
+    exit_interval: 3000
+    eval_interval: 500
+    save_interval: 500
+    branch_resume_from_save: false  # no branch point
+    page_sparse_per_group: true
+
+job:
+  metadata:
+    pool_priority: 40  # below every main-run job (v4b: 150)
+  est_step_time_s: 5.0
+  state_events:
+    - name: retry_node_fail
+      transition: [null, NODE_FAIL]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "lost its node -- resume", exclude_file: "${slurm.exclude_file}"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: FinishAction, reason: "lost its node again"}
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "pool run limit -- resume from the exit save"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (no retry)"}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: r7_dense
+          backend.megatron.page_sparse_selector: null
+        - aux.arm: r7_pmp
+          backend.megatron.page_sparse_selector: page_maxpool
+        - aux.arm: r3_dense
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.hybrid_layer_pattern: "*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE"
+        - aux.arm: r3_pmp
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.hybrid_layer_pattern: "*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE"
