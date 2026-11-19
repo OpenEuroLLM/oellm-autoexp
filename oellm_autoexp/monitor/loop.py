@@ -189,6 +189,8 @@ class MonitorLoop:
         self._pool = pool_manager or PoolManager()
         # resolved at call time: test doubles of the SLURM client need not implement cancel
         self._pool._slurm_cancel = lambda job_id: self._slurm_client.cancel(job_id)
+        # parked successors (pool.py): promote with scontrol update Nice=0
+        self._pool._slurm_nice = lambda job_id, nice: self._slurm_client.set_nice(job_id, nice)
         self.poll_interval_seconds = poll_interval_seconds
         self.show_poll_state = show_poll_state
         self.no_error_catching = no_error_catching
@@ -691,14 +693,16 @@ class MonitorLoop:
     def _process_threshold_event(
         self, job: JobRecord, event_cfg: LogEventConfig, idx: int, *, new_text: str, log_path: Path
     ) -> str:
-        """Count consecutive values below ``threshold_below`` and fire once the streak reaches
-        ``threshold_consecutive``. State per event in ``runtime.condition_state``; a new log
-        path (a new run) starts it over, so warm-up skipping applies to every run.
+        """Count consecutive values below ``threshold_below`` and fire once the
+        streak reaches ``threshold_consecutive``. State per event in
+        ``runtime.condition_state``; a new log path (a new run) starts it over,
+        so warm-up skipping applies to every run.
 
         Only the streak as it stands at the NEWEST value counts: a streak that already ended
         inside ``new_text`` never fires. A monitor catching up on a backlog (restarted after a
         login-node outage) must not act on a slow phase the run has since left -- that released
-        a healthy 1950 tok/s run on 2026-11-02 for a slow stretch two hours earlier."""
+        a healthy 1950 tok/s run on 2026-11-02 for a slow stretch two hours earlier.
+        """
         import re
 
         if event_cfg.threshold_below <= 0 or not new_text:

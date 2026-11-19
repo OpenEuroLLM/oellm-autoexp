@@ -177,5 +177,14 @@ class SlurmClient(JobClientInterface):
         """
         return self._client.update_excludes(job_id, nodelist)
 
+    def set_nice(self, job_id: str, nice: int) -> None:
+        """Change a pending job's Nice (delegates to ``scontrol update``).
+
+        Args:
+            job_id: SLURM job id of a pending job.
+            nice: New Nice value; positive deprioritises, 0 restores.
+        """
+        return self._client.set_nice(job_id, nice)
+
 
 __all__ = ["BaseSlurmClient", "SlurmClient", "SlurmClientConfig"]

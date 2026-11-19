@@ -187,6 +187,14 @@ class PoolHostConfig:
     # after a host was released for starting too early, submit nothing for this long (the loop
     # of submit -> early start -> release -> submit is what costs allocations, not one event)
     successor_retry_s: float = 600.0
+    # PARKED successors (successor_nice > 0): the pool submits its keep_pending hosts with
+    # `#SBATCH --nice=<successor_nice>`, so they sit behind other users' work while they keep
+    # accruing queue age (nice is a 1:1, reversible priority offset that resets nothing --
+    # JUPITER probe 2026-11-19, same as MareNostrum 5). They are promoted to nice 0
+    # `successor_promote_lead_s` before the block end, or as soon as the run has no host.
+    # Nice cannot stop a job in an idle cluster; it only keeps us out of the way of contenders.
+    successor_nice: int = 0
+    successor_promote_lead_s: float = 1800.0
     # reuse a `--test-only` estimate for this long
     successor_est_ttl_s: float = 240.0
     # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
@@ -1246,6 +1254,7 @@ class PoolManager:
                 self._unassign(layout, rid, state.host)
 
     _slurm_cancel = None  # set by the monitor loop: callable(job_id)
+    _slurm_nice = None  # callable(job_id, nice): scontrol update Nice=
 
     def _cancel_host_job(self, host: HostView) -> None:
         rid = host.record.runtime.runtime_job_id
@@ -2394,6 +2403,26 @@ class PoolManager:
         state["admission_warned"] = key
         LOGGER.warning("[pool %s] successor settings: %s", cfg.name, "; ".join(problems))
 
+    def _promote_host(self, layout: PoolLayout, cfg: PoolHostConfig, host: HostView) -> None:
+        """Give a parked successor its priority back (nice 0): it may start
+        now."""
+        jid = host.record.runtime.runtime_job_id
+        if not jid or self._slurm_nice is None:
+            return
+        try:
+            self._slurm_nice(jid, 0)
+        except Exception as exc:  # pragma: no cover - best effort
+            LOGGER.warning("[pool] could not promote host %s (job %s): %s", host.hid, jid, exc)
+            return
+        _atomic_write(layout.host_dir(host.hid) / "promoted", f"{time.time():.0f}\n")
+        LOGGER.info(
+            "[pool %s] promoted parked host %s (job %s): nice %d -> 0",
+            cfg.name,
+            host.hid,
+            jid,
+            cfg.successor_nice,
+        )
+
     def _admission_manage_queued(
         self,
         loop: MonitorLoop,
@@ -2407,9 +2436,20 @@ class PoolManager:
     ) -> None:
         """Park, release or cancel the hosts already waiting in the queue."""
         for host in queued:
+            hdir = layout.host_dir(host.hid)
+            if (
+                cfg.successor_nice > 0
+                and not (hdir / "promoted").exists()
+                and now >= block_end - cfg.successor_promote_lead_s
+            ):
+                self._promote_host(layout, cfg, host)
+                continue
             if now >= block_end:
                 continue
-            hdir = layout.host_dir(host.hid)
+            if cfg.successor_nice > 0:
+                # parked: it cannot grab nodes ahead of other work, and its queue age is the
+                # point -- a parked successor is promoted, never cancelled
+                continue
             # A host SLURM has just started is still in this list until its supervisor writes
             # info.env: cancelling it then kills a live allocation (JUPITER 2026-11-18 11:35:30:
             # host209 started 11:35:31, this cancel killed it 7 s later). Only a job SLURM still
@@ -2483,6 +2523,11 @@ class PoolManager:
         est = self._start_estimate(layout, cfg, state, account, now)
         adm["last_est"] = est
         self._admission_manage_queued(loop, layout, cfg, state, queued, block_end, est, now)
+        if cfg.successor_nice > 0:
+            # parked successors are safe by construction: they queue behind other work and
+            # only a promotion (nice 0) lets them run, so no estimate is needed
+            adm["streak"] = 0
+            return True
         if now >= block_end:
             adm["streak"] = 0
             LOGGER.info(
@@ -2550,6 +2595,9 @@ class PoolManager:
             sbatch_set(sbatch, "exclude", ",".join(excluded))
         if account:
             sbatch_set(sbatch, "account", account)
+        if cfg.successor_nice > 0:
+            # parked: low priority, keeps queue age (nice resets nothing)
+            sbatch_set(sbatch, "nice", str(int(cfg.successor_nice)))
         cap = self._caps.get(str(layout.root), {}).get(
             account or str(sbatch_get(sbatch, "account"))
         )

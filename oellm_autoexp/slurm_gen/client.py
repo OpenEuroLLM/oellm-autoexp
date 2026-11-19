@@ -78,6 +78,11 @@ class BaseSlurmClient(SlurmClientInterface, RegistrableConfigInterface):
     def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def set_nice(self, job_id: str, nice: int) -> None:  # pragma: no cover - interface
+        """Change a pending job's Nice (a 1:1 priority offset; resets
+        nothing)."""
+        raise NotImplementedError
+
 
 @dataclass(kw_only=True)
 class BaseSlurmClientConfig(ConfigInterface):
@@ -105,6 +110,8 @@ class FakeSlurmClient(BaseSlurmClient):
         self._next_id = 1
         # job_id -> last nodelist passed to update_excludes (test introspection)
         self._excludes: dict[str, str] = {}
+        # job_id -> last Nice set with scontrol update (test introspection)
+        self._nice: dict[str, int] = {}
 
     def submit(self, slurm_config: SlurmConfig) -> str:
         job_id = str(self._next_id)
@@ -153,6 +160,13 @@ class FakeSlurmClient(BaseSlurmClient):
     def update_excludes(self, job_id: str, nodelist: str) -> None:
         """Record an exclude-node update (simulates ``scontrol update``)."""
         self._excludes[job_id] = nodelist
+
+    def set_nice(self, job_id: str, nice: int) -> None:
+        """Record a Nice change (simulates ``scontrol update JobId=..
+
+        Nice=..``).
+        """
+        self._nice[job_id] = int(nice)
 
     def get_job(self, job_id: str) -> SlurmJob:
         return self._jobs[job_id]
@@ -372,6 +386,23 @@ class SlurmClient(BaseSlurmClient):
         proc = run_command(full_cmd)
         if proc.returncode != 0:
             raise RuntimeError(f"scontrol update failed for job {job_id}: {proc.stderr.strip()}")
+
+    def set_nice(self, job_id: str, nice: int) -> None:
+        """``scontrol update JobId=<id> Nice=<n>``.
+
+        Nice is a 1:1 offset on the job's priority: the job keeps its
+        submit time and EligibleTime, so its queue age keeps accruing
+        (JUPITER 2026-11-19: 350107 -> 349107 with Nice=1000, restored
+        to 350107 with Nice=0; negative values need root).
+        """
+        cmd = shlex.split(self.config.scontrol_cmd)
+        full_cmd = [*cmd, "update", f"JobId={job_id}", f"Nice={int(nice)}"]
+        LOGGER.info("set_nice: %s", " ".join(full_cmd))
+        proc = run_command(full_cmd)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"scontrol update Nice failed for job {job_id}: {proc.stderr.strip()}"
+            )
 
     def _check_sacct_for_missing_jobs(
         self, job_ids: list[str], job_id_to_key: dict[str, str]

@@ -632,6 +632,11 @@ def cmd_scontrol(argv: list[str]) -> int:
     if argv[:1] == ["update"]:
         fields = dict(a.split("=", 1) for a in argv[1:] if "=" in a)
         jid = fields.get("JobId") or fields.get("JobID")
+        nice = fields.get("Nice")
+        if jid and nice is not None:
+            # 1:1 priority offset; the fake records it, squeue shows it via job.json
+            _update(jid, nice=int(nice))
+            return 0
         nodelist = fields.get("NodeList") or fields.get("Nodelist")
         if jid and nodelist:
             # shrinking a running job, as `scontrol update JobId=.. NodeList=..` on SLURM: the

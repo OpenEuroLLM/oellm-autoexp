@@ -1466,3 +1466,39 @@ def test_admission_never_cancels_a_host_that_has_already_started(env, monkeypatc
     env.poll(2)
     assert not env.rec(queued.job_id).runtime.final_state, "a live host was cancelled"
     assert not (env.layout.host_dir(hid) / "exited").exists()
+
+
+def test_parked_successors_are_submitted_with_nice_and_promoted_at_the_block(env, monkeypatch):
+    """successor_nice: the keep_pending hosts are submitted with --nice so they queue behind
+    other work while keeping their age; at block end - promote_lead they are promoted (nice 0).
+    JUPITER 2026-11-19: nice is a 1:1 reversible priority offset that resets nothing."""
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_nice=100000)
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=2)
+    env.layout.write_meta(meta)
+    env.poll(3)
+    hosts = env.hosts()
+    assert len(hosts) >= 2, "parked successors were not submitted"
+    new = hosts[-1]
+    script = (
+        env.layout.host_dir(new.definition.metadata["pool_host_id"]) / "host.sbatch"
+    ).read_text()
+    assert "--nice=100000" in script, "the parked host was submitted without --nice"
+    # a parked host is never cancelled for starting too early: it is parked instead
+    estimate[0] = time.time() + 60
+    env.poll(2)
+    assert not env.rec(new.job_id).runtime.final_state
+    # block end reached (the run host is old enough): the parked host is promoted to nice 0
+    info = env.layout.host_dir(env.hosts()[0].definition.metadata["pool_host_id"]) / "info.env"
+    info.write_text(
+        "\n".join(
+            f"START_TS={int(time.time() - 4000)}" if line.startswith("START_TS") else line
+            for line in info.read_text().splitlines()
+        )
+        + "\n"
+    )
+    env.poll()
+    jid = new.runtime.runtime_job_id
+    assert env.fake._nice.get(jid) == 0, f"host was not promoted (nice={env.fake._nice.get(jid)})"
+    assert (env.layout.host_dir(new.definition.metadata["pool_host_id"]) / "promoted").exists()
