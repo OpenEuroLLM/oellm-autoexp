@@ -1587,8 +1587,12 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     init, 128 nodes, 30 steps; median of steps 8-30. Data: v8ml-valid/long_64k (documents >= 64k); tokens per step
     equal across contexts (512 x 64k = 128 x 256k); 256k uses CP 4 inside a node. Before the runs: every variant on
     the flex path equals one rank at CP 2 / 4 (Megatron a3ff571d7), with one exception: a select block that
-    straddles a CP chunk boundary takes the chunk's first query as anchor (causal, but not the one-rank selection;
-    fix = all-gather the <= 2 anchor queries per document, needed before CP training on packed documents).
+    straddles a CP chunk boundary took the chunk's first query as anchor (causal, but not the one-rank selection).
+    Fixed in Megatron b6b6f8e40 (2026-11-19): such a chunk gets the block's earlier queries from the owning ranks
+    (one all-reduce, detached, outputs dropped), so every selector makes the one-rank selection; CP 2 / 4 tests
+    with straddling chunks pass locally and on H100 (757ade0ad: 5e-3 for TF32), and fail without the gather.
+    Unrelated, pre-existing: test_hybrid_cp_packed[page_sparse] (no block selection) misses on one expert's
+    gradient (0.17 vs 0.15, deterministic).
 
     | arm | 64k, CP 1 | 256k, CP 4 | memory (256k) |
     |---|---:|---:|---:|
