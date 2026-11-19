@@ -5,9 +5,11 @@
 #         64k context, greedy generation, F1 (multidoc_qa.py)
 #   mdqa3 the same with 3 worked examples (span answers from a base model), the gold passage alone as the ceiling,
 #         60 questions per cell
+#   retr  synthetic retrieval, generative (RULER-style, offline): passkey, multi-key NIAH, variable tracking at
+#         4k-64k, exact match (retrieval_gen.py)
 # One MN5 node:
 #
-#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3> [step]
+#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr> [step]
 set -euo pipefail
 arm=$1; task=$2; step=${3:-3000}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
@@ -25,6 +27,8 @@ case $task in
           --out "$out" --lengths 8192 32768 65536 --n 30 ;;
   mdqa3) python scripts/korbi/campaign_midtraining/multidoc_qa.py --model "$model" --squad "$DS/squad/dev-v2.0.json" \
           --out "$out" --lengths 8192 32768 65536 --depths far=0.05 mid=0.5 near=0.95 only --shots 3 --n 60 ;;
+  retr) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths 4096 8192 16384 32768 65536 --n 30 ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"

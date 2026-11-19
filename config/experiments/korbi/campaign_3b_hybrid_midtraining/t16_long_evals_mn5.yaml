@@ -50,3 +50,4 @@ sweep:
         - aux.task: nll
         - aux.task: mdqa
         - aux.task: mdqa3
+        - aux.task: retr
