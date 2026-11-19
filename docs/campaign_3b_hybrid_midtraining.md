@@ -1635,6 +1635,27 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       16000-32000, the base pins diag_consumed_train_samples on every load); its 3000 point and nsa_adam's (8 h pool
       limit at 2881) come from resumes with the checkpoint's own step and data position, verified in the log.
 
+  - **Sparse attention in the HF model, parity with Megatron (2026-11-19).** oellm_ambitious/sparse_attention.py
+    runs Megatron's own page_sparse.py / sparse_variants.py (copied into exports; config.sparse_attention = the run's
+    page_sparse_* arguments; the trained selector weights exported). Block-wise selection stays exact under chunked
+    prefill and decode (the block's earlier queries come from the cache, the CP rule); the selector reads the
+    attention layer's pre-norm input as in Megatron (the old probe passed the normalized one: its Phase A NSA / CSA2 /
+    indexer numbers may be slightly off). Megatron fix found on the way: CSA2's indexer scores tie exactly (relu = 0)
+    and torch.topk broke ties by sequence length -- now by entry index (77f864787). Parity on 32 samples of
+    v8ml-valid/long_64k at 64k (HF paired_valid_check vs Megatron fixed validation, step 3000):
+
+    | arm | HF | Megatron | vs dense (HF) |
+    |---|---:|---:|---:|
+    | dense | 2.57768 | 2.57775 | -- |
+    | page_maxpool_pg | 2.64153 | 2.64181 | +0.064 |
+    | page_mean_pg | 2.64872 | 2.64878 | +0.071 |
+    | lsa_fix | 2.67537 | 2.67537 | +0.098 |
+    | nsa_adam | 2.69661 | 2.69670 | +0.119 |
+    | csa2_fix | 2.71070 | 2.71073 | +0.133 |
+
+    All within 3e-4 (bf16). On documents that are long throughout the gaps are 3-5x t16's mix validation gaps, same
+    order. Long-context evals (per-position NLL, multi-document QA far / mid / near at 8k-64k) run on these exports.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
