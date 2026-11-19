@@ -14,9 +14,17 @@ The selection code is Megatron's own -- ``page_sparse.py`` and ``sparse_variants
 * the selector's hidden input is the attention layer's PRE-norm input (Megatron fuses the input norm into
   ``linear_qkv``; ``set_hidden`` receives the raw stream), the normalized one for a V (kvshare) layer.
 * batch elements are attended one at a time (page selection is per sequence); no padding / packed documents.
+* inference option ``OELLM_SPARSE_SELECT=token`` (default ``block`` = training): the last ``OELLM_SPARSE_TAIL`` (128)
+  queries of every call -- the prompt's end at the prefill, each token in decode -- select for themselves instead of
+  reusing the selection of their block's first query, which in generation is often filler before the question
+  (selection carries no gradient, so this only changes which pages the asking tokens read; the long-context probe
+  did the same with decode=token, tail=128).
 """
 
 from __future__ import annotations
+
+import dataclasses
+import os
 
 import torch
 from torch import nn
@@ -84,6 +92,10 @@ class OellmSparseAttention(nn.Module):
         elif sel not in PAGE_SELECTORS and sel not in ("dense", "compress_mean"):
             raise ValueError(f"sparse_attention: selector {sel!r} is not supported")
         self.uses_hidden = self.indexer is not None or sel in ("nsa", "csa2")
+        self.select_mode = os.environ.get("OELLM_SPARSE_SELECT", "block")
+        if self.select_mode not in ("block", "token"):
+            raise ValueError(f"OELLM_SPARSE_SELECT={self.select_mode!r}: block or token")
+        self.tail = int(os.environ.get("OELLM_SPARSE_TAIL", "128"))
 
     def _features(self, x):
         """The key side's per-token features of the new tokens: csa2's compression weights, the indexer's keys."""
@@ -93,19 +105,28 @@ class OellmSparseAttention(nn.Module):
             return self.variant.token_features(x)
         return None
 
-    def _attend(self, q, k, v, q_offset, xq, feat):
-        """One sequence: q [1, hq, n, d] at q_offset.., k / v [1, g, L, d], xq [1, n, h], feat [1, L, F]."""
+    def _attend(self, q, k, v, q_offset, xq, feat, per_token: bool = False):
+        """One sequence: q [1, hq, n, d] at q_offset.., k / v [1, g, L, d], xq [1, n, h], feat [1, L, F];
+        ``per_token``: every query selects for itself (select_block 1)."""
         sel, cfg = self.cfg.selector, self.cfg
-        flex = q.is_cuda and q.shape[2] >= FLEX_MIN_QUERIES
+        if per_token:
+            cfg = dataclasses.replace(cfg, select_block=1)
+        flex = q.is_cuda and q.shape[2] >= FLEX_MIN_QUERIES and not per_token
         if sel == "dense":
             return dense_attention(q, k, v, q_offset, self.scale)
         if self.variant is not None:
             self.variant.flex = flex
-            if sel == "nsa":
-                return self.variant(q, k, v, xq, q_offset, self.scale)
-            if sel == "csa2":
-                return self.variant(q, k, v, xq, feat, q_offset, self.scale)
-            return self.variant(q, k, v, q_offset, self.scale)
+            saved = self.variant.cfg
+            if per_token:
+                self.variant.cfg = dataclasses.replace(saved, select_block=1)
+            try:
+                if sel == "nsa":
+                    return self.variant(q, k, v, xq, q_offset, self.scale)
+                if sel == "csa2":
+                    return self.variant(q, k, v, xq, feat, q_offset, self.scale)
+                return self.variant(q, k, v, q_offset, self.scale)
+            finally:
+                self.variant.cfg = saved
         scores = None
         if self.indexer is not None:
             kp = page_pool(feat.unsqueeze(1), cfg.page, "mean")[:, 0]
@@ -127,11 +148,23 @@ class OellmSparseAttention(nn.Module):
         feat = None
         if new is not None:
             feat = new if st.get("feat") is None or past == 0 else torch.cat([st["feat"], new], 1)
+        # rows of q (incl. the prepended heads) selecting block-wise / per token (OELLM_SPARSE_SELECT=token: the last
+        # `tail` new queries); the keys a row sees end at its own position either way (causal)
+        n_all = q.shape[2]
+        t0 = n_all - min(self.tail, s) if self.select_mode == "token" else n_all
         outs = []
         for i in range(b):
             xi = None if x is None else x[i:i + 1]
             fi = None if feat is None else feat[i:i + 1]
-            outs.append(self._attend(q[i:i + 1], k[i:i + 1], v[i:i + 1], past - h, xi, fi))
+            parts = []
+            if t0 > 0:  # its keys end at its last query (LSA clusters / CSA2 compresses every key it is given)
+                e0 = past - h + t0
+                parts.append(self._attend(q[i:i + 1, :, :t0], k[i:i + 1, :, :e0], v[i:i + 1, :, :e0], past - h,
+                                          None if xi is None else xi[:, :t0], None if fi is None else fi[:, :e0]))
+            if t0 < n_all:
+                parts.append(self._attend(q[i:i + 1, :, t0:], k[i:i + 1], v[i:i + 1], past - h + t0,
+                                          None if xi is None else xi[:, t0:], fi, per_token=True))
+            outs.append(torch.cat(parts, 2))
         out = torch.cat(outs, 0)[:, :, h:]
         r = (past + s) % B  # the queries of the block the next call continues
         new_state = {"qh": q[:, :, q.shape[2] - r:].detach() if r else q[:, :, :0].detach(),

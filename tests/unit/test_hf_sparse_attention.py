@@ -148,3 +148,33 @@ def test_kvshare_layer_selects_over_its_sources_keys():
         outs.append(o)
         a = c
     torch.testing.assert_close(torch.cat(outs, 1), one, atol=1e-10, rtol=1e-10)
+
+
+@pytest.mark.parametrize("name", list(VARIANTS))
+def test_token_select_mode_is_per_token_selection(name, monkeypatch):
+    """OELLM_SPARSE_SELECT=token (inference option): the last OELLM_SPARSE_TAIL queries of a call select for themselves.
+    With the tail covering every query it is the select_block-1 model; in decode every token selects for itself, the
+    prefill before the tail stays block-wise."""
+    monkeypatch.setenv("OELLM_SPARSE_SELECT", "token")
+    monkeypatch.setenv("OELLM_SPARSE_TAIL", str(L))
+    tok_att = _attn(dict(BASE, **VARIANTS[name]))
+    monkeypatch.delenv("OELLM_SPARSE_SELECT")
+    one_att = _attn(dict(BASE, **VARIANTS[name], page_sparse_select_block=1))
+    one_att.load_state_dict(tok_att.state_dict())
+    x, raw = _inputs()
+    torch.testing.assert_close(tok_att(x, None, True, raw=raw)[0], one_att(x, None, True, raw=raw)[0],
+                               atol=1e-10, rtol=1e-10)
+    # decode: a 30-token prefill with tail 4 (rows 0..25 block-wise, 26..29 per token), then token by token
+    monkeypatch.setenv("OELLM_SPARSE_SELECT", "token")
+    monkeypatch.setenv("OELLM_SPARSE_TAIL", "4")
+    dec = _attn(dict(BASE, **VARIANTS[name]))
+    dec.load_state_dict(tok_att.state_dict())
+    out = _run_split(dec, x, raw, tuple(range(30, L)))
+    blk = _attn(dict(BASE, **VARIANTS[name]))  # block-wise reference for rows 0..25
+    blk.load_state_dict(tok_att.state_dict())
+    monkeypatch.delenv("OELLM_SPARSE_SELECT")
+    ref_blk = _attn(dict(BASE, **VARIANTS[name]))
+    ref_blk.load_state_dict(tok_att.state_dict())
+    torch.testing.assert_close(out[:, :26], ref_blk(x, None, True, raw=raw)[0][:, :26], atol=1e-10, rtol=1e-10)
+    # every decode token = the select_block-1 model's output at that position
+    torch.testing.assert_close(out[:, 30:], one_att(x, None, True, raw=raw)[0][:, 30:], atol=1e-10, rtol=1e-10)
