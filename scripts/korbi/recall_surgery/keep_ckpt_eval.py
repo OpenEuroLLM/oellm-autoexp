@@ -69,10 +69,23 @@ def mirror(run_dir: str, iteration: int) -> str:
     return f"{name}: mirrored ({got} file(s), link count {links})"
 
 
-def trim(run_dir: str, keep: int) -> int:
-    """Drop the oldest ckpt_eval mirrors beyond `keep` (the data is the only copy left)."""
+def trim(run_dir: str, keep: int, every: int) -> int:
+    """Drop the oldest *own* mirrors beyond `keep`.
+
+    ckpt_eval is a shared convention: the export/eval pipelines of other arms hard-link
+    their sources there too (ten such entries appeared in v4b's ckpt_eval on 2026-11-18).
+    Trimming by age alone would delete someone else's archive, so only iterations that are
+    multiples of `every` -- the ones this tool mirrors -- are candidates.
+    """
     ev = os.path.join(run_dir, "ckpt_eval")
-    dirs = sorted(d for d in os.listdir(ev) if d.startswith("iter_") and os.path.isdir(os.path.join(ev, d)))
+    dirs = sorted(
+        d
+        for d in os.listdir(ev)
+        if d.startswith("iter_")
+        and os.path.isdir(os.path.join(ev, d))
+        and d.split("_")[-1].isdigit()
+        and int(d.split("_")[-1]) % every == 0
+    )
     removed = 0
     for name in dirs[:-keep] if keep > 0 else []:
         shutil.rmtree(os.path.join(ev, name), ignore_errors=True)
@@ -125,7 +138,7 @@ def main() -> int:
         else:
             print(f"[{time.strftime('%H:%M:%S')}] no tracker yet in {run_dir}/ckpt", flush=True)
         if args.keep > 0:
-            trimmed = trim(run_dir, args.keep)
+            trimmed = trim(run_dir, args.keep, args.every)
             if trimmed:
                 print(f"[{time.strftime('%H:%M:%S')}] trimmed {trimmed} old mirror(s) (keep {args.keep})", flush=True)
         if args.once:
