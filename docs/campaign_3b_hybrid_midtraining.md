@@ -1735,6 +1735,30 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       perfect passkey and dense-level QA at 256k. Candidates for the 1M switch: page_maxpool_pg / LSA. Open: retrieval
       with more samples (60 per cell), page_maxpool's decode cost, its training speed at long context.
 
+  - **Training cost of the attention layer (2026-11-19; attn_train_bench.py, one H100, v4b shapes, one document per
+    step, forward + backward of Megatron's PageSparseCoreAttention flex paths vs dense flash attention):**
+
+    | arm | 64k | 128k | 256k | peak GB at 256k |
+    |---|---:|---:|---:|---:|
+    | dense | 310 ms | 1242 | 4923 | 24 |
+    | page_mean_pg | 185 (0.60x) | 419 (0.34x) | 1232 (0.25x) | 34 |
+    | page_maxpool_pg | 232 (0.75x) | 519 (0.42x) | 1438 (0.29x) | 34 |
+    | lsa_fix | 548 (1.77x) | 1148 (0.92x) | 2371 (0.48x) | 45 |
+    | csa2_fix (indexer 32 x 128) | 901 | 2971 | OOM | -- |
+    | csa2_small (4 x 64) | 881 | 2883 | 8017 | 46 |
+    | nsa | 378 | 999 | OOM | -- |
+
+    The page selectors are the fast training paths (a quarter of dense's attention cost at 256k); LSA crosses dense
+    only at ~128k (per-document clustering and flex calls); CSA2 / NSA are slower than dense and run out of memory at
+    256k on these code paths. In the full model the gain is diluted (128 nodes, 256k: page_mean -15 % per step).
+  - **Decode bench extended (RTX 3090 Ti, one layer, 1M):** page_mean 0.24 ms, LSA 0.25 (bucket centroids, bucket-
+    contiguous KV: the same structure), CSA2 0.49 (small indexer 0.30, 545 MB), page_maxpool 0.54 (scores 4x the
+    windows), dense 2.51. Host-offload variants of page_maxpool / LSA measured 2.3 ms at 512k-1M against 0.6 ms for
+    page_mean_host with the same gather code -- a benchmark artifact, not resolved; budget ~0.6 ms + the scoring.
+  - **CSA2 decision (2026-11-19, user):** not adopted. Its 4x KV saving is available more cheaply: host offload of a
+    page method (~100x less GPU memory, no extra quality cost) and FP8 KV (2x); CSA2 is the worst or second-worst arm
+    in every quality eval and slower than dense in training.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
