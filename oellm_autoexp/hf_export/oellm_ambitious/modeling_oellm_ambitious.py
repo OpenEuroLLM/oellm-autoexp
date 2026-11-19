@@ -69,6 +69,17 @@ from .sparse_attention import OellmSparseAttention
 from .sparse_variants import NSA  # noqa: F401
 
 
+def _past_mask(s: int, total: int):
+    """The mask of s queries after a past (keys 0 .. total - 1, query i at total - s + i): None for one query (it sees
+    every key), else the lower-right causal bias -- SDPA keeps its memory-efficient kernels, where an explicit bool mask
+    [s, total] took the math path (a 16k chunk over 256k keys: 4 G entries, out of memory)."""
+    if s == 1:
+        return None
+    from torch.nn.attention.bias import causal_lower_right
+
+    return causal_lower_right(s, total)
+
+
 def _sparse(config, num_heads: int, num_kv: int, head_dim: int):
     """config.sparse_attention (the run's page_sparse_* arguments) -> its OellmSparseAttention, or None (dense)."""
     sa = getattr(config, "sparse_attention", None)
@@ -390,9 +401,7 @@ class OellmXSAAttention(nn.Module):
             if past == 0:
                 o = F.scaled_dot_product_attention(q, kk, vv, is_causal=True, scale=self.d**-0.5)
             else:  # queries at past..past+s-1 see keys 0..their position
-                qp = torch.arange(past, past + s, device=x.device)[:, None]
-                mask = torch.arange(k.shape[2], device=x.device)[None, :] <= qp
-                o = F.scaled_dot_product_attention(q, kk, vv, attn_mask=mask[None, None], scale=self.d**-0.5)
+                o = F.scaled_dot_product_attention(q, kk, vv, attn_mask=_past_mask(s, k.shape[2]), scale=self.d**-0.5)
         o = o.transpose(1, 2)  # [b, s, nh, d]
         if self.xsa:
             vf = own_v.float().repeat_interleave(rep, dim=2) if rep > 1 else own_v.float()
@@ -500,9 +509,7 @@ class OellmKVShareAttention(nn.Module):
             rep = nh // nkv
             kk = k.repeat_interleave(rep, dim=1) if rep > 1 else k
             vv = v.repeat_interleave(rep, dim=1) if rep > 1 else v
-            qp = torch.arange(past, past + s, device=x.device)[:, None]
-            mask = torch.arange(k.shape[2], device=x.device)[None, :] <= qp
-            o = F.scaled_dot_product_attention(qt, kk, vv, attn_mask=mask[None, None], scale=d**-0.5)
+            o = F.scaled_dot_product_attention(qt, kk, vv, attn_mask=_past_mask(s, k.shape[2]), scale=d**-0.5)
         o = o.transpose(1, 2)  # [b, s, nh, d]
         gate = self.gate_proj(x).view(b, s, nh, d) if self.gate_proj is not None else None
         if self.xsa:
