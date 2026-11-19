@@ -1613,6 +1613,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     - Host: host007 shrunk 259 -> 28 nodes afterwards (frozen + empty, slow-GPU nodes excluded first,
       `pool_ctl shrink --apply`); t16 continues there (page_maxpool_pg resumed from its step-2000 save).
 
+  - **t16 results (Phase B, 2026-11-19): validation loss minus dense at the same step** (s3 testbed, 64k, sparse from
+    step 1000; every arm sees the same validation batches at a step, so only the paired difference counts):
+
+    | arm | 1500 | 2000 | 2500 | 3000 |
+    |---|---:|---:|---:|---:|
+    | dense (absolute) | 2.1432 | 2.2352 | 1.9091 | 1.9203 |
+    | page_maxpool_pg | +0.017 | +0.005 | +0.019 | **+0.015** |
+    | page_mean_pg | +0.022 | +0.010 | +0.023 | **+0.019** |
+    | lsa_fix | +0.035 | +0.020 | +0.034 | **+0.028** |
+    | nsa_adam | +0.031 | +0.022 | +0.041 | **+0.033** |
+    | csa2_fix | +0.065 | +0.046 | +0.061 | **+0.048** |
+
+    - The order is the same at every point: page selectors < LSA < NSA < CSA2. The audit fixes narrow LSA's and
+      NSA's gap but do not change the ranking, and CSA2 with + log m stays the worst: the "naive" page selection
+      is not an artifact of broken baselines.
+    - With t17's speed: page_mean_pg is faster than dense (-10 % at 64k, -15 % at 256k) at +0.004 against
+      page_maxpool, which is slower than dense. **Recommendation: page_mean_pg (per-group page means, = MoBA) for
+      the sparse transition.** Open: quality at > 64k (t16 trains at 64k; documents beyond the ~2.6k budget only).
+    - Resume bookkeeping: page_maxpool_pg's 2500 point is the first pass (its first resume re-trained samples
+      16000-32000, the base pins diag_consumed_train_samples on every load); its 3000 point and nsa_adam's (8 h pool
+      limit at 2881) come from resumes with the checkpoint's own step and data position, verified in the log.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
