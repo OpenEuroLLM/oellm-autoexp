@@ -1,7 +1,8 @@
 # @package _global_
 # t18 eval pack 2 (as t18_eval_pack_mn5): realistic long-context tasks (LongBench v1, NarrativeQA's longest,
 # InfiniteBench at 64k / 128k / 256k; long_realistic_eval.py) for dense, the trained sparse arms and training-free
-# page_maxpool (sparse arms with per-token selection), and the whole-model e2e bench (pack 1's failed on device_map).
+# page_maxpool (sparse arms with per-token selection), and the whole-model e2e bench (pack 1's failed on device_map), first pack 1's 6 items its step
+# cancellation cut off (resumed from their samples).
 #   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_eval_pack2_mn5 \
 #       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
 defaults:
@@ -11,6 +12,8 @@ defaults:
 aux:
   name: t18_eval_pack2
   items: >-
+    dense:retr_1m page_maxpool_pg:retr_1m_tok dense_as_page_maxpool_pg:retr_1m_tok page_maxpool_pg:retr_512k_tok
+    dense_as_page_maxpool_pg:retr_long60_tok dense_as_page_maxpool_pg:mdqa3_tok
     dense:real_inf256k page_maxpool_pg:real_inf256k_tok lsa_fix:real_inf256k_tok page_mean_pg:real_inf256k_tok
     dense_as_page_maxpool_pg:real_inf256k_tok
     dense:e2e page_maxpool_pg:e2e_tok lsa_fix:e2e_tok

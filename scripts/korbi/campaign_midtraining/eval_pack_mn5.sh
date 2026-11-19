@@ -42,5 +42,7 @@ status=0
 for p in "${pids[@]}"; do
     wait "$p" || status=1
 done
-echo "[eval_pack] $(hostname) exit $status"
-exit $status
+# always 0: a node's nonzero exit makes srun cancel the whole step, killing the other nodes' running items
+# (pack 1, 2026-11-19 23:49); failed items have no done marker and are listed in the log
+echo "[eval_pack] $(hostname) finished (status $status)"
+exit 0
