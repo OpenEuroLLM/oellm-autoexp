@@ -10,6 +10,8 @@
 #   beyond 256k (t18, 2026-11-19): nll_512k / nll_1m (the 10 / 3 held-out documents that long), retr_vt_long
 #         (variable tracking at 128k / 256k), retr_512k / retr_1m (passkey, multi-key, variable tracking), e2e (prefill
 #         and decode cost of the whole model at 128k-1M, long_e2e_bench.py)
+#   realistic: real64 (LongBench v1's 14 tasks + InfiniteBench cut to 64k, 50 each), real_nqa64 (NarrativeQA's 100
+#         longest), real_inf128k / real_inf256k (InfiniteBench en.mc / en.qa / code.debug cut to 128k / 256k)
 # One MN5 node (or one GPU: the evals load the model on the visible devices):
 #
 #   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr|nll_long|mdqa3_128k|mdqa3_256k|retr_long|...>[_tok][_k<N>] [step]
@@ -66,6 +68,14 @@ case $task in
           --out "$out" --lengths $L --n 30 --tasks passkey kv vt ;;
   e2e) python scripts/korbi/campaign_midtraining/long_e2e_bench.py --model "$model" --raw "$DS/raw.jsonl" \
           --out "$out/e2e.json" --lengths 131072 262144 524288 1048576 ;;
+  # realistic tasks (long_realistic_eval.py): LongBench v1 (<= 64k) and InfiniteBench (cut to 64k / 128k / 256k)
+  real64) python scripts/korbi/campaign_midtraining/long_realistic_eval.py --model "$model" \
+          --data "$D/long_evals" --out "$out" --max-len 65536 --n 50 ;;
+  real_nqa64) python scripts/korbi/campaign_midtraining/long_realistic_eval.py --model "$model" \
+          --data "$D/long_evals" --out "$out" --tasks narrativeqa --max-len 65536 --n 100 --select longest ;;
+  real_inf128k|real_inf256k) L=$([ $task = real_inf128k ] && echo 131072 || echo 262144)
+        python scripts/korbi/campaign_midtraining/long_realistic_eval.py --model "$model" \
+          --data "$D/long_evals" --out "$out" --tasks en_mc en_qa code_debug --max-len $L --n 50 ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"
