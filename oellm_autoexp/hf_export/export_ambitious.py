@@ -225,6 +225,30 @@ def _kronlstm_layer_spec(m: dict) -> dict:
     return {"class": "fla.layers.kronlstm.KronLSTM", "kwargs": kw}
 
 
+def _sparse_attention_cfg(m: dict):
+    """The run's page_sparse_* arguments (None without a page_sparse_selector). Training-only settings (the indexer
+    loss, dense warm-up forward, selector-on-Adam) are left out."""
+    if not m.get("page_sparse_selector"):
+        return None
+    skip = {"page_sparse_indexer_loss_coeff", "page_sparse_dense_forward", "page_sparse_selector_adam",
+            "page_sparse_backend", "page_sparse_packed_flex", "page_sparse_share_source"}
+    if m.get("page_sparse_share_source"):
+        raise ValueError("sparse_attention export: page_sparse_share_source (cross-layer shared selection) is not "
+                         "supported by the HF model")
+    return {k: v for k, v in sorted(m.items()) if k.startswith("page_sparse_") and k not in skip}
+
+
+def _sparse_params(t: dict, p: str, hp: str, add) -> None:
+    """The trained sparse-attention parameters (NSA / CSA2 / D-LSA variant, learned page indexer) of an attention or
+    V layer: core_attention.{variant,indexer}.* -> mixer.sparse.{variant,indexer}.* (fp32, as trained)."""
+    pre = p + "self_attention.core_attention."
+    for k in sorted(k for k in t if k.startswith(pre)):
+        rest = k[len(pre):]
+        if not rest.startswith(("variant.", "indexer.")):
+            raise KeyError(f"unexpected core_attention tensor {k}")
+        add(hp + "mixer.sparse." + rest, t.pop(k).float())
+
+
 def hf_config(m: dict, vocab: int) -> dict:
     syms = [c for c in m["hybrid_layer_pattern"] if c != "|"]
     bad = sorted({c for c in syms if c not in _KINDS})
@@ -309,6 +333,9 @@ def hf_config(m: dict, vocab: int) -> dict:
         "rope_theta": float(m.get("rotary_base") or 10000) if pos == "rope" else None,
         "exclusive_self_attention": bool(m.get("exclusive_self_attention")),
         "xsa_eps": 1e-6,
+        # page_sparse_selector (Megatron PageSparseCoreAttention): its arguments under their Megatron names, read by
+        # oellm_ambitious/sparse_attention.py; None = dense attention
+        "sparse_attention": _sparse_attention_cfg(m),
         "kv_share_sources": kv_sources,
         # the kvshare layers' input norm (plan() reads it from the checkpoint: the V layer spec before
         # 2026-11-17 built none, docs/recall_surgery_ambitious.md §22.18)
@@ -573,6 +600,7 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
             if str(i) in gates and abs(float(gates[str(i)]) - rho) > 1e-9:
                 raise ValueError(f"layer {i}: kv_share_res_gate {gates[str(i)]} != checkpoint's rho {rho}")
             gates[str(i)] = rho
+        _sparse_params(t, p, hp, add)
     elif kind == "kvshare" and i in folded:
         # a ckda_branch kvshare attention past its hand-over: q / gate / o / q norm of its own, the keys / values
         # of the source attention layer at run time (cfg kv_share_sources); the branch's output weight folded into
@@ -616,10 +644,7 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         add(hp + "input_layernorm.weight", g("self_attention.linear_qkv.layer_norm_weight").to(cast))
         if p + "self_attention.head_temperature" in t:  # attention_head_temperature: one logit scale per head
             add(hp + "mixer.head_temperature", g("self_attention.head_temperature").float())
-        # trained sparse-attention parameters (page_sparse_selector nsa / csa2 / indexer): not part of the HF
-        # model; campaign_midtraining/extract_variant_params.py takes them for the long-context probe
-        for k in [k for k in t if k.startswith(p + "self_attention.core_attention.")]:
-            t.pop(k)
+        _sparse_params(t, p, hp, add)  # page_sparse_selector nsa / csa2 / lsa latent / indexer
     elif kind == "ckda":
         add(hp + "input_layernorm.weight", g("input_layernorm.weight").to(cast))
         pre = p + "self_attention.layer."
@@ -679,11 +704,16 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
         raise KeyError(f"layer {i} ({kind}): unmapped tensors {sorted(t)}")
 
 
+# the model code an export carries (page_sparse.py / sparse_variants.py: Megatron's, linked into the package)
+MODEL_CODE = ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py",
+              "sparse_attention.py", "page_sparse.py", "sparse_variants.py")
+
+
 def finish_export(out_dir: Path, cfg: dict, tokenizer: Path | None, ckpt_dir: Path, config_yaml: Path) -> None:
     """config.json, the model code, the tokenizer and megatron_source.json next to the weights."""
     write_config(out_dir, cfg, tokenizer)
-    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py"):
-        shutil.copy2(_PKG / f, out_dir / f)
+    for f in MODEL_CODE:
+        shutil.copyfile((_PKG / f).resolve(), out_dir / f)
     # the reused modules (CKDA wrapper, Engram base, norm, cache) and their config
     for f in ("modeling_oellm_hybrid.py", "configuration_oellm_hybrid.py"):
         shutil.copy2(_HERE / "oellm_hybrid" / f, out_dir / f)

@@ -11,6 +11,8 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 HF=$ROOT/oellm_autoexp/hf_export
 files=("$HF"/oellm_ambitious/configuration_oellm_ambitious.py "$HF"/oellm_ambitious/modeling_oellm_ambitious.py
        "$HF"/oellm_ambitious/mhc_kernels.py "$HF"/oellm_ambitious/oellm_kernels.py
+       "$HF"/oellm_ambitious/sparse_attention.py "$HF"/oellm_ambitious/page_sparse.py
+       "$HF"/oellm_ambitious/sparse_variants.py
        "$HF"/oellm_hybrid/configuration_oellm_hybrid.py "$HF"/oellm_hybrid/modeling_oellm_hybrid.py)
 for d in "$@"; do
     if [ ! -f "$d/modeling_oellm_ambitious.py" ]; then
@@ -24,7 +26,7 @@ for d in "$@"; do
             continue
         fi
         tmp="$dst.new.$$"
-        cp "$f" "$tmp" && mv -f "$tmp" "$dst"
+        cp -L "$f" "$tmp" && mv -f "$tmp" "$dst"
         changed=$((changed + 1))
     done
     echo "[refresh_code] $d: $changed file(s) replaced"

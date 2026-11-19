@@ -19,8 +19,9 @@ VIEW=${BASE}_probe
 [ -d "$VIEW" ] || cp -al "$BASE" "$VIEW"
 for f in oellm_ambitious/configuration_oellm_ambitious.py oellm_ambitious/modeling_oellm_ambitious.py \
          oellm_ambitious/mhc_kernels.py oellm_ambitious/oellm_kernels.py \
+         oellm_ambitious/sparse_attention.py oellm_ambitious/page_sparse.py oellm_ambitious/sparse_variants.py \
          oellm_hybrid/configuration_oellm_hybrid.py oellm_hybrid/modeling_oellm_hybrid.py; do
-  cp "oellm_autoexp/hf_export/$f" "$VIEW/$(basename $f).new" && mv "$VIEW/$(basename $f).new" "$VIEW/$(basename $f)"
+  cp -L "oellm_autoexp/hf_export/$f" "$VIEW/$(basename $f).new" && mv "$VIEW/$(basename $f).new" "$VIEW/$(basename $f)"
 done
 D=/gpfs/projects/ehpc533/users/korbip/data/v8ml-valid
 DATA_ARGS=()

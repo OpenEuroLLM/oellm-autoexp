@@ -94,8 +94,9 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
 
 
 def _copy_code(out: Path) -> None:
-    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py"):
-        shutil.copy(_PKG / f, out / f)
+    for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py",
+              "sparse_attention.py", "page_sparse.py", "sparse_variants.py"):
+        shutil.copyfile((_PKG / f).resolve(), out / f)
     for f in ("configuration_oellm_hybrid.py", "modeling_oellm_hybrid.py"):
         shutil.copy(_HYB / f, out / f)
 

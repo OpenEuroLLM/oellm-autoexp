@@ -21,7 +21,8 @@ def refresh(d: Path) -> None:
         for f in (_HERE / pkg).glob("*.py"):
             new_mhc_helper = (  # kernel files added after the export was written
                 pkg == "oellm_ambitious"
-                and f.name in ("mhc_kernels.py", "oellm_kernels.py")
+                and f.name in ("mhc_kernels.py", "oellm_kernels.py", "sparse_attention.py", "page_sparse.py",
+                               "sparse_variants.py")
                 and (d / "modeling_oellm_ambitious.py").exists()
             )
             if (d / f.name).exists() or new_mhc_helper:
