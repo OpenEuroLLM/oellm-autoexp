@@ -3,9 +3,11 @@
 #   nll   per-position NLL on 8 held-out documents >= 64k (nll_by_position.py, chunked prefill through the cache)
 #   mdqa  multi-document QA: a SQuAD question on a passage at depth far / mid / near among other passages, 8k / 32k /
 #         64k context, greedy generation, F1 (multidoc_qa.py)
+#   mdqa3 the same with 3 worked examples (span answers from a base model), the gold passage alone as the ceiling,
+#         60 questions per cell
 # One MN5 node:
 #
-#   t16_long_evals_mn5.sh <arm> <nll|mdqa> [step]
+#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3> [step]
 set -euo pipefail
 arm=$1; task=$2; step=${3:-3000}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
@@ -21,6 +23,8 @@ case $task in
           --docs "$D/v8ml-valid/long_64k_text_document" --out "$out/nll.json" --lengths 65536 --docs-n 8 ;;
   mdqa) python scripts/korbi/campaign_midtraining/multidoc_qa.py --model "$model" --squad "$DS/squad/dev-v2.0.json" \
           --out "$out" --lengths 8192 32768 65536 --n 30 ;;
+  mdqa3) python scripts/korbi/campaign_midtraining/multidoc_qa.py --model "$model" --squad "$DS/squad/dev-v2.0.json" \
+          --out "$out" --lengths 8192 32768 65536 --depths far=0.05 mid=0.5 near=0.95 only --shots 3 --n 60 ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"

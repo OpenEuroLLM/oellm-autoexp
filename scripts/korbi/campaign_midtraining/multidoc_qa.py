@@ -5,7 +5,11 @@ Greedy generation with the HF export as it is (its sparse attention, config.spar
 SQuAD-normalized F1 / exact match per (length, depth). Batch size 1 (the HF attention takes no padding mask).
 
     multidoc_qa.py --model <hf export> --squad <dev-v2.0.json> --out <dir> [--lengths 8192 32768 65536]
-                   [--depths far=0.05 mid=0.5 near=0.95] [--n 30] [--seed 0]
+                   [--depths far=0.05 mid=0.5 near=0.95 only] [--n 30] [--shots 3] [--seed 0]
+
+``--shots K``: K worked examples (question + short answer) before the question, their passages among the documents
+at random positions -- a base model then answers with a span instead of a sentence. Depth ``only``: the question's
+passage (and the examples') alone, no distractors -- the ceiling without long context.
 
 Writes <out>/samples.jsonl (prompt length, gold position, prediction, F1 / EM) and <out>/summary.json; cells already
 in samples.jsonl are skipped (resumable).
@@ -58,24 +62,31 @@ def load_squad(path: Path):
     return qs, paras
 
 
-def build(tok, q, paras, length: int, depth: float, rng: random.Random):
+def build(tok, q, paras, length: int, depth, rng: random.Random, shots=()):
     """Prompt ids of about ``length`` tokens: distractor passages of other articles, the gold one at ``depth`` (fraction
-    of the passages before it). Returns (ids, gold index, number of passages)."""
+    of the passages before it; None = the gold passage alone), the examples' passages at random positions and their
+    question / answer pairs before the question. Returns (ids, gold index, number of passages)."""
     art, pid, question, _ = q
     head = f"{INSTR}\n\nThe following are given documents.\n\n"
-    tail = f"\n\n{INSTR}\n\nQuestion: {question} Answer:"
+    examples = "".join(f"Question: {sq} Answer: {sa[0]}\n\n" for _, _, sq, sa in shots)
+    tail = f"\n\n{INSTR}\n\n{examples}Question: {question} Answer:"
     budget = length - len(tok(head + tail, add_special_tokens=False).input_ids) - 8
-    others = [k for k, (a, _) in paras.items() if a != art]
+    taken = {art} | {sa for sa, _, _, _ in shots}
+    others = [k for k, (a, _) in paras.items() if a not in taken]
     rng.shuffle(others)
     gold_text = paras[pid][1]
-    docs, used = [], len(tok(gold_text, add_special_tokens=False).input_ids) + 8
-    for k in others:
+    shot_texts = [paras[spid][1] for _, spid, _, _ in shots]
+    used = sum(len(tok(t, add_special_tokens=False).input_ids) + 8 for t in [gold_text] + shot_texts)
+    docs = []
+    for k in others if depth is not None else []:
         n = len(tok(paras[k][1], add_special_tokens=False).input_ids) + 8
         if used + n > budget:
             break
         docs.append(paras[k][1])
         used += n
-    gi = min(len(docs), int(round(depth * len(docs))))
+    for t in shot_texts:
+        docs.insert(rng.randint(0, len(docs)), t)
+    gi = 0 if depth is None else min(len(docs), int(round(depth * len(docs))))
     docs.insert(gi, gold_text)
     body = "".join(f"Document {i + 1}:\n{d}\n\n" for i, d in enumerate(docs)).rstrip()
     ids = tok(head + body + tail, add_special_tokens=True).input_ids
@@ -88,7 +99,9 @@ def main() -> None:
     ap.add_argument("--squad", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--lengths", type=int, nargs="+", default=[8192, 32768, 65536])
-    ap.add_argument("--depths", nargs="+", default=["far=0.05", "mid=0.5", "near=0.95"])
+    ap.add_argument("--depths", nargs="+", default=["far=0.05", "mid=0.5", "near=0.95"],
+                    help="name=fraction, or 'only' (the gold passage alone)")
+    ap.add_argument("--shots", type=int, default=0, help="worked examples before the question")
     ap.add_argument("--n", type=int, default=30, help="questions per (length, depth) cell")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max-new-tokens", type=int, default=32)
@@ -112,7 +125,7 @@ def main() -> None:
     sa = getattr(model.config, "sparse_attention", None)
     print(f"[multidoc_qa] {a.model}: sparse_attention {json.dumps(sa)}", flush=True)
     qs, paras = load_squad(a.squad)
-    depths = [(d.split("=")[0], float(d.split("=")[1])) for d in a.depths]
+    depths = [(d, None) if d == "only" else (d.split("=")[0], float(d.split("=")[1])) for d in a.depths]
     eos = tok.eos_token_id
     with samples.open("a") as fh:
         for length in a.lengths:
@@ -122,7 +135,14 @@ def main() -> None:
                 for i, q in enumerate(cell):
                     if i < done[(length, dname)]:
                         continue
-                    ids, gi, ndocs = build(tok, q, paras, length, dval, random.Random(f"{a.seed}:{length}:{dname}:{i}"))
+                    srng = random.Random(f"{a.seed}:{length}:{dname}:{i}:shots")
+                    shots = []
+                    while len(shots) < a.shots:  # examples from other articles than the question's and each other's
+                        e = srng.choice(qs)
+                        if e[0] != q[0] and all(e[0] != x[0] for x in shots):
+                            shots.append(e)
+                    ids, gi, ndocs = build(tok, q, paras, length, dval, random.Random(f"{a.seed}:{length}:{dname}:{i}"),
+                                           shots)
                     t0 = time.time()
                     x = torch.tensor([ids], device=model.device)
                     with torch.no_grad():

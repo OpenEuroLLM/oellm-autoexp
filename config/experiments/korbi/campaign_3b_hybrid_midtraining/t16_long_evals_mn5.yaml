@@ -49,3 +49,4 @@ sweep:
       configs:
         - aux.task: nll
         - aux.task: mdqa
+        - aux.task: mdqa3
