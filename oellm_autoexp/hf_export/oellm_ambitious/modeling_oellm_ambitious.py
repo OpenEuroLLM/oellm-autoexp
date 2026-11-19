@@ -62,6 +62,15 @@ from .configuration_oellm_ambitious import OellmAmbitiousConfig
 # imported here too: the HF dynamic loader copies only the direct relative imports of this file
 from .configuration_oellm_hybrid import OellmHybridConfig  # noqa: F401
 from .modeling_oellm_hybrid import OellmEngram, OellmFLALayer, OellmHybridCache, OellmRMSNorm
+from .sparse_attention import OellmSparseAttention
+
+
+def _sparse(config, num_heads: int, num_kv: int, head_dim: int):
+    """config.sparse_attention (the run's page_sparse_* arguments) -> its OellmSparseAttention, or None (dense)."""
+    sa = getattr(config, "sparse_attention", None)
+    if not sa or not sa.get("page_sparse_selector"):
+        return None
+    return OellmSparseAttention(sa, config.hidden_size, num_heads, num_kv, head_dim)
 
 
 def _fast(t: torch.Tensor) -> bool:
@@ -284,6 +293,8 @@ class OellmXSAAttention(nn.Module):
         # past, [b, nkv, S, d] each, for the kvshare layers after it
         self.keep_kv, self.last_kv = False, None
         self.rope_theta = getattr(config, "rope_theta", None)
+        # page_sparse_selector (sparse_attention.py): the cache slot is then (k, v, selection state)
+        self.sparse = _sparse(config, self.nh, self.nkv, d)
 
     def _rope(self, q: torch.Tensor, k: torch.Tensor, past: int):
         """RoPE as Megatron applies it (rotate_half, non-interleaved, inv_freq = theta^(-2i/d) over the full head
@@ -342,8 +353,9 @@ class OellmXSAAttention(nn.Module):
             self.last_kv = (kt, vt)
         return self.o_proj(o.reshape(b, s, nh * d)), state
 
-    def forward(self, x: torch.Tensor, state=None, keep_state: bool = True):
-        if state is None and _fast(x):
+    def forward(self, x: torch.Tensor, state=None, keep_state: bool = True, raw=None):
+        """``raw``: the layer's pre-norm input, the sparse selector's hidden input (Megatron's set_hidden)."""
+        if state is None and _fast(x) and self.sparse is None:
             return self._fast_forward(x, keep_state)
         b, s, _ = x.shape
         q = self.q_proj(x).view(b, s, self.nh, self.d)
@@ -364,14 +376,19 @@ class OellmXSAAttention(nn.Module):
         if self.keep_kv:
             self.last_kv = new_state
         rep = self.nh // self.nkv
-        kk = k.repeat_interleave(rep, dim=1) if rep > 1 else k
-        vv = v.repeat_interleave(rep, dim=1) if rep > 1 else v
-        if past == 0:
-            o = F.scaled_dot_product_attention(q, kk, vv, is_causal=True, scale=self.d**-0.5)
-        else:  # queries at past..past+s-1 see keys 0..their position
-            qp = torch.arange(past, past + s, device=x.device)[:, None]
-            mask = torch.arange(k.shape[2], device=x.device)[None, :] <= qp
-            o = F.scaled_dot_product_attention(q, kk, vv, attn_mask=mask[None, None], scale=self.d**-0.5)
+        if self.sparse is not None:
+            sel_state = state[2] if state is not None and len(state) > 2 else None
+            o, sel_state = self.sparse(q, k, v, raw if raw is not None else x, past, sel_state)
+            new_state = (k, v, sel_state)
+        else:
+            kk = k.repeat_interleave(rep, dim=1) if rep > 1 else k
+            vv = v.repeat_interleave(rep, dim=1) if rep > 1 else v
+            if past == 0:
+                o = F.scaled_dot_product_attention(q, kk, vv, is_causal=True, scale=self.d**-0.5)
+            else:  # queries at past..past+s-1 see keys 0..their position
+                qp = torch.arange(past, past + s, device=x.device)[:, None]
+                mask = torch.arange(k.shape[2], device=x.device)[None, :] <= qp
+                o = F.scaled_dot_product_attention(q, kk, vv, attn_mask=mask[None, None], scale=self.d**-0.5)
         o = o.transpose(1, 2)  # [b, s, nh, d]
         if self.xsa:
             vf = own_v.float().repeat_interleave(rep, dim=2) if rep > 1 else own_v.float()
@@ -456,8 +473,10 @@ class OellmKVShareAttention(nn.Module):
         zcg = config.layernorm_zero_centered_gamma
         self.q_norm = OellmRMSNorm(d, config.rms_norm_eps, zcg) if config.qk_layernorm else None
         self.kv = None
+        # page_sparse_selector: selects with its own queries over the source's keys (its state: the selection's)
+        self.sparse = _sparse(config, self.nh, self.nkv, d)
 
-    def forward(self, x: torch.Tensor, state=None, keep_state: bool = True):
+    def forward(self, x: torch.Tensor, state=None, keep_state: bool = True, raw=None):
         if self.kv is None:
             raise RuntimeError("kvshare attention called without its source layer's keys / values")
         k, v = self.kv
@@ -468,7 +487,10 @@ class OellmKVShareAttention(nn.Module):
             q = self.q_norm(q)
         past = k.shape[2] - s
         qt = q.transpose(1, 2)
-        if past == 0:
+        sel_state = None
+        if self.sparse is not None:  # the V layer's hidden input is its normalized one (it has its own input norm)
+            o, sel_state = self.sparse(qt, k, v, x, past, state)
+        elif past == 0:
             o = F.scaled_dot_product_attention(qt, k, v, is_causal=True, scale=d**-0.5, enable_gqa=nh != nkv)
         else:  # queries at past..past+s-1 see keys 0..their position
             rep = nh // nkv
@@ -490,7 +512,7 @@ class OellmKVShareAttention(nn.Module):
             o = of.to(x.dtype)
         elif gate is not None:
             o = (o.float() * torch.sigmoid(gate.float())).to(x.dtype)
-        return self.o_proj(o.reshape(b, s, nh * d)), None
+        return self.o_proj(o.reshape(b, s, nh * d)), sel_state
 
 
 # --------------------------------------------------------------------------- MoE
@@ -886,11 +908,16 @@ class OellmAmbitiousLayer(nn.Module):
         else:  # engram normalises internally
             self.mixer = OellmEngramV2(config, layer_idx)
 
-    def _mix(self, xin, state, input_ids, token_mask, attention_mask, keep_state):
-        """The mixer on its (normalised, except Engram) input."""
+    def _needs_raw(self) -> bool:
+        """A sparse attention whose selector reads the hidden state takes the pre-norm input as well."""
+        sp = getattr(self.mixer, "sparse", None) if self.kind == "attention" else None
+        return sp is not None and sp.uses_hidden
+
+    def _mix(self, xin, state, input_ids, token_mask, attention_mask, keep_state, raw=None):
+        """The mixer on its (normalised, except Engram) input; ``raw`` the pre-norm input (sparse attention)."""
         new_state = None
         if self.kind in ("attention", "kvshare"):
-            out, new_state = self.mixer(xin, state, keep_state)
+            out, new_state = self.mixer(xin, state, keep_state, raw=raw)
         elif self.kind in ("ckda", "kronlstm"):
             # stateless (scoring, fast path): FLA's fused input projections, no final state
             stateless = not keep_state and state is None and _fast(xin)
@@ -909,19 +936,22 @@ class OellmAmbitiousLayer(nn.Module):
     def forward(self, streams, state=None, input_ids=None, token_mask=None, attention_mask=None, keep_state=True):
         if self.ldm:  # streams = (x, r, memory, covariance)
             x, r, memory, covariance = streams
-            out, new_state = self._mix(self._norm(x + r), state, input_ids, token_mask, attention_mask, keep_state)
+            out, new_state = self._mix(self._norm(x + r), state, input_ids, token_mask, attention_mask, keep_state,
+                                       raw=(x + r) if self._needs_raw() else None)
             x = x + out
             r, memory, covariance = ldm_step(
                 self.ldm_mixer.write_site, self.ldm_mixer.next_query, x, out, memory, covariance
             )
             return (x, r, memory, covariance), new_state
         norm = self.input_layernorm
-        if _fast(streams) and streams.shape[-2] == 4:
+        raw = None
+        if _fast(streams) and streams.shape[-2] == 4 and not self._needs_raw():
             xin, pending = self.mhc.read(streams, norm)  # the input norm fused into the read
         else:
             x, pending = self.mhc.read(streams)
             xin = self._norm(x)
-        out, new_state = self._mix(xin, state, input_ids, token_mask, attention_mask, keep_state)
+            raw = x if self._needs_raw() else None
+        out, new_state = self._mix(xin, state, input_ids, token_mask, attention_mask, keep_state, raw=raw)
         h_post, h_res = pending
         if self.res_gate is not None:
             # streams' = (1 - rho) streams + rho (h_res @ streams) + h_post^T out (docs/v4b_plan.md)

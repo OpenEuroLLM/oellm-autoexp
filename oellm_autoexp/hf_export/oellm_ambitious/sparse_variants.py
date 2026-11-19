@@ -1,0 +1,1 @@
+../../../submodules/Megatron-LM/megatron/core/transformer/experimental_attention_variant/sparse_variants.py
