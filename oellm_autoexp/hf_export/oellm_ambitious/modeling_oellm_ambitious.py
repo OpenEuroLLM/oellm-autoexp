@@ -62,7 +62,11 @@ from .configuration_oellm_ambitious import OellmAmbitiousConfig
 # imported here too: the HF dynamic loader copies only the direct relative imports of this file
 from .configuration_oellm_hybrid import OellmHybridConfig  # noqa: F401
 from .modeling_oellm_hybrid import OellmEngram, OellmFLALayer, OellmHybridCache, OellmRMSNorm
+# transformers' remote-code loader copies only the model file's DIRECT relative imports: sparse_attention.py's own
+# (Megatron's selection code) are imported here too, so they reach the module cache
+from .page_sparse import PageSparseConfig  # noqa: F401
 from .sparse_attention import OellmSparseAttention
+from .sparse_variants import NSA  # noqa: F401
 
 
 def _sparse(config, num_heads: int, num_kv: int, head_dim: int):

@@ -21,8 +21,11 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from . import page_sparse as ps
-from . import sparse_variants as sv
+# "from .<module> import ..." -- the form transformers' remote-code loader follows to copy a module next to the model
+# code ("from . import page_sparse" is not followed, so the export's copy would never reach its module cache)
+from .page_sparse import (PAGE_SELECTORS, PageIndexer, PageSparseConfig, dense_attention, flex_page_sparse_attention,
+                          page_pool, page_sparse_attention)
+from .sparse_variants import CSA2, LSA, NSA, CSA2Config, LSAConfig, NSAConfig
 
 # a call with at least this many queries uses the flex kernels on CUDA (prefill); shorter ones (decode) the exact
 # gathered reference, which needs no compilation for each new shape
@@ -42,7 +45,7 @@ class OellmSparseAttention(nn.Module):
     def __init__(self, sa: dict, hidden: int, num_heads: int, num_kv: int, head_dim: int):
         super().__init__()
         sel = sa["page_sparse_selector"]
-        self.cfg = ps.PageSparseConfig(
+        self.cfg = PageSparseConfig(
             selector=sel, page=_get(sa, "page_sparse_page", 64), topk=_get(sa, "page_sparse_topk", 32),
             window=_get(sa, "page_sparse_window", 512), sink_pages=_get(sa, "page_sparse_sink_pages", 1),
             compress=_get(sa, "page_sparse_compress", 4), hier_group=_get(sa, "page_sparse_hier_group", 0),
@@ -55,16 +58,16 @@ class OellmSparseAttention(nn.Module):
         self.indexer = self.variant = None
         cfg = self.cfg
         if sel == "indexer":
-            self.indexer = ps.PageIndexer(hidden, _get(sa, "page_sparse_indexer_heads", 4),
+            self.indexer = PageIndexer(hidden, _get(sa, "page_sparse_indexer_heads", 4),
                                           _get(sa, "page_sparse_indexer_dim", 64), cfg.page)
         elif sel == "nsa":
-            self.variant = sv.NSA(hidden, num_heads, head_dim, sv.NSAConfig(
+            self.variant = NSA(hidden, num_heads, head_dim, NSAConfig(
                 block=_get(sa, "page_sparse_nsa_block", 32), stride=_get(sa, "page_sparse_nsa_stride", 16),
                 page=cfg.page, topk=cfg.topk, sink_pages=cfg.sink_pages,
                 select_window=_get(sa, "page_sparse_nsa_select_window", 512), window=cfg.window,
                 select_block=cfg.select_block))
         elif sel == "csa2":
-            self.variant = sv.CSA2(hidden, num_kv, head_dim, sv.CSA2Config(
+            self.variant = CSA2(hidden, num_kv, head_dim, CSA2Config(
                 compress=cfg.compress, topk_entries=_get(sa, "page_sparse_csa2_topk_entries", 512),
                 window=cfg.window, page=cfg.page, sink_pages=cfg.sink_pages,
                 index_heads=_get(sa, "page_sparse_indexer_heads", 4),
@@ -72,13 +75,13 @@ class OellmSparseAttention(nn.Module):
                 entry_bias=_get(sa, "page_sparse_csa2_entry_bias", 0.0),
                 entry_rms=bool(_get(sa, "page_sparse_csa2_entry_rms", False))))
         elif sel == "lsa":
-            self.variant = sv.LSA(sv.LSAConfig(
+            self.variant = LSA(LSAConfig(
                 pool=_get(sa, "page_sparse_lsa_pool", 4), block=_get(sa, "page_sparse_lsa_block", 512),
                 buckets=_get(sa, "page_sparse_lsa_buckets", 32), topk=cfg.topk, window=cfg.window, page=cfg.page,
                 sink_pages=cfg.sink_pages, select_block=cfg.select_block,
                 latent=bool(_get(sa, "page_sparse_lsa_latent", False)),
                 visibility=_get(sa, "page_sparse_lsa_visibility", "window")), num_kv, head_dim)
-        elif sel not in ps.PAGE_SELECTORS and sel not in ("dense", "compress_mean"):
+        elif sel not in PAGE_SELECTORS and sel not in ("dense", "compress_mean"):
             raise ValueError(f"sparse_attention: selector {sel!r} is not supported")
         self.uses_hidden = self.indexer is not None or sel in ("nsa", "csa2")
 
@@ -95,7 +98,7 @@ class OellmSparseAttention(nn.Module):
         sel, cfg = self.cfg.selector, self.cfg
         flex = q.is_cuda and q.shape[2] >= FLEX_MIN_QUERIES
         if sel == "dense":
-            return ps.dense_attention(q, k, v, q_offset, self.scale)
+            return dense_attention(q, k, v, q_offset, self.scale)
         if self.variant is not None:
             self.variant.flex = flex
             if sel == "nsa":
@@ -105,11 +108,11 @@ class OellmSparseAttention(nn.Module):
             return self.variant(q, k, v, q_offset, self.scale)
         scores = None
         if self.indexer is not None:
-            kp = ps.page_pool(feat.unsqueeze(1), cfg.page, "mean")[:, 0]
+            kp = page_pool(feat.unsqueeze(1), cfg.page, "mean")[:, 0]
             scores = self.indexer(xq, kp).detach()
         if flex:
-            return ps.flex_page_sparse_attention(q, k, v, cfg, q_offset, self.scale, scores, self.q_block)
-        return ps.page_sparse_attention(q, k, v, cfg, q_offset, self.scale, scores)
+            return flex_page_sparse_attention(q, k, v, cfg, q_offset, self.scale, scores, self.q_block)
+        return page_sparse_attention(q, k, v, cfg, q_offset, self.scale, scores)
 
     def forward(self, q, k, v, x, past: int, state=None):
         b, s = q.shape[0], q.shape[2]
