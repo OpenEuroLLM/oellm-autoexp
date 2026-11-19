@@ -1,0 +1,27 @@
+# @package _global_
+# Training cost of one attention layer (forward + backward) per sparse variant at v4b's shapes on one H100, 64k-256k,
+# one document per step (scripts/korbi/campaign_midtraining/attn_train_bench.py): Megatron's PageSparseCoreAttention
+# flex paths against dense flash attention, with the peak memory. One MN5 node:
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t16_attn_train_bench_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t16_attn_train_bench
+  bench: >-
+    cd submodules/Megatron-LM && python ../../scripts/korbi/campaign_midtraining/attn_train_bench.py
+    --lengths 65536 131072 262144
+    --out /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t16_evals/attn_train_bench.json
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 1800
+  array_group: null
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
