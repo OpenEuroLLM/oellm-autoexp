@@ -1502,3 +1502,34 @@ def test_parked_successors_are_submitted_with_nice_and_promoted_at_the_block(env
     jid = new.runtime.runtime_job_id
     assert env.fake._nice.get(jid) == 0, f"host was not promoted (nice={env.fake._nice.get(jid)})"
     assert (env.layout.host_dir(new.definition.metadata["pool_host_id"]) / "promoted").exists()
+
+
+def test_a_parked_successor_is_unparked_when_the_run_has_no_host(env, monkeypatch):
+    """The host stops at its wall clock (or dies): the run has no host, so one
+    parked successor must get its priority back, otherwise the run waits behind
+    our own nice."""
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_nice=100000)
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=3)
+    env.layout.write_meta(meta)
+    env.poll(4)
+    parked = [
+        h
+        for h in env.hosts()
+        if h.definition.metadata["pool_host_id"]
+        not in {env.hosts()[0].definition.metadata["pool_host_id"]}
+    ]
+    assert len(parked) >= 2, "no parked successors were submitted"
+    # the run's host reaches its wall clock: the supervisor preempts the run and the host goes
+    run_host = env.hosts()[0]
+    hid = run_host.definition.metadata["pool_host_id"]
+    (env.layout.host_dir(hid) / "exited").write_text("host exit: signal USR1\n")
+    (env.layout.run_dir(env.rec("train").runtime.runtime_job_id) / "rc").write_text("0 preempted\n")
+    env.poll()
+    promoted = [h for h in parked if env.fake._nice.get(h.runtime.runtime_job_id) == 0]
+    assert len(promoted) == 1, f"expected exactly one unparked successor, got {len(promoted)}"
+    # a second poll promotes nobody else while that candidate is still queued
+    env.poll()
+    promoted = [h for h in parked if env.fake._nice.get(h.runtime.runtime_job_id) == 0]
+    assert len(promoted) == 1, "a second successor was unparked while one was already waiting"

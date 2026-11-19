@@ -2423,6 +2423,26 @@ class PoolManager:
             cfg.successor_nice,
         )
 
+    def _promote_for_capacity(
+        self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView]
+    ) -> None:
+        """The run has no host: give ONE parked successor its priority back.
+
+        Parked hosts sit behind other work, so after a wall-clock stop (or a lost host) the
+        run would otherwise wait behind its own nice value. One candidate is enough: if it
+        starts, the others stay parked and keep their age; if it does not, the next poll
+        promotes another.
+        """
+        if cfg.successor_nice <= 0 or not queued:
+            return
+        if any((layout.host_dir(h.hid) / "promoted").exists() for h in queued):
+            return  # a candidate is already unparked
+        parked = [h for h in queued if h.record.runtime.runtime_job_id]
+        if not parked:
+            return
+        oldest = min(parked, key=lambda h: float(h.record.runtime.start_ts or 0.0))
+        self._promote_host(layout, cfg, oldest)
+
     def _admission_manage_queued(
         self,
         loop: MonitorLoop,
@@ -2439,6 +2459,7 @@ class PoolManager:
             hdir = layout.host_dir(host.hid)
             if (
                 cfg.successor_nice > 0
+                and cfg.handover
                 and not (hdir / "promoted").exists()
                 and now >= block_end - cfg.successor_promote_lead_s
             ):
@@ -2507,8 +2528,10 @@ class PoolManager:
             # a handover: the run is leaving a retiring host for the newest live one
             run_hosts = [max(running, key=lambda h: h.start_ts)]
         if not run_hosts:
-            # nothing trains: nothing to protect
+            # nothing trains (the host hit its wall clock, died, or the run waits in the
+            # queue): unpark ONE successor so it can actually start, and leave the rest parked
             adm["not_before"] = None
+            self._promote_for_capacity(layout, cfg, queued)
             return True
         block_end = max(h.start_ts for h in run_hosts) + cfg.handover_min_age_s
         adm["not_before"] = block_end
