@@ -9,7 +9,7 @@
 #         4k-64k, exact match (retrieval_gen.py)
 # One MN5 node:
 #
-#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr> [step]
+#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr>[_tok] [step]
 set -euo pipefail
 arm=$1; task=$2; step=${3:-3000}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
@@ -17,6 +17,12 @@ D=/gpfs/projects/ehpc533/users/korbip/data
 DS=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream
 model=$R/hf_exports/t16_s3_${arm}_${step}
 out=$R/campaign_midtraining/t16_evals/$task/$arm
+# <task>_tok: the same task with per-token selection for the prompt's last 128 queries and in decode
+# (OELLM_SPARSE_SELECT=token, oellm_ambitious/sparse_attention.py); the default is the training's block-wise selection
+if [[ $task == *_tok ]]; then
+  export OELLM_SPARSE_SELECT=token OELLM_SPARSE_TAIL=128
+  task=${task%_tok}
+fi
 [ -f "$model/.check_done" ] || { echo "export $model not checked yet" >&2; exit 1; }
 mkdir -p "$out"
 echo "[t16_long_evals] $arm $task: $model -> $out"

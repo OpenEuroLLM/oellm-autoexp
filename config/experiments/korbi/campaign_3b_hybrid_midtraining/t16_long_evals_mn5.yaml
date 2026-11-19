@@ -51,3 +51,5 @@ sweep:
         - aux.task: mdqa
         - aux.task: mdqa3
         - aux.task: retr
+        - aux.task: retr_tok
+        - aux.task: mdqa3_tok
