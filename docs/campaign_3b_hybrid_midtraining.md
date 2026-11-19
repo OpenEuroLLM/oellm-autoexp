@@ -1656,6 +1656,42 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     All within 3e-4 (bf16). On documents that are long throughout the gaps are 3-5x t16's mix validation gaps, same
     order. Long-context evals (per-position NLL, multi-document QA far / mid / near at 8k-64k) run on these exports.
 
+  - **Long-context evals of the t16 arms with their sparse attention active (2026-11-19; HF exports at step 3000,
+    one node per arm and task).** "block" = the training's selection (64 queries share their block's first query's
+    selection); "token" = the prompt's last 128 queries and every decode token select for themselves
+    (OELLM_SPARSE_SELECT=token, inference only: selection carries no gradient).
+    - *Per-position NLL*, 8 held-out documents at 64k (block): gap to dense grows with position, ~0.01 at 0-4k,
+      +0.12 (page_maxpool_pg) / +0.14 (page_mean_pg) / +0.16 (lsa) / +0.19 (nsa) / +0.22 (csa2) at 32-64k.
+    - *Synthetic retrieval* (retrieval_gen.py, exact match, 30 per cell; variable tracking ~0 even dense, dropped):
+
+      | task | dense | page_mean_pg tok | page_maxpool_pg blk / tok | lsa blk / tok | nsa blk / tok | csa2 blk / tok |
+      |---|---:|---:|---:|---:|---:|---:|
+      | passkey 8k-64k | 1.00 | 1.00 | 0.00-0.10 / 1.00 | 0.00-0.47 / 1.00 | 0.40-1.00 / 0.93-1.00 | 0.00 / 0.93-0.97 |
+      | multi-key 8k-64k | 0.80-0.93 | 0.47-0.63 | 0.07-0.17 / 0.60-0.80 | 0.10-0.17 / 0.57-0.80 | 0.10-0.33 / 0.13-0.33 | 0.00-0.17 / 0.20-0.43 |
+
+    - *Multi-document QA* (multidoc_qa.py: SQuAD passage far / mid / near among other passages, 3 worked examples,
+      60 per cell, F1; mean over 8k / 32k / 64k x 3 depths; "only" = the gold passage alone):
+
+      | arm | block | token | 64k far / mid / near (token) | only |
+      |---|---:|---:|---|---:|
+      | dense | 0.333 | -- | 0.33 / 0.22 / 0.30 | 0.36-0.44 |
+      | page_mean_pg | 0.126 | 0.308 | 0.22 / 0.15 / 0.31 | 0.42-0.43 |
+      | page_maxpool_pg | 0.115 | 0.300 | 0.18 / 0.15 / 0.33 | 0.38-0.49 |
+      | lsa_fix | 0.109 | 0.289 | 0.16 / 0.14 / 0.30 | 0.44-0.48 |
+      | csa2_fix | 0.110 | 0.215 | 0.16 / 0.14 / 0.19 | 0.31-0.40 |
+      | nsa_adam | 0.107 | 0.122 | 0.07 / 0.03 / 0.07 | 0.39-0.50 |
+
+    - Block-wise selection in generation lets the question / answer tokens read the pages their block's first query
+      chose (often filler): it cost most of the retrieval and QA. With per-token selection the page selectors and LSA
+      are within noise of dense on QA at 8k-32k and find every passkey; multi-key retrieval favours page_maxpool /
+      LSA (content-sharper scores) over page_mean. NSA barely uses its selection in QA; CSA2 recovers partly.
+    - Remaining gap: far / mid passages at 64k (page_mean 0.22 / 0.15 vs dense 0.33 / 0.22), multi-key retrieval
+      (-0.2 to -0.4), and the long-document NLL beyond 32k. Not measured yet: > 64k, aggregation / summarization /
+      multi-hop tasks, 1M decode cost (KV memory, indexer time), longer adaptation, a non-hybrid control.
+    - Working recommendation: page_mean_pg (fastest, lowest loss of the fast ones, QA 0.308 vs dense 0.333) trained
+      block-wise, served with per-token selection at the prompt's end and in decode; open before the switch:
+      quality at 128k-256k and the 1M single-GPU decode cost vs a compressing method (CSA2).
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
