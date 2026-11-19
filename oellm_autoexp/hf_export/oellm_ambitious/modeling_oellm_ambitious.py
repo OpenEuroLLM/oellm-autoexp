@@ -1301,7 +1301,10 @@ class OellmAmbitiousForCausalLM(OellmAmbitiousPreTrainedModel, GenerationMixin):
         return dmap
 
     def forward(self, input_ids=None, attention_mask=None, past_key_values=None, labels=None,
-                use_cache=None, output_hidden_states=None, **kwargs) -> CausalLMOutputWithPast:
+                use_cache=None, output_hidden_states=None, logits_to_keep: int = 0,
+                **kwargs) -> CausalLMOutputWithPast:
+        """``logits_to_keep`` > 0: logits of the last that many positions only (generate passes 1: a 64k prompt's full
+        logits are [65536, vocab 262144] -- 32 GiB in bf16)."""
         # eval-mode calls without labels need no autograd graph (lighteval scores with grad enabled);
         # OELLM_HF_GRAD=1 keeps it
         no_grad = not self.training and labels is None and os.environ.get("OELLM_HF_GRAD", "0") != "1"
@@ -1309,6 +1312,8 @@ class OellmAmbitiousForCausalLM(OellmAmbitiousPreTrainedModel, GenerationMixin):
             in_dev = input_ids.device if input_ids is not None else None
 
             def head(h):
+                if logits_to_keep and labels is None:
+                    h = h[:, -logits_to_keep:]
                 dev = self.model._device_of(self.lm_head)
                 return self.lm_head(h if dev is None else h.to(dev))
 
@@ -1331,5 +1336,8 @@ class OellmAmbitiousForCausalLM(OellmAmbitiousPreTrainedModel, GenerationMixin):
             past_key_values = None
         if past_key_values is not None and past_key_values.seen_tokens > 0:
             input_ids = input_ids[:, past_key_values.seen_tokens :]
-        return {"input_ids": input_ids, "past_key_values": past_key_values, "attention_mask": attention_mask,
-                "use_cache": kwargs.get("use_cache", True)}
+        out = {"input_ids": input_ids, "past_key_values": past_key_values, "attention_mask": attention_mask,
+               "use_cache": kwargs.get("use_cache", True)}
+        if kwargs.get("logits_to_keep") is not None:
+            out["logits_to_keep"] = kwargs["logits_to_keep"]
+        return out

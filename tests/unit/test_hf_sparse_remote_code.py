@@ -59,3 +59,19 @@ def test_export_with_sparse_attention_loads_as_remote_code(tmp_path, monkeypatch
         for _ in range(12):
             seq = torch.cat([seq, model(seq).logits[:, -1:].argmax(-1)], 1)
     assert torch.equal(gen, seq)
+
+
+def test_logits_to_keep_returns_the_last_positions():
+    """generate() passes logits_to_keep=1: a 64k prompt's full logits ([65536, 262144], 32 GiB in bf16) ran a dense
+    arm out of memory in multidoc_qa. The kept logits equal the full ones' last positions; labels still see all."""
+    torch.manual_seed(0)
+    cfg = OellmAmbitiousConfig(
+        vocab_size=97, hidden_size=32, num_hidden_layers=2, num_attention_heads=4, head_dim=8,
+        num_key_value_heads=2, block_types=["attention", "attention"], residual="mhc", mhc_expansion_rate=4,
+        rms_norm_eps=1e-5, qk_layernorm=True)
+    model = OellmAmbitiousForCausalLM(cfg).eval()
+    ids = torch.randint(0, 97, (2, 19), generator=torch.Generator().manual_seed(2))
+    full = model(ids).logits
+    torch.testing.assert_close(model(ids, logits_to_keep=1).logits, full[:, -1:], atol=1e-5, rtol=1e-5)  # a GEMM over fewer rows rounds differently
+    torch.testing.assert_close(model(ids, logits_to_keep=3).logits, full[:, -3:], atol=1e-5, rtol=1e-5)
+    assert model(ids, labels=ids, logits_to_keep=1).logits.shape[1] == 19
