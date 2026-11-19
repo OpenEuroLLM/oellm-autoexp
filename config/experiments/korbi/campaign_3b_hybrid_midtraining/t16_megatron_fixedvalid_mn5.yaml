@@ -19,7 +19,7 @@ backend:
     load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t16_s3_sparse_fixed/${aux.arm}/ckpt
     ckpt_step: 3000
     train_iters: 3000
-    exit_interval: 3000
+    exit_interval: null  # a resume at a multiple of exit_interval exits before the final evaluation
     diag_consumed_train_samples: null
     no_load_optim: true  # an evaluation: weights only
     no_load_rng: true
