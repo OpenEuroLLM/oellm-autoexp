@@ -1,0 +1,54 @@
+# @package _global_
+# t18 evals of the t16 step-3000 exports as one 4-node pool run (eval_pack_mn5.sh: one worker per GPU, items taken in
+# turn, done markers -- a rerun finishes the rest; >= 4 nodes so it never takes host008's 3 spare nodes):
+#   training-free  -- dense weights with page_maxpool_pg / page_mean_pg / lsa_fix selection (t18_trainfree_exports_mn5.sh,
+#                     run on the login node first): NLL / QA / retrieval at <= 64k and 128k-256k
+#   beyond 256k    -- NLL at 512k / 1M, passkey / multi-key / variable tracking at 512k / 1M, variable tracking at
+#                     128k / 256k (dense; page_maxpool_pg, lsa_fix, page_mean_pg with per-token selection)
+#   e2e            -- whole-model prefill / decode cost at 128k-1M (long_e2e_bench.py), dense vs sparse
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_eval_pack_mn5 \
+#       slurm.sbatch.account=cns144 slurm.sbatch.qos=acc_xehpc --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t18_eval_pack
+  queue: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t18_eval_queue/${aux.name}
+  items: >-
+    dense:retr_1m page_maxpool_pg:retr_1m_tok lsa_fix:retr_1m_tok page_mean_pg:retr_1m_tok
+    dense_as_page_maxpool_pg:retr_1m_tok
+    dense:retr_512k page_maxpool_pg:retr_512k_tok lsa_fix:retr_512k_tok
+    dense:e2e page_maxpool_pg:e2e_tok lsa_fix:e2e_tok
+    dense:nll_1m page_maxpool_pg:nll_1m lsa_fix:nll_1m
+    dense:nll_512k page_maxpool_pg:nll_512k lsa_fix:nll_512k page_mean_pg:nll_512k
+    dense:retr_vt_long page_maxpool_pg:retr_vt_long_tok lsa_fix:retr_vt_long_tok page_mean_pg:retr_vt_long_tok
+    dense_as_page_maxpool_pg:retr_long60_tok dense_as_page_mean_pg:retr_long60_tok dense_as_lsa_fix:retr_long60_tok
+    dense_as_page_maxpool_pg:mdqa3_tok dense_as_page_mean_pg:mdqa3_tok dense_as_lsa_fix:mdqa3_tok
+    dense_as_page_maxpool_pg:nll_long dense_as_page_mean_pg:nll_long dense_as_lsa_fix:nll_long
+    dense_as_page_maxpool_pg:retr_tok dense_as_page_mean_pg:retr_tok dense_as_lsa_fix:retr_tok
+    dense_as_page_maxpool_pg:nll dense_as_page_mean_pg:nll dense_as_lsa_fix:nll
+  bench: "bash scripts/korbi/campaign_midtraining/eval_pack_mn5.sh ${aux.queue} ${aux.items}"
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 21600
+  array_group: null
+  metadata:
+    pool_priority: 45  # below every main-run job (v4b: 150), above the t18 training arms
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "pool run limit -- the rerun takes the remaining items"}
+    - name: timeout_completing
+      transition: ["COMPLETING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "pool run limit -- the rerun takes the remaining items"}
+
+slurm:
+  sbatch:
+    nodes: 4
+    time: "08:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}

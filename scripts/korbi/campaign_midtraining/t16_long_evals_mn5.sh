@@ -7,16 +7,21 @@
 #         60 questions per cell
 #   retr  synthetic retrieval, generative (RULER-style, offline): passkey, multi-key NIAH, variable tracking at
 #         4k-64k, exact match (retrieval_gen.py)
-# One MN5 node:
+#   beyond 256k (t18, 2026-11-19): nll_512k / nll_1m (the 10 / 3 held-out documents that long), retr_vt_long
+#         (variable tracking at 128k / 256k), retr_512k / retr_1m (passkey, multi-key, variable tracking), e2e (prefill
+#         and decode cost of the whole model at 128k-1M, long_e2e_bench.py)
+# One MN5 node (or one GPU: the evals load the model on the visible devices):
 #
-#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr|nll_long|mdqa3_128k|mdqa3_256k|retr_long>[_tok][_k<N>] [step]
+#   t16_long_evals_mn5.sh <arm> <nll|mdqa|mdqa3|retr|nll_long|mdqa3_128k|mdqa3_256k|retr_long|...>[_tok][_k<N>] [step]
+#
+# EVAL_EXPORT_PREFIX (default t16_s3) / EVAL_OUT (default t16_evals): another suite's exports and result tree.
 set -euo pipefail
 arm=$1; task=$2; step=${3:-3000}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
 D=/gpfs/projects/ehpc533/users/korbip/data
 DS=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream
-model=$R/hf_exports/t16_s3_${arm}_${step}
-out=$R/campaign_midtraining/t16_evals/$task/$arm
+model=$R/hf_exports/${EVAL_EXPORT_PREFIX:-t16_s3}_${arm}_${step}
+out=$R/campaign_midtraining/${EVAL_OUT:-t16_evals}/$task/$arm
 # <task>_tok: the same task with per-token selection for the prompt's last 128 queries and in decode
 # (OELLM_SPARSE_SELECT=token, oellm_ambitious/sparse_attention.py); the default is the training's block-wise selection
 # <task>_k<N>: N selected pages at inference (OELLM_SPARSE_TOPK) instead of the trained 32
@@ -50,6 +55,17 @@ case $task in
           --out "$out" --lengths 131072 262144 --n 21 --tasks passkey kv ;;
   retr_long60) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
           --out "$out" --lengths 131072 262144 --n 60 --tasks passkey kv ;;
+  nll_512k|nll_1m) L=$([ $task = nll_512k ] && echo 524288 || echo 1048576)
+        N=$([ $task = nll_512k ] && echo 8 || echo 3)
+        python scripts/korbi/campaign_midtraining/nll_by_position.py --model "$model" \
+          --docs "$D/v8ml-valid/long_64k_text_document" --out "$out/nll.json" --lengths $L --docs-n $N ;;
+  retr_vt_long) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths 131072 262144 --n 30 --tasks vt ;;
+  retr_512k|retr_1m) L=$([ $task = retr_512k ] && echo 524288 || echo 1048576)
+        python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths $L --n 30 --tasks passkey kv vt ;;
+  e2e) python scripts/korbi/campaign_midtraining/long_e2e_bench.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out/e2e.json" --lengths 131072 262144 524288 1048576 ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"
