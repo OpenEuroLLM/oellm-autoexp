@@ -35,8 +35,8 @@ def main() -> None:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(a.model)
-    model = AutoModelForCausalLM.from_pretrained(a.model, trust_remote_code=True, dtype=torch.bfloat16,
-                                                 device_map="cuda:0").eval()
+    # no device_map: that needs accelerate, which the training container lacks
+    model = AutoModelForCausalLM.from_pretrained(a.model, trust_remote_code=True, dtype=torch.bfloat16).cuda().eval()
     dev = torch.device("cuda:0")
     filler = pt._filler(tok, a.raw)
     rows = []
