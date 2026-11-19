@@ -29,6 +29,8 @@ job:
 slurm:
   sbatch:
     time: "08:00:00"
+    # the fleet's bad-node list (kernel_tests_mn5 jobs carry none; 2026-11-19 parity jobs died on as02r1b15)
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
 
 sweep:
   type: product

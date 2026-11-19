@@ -21,6 +21,8 @@ backend:
     train_iters: 3000
     exit_interval: 3000
     diag_consumed_train_samples: null
+    no_load_optim: true  # an evaluation: weights only
+    no_load_rng: true
     save: null
     save_interval: null
     eval_interval: 1
@@ -74,8 +76,10 @@ sweep:
           backend.megatron.page_sparse_indexer_dim: 128
           backend.megatron.page_sparse_csa2_entry_bias: 1.3862944
           backend.megatron.page_sparse_csa2_entry_rms: true
+          backend.megatron.page_sparse_selector_adam: true  # as trained (the selector's parameter groups)
         - aux.arm: nsa_adam
           backend.megatron.page_sparse_selector: nsa
           backend.megatron.page_sparse_nsa_block: 32
           backend.megatron.page_sparse_nsa_stride: 16
           backend.megatron.page_sparse_nsa_select_window: 512
+          backend.megatron.page_sparse_selector_adam: true
