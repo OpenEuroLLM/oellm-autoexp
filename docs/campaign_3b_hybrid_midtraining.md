@@ -1713,6 +1713,28 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       32 x 128 heads) costs more than page_mean's whole step. Page selection + host KV gives ~100x less GPU memory at
       4x dense's speed (unoptimized: synchronous host gather) -- the §3.2 plan holds.
 
+  - **Beyond the training length: 128k / 256k (2026-11-19; s3 testbed trained at 64k; sparse arms with per-token
+    selection; chunked prefill + cached decode, long_generate.py).**
+    - *NLL by position* (8 documents >= 128k resp. >= 256k): dense keeps improving with position up to 256k
+      (32-64k 1.762 -> 128-256k 1.674); the sparse arms follow with a nearly constant offset -- at 128-256k
+      page_maxpool_pg +0.083, page_mean_pg +0.103, lsa +0.155, nsa +0.187, csa2 +0.210 (at 64-128k on the 128k set:
+      +0.11 / +0.12 / ...). No blow-up past the training length.
+    - *Multi-document QA* (F1, 30 per cell, +-0.07): 128k dense 0.202 / page_maxpool 0.198 / page_mean 0.193 /
+      lsa 0.190 / csa2 0.148 / nsa 0.091; 256k dense 0.184 / page_maxpool 0.199 / page_mean 0.190 / lsa 0.176 /
+      csa2 0.146 / nsa 0.068. Far-back passages: 128k dense 0.18, page_maxpool 0.10, page_mean 0.06, lsa 0.12;
+      256k dense 0.18, page_maxpool 0.23, page_mean 0.13, lsa 0.14.
+    - *Retrieval* (21 per cell, +-0.1): multi-key 128k / 256k: dense 0.76 / 0.67, page_maxpool 0.24 / 0.67,
+      page_mean 0.29 / 0.19, lsa 0.43 / 0.52, csa2 0.24 / 0.19, nsa 0.10 / 0.10; passkey 128k / 256k: dense,
+      page_maxpool, lsa 1.00 / 1.00; page_mean 0.71 / 0.86; csa2 0.81 / 0.90; nsa 1.00 / 0.57.
+    - *Budget at inference* (OELLM_SPARSE_TOPK, no retraining): page_mean with 64 / 128 pages does not recover
+      (multi-key 0.33-0.38 / 0.29-0.33, passkey 0.71-0.90, QA far 0.07): mean-pooled page keys dilute a single fact,
+      so its page is not in the top 128 either. LSA with 128 buckets: multi-key 0.62 / 0.57 (dense 0.76 / 0.67),
+      passkey 1.00. QA does not improve with the budget in any arm.
+    - Revised reading: page_mean_pg suffices up to 64k, but at long context its scoring (the page mean) is the
+      bottleneck for targeted retrieval; page_maxpool_pg (max over half-page windows) and LSA (content buckets) keep a
+      perfect passkey and dense-level QA at 256k. Candidates for the 1M switch: page_maxpool_pg / LSA. Open: retrieval
+      with more samples (60 per cell), page_maxpool's decode cost, its training speed at long context.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
