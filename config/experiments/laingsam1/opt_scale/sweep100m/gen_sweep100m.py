@@ -9,7 +9,7 @@ root = sys.argv[1]  # .../config/experiments/laingsam1/opt_scale
 src = open(f"{root}/hyb100m/11_wsd_ladder.yaml").read()
 body0 = src[src.index("defaults:"):src.index("\nsweep:") + 1]
 
-GBS = [64, 128, 256, 512]
+GBS = [128, 256, 512]
 OPTS = {
     "adam": dict(lrs=["2.5e-4", "5.e-4", "1.e-3", "2.e-3", "4.e-3"], hp="beta", vals=["0.9", "0.95", "0.975"]),
     "muon": dict(lrs=["2.5e-4", "5.e-4", "1.e-3", "2.e-3", "4.e-3"], hp="mom", vals=["0.9", "0.95", "0.975"]),
@@ -180,6 +180,10 @@ STAGES = '''    # stage: stable + 3 cooldown branches (1x / 2x / 4x Chinchilla),
           defaults:
             backend.megatron.save_extra_steps: []
             backend.megatron.non_persistent_save_interval: null   # a cooldown restarts from its branch point
+            # No rolling checkpoints here. With "global", Megatron ignores ckpt_step whenever the
+            # stable run already has a newer rolling checkpoint and loads that one instead, so a
+            # cooldown that waits in the queue branches too late (21 phase 2 cooldowns, 2026-11-19).
+            backend.megatron.non_persistent_ckpt_type: null
             backend.megatron.load: "\\\\${sibling.stable.job.base_output_dir}/ckpt"
             backend.megatron.ckpt_step: "\\\\${backend.aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true
@@ -218,7 +222,7 @@ def header(opt, o):
         f"# = {n} settings x 4 jobs (stable, cooldown1x, cooldown2x, cooldown4x) = {n * 4} jobs, ~{cost} GPU-h per",
         f"#   setting -> ~{n * cost:,} GPU-h for the whole file (~{per_gbs // 4 * cost:,} per batch size).",
         "#",
-        "# Job index = ((gbs_i x %d + lr_i) x %d + %s_i) x 4 + stage_i  (gbs_i: 0=64 1=128 2=256 3=512;" % (nl, nv, o["hp"]),
+        "# Job index = ((gbs_i x %d + lr_i) x %d + %s_i) x 4 + stage_i  (gbs_i: %s;" % (nl, nv, o["hp"], " ".join(f"{i}={g}" for i, g in enumerate(GBS))),
         "#   stage_i: 0 stable, 1 cooldown1x, 2 cooldown2x, 3 cooldown4x). One batch size = %d consecutive jobs:" % per_gbs,
         "#   " + "   ".join(f"gbs {g}: {i * per_gbs}-{(i + 1) * per_gbs - 1}" for i, g in enumerate(GBS)),
         "#",
@@ -293,6 +297,306 @@ def phase1_sweep():
 for opt in OPTS:
     b = opt_specific(common_body(opt), opt)
     open(f"{root}/sweep100m/phase1_{opt}.yaml", "w").write(phase1_header(opt) + b + phase1_sweep())
+
+# --- phase 2: beta / momentum around the best learning rates of phase 1, one WSD ladder per setting ---
+# Momentum 0.95 is phase 1, so only the new values are run here. Two learning rates per optimizer:
+# the best of phase 1 at the 4x budget and its neighbour that is best at 1x (AdamW 1e-3 / 2e-3,
+# Muon and muown_classical 2e-3 / 4e-3).
+# The training jobs are configured exactly as in phase 1 (same reader, same evaluations), so
+# the new values compare directly with the 0.95 runs. The only addition: every cooldown is
+# followed by a scoring job on the fixed validation set of ../rescore.
+P2_COST = 50                  # GPU-h per ladder: 48 measured in phase 1 + 3 scoring jobs
+P2_UNTIED = ("0.9", "0.95")   # AdamW reference with the usual untied betas
+P2 = {
+    "adam": dict(gbs=[128, 256, 512], lrs=["1.e-3", "2.e-3"], vals=["0.9", "0.975"]),
+    "adam_untied": dict(gbs=[256], lrs=["1.e-3", "2.e-3"], vals=[]),
+    "muon": dict(gbs=[128, 256, 512], lrs=["2.e-3", "4.e-3"], vals=["0.9", "0.975"]),
+    "muown_classical": dict(gbs=[128, 256, 512], lrs=["2.e-3", "4.e-3"], vals=["0.9", "0.975"]),
+}
+P2_NVALID = 25600             # sequences of the fixed validation set (as ../rescore)
+P2_STAGES = ["stable", "cooldown1x", "cooldown2x", "cooldown4x", "score1x", "score2x", "score4x"]
+
+
+def phase2_stages(score_name):
+    """STAGES of phase 1 + one scoring job per cooldown."""
+    s = STAGES.replace("# stage: stable + 3 cooldown branches (1x / 2x / 4x Chinchilla), as in hyb100m/11",
+                       "# stage: stable + 3 cooldown branches (1x / 2x / 4x Chinchilla) + 3 scoring jobs")
+    s += f'''        # Scoring only (no training): the final checkpoint of each cooldown on the fixed validation
+        # set, the first {P2_NVALID:,} held-out sequences in fixed order (same set as ../rescore, so
+        # phase 1 and phase 2 losses are comparable). Starts when the cooldown's checkpoint exists.
+        - type: list
+          defaults:
+            backend.megatron.skip_train: true
+            backend.megatron.dataloader_type: single   # fixed order: the same sequences for every checkpoint
+            backend.megatron.eval_iters: "\\\\${{oc.eval:'{P2_NVALID} // \\\\${{backend.aux.gbs}}'}}"
+            backend.megatron.save_extra_steps: []
+            backend.megatron.non_persistent_save_interval: null
+            backend.megatron.non_persistent_ckpt_type: null   # load exactly ckpt_step
+            backend.megatron.override_opt_param_scheduler: true
+            backend.megatron.ckpt_step: "\\\\${{backend.megatron.train_iters}}"
+            slurm.sbatch.time: "01:00:00"
+            job.name: "{score_name}"
+            job.base_output_dir: "\\\\${{backend.aux.base}}/experiments/opt_scale/hyb100m_rescore/\\\\${{job.name}}"
+          configs:
+'''
+    for x, br, end in (("1x", 1542, 1928), ("2x", 3084, 3855), ("4x", 6168, 7710)):
+        s += f'''            - stage: score{x}
+              backend.aux.branch256: {br}
+              backend.aux.end256: {end}
+              backend.megatron.load: "\\\\${{sibling.cooldown{x}.job.base_output_dir}}/ckpt"
+              job.start_condition:
+                class_name: FileExistsCondition
+                path: "\\\\${{sibling.cooldown{x}.job.base_output_dir}}/ckpt/iter_\\\\${{oc.eval:'str(\\\\${{backend.megatron.train_iters}}).zfill(7)'}}/.metadata"
+'''
+    return s
+
+
+def phase2_header(key, o, what, question):
+    opt = "adam" if key.startswith("adam") else key
+    nl, nv, ns = len(o["lrs"]), max(len(o["vals"]), 1), len(P2_STAGES)
+    n = len(o["gbs"]) * nl * nv
+    per = nl * nv * ns
+    hp = "beta1 = beta2" if opt == "adam" else "momentum"
+    index = (f"# Job index = ((batch_i x {nl} + lr_i) x {nv} + {'beta' if opt == 'adam' else 'mom'}_i) x {ns} + stage_i"
+             if o["vals"] else f"# Job index = lr_i x {ns} + stage_i")
+    return "\n".join([
+        "# @package _global_",
+        "#",
+        f"# sweep100m phase 2 / {key}: {what}, one WSD ladder per setting.",
+        f"# Question: {question}",
+        "#",
+        f"#   batch size : {', '.join(map(str, o['gbs']))} sequences of 4096 tokens (same tokens at every batch size)",
+        f"#   lr         : {', '.join(o['lrs'])}",
+        (f"#   {hp:11s}: {', '.join(o['vals'])}   (0.95 was run in phase 1)" if o["vals"] else
+         f"#   betas      : beta1 = {P2_UNTIED[0]}, beta2 = {P2_UNTIED[1]} (fixed)"),
+        "#   weight decay, data reader and everything else as phase 1",
+        f"# = {n} settings x {ns} jobs (stable, 3 cooldowns, 3 scoring jobs) = {n * ns} jobs, ~{P2_COST} GPU-h per",
+        f"#   setting -> ~{n * P2_COST:,} GPU-h for the whole file.",
+        "#",
+        index,
+        "#   stage_i: " + ", ".join(f"{i} {s}" for i, s in enumerate(P2_STAGES)),
+        "#   " + "   ".join(f"batch {b}: {g * per}-{(g + 1) * per - 1}" for g, b in enumerate(o["gbs"])),
+        "#",
+        "# The result of a ladder is the three scoring jobs (fixed validation set); collect them with",
+        "#   python3 config/experiments/laingsam1/opt_scale/rescore/collect_rescore.py --logs $OPT_SCALE_BASE/logs",
+        "# Submit inside tmux (the monitor must keep running to start the cooldowns and scoring jobs):",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/phase2_{key} --dry-run",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/phase2_{key}",
+        "# Generated by gen_sweep100m.py from hyb100m/11.",
+        "",
+        "",
+    ])
+
+
+def phase2_sweep(key, o, score_name):
+    opt = "adam" if key.startswith("adam") else key
+    hk = "beta" if opt == "adam" else "mom"
+    s = "sweep:\n  type: product\n  groups:\n"
+    s += "    # batch size\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.gbs: {g}}}\n" for g in o["gbs"])
+    s += "    # learning rate\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.lr: {lr}}}\n" for lr in o["lrs"])
+    if o["vals"]:
+        s += f"    # {'beta1 = beta2' if opt == 'adam' else 'momentum'}\n    - type: list\n      configs:\n"
+        s += "".join(f"        - {{backend.aux.{hk}: {v}}}\n" for v in o["vals"])
+    return s + phase2_stages(score_name)
+
+
+def phase2_body(key):
+    opt = "adam" if key.startswith("adam") else key
+    b = opt_specific(common_body(opt), opt)
+    rep = {
+        'WANDB_TAGS: "jupiter,sweep,': 'WANDB_TAGS: "jupiter,sweep,phase2,',
+    }
+    if key == "adam_untied":
+        b1, b2 = P2_UNTIED
+        rep.update({
+            "    adam_beta1: ${backend.aux.beta}   # beta1 = beta2 (swept)\n    adam_beta2: ${backend.aux.beta}\n":
+            f"    adam_beta1: {b1}   # untied reference\n    adam_beta2: {b2}\n",
+            "_lr${backend.megatron.lr}_beta${backend.aux.beta}_bs${backend.aux.gbs}_${stage}\"":
+            f"_lr${{backend.megatron.lr}}_b1-{b1}_b2-{b2}_bs${{backend.aux.gbs}}_${{stage}}\"",
+            "lr=${backend.megatron.lr},beta=${backend.aux.beta},wd=": f"lr=${{backend.megatron.lr}},beta1={b1},beta2={b2},wd=",
+            "  # e.g. hyb100m_sweep_adam_lr0.001_beta0.95_bs256_cooldown2x  (= wandb run name = output dir name)\n"
+            "  # model _ \"sweep\" _ optimizer _ learning rate _ beta _ batch size _ stage\n":
+            f"  # e.g. hyb100m_sweep_adam_lr0.001_b1-{b1}_b2-{b2}_bs256_cooldown2x  (= wandb run name = output dir name)\n"
+            "  # model _ \"sweep\" _ optimizer _ learning rate _ beta1 _ beta2 _ batch size _ stage\n",
+            "    beta: 0.95         # AdamW: beta1 = beta2\n": "    beta: 0.95         # not used in this file (betas are fixed below)\n",
+        })
+    for a, c in rep.items():
+        assert b.count(a) == 1, (key, a[:60])
+        b = b.replace(a, c)
+    return b
+
+
+P2_TEXT = {
+    "adam": ("beta1 = beta2 x learning rate x batch size", "does the best loss, and the learning rate that gives it, change with the betas?"),
+    "adam_untied": (f"AdamW with beta1 = {P2_UNTIED[0]}, beta2 = {P2_UNTIED[1]} (reference) at batch 256",
+                    "how far is the usual untied AdamW setting from the tied betas of this sweep?"),
+    "muon": ("momentum x learning rate x batch size", "does the best loss, and the learning rate that gives it, change with momentum?"),
+    "muown_classical": ("momentum x learning rate x batch size (held back until the Muon result is in)",
+                        "does the best loss, and the learning rate that gives it, change with momentum?"),
+}
+for key, o in P2.items():
+    opt = "adam" if key.startswith("adam") else key
+    hk = "beta" if opt == "adam" else "mom"
+    mid = f"b1-{P2_UNTIED[0]}_b2-{P2_UNTIED[1]}" if key == "adam_untied" else f"{hk}\\\\${{backend.aux.{hk}}}"
+    score_name = f"hyb100m_rescore_\\\\${{backend.aux.opt}}_lr\\\\${{backend.megatron.lr}}_{mid}_bs\\\\${{backend.aux.gbs}}_\\\\${{stage}}"
+    open(f"{root}/sweep100m/phase2_{key}.yaml", "w").write(
+        phase2_header(key, o, *P2_TEXT[key]) + phase2_body(key) + phase2_sweep(key, o, score_name))
+
+# --- grid: completes learning rate x beta / momentum to a full rectangle at every batch size ---
+# Four learning rates x {0.8, 0.9, 0.95, 0.975} per optimizer. Only the settings that phase 1
+# (0.95) and phase 2 (0.9 and 0.975 at two learning rates; Muon and AdamW only) have not run.
+# Jobs are configured exactly as phase 2 (same reader, same evaluations, one scoring job per
+# cooldown), so all three phases compare directly.
+GRID_VALS = ["0.8", "0.9", "0.95", "0.975"]
+GRID_LRS = {
+    "adam": ["5.e-4", "1.e-3", "2.e-3", "4.e-3"],
+    "muon": ["1.e-3", "2.e-3", "4.e-3", "8.e-3"],
+    "muown_classical": ["1.e-3", "2.e-3", "4.e-3", "8.e-3"],
+}
+GRID_DONE = {   # (lr, value) pairs with a finished ladder at every batch size
+    "adam": {(lr, "0.95") for lr in P1_LRS} | {(lr, v) for lr in P2["adam"]["lrs"] for v in P2["adam"]["vals"]},
+    "muon": {(lr, "0.95") for lr in P1_LRS} | {(lr, v) for lr in P2["muon"]["lrs"] for v in P2["muon"]["vals"]},
+    "muown_classical": {(lr, "0.95") for lr in P1_LRS},   # its phase 2 file was never submitted
+}
+
+
+def grid_pairs(opt):
+    return [(lr, v) for v in GRID_VALS for lr in GRID_LRS[opt] if (lr, v) not in GRID_DONE[opt]]
+
+
+def grid_header(opt):
+    pairs, ns = grid_pairs(opt), len(P2_STAGES)
+    hp = "beta1 = beta2" if opt == "adam" else "momentum"
+    n, per = len(GBS) * len(pairs), len(pairs) * ns
+    lines = [
+        "# @package _global_",
+        "#",
+        f"# sweep100m grid / {opt}: the settings missing from a full learning rate x {hp} grid,",
+        "# one WSD ladder per setting.",
+        "#",
+        f"#   batch size : {', '.join(map(str, GBS))} sequences of 4096 tokens (same tokens at every batch size)",
+        f"#   full grid  : lr {', '.join(GRID_LRS[opt])}  x  {hp} {', '.join(GRID_VALS)}",
+        "#   run here   : the pairs below; the others were run in phase 1 and phase 2",
+        "#   weight decay, data reader and everything else as phase 1 and phase 2",
+        f"# = {n} settings x {ns} jobs (stable, 3 cooldowns, 3 scoring jobs) = {n * ns} jobs, ~{P2_COST} GPU-h per",
+        f"#   setting -> ~{n * P2_COST:,} GPU-h for the whole file.",
+        "#",
+        f"# Job index = (batch_i x {len(pairs)} + pair_i) x {ns} + stage_i",
+        "#   stage_i: " + ", ".join(f"{i} {s}" for i, s in enumerate(P2_STAGES)),
+        "#   pair_i : " + ", ".join(f"{i} ({lr}, {v})" for i, (lr, v) in enumerate(pairs)),
+        "#   " + "   ".join(f"batch {b}: {g * per}-{(g + 1) * per - 1}" for g, b in enumerate(GBS)),
+        "#",
+        "# Results: in-training validation of each cooldown and the scoring jobs (fixed validation set);",
+        "#   python3 config/experiments/laingsam1/opt_scale/sweep100m/make_sweep_page.py --logs $OPT_SCALE_BASE/logs --out sweep_page.html",
+        "# Submit inside tmux (the monitor must keep running to start the cooldowns and scoring jobs):",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/grid_{opt} --dry-run",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/grid_{opt}",
+        "# Generated by gen_sweep100m.py from hyb100m/11.",
+        "",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def grid_sweep(opt, score_name):
+    hk = "beta" if opt == "adam" else "mom"
+    s = "sweep:\n  type: product\n  groups:\n"
+    s += "    # batch size\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.gbs: {g}}}\n" for g in GBS)
+    s += f"    # learning rate, {'beta1 = beta2' if opt == 'adam' else 'momentum'}\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.lr: {lr}, backend.aux.{hk}: {v}}}\n" for lr, v in grid_pairs(opt))
+    return s + phase2_stages(score_name)
+
+
+for opt in OPTS:
+    hk = "beta" if opt == "adam" else "mom"
+    score_name = f"hyb100m_rescore_\\\\${{backend.aux.opt}}_lr\\\\${{backend.megatron.lr}}_{hk}\\\\${{backend.aux.{hk}}}_bs\\\\${{backend.aux.gbs}}_\\\\${{stage}}"
+    gb = phase2_body(opt)
+    assert gb.count('WANDB_TAGS: "jupiter,sweep,phase2,') == 1
+    gb = gb.replace('WANDB_TAGS: "jupiter,sweep,phase2,', 'WANDB_TAGS: "jupiter,sweep,grid,')
+    open(f"{root}/sweep100m/grid_{opt}.yaml", "w").write(grid_header(opt) + gb + grid_sweep(opt, score_name))
+
+# --- weight decay: other values at the two best learning rates and the best beta / momentum ---
+# The grid ran AdamW and Muon at weight decay 0.1 and muown_classical at 0 (WD_BASE). This adds
+# three more values per optimizer, at every batch size. Two learning rates because the decay is
+# decoupled (applied as lr x weight decay), so the two interact. Jobs are configured exactly as
+# the grid; the weight decay is part of the job name, so no existing folder is touched and the
+# existing read-out scripts (which match names without "_wd") ignore these runs.
+WD_BASE = {"adam": "0.1", "muon": "0.1", "muown_classical": "0.0"}
+WD = {
+    "adam": dict(val="0.95", lrs=["1.e-3", "2.e-3"], wds=["0.0", "0.03", "0.3"]),
+    "muon": dict(val="0.9", lrs=["2.e-3", "4.e-3"], wds=["0.0", "0.03", "0.3"]),
+    "muown_classical": dict(val="0.9", lrs=["2.e-3", "4.e-3"], wds=["0.03", "0.1", "0.3"]),
+}
+
+
+def wd_header(opt):
+    o, ns = WD[opt], len(P2_STAGES)
+    hp = "beta1 = beta2" if opt == "adam" else "momentum"
+    npairs = len(o["lrs"]) * len(o["wds"])
+    n, per = len(GBS) * npairs, npairs * ns
+    lines = [
+        "# @package _global_",
+        "#",
+        f"# sweep100m weight decay / {opt}: weight decay x learning rate x batch size, one WSD ladder per setting.",
+        "#",
+        f"#   batch size   : {', '.join(map(str, GBS))} sequences of 4096 tokens",
+        f"#   learning rate: {', '.join(o['lrs'])}",
+        f"#   weight decay : {', '.join(o['wds'])}   (the grid already has {WD_BASE[opt]} at these settings)",
+        f"#   {hp:<13}: {o['val']} (fixed)",
+        "#   data reader and everything else as the grid",
+    ]
+    if opt == "muown_classical":
+        lines += [
+            "#   Note: muown_classical keeps a magnitude and a normalised direction per weight row; its",
+            "#   weight decay acts on the unnormalised variable, so it is not the same quantity as the",
+            "#   weight decay of AdamW or Muon. The team default is 0.",
+        ]
+    lines += [
+        f"# = {n} settings x {ns} jobs (stable, 3 cooldowns, 3 scoring jobs) = {n * ns} jobs, ~{P2_COST} GPU-h per",
+        f"#   setting -> ~{n * P2_COST:,} GPU-h for the whole file.",
+        "#",
+        f"# Job index = ((batch_i x {len(o['lrs'])} + lr_i) x {len(o['wds'])} + wd_i) x {ns} + stage_i",
+        "#   stage_i: " + ", ".join(f"{i} {s}" for i, s in enumerate(P2_STAGES)),
+        "#   " + "   ".join(f"batch {b}: {g * per}-{(g + 1) * per - 1}" for g, b in enumerate(GBS)),
+        "#",
+        "# Submit inside tmux (the monitor must keep running to start the cooldowns and scoring jobs):",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/wd_{opt} --dry-run",
+        f"#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/sweep100m/wd_{opt}",
+        "# Generated by gen_sweep100m.py from hyb100m/11.",
+        "",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def wd_sweep(opt, score_name):
+    o = WD[opt]
+    hk = "beta" if opt == "adam" else "mom"
+    s = "sweep:\n  type: product\n  groups:\n"
+    s += "    # batch size\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.aux.gbs: {g}}}\n" for g in GBS)
+    s += "    # learning rate\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.lr: {lr}, backend.aux.{hk}: {o['val']}}}\n" for lr in o["lrs"])
+    s += "    # weight decay\n    - type: list\n      configs:\n"
+    s += "".join(f"        - {{backend.megatron.weight_decay: {w}}}\n" for w in o["wds"])
+    return s + phase2_stages(score_name)
+
+
+for opt in OPTS:
+    hk = "beta" if opt == "adam" else "mom"
+    score_name = (f"hyb100m_rescore_\\\\${{backend.aux.opt}}_lr\\\\${{backend.megatron.lr}}_{hk}\\\\${{backend.aux.{hk}}}"
+                  f"_wd\\\\${{backend.megatron.weight_decay}}_bs\\\\${{backend.aux.gbs}}_\\\\${{stage}}")
+    wb = phase2_body(opt)
+    for a, c in {
+        'WANDB_TAGS: "jupiter,sweep,phase2,': 'WANDB_TAGS: "jupiter,sweep,wd,',
+        '_bs${backend.aux.gbs}_${stage}"\n': '_wd${backend.megatron.weight_decay}_bs${backend.aux.gbs}_${stage}"\n',
+    }.items():
+        assert wb.count(a) == 1, (opt, a)
+        wb = wb.replace(a, c)
+    open(f"{root}/sweep100m/wd_{opt}.yaml", "w").write(wd_header(opt) + wb + wd_sweep(opt, score_name))
 
 # --- 1x runs: the same learning rate x batch size grid as phase 1, but each setting is ONE run
 # trained from scratch to the 1x budget (2.0B tokens: warmup, constant lr, cooldown over the

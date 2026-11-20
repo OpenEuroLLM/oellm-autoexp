@@ -342,6 +342,10 @@ sweep:
           defaults:
             backend.megatron.save_extra_steps: []
             backend.megatron.non_persistent_save_interval: null   # a cooldown restarts from its branch point
+            # No rolling checkpoints here. With "global", Megatron ignores ckpt_step whenever the
+            # stable run already has a newer rolling checkpoint and loads that one instead, so a
+            # cooldown that waits in the queue branches too late (21 phase 2 cooldowns, 2026-11-19).
+            backend.megatron.non_persistent_ckpt_type: null
             backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/ckpt"
             backend.megatron.ckpt_step: "\\${backend.aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true

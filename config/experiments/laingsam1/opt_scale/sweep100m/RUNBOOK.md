@@ -14,8 +14,8 @@ Each of the 18 settings is a *ladder* of 4 jobs:
 | `stable` | trains at constant learning rate for 6.5B tokens and saves checkpoints at the branch points |
 | `cooldown1x`, `cooldown2x`, `cooldown4x` | each starts from a branch checkpoint, cools the learning rate down to 0 and gives the final loss at 2.0B, 4.0B and 8.1B tokens |
 
-So one file is 72 jobs, each on 1 node (4 GPUs): about 920 GPU-h for muown_classical, 1,030
-for Muon, 900 for AdamW. The result is the best learning rate per batch size and token budget.
+So one file is 72 jobs, each on 1 node (4 GPUs): about 850 GPU-h per optimizer (measured:
+44-52 GPU-h per ladder). The result is the best learning rate per batch size and token budget.
 Background and design: `README.md` in this folder.
 
 ## Before you start
@@ -70,7 +70,7 @@ Check them about 15 minutes after they start running (`squeue --me`):
 |---|---|---|
 | Training started | `grep "iteration " $OPT_SCALE_BASE/logs/hyb100m_sweep_${OPT}_*bs256_stable-*.out \| head -3` | first step within ~8 min of the job start (much longer means the shared index cache is not being used) |
 | Same model and data as everyone else | same lines, `lm loss` of iteration 1 at batch 256 | 12.511 |
-| Speed at batch 256 | `... \| tail -3`, `elapsed time per iteration (ms)` | about 4500-5200 (batch 128 half, batch 512 double) |
+| Speed at batch 256 | `... \| tail -3`, `elapsed time per iteration (ms)` | about 4100-4800 (batch 128 half, batch 512 double) |
 | GPU memory | same lines, `mem usages` | about 0.91-0.94 |
 | Host memory | `grep MemAvailable $OPT_SCALE_BASE/experiments/opt_scale/hyb100m_sweep/hyb100m_sweep_${OPT}_*bs256_stable/node_mem_*.log \| tail -3` | stays above ~300 GB (in kB: 300000000) |
 
@@ -87,7 +87,7 @@ Never give two monitors the same job numbers: both would submit the job.
 
 ## 5. While it runs
 
-- A stable run takes about 8.5-10 h. The 1x cooldown starts after roughly a quarter of that,
+- A stable run takes about 7.5-8.6 h. The 1x cooldown starts after roughly a quarter of that,
   the 2x after half, the 4x at the end; a whole ladder is done after about 12 h of running.
 - A run at a learning rate that is too high may diverge (loss becomes NaN) and stop early.
   That is a result, not a problem.

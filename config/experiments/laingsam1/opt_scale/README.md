@@ -16,7 +16,7 @@ results and debugging history is `smoke_test/README.md`.
 | `smoke_test/06_hybrid100m_team_arch.yaml` | **reference config**: 100M-active hybrid MoE, 4 optimizers, 100 steps |
 | `smoke_test/08_throughput_gbs256.yaml` | throughput test at gbs 256 (micro-batch / kernel variants, AdamW) |
 | `hyb100m/11_wsd_ladder.yaml` | **main run**: 100M, WSD ladder 1x / 2x / 4x Chinchilla, 4 optimizers, fast settings. **How to run it, history and costs: `hyb100m/README.md`** |
-| `sweep100m/` | **hyperparameter sweep** at 100M: WSD ladder for every batch size x lr x beta / momentum, one file per optimizer. See `sweep100m/README.md` |
+| `sweep100m/` | **hyperparameter sweep** at 100M: one WSD ladder per setting. Phase 1 (in progress): batch size 128 / 256 / 512 x 6 learning rates, one file per optimizer. Design and results: `sweep100m/README.md`; how to run a slice: `sweep100m/RUNBOOK.md` |
 | `smoke_test/12_throughput_memory.yaml` | throughput + memory test that gave the fast settings (Liger + micro-batch 16, 2.5x) |
 | `smoke_test/13_throughput_ladder.yaml` | throughput vs model size (100M-850M active) and 1 / 2 / 4 nodes |
 | `hyb100m/07_hyb100m_20N.yaml` | older single-budget run (D = 20N), slow settings; superseded by 11 |

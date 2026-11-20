@@ -5,15 +5,15 @@
 # hyb100m/11_wsd_ladder.yaml (model, data, Liger + micro-batch 16, logging, restarts).
 # Generated from 11 by gen_sweep100m.py; see README.md in this folder.
 #
-#   batch size : 64, 128, 256, 512   (same tokens per stage at every batch size)
+#   batch size : 128, 256, 512   (same tokens per stage at every batch size)
 #   lr         : 2.5e-4, 5.e-4, 1.e-3, 2.e-3, 4.e-3
 #   momentum   : 0.9, 0.95, 0.975
-# = 60 settings x 4 jobs (stable, cooldown1x, cooldown2x, cooldown4x) = 240 jobs, ~51 GPU-h per
-#   setting -> ~3,060 GPU-h for the whole file (~765 per batch size).
+# = 45 settings x 4 jobs (stable, cooldown1x, cooldown2x, cooldown4x) = 180 jobs, ~51 GPU-h per
+#   setting -> ~2,295 GPU-h for the whole file (~765 per batch size).
 #
-# Job index = ((gbs_i x 5 + lr_i) x 3 + mom_i) x 4 + stage_i  (gbs_i: 0=64 1=128 2=256 3=512;
+# Job index = ((gbs_i x 5 + lr_i) x 3 + mom_i) x 4 + stage_i  (gbs_i: 0=128 1=256 2=512;
 #   stage_i: 0 stable, 1 cooldown1x, 2 cooldown2x, 3 cooldown4x). One batch size = 60 consecutive jobs:
-#   gbs 64: 0-59   gbs 128: 60-119   gbs 256: 120-179   gbs 512: 180-239
+#   gbs 128: 0-59   gbs 256: 60-119   gbs 512: 120-179
 #
 # BEFORE the first submission: prebuild_index.yaml (once per cache, see README).
 # Runs need the monitor (tmux), like 11:
@@ -327,7 +327,6 @@ sweep:
     # batch size
     - type: list
       configs:
-        - {backend.aux.gbs: 64}
         - {backend.aux.gbs: 128}
         - {backend.aux.gbs: 256}
         - {backend.aux.gbs: 512}
@@ -353,6 +352,10 @@ sweep:
           defaults:
             backend.megatron.save_extra_steps: []
             backend.megatron.non_persistent_save_interval: null   # a cooldown restarts from its branch point
+            # No rolling checkpoints here. With "global", Megatron ignores ckpt_step whenever the
+            # stable run already has a newer rolling checkpoint and loads that one instead, so a
+            # cooldown that waits in the queue branches too late (21 phase 2 cooldowns, 2026-11-19).
+            backend.megatron.non_persistent_ckpt_type: null
             backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/ckpt"
             backend.megatron.ckpt_step: "\\${backend.aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true

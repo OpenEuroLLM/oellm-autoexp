@@ -1,0 +1,303 @@
+# @package _global_
+#
+# Smoke test 18: throughput of the 250M and 500M models on 4 nodes (16 GPUs), for five ways of
+# placing the experts, three batch sizes, AdamW and Muon. Settings as sweep100m; short jobs, no
+# checkpoints.
+#
+# Questions:
+#   1. GPU-h per billion tokens at 250M and 500M on 4 nodes (the budget for those sizes).
+#   2. Which expert placement and dispatcher is fastest, and does splitting the experts free
+#      enough GPU memory for a larger micro-batch to pay off? (at 100M, micro-batch 4 -> 16 was
+#      the largest single speed-up, 2.3x)
+#   3. Does the batch size change the speed per token?
+#   4. What does the Muon step cost at these sizes?
+#
+#   size   width x blocks   active   total   base micro-batch
+#   250m    896 x 5          246M    2.5B    8
+#   500m   1152 x 6          486M    4.9B    4
+#
+# Placements (the Megatron MoE guide: keep model parallelism as small as memory allows, and
+# keep expert traffic inside a node; megatron/core/transformer/moe/README.md):
+#   ep1               every GPU holds all 96 experts. No token traffic; the whole model on each GPU.
+#   ep4               the experts are split over the 4 GPUs of a node (24 each); tokens go to the
+#                     GPU that holds their expert and back, with the plain all-to-all dispatcher.
+#                     Expert weights, gradients and optimizer state per GPU drop to a quarter.
+#   ep4_deepep        the same with the DeepEP dispatcher (flex + deepep)
+#   ep4_hybridep      the same with the HybridEP dispatcher (flex + hybridep)
+#   ep4_hybridep_mb2x HybridEP with twice the base micro-batch (16 / 8), using the freed memory
+#   On one node at 100M (test 12, micro-batch 4): all-to-all ep1 11.5 s/step, DeepEP ep4 9.2,
+#   HybridEP ep4 7.9. Neither has been run on several nodes or with Liger in this setup.
+#   The 16 GPUs are 4 expert groups of 4; nodes are data-parallel replicas of each other.
+#
+# Memory, estimated from the 100M run (10 GB weights + state, 4.2 GB activations per sequence):
+#   250m ep1 at micro-batch 8 about 76 GB, 500m ep1 at micro-batch 4 about 78 GB, of 96 GB.
+#   Rough numbers: a job that runs out of memory is listed as such by the read-out script.
+#
+# Batch sizes 256 / 512 / 1024 sequences; all divide by micro-batch x 16 GPUs. train_iters and
+# the evaluation settings per batch size give the sample counts of the sweep100m stable run
+# (1,579,008 train, 66,560 validation), so the cached data index is used. Jobs stop after 80
+# (250m) or 60 (500m) steps at batch 256, proportionally fewer at larger batches, at least 20.
+#
+# Job index = ((size_i x 3 + batch_i) x 5 + placement_i) x 2 + opt_i          (60 jobs)
+#   size_i     : 0 250m, 1 500m          (30 jobs each: 0-29, 30-59)
+#   batch_i    : 0 256, 1 512, 2 1024    (10 jobs each)
+#   placement_i: 0 ep1, 1 ep4, 2 ep4_deepep, 3 ep4_hybridep, 4 ep4_hybridep_mb2x
+#   opt_i      : 0 adam, 1 muon
+#
+# Cost: about 3 GPU-h per job, about 180 GPU-h in total (the launcher quotes the time-limit cap,
+# 800). No auto-restart, no monitor needed.
+#
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/18_tput_250m_500m --dry-run
+#   python scripts/run_autoexp.py --config-name experiments/laingsam1/opt_scale/smoke_test/18_tput_250m_500m --submit-and-exit
+#   only batch 512 (20 jobs, about 60 GPU-h): ... --array-subset 10-19,40-49 --submit-and-exit
+# Read-out: python3 config/experiments/laingsam1/opt_scale/smoke_test/collect_scale_throughput.py --logs $OPT_SCALE_BASE/logs
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: smoke
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: /opt/venv/bin/python
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    WANDB_MODE: offline
+
+job:
+  name: "scale_tput_${backend.aux.size}_bs${backend.megatron.global_batch_size}_N${slurm.sbatch.nodes}_${backend.aux.setup}_${backend.aux.opt}"
+  base_output_dir: "${backend.aux.base}/experiments/opt_scale/smoke_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    base: ${oc.env:OPT_SCALE_BASE,/e/scratch/e-aif-2026sc04-211/users/slaing}
+    # --- set by the sweep (size group) ---
+    size: 250m
+    h: 896             # model width
+    blocks: 5          # number of LELELE*E blocks (4 mixer + 4 MoE layers each)
+    mbs: 8             # base micro-batch per GPU (see header)
+    mbs_mult: 1        # set by the placement group: 2 = double micro-batch
+    steps256: 80       # measured steps at batch 256; scaled down for larger batches, at least 20
+    # --- set by the sweep (setup group) ---
+    setup: N1_ep1
+    ep: 1              # expert parallel size: 1 = every GPU holds all 96 experts; 4 = 24 per GPU
+    dispatcher: alltoall   # alltoall, or flex with the backend below (only matters with ep > 1)
+    flex_backend: hybridep # deepep or hybridep
+    # --- set by the sweep (optimizer group) ---
+    opt: adam
+    opt_args: ""       # flags missing from the autoexp schema
+    megatron_dir: ${backend.aux.base}/NVIDIA-Megatron-LM-hybrid
+    pyext_dir: ${backend.aux.base}/pyext
+    repo_dir: ${oc.env:OPT_SCALE_REPO,${backend.aux.base}/oellm-autoexp}
+    arch_args: >-
+      --hybrid-layer-pattern ${oc.eval:'"LELELE*E" * ${backend.aux.blocks}'}
+      --linear-beta-adam
+      --liger-fused-linear-cross-entropy --liger-fused-linear-cross-entropy-chunk-size 8192
+
+  launcher_script: "${backend.aux.megatron_dir}/pretrain_hybrid.py ${backend.aux.arch_args} ${backend.aux.opt_args}"
+
+  data_integrity_check: false   # MUST stay off (see 01_single_node.yaml)
+
+  env:
+    PYTHONPATH: "${backend.aux.pyext_dir}:${backend.aux.megatron_dir}:."
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_CACHE_DIR: /tmp/triton_cache
+    FLA_TENSOR_CACHE_SIZE: "64"
+
+  megatron:
+    # --- model: the team block, width / depth from backend.aux (640 x 4 = the 100M of sweep100m) ---
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    num_layers: null
+    hidden_size: ${backend.aux.h}
+    ffn_hidden_size: ${oc.eval:'3 * ${backend.aux.h}'}
+    num_attention_heads: ${oc.eval:'${backend.aux.h} // 64'}
+    group_query_attention: true
+    num_query_groups: 2
+    kv_channels: 128
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-6
+    layernorm_zero_centered_gamma: true
+    qk_layernorm: true
+    attention_output_gate: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    bf16: true
+    use_flash_attn: true
+
+    position_embedding_type: rope
+    rotary_base: 10000000
+    rotary_percent: 0.25
+    rotary_interleaved: true
+
+    experimental_attention_variant: gated_delta_net
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: ${oc.eval:'${backend.aux.h} // 64'}
+    linear_num_value_heads: ${oc.eval:'${backend.aux.h} // 32'}
+
+    num_experts: 96
+    moe_ffn_hidden_size: ${oc.eval:'${backend.aux.h} // 2'}
+    moe_shared_expert_intermediate_size: ${oc.eval:'${backend.aux.h} // 2'}
+    moe_shared_expert_gate: true
+    moe_router_topk: 4
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_dtype: fp32
+    moe_router_fusion: true
+    moe_router_load_balancing_type: seq_aux_loss
+    moe_aux_loss_coeff: 1.0e-4
+    moe_router_score_function: sigmoid
+    moe_router_enable_expert_bias: true
+    moe_router_bias_update_rate: 1.0e-3
+    moe_router_force_load_balancing: false
+    mtp_num_layers: null
+
+    moe_token_dispatcher_type: ${backend.aux.dispatcher}
+    moe_flex_dispatcher_backend: ${backend.aux.flex_backend}   # only used when the dispatcher is flex
+    expert_model_parallel_size: ${backend.aux.ep}
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 120
+
+    # --- kernels / numerics ---
+    cross_entropy_loss_fusion: false      # 08: native fusion is slower + uses more memory
+    cross_entropy_fusion_impl: native
+    masked_softmax_fusion: true
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true
+    gradient_accumulation_fusion: true
+    check_for_nan_in_loss_and_grad: true
+    manual_gc: true
+    manual_gc_interval: 100
+
+    # --- data and loader: exactly as sweep100m ---
+    data_path: null
+    data_args_path: "${backend.aux.repo_dir}/config/experiments/laingsam1/opt_scale/data/datamix_v8ml_flagfull_jsc.txt"
+    split: "99,1,0"
+    data_cache_path: ${oc.env:OPT_SCALE_CACHE,${backend.aux.base}/cache/megatron_index}
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm_testing/tokenizers/tokenizer-256k-agent
+    num_workers: 2
+    create_attention_mask_in_dataloader: false   # as sweep100m (host memory)
+    mmap_bin_files: false
+    padded_vocab_size: 262144
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: "${oc.eval:'${backend.aux.mbs} * ${backend.aux.mbs_mult}'}"
+    global_batch_size: 256       # set by the sweep, together with train_iters and the evaluation
+    train_iters: 6168            # settings, so that the cached data index of sweep100m is used
+    exit_interval: "${oc.eval:'max(20, round(${backend.aux.steps256} * 256 / ${backend.megatron.global_batch_size}))'}"
+
+    # --- optimizer: set by the sweep; settings as sweep100m (stable phase) ---
+    lr: 1.e-3
+    min_lr: 0.0
+    lr_warmup_iters: 40
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 0
+    clip_grad: 1.0
+    weight_decay: 0.1
+    adam_beta1: 0.95
+    adam_beta2: 0.95
+
+    eval_interval: 240           # as sweep100m at batch 256 -> cached validation index; no
+    eval_iters: 10               # evaluation happens within the measured steps
+
+    log_interval: 1
+    log_throughput: true
+    log_timers_to_tensorboard: true
+    log_memory_to_tensorboard: true   # allocator memory -> separates GPU-allocator growth from host spill
+    log_params_norm: true             # on in the real runs -> include its cost here
+    moe_per_layer_logging: true       # same
+    moe_expert_viability_metrics: true
+
+    save: null
+    load: null
+    save_interval: null
+    save_extra_steps: []
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_project: opt_scale_throughput
+
+slurm:
+  # = config/slurm/jupiter.yaml launcher_cmd, prefixed with a background memory sampler
+  # (free memory per NUMA node: node 0 = CPU DRAM, the others = the 4 GPUs' HBM; plus the
+  # 30 largest processes by RSS), every 30 s, into the job's output dir.
+  launcher_cmd: "\
+    mkdir -p ${job.base_output_dir} ; ( while true ; do date +%T ; grep -h -e MemFree -e FilePages -e AnonPages /sys/devices/system/node/node*/meminfo ; grep -e MemAvailable -e Cached /proc/meminfo ; ps -u $USER -o rss=,pid=,comm= --sort=-rss | head -30 ; sleep 30 ; done >> ${job.base_output_dir}/node_mem_$SLURM_JOB_ID.log 2>&1 & ) ;\\\n \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+    ${oc.select:container.runtime,apptainer} exec \
+    ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+    --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+    WANDB_TAGS: "scale_tput,throughput,gbs=${backend.megatron.global_batch_size},${backend.aux.size},${backend.aux.setup},${backend.aux.opt},mbs=${backend.megatron.micro_batch_size},ep=${backend.aux.ep},nodes=${slurm.sbatch.nodes}"
+  sbatch:
+    nodes: 4
+    account: ${oc.env:OPT_SCALE_ACCOUNT,e-aif-2026sc04-211}
+    partition: booster
+    time: "00:50:00"             # expected 10-15 min; margin for a 20-min index build if one is not cached
+    output: "${backend.aux.base}/logs/${job.name}-%j.out"
+    error: "${backend.aux.base}/logs/${job.name}-%j.err"
+
+sweep:
+  type: product
+  groups:
+    # model size
+    - type: list
+      configs:
+        - {backend.aux.size: 250m, backend.aux.h: 896, backend.aux.blocks: 5, backend.aux.mbs: 8, backend.aux.steps256: 80}
+        - {backend.aux.size: 500m, backend.aux.h: 1152, backend.aux.blocks: 6, backend.aux.mbs: 4, backend.aux.steps256: 60}
+    # batch size (train_iters x batch = 1,579,008; evaluations sized for the cached validation index)
+    - type: list
+      configs:
+        - {backend.megatron.global_batch_size: 256, backend.megatron.train_iters: 6168, backend.megatron.eval_interval: 240, backend.megatron.eval_iters: 10}
+        - {backend.megatron.global_batch_size: 512, backend.megatron.train_iters: 3084, backend.megatron.eval_interval: 120, backend.megatron.eval_iters: 5}
+        - {backend.megatron.global_batch_size: 1024, backend.megatron.train_iters: 1542, backend.megatron.eval_interval: 120, backend.megatron.eval_iters: 5}
+    # expert placement and dispatcher
+    - type: list
+      configs:
+        - {backend.aux.setup: ep1, backend.aux.ep: 1}
+        - {backend.aux.setup: ep4, backend.aux.ep: 4}
+        - {backend.aux.setup: ep4_deepep, backend.aux.ep: 4, backend.aux.dispatcher: flex, backend.aux.flex_backend: deepep}
+        - {backend.aux.setup: ep4_hybridep, backend.aux.ep: 4, backend.aux.dispatcher: flex, backend.aux.flex_backend: hybridep}
+        - {backend.aux.setup: ep4_hybridep_mb2x, backend.aux.ep: 4, backend.aux.dispatcher: flex, backend.aux.flex_backend: hybridep, backend.aux.mbs_mult: 2}
+    # optimizer (settings as sweep100m at beta / momentum 0.95)
+    - type: list
+      configs:
+        - backend.aux.opt: adam
+          backend.megatron.optimizer: adam
+        - backend.aux.opt: muon
+          backend.megatron.optimizer: muon
+          backend.megatron.muon_momentum: 0.95
+          backend.megatron.muon_nesterov: true
+          backend.megatron.muon_scale_mode: spectral
+          backend.megatron.muon_coefficient_type: polar_express
+          backend.megatron.muon_fp32_matmul_prec: medium
+          backend.megatron.muon_num_ns_steps: 5
+          backend.megatron.muon_tp_mode: blockwise
+          backend.megatron.muon_split_qkv: true
+          backend.megatron.muon_extra_scale_factor: 0.2
+          backend.megatron.muon_scalar_optimizer: adam
+          backend.aux.opt_args: "--muon-batched-step"
