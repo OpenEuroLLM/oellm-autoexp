@@ -1,0 +1,29 @@
+# @package _global_
+# FlexAttention kernel options for the page-sparse training path on one H100 at v4b's attention shapes
+# (scripts/korbi/campaign_midtraining/flex_tune_bench.py: every candidate checked against the default options'
+# outputs / gradients, then timed): one 64k document, 4 x 16k packed, one 256k document.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_flex_tune_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t18_flex_tune
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t18_evals/flex_tune
+  bench: >-
+    mkdir -p ${aux.out} && cd submodules/Megatron-LM
+    && python ../../scripts/korbi/campaign_midtraining/flex_tune_bench.py --docs 65536 --out ${aux.out}/64k.json
+    && python ../../scripts/korbi/campaign_midtraining/flex_tune_bench.py --docs 16384 16384 16384 16384 --out ${aux.out}/4x16k.json
+    && python ../../scripts/korbi/campaign_midtraining/flex_tune_bench.py --docs 262144 --steps 3 --out ${aux.out}/256k.json
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 5400
+  array_group: null
+
+slurm:
+  sbatch:
+    time: "03:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
