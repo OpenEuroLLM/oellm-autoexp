@@ -10,11 +10,15 @@ aux:
   name: t18_token_sparse_bench
   bench: >-
     cd submodules/Megatron-LM
-    && python ../../scripts/korbi/campaign_midtraining/token_sparse_bench.py --lengths 16384 65536 131072
+    && python ../../scripts/korbi/campaign_midtraining/token_sparse_bench.py --lengths 16384 65536 131072 262144
+    --skip-fla --candidates 40 48 64 --kernels rowmask
     && python ../../scripts/korbi/campaign_midtraining/token_sparse_bench.py --lengths 65536 --heads 10 --dim 128
+    --skip-fla --candidates 40 48 64 --kernels rowmask
 
 job:
   name: campaign_mid_${aux.name}
+  metadata:
+    pool_priority: 90
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
   est_step_time_s: 1800
   array_group: null

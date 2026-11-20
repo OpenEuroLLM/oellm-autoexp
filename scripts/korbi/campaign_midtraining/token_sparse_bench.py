@@ -28,6 +28,7 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=5)
     ap.add_argument("--candidates", type=int, nargs="*", default=[48, 64])
     ap.add_argument("--skip-fla", action="store_true", help="only dense / block / two-level")
+    ap.add_argument("--kernels", nargs="+", default=["flex", "rowmask"])
     a = ap.parse_args()
 
     import torch
@@ -64,11 +65,15 @@ def main() -> None:
         res["block"] = timed(lambda: ps.flex_packed_page_attention([(q, k, v, 0, None)], cfg, a.dim**-0.5, 64)[0]
                              .sum().backward())
 
-        for U in a.candidates:  # per-token choices inside per-block candidates (two-level), the packed flex path
+        res["block_rowmask"] = timed(lambda: ps.flex_packed_page_attention([(q, k, v, 0, None)], cfg, a.dim**-0.5,
+                                                                           64, kernel="rowmask")[0].sum().backward())
+        for U in a.candidates:  # per-token choices inside per-block candidates (two-level), the packed path
             ccfg = ps.PageSparseConfig(selector="page_maxpool", page=page, topk=topk, window=512, sink_pages=sinks,
                                        select_block=1, per_group=True, block_candidates=U, candidate_block=64)
-            res[f"token_cand{U}"] = timed(lambda: ps.flex_packed_page_attention([(q, k, v, 0, None)], ccfg,
-                                                                                a.dim**-0.5, 64)[0].sum().backward())
+            for kern in a.kernels:
+                res[f"token_cand{U}_{kern}"] = timed(
+                    lambda: ps.flex_packed_page_attention([(q, k, v, 0, None)], ccfg, a.dim**-0.5, 64,
+                                                          kernel=kern)[0].sum().backward())
         if a.skip_fla:
             print(f"L={L}: " + "  ".join(f"{n} {t:.1f} ms" for n, t in res.items()), flush=True)
             continue

@@ -739,7 +739,10 @@ class MegatronConfig(ConfigInterface):
     # mask of each query block's page union), "gathered" (the exact torch reference) or
     # "token" (per-token selection, select_block 1: every query token its own pages, NSA's
     # selection kernel over the packed documents -- token_sparse.py; page_mean / page_maxpool
-    # / quest, CP 1); token_topk / compress_mean are always gathered.
+    # / quest, CP 1) or "rowmask" (the packed flex path's selection with a Triton kernel
+    # taking one bit word per (64-query tile, page): per-token choices inside block candidates
+    # at near block-wise cost -- rowmask_attention.py; page 64, flex_q_block 64); token_topk /
+    # compress_mean are always gathered.
     page_sparse_backend: str = "flex"
 
     # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
@@ -826,6 +829,13 @@ class MegatronConfig(ConfigInterface):
     # to a fixed norm after one step whatever the gradient (audit 2026-11-18: NSA's gate
     # rows).
     page_sparse_selector_adam: bool = False
+
+    # Per-token selection (page_sparse_select_block 1) inside block candidates: each block of
+    # page_sparse_flex_q_block queries keeps the pages most often in its queries' own top-k
+    # (this many), every query picks its top-k among them -- the flex kernel's page union per
+    # block stays bounded (~ block-wise cost) while the choices are per token. 0: plain per-
+    # token selection (unbounded union).
+    page_sparse_block_candidates: int = 0
 
     # 0-based decoder layer indices (like ``kv_share_layers``) whose self-attention stays
     # dense (the configured core attention) under ``page_sparse_selector``; e.g. the first

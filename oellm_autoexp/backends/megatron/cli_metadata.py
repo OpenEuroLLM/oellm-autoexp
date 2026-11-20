@@ -6957,7 +6957,15 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "page_sparse_backend": MegatronArgMetadata(
         arg_type=str,
         default="flex",
-        help='page selectors\' kernel: "flex" (FlexAttention, fused Triton forward / backward, a block mask of each query block\'s page union), "gathered" (the exact torch reference) or "token" (per-token selection, select_block 1: every query token its own pages, NSA\'s selection kernel over the packed documents -- token_sparse.py; page_mean / page_maxpool / quest, CP 1); token_topk / compress_mean are always gathered.',
+        help='page selectors\' kernel: "flex" (FlexAttention, fused Triton forward / backward, a block mask of each query block\'s page union), "gathered" (the exact torch reference) or "token" (per-token selection, select_block 1: every query token its own pages, NSA\'s selection kernel over the packed documents -- token_sparse.py; page_mean / page_maxpool / quest, CP 1) or "rowmask" (the packed flex path\'s selection with a Triton kernel taking one bit word per (64-query tile, page): per-token choices inside block candidates at near block-wise cost -- rowmask_attention.py; page 64, flex_q_block 64); token_topk / compress_mean are always gathered.',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "page_sparse_block_candidates": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Per-token selection (page_sparse_select_block 1) inside block candidates: each block of page_sparse_flex_q_block queries keeps the pages most often in its queries' own top-k (this many), every query picks its top-k among them -- the flex kernel's page union per block stays bounded (~ block-wise cost) while the choices are per token. 0: plain per-token selection (unbounded union).",
         choices=None,
         nargs=None,
         element_type=None,
@@ -15154,6 +15162,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="flex",
+    ),
+    "page_sparse_block_candidates": MegatronActionSpec(
+        option_strings=("--page-sparse-block-candidates",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "page_sparse_compress": MegatronActionSpec(
         option_strings=("--page-sparse-compress",),
