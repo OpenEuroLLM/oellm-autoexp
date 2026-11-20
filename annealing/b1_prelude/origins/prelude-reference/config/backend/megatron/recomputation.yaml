@@ -1,0 +1,2 @@
+recompute_activations: true
+recompute_granularity: "full"

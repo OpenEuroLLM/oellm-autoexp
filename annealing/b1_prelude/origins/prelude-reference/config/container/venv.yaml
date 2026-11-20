@@ -1,0 +1,4 @@
+class_name: Venv
+venv_path: ${oc.env:HOME}/work/venv
+
+env: {}

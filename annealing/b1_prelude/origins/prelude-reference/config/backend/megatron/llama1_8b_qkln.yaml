@@ -1,0 +1,19 @@
+defaults:
+  - base_llama
+  - _self_
+
+hidden_size: 2048
+num_layers: 26
+num_attention_heads: 16
+num_query_groups: 2
+kv_channels: 128
+ffn_hidden_size: 8192
+seq_length: 4096
+vocab_size: 50304
+qk_layernorm: true
+micro_batch_size: 2
+tensor_model_parallel_size: 1
+recompute_activations: true
+recompute_granularity: full
+aux:
+  model_name: "llama1.8bqkln"

@@ -1,0 +1,129 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base,data_nemonicco_jupiter]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+# will be overridden
+aux:
+  experiment_group: "niccolo_130M_smoke"
+
+  total_tokens: "${oc.eval:'${aux.seq_len}*${aux.gbs}*${backend.megatron.train_iters}'}"
+  tokens: 6_000_000_000
+  decay_fraction: 0.2
+  gbs: 128
+  seq_len: 4096
+
+  start_iter: 0
+  additional_tag: ""
+
+backend:
+  megatron:
+    accumulate_allreduce_grads_in_fp32: true
+    adam_beta2: 0.99
+    add_qkv_bias: true
+    align_param_gather: false
+    attention_dropout: 0
+    bf16: true
+    bias_dropout_fusion: false
+    bias_gelu_fusion: false
+    bias_swiglu_fusion: false
+    ckpt_format: torch_dist
+    classes_fraction: 1
+    clip_grad: 1
+    data_per_class_fraction: 1
+    dataloader_type: cyclic
+    eval_interval: 1000
+    expert_tensor_parallel_size: 1
+    ffn_hidden_size: 2304
+    global_batch_size: ${aux.gbs}
+    gradient_accumulation_fusion: false
+    head_lr_mult: 1.0
+    hidden_dropout: 0
+    hidden_size: 576
+    hybrid_attention_ratio: 0.0
+    hybrid_mlp_ratio: 0.0
+    kv_channels: 64
+    log_interval: 10
+    log_progress: true
+    log_throughput: true
+    lr: 0.002
+    lr_decay_style: WSD
+    lr_warmup_init: 0
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: ${oc.eval:'int(0.2 * ${.train_iters})'}
+    lr_wsd_decay_style: linear
+    mask_factor: 1
+    max_position_embeddings: ${aux.seq_len}
+    micro_batch_size: 16
+    min_loss_scale: 1
+    min_lr: 1.0e-05
+    normalization: RMSNorm
+    num_attention_heads: 9
+    num_dataset_builder_threads: 6
+    num_layers: 18
+    num_query_groups: 9
+    num_workers: 7
+    overlap_p2p_comm: false
+    padded_vocab_size: 50304
+    position_embedding_type: rope
+    qk_layernorm: true
+    rerun_mode: disabled
+    rotary_percent: 1
+    rotary_base: 100000
+    rotary_scaling_factor: 1
+    sample_rate: 1
+    save_interval: 3000
+    save: ${job.base_output_dir}
+    seq_length: ${aux.seq_len}
+    swiglu: true
+    tokenizer_model: EleutherAI/gpt-neox-20b
+    tokenizer_type: HuggingFaceTokenizer
+    train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+    use_distributed_optimizer: true
+    use_flash_attn: true
+    wandb_project: dense_scaling
+    weight_decay: 0.1
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    grad_reduce_in_bf16: false
+
+
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    untie_embeddings_and_output_weights: False
+
+    # hidden_size: ${aux.width}
+    # ffn_hidden_size: ${oc.muli:${aux.width},${aux.ffn_scale}}
+    # num_layers: ${aux.layers}
+    # num_attention_heads: ${aux.nheads}
+    # num_query_groups: ${oc.eval:${.num_attention_heads}/${aux.num_kv_heads}}
+
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+slurm:
+  sbatch:
+    nodes: 2
+
+stage: stable
+
+
+job:
+  name: mt_dense_50M_01_lr${backend.megatron.lr}_gbsz${aux.gbs}_beta2${backend.megatron.adam_beta2}_${aux.additional_tag}_${stage}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

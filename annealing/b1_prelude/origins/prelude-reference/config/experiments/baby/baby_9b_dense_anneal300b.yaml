@@ -1,0 +1,72 @@
+# @package _global_
+
+# 9B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_cancel
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - /backend/megatron/baby/data: oellm_256k_10TT_leonardo_train
+  - _self_
+
+job:
+  name: "baby_9b_dense_anneal300b"
+  # base_output_dir: /leonardo_work/OELLM_prod2026/production_training/${job.name}
+  base_output_dir: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 2
+
+backend:
+  megatron:
+    wandb_project: baby_9b_dense
+    # No suffix after $SLURM_JOB_ID: bash would read it as $SLURM_JOB_ID_anneal
+    # (empty), and ${SLURM_JOB_ID} would be eaten by OmegaConf interpolation.
+    # job.name already carries the "anneal300b" tag.
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    # data_cache_path: /leonardo_work/OELLM_prod2026/production_training/${job.name}/cache
+    data_cache_path: /leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense/cache
+
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # 24h limit
+    exit_duration_in_mins: 1410
+
+    # Annealing: branch off the 10T run at iter 953312 (7.997T tokens) and decay
+    override_opt_param_scheduler: true
+    min_lr: 0.0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 4000       # long past; kept for scheduler consistency
+    lr: 0.00035
+    train_iters: 989075         # 953312 + 35763
+    lr_wsd_decay_iters: 35763   # 300e9 / (seq_len 4096 * gbs 2048) ≈ 35,762.8
+
+
+    save: ${job.base_output_dir}/checkpoints
+    # load: /leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense/checkpoints
+    load: ${.save}
+
+slurm:
+  env:
+    HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
+    NCCL_DEBUG: info
+  sbatch:
+    nodes: 256
+    time: "24:00:00"
+    qos: qos_oellm
+    exclude: "lrdn[0337,0417,2658,1338]"
+    # reservation: s_oellm_prod2026
+
+    # slurm signal to process to stop training and checkpoint right before time limit
+    signal: "TERM@240"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"

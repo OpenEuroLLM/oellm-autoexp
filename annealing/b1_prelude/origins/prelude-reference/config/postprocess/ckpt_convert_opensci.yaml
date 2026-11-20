@@ -1,0 +1,18 @@
+# @package _global_
+#
+# Megatron distributed checkpoint -> HuggingFace conversion for OpenSci models.
+# Runs in the same SLURM job after the dist->torch conversion.
+
+postprocess:
+  convert_hf:
+    class_name: MegatronToHFStep
+    architecture: opensci
+    torch_ckpt_dir: ${job.base_output_dir}/torch/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    hf_output_dir: ${job.base_output_dir}/hf/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    target_tensor_parallel_size: 1
+    target_pipeline_parallel_size: 1
+    target_params_dtype: bf16
+    num_key_value_heads: ${backend.megatron.num_attention_heads}
+    model_type: opensci
+    architecture_class: OpensciForCausalLM
+    tokenizer_name: EleutherAI/gpt-neox-20b

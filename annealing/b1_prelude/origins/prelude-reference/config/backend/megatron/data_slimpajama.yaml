@@ -1,0 +1,5 @@
+data_path:
+ - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/cerebras-SlimPajama-627B/train/merged
+
+aux:
+  dataset: spaj

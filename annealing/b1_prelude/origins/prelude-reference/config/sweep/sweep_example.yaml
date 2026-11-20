@@ -1,0 +1,103 @@
+# Outer level: product (combines hyperparameters × stages)
+# usually this should be defined in your experiment file.
+type: product
+
+groups:
+  - type: list
+    configs:
+      - backend.megatron.wandb_exp_name: "${job.name}"
+        job.base_output_dir: "${job.base_output_dir}/${job.name}"
+  # GROUP 1: Hyperparameter configurations (list of two product grids)
+  - type: list
+    configs:
+      # Grid 1: 6 configurations (3 lr × 2 batch sizes)
+      - type: product
+        params:
+          backend.megatron.lr: [2.5e-4]
+          backend.megatron.global_batch_size: [64]
+
+  # GROUP 2: Multi-stage training (stable + cooldown/decay)
+  # Uses a nested structure with defaults for decay stages
+  - type: list
+    configs:
+      # STABLE PHASE: Train for 50B tokens with no decay
+      - stage: stable
+
+        backend.megatron.aux.tokens: 50_000_000_000
+        # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
+        # These will be unescaped during sweep expansion and resolved with stage-specific values
+        backend.megatron.train_iters: "\\${oc.eval:'int((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))'}"
+        backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
+
+      # NESTED GROUP: Cooldown/decay stages with shared defaults
+      # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
+      - type: list
+        defaults:
+          # Common decay configuration
+          backend.megatron.aux.decay_fraction: 0.2
+
+          # Computed fields using ESCAPED OmegaConf interpolations ($ prevents early resolution)
+          # These will be unescaped during sweep expansion and resolved with stage-specific values (6B, 12B, 30B, 50B)
+          # Each computation is self-contained (doesn't reference other computed values) to avoid ordering issues
+
+          #!!!
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+          backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
+
+          # Checkpoint loading configuration
+          backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
+          backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter_round}"
+          backend.megatron.override_opt_param_scheduler: true
+
+          # Start conditions: wait for stable to reach checkpoint (new async approach)
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
+
+          # Cancel conditions: cancel if stable job fails
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.stable.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+        configs:
+          # Each decay stage only needs to specify its unique stage and tokens
+          - stage: decay6B
+            backend.megatron.aux.tokens: 6_000_000_000
+
+
+# Summary of what this creates:
+# - GROUP 1: 15 hyperparameter configurations
+#   - Grid 1: 6 configs (3 lr × 2 batch sizes)
+#   - Grid 2: 9 configs (3 lr × 3 batch sizes)
+#   - Union (list mode): 6 + 9 = 15 configs
+# - GROUP 2: 5 stages per config
+#   - Stable: 1 config
+#   - Nested group with defaults: 4 decay stages
+#     - Common config in 'defaults' (20% decay, checkpoint loading, conditions)
+#     - Each stage overrides only stage and tokens
+#   - Total: 1 + 4 = 5 stages
+# - Outer product: 15 hyperparameter configs × 5 stages = 75 total jobs
+#
+# Benefits of using group-level defaults:
+# 1. DRY (Don't Repeat Yourself) - common config defined once
+# 2. Easy to modify - change decay_fraction, start_conditions, etc. in one place
+# 3. Clear structure - defaults vs. stage-specific parameters
+# 4. No exotic YAML features (vs. anchors) - more maintainable
+#
+# OmegaConf interpolation strategy:
+# 1. Base config (backend.megatron.aux) defines interpolations for start_iter, start_iter_round
+# 2. Defaults override primitive values (decay_fraction, tokens)
+# 3. Interpolations in base config automatically pick up overridden values
+# 4. This ensures correct evaluation order: tokens → train_iters → start_iter → start_iter_round
+#
+# Pull-based advantages over push-based:
+# 1. All jobs planned upfront - full visibility
+# 2. No dynamic job creation during monitoring
+# 3. Cooldown jobs wait for checkpoints (start_conditions with FileExistsCondition)
+# 4. Automatic cancellation if stable job fails (cancel_conditions)
+# 5. Uses stable log symlink for reliable monitoring
+# 6. Unified condition system (same conditions for start gating and failure detection)

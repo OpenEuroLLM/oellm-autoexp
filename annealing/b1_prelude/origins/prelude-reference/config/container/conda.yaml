@@ -1,0 +1,7 @@
+class_name: Conda
+env_name: oellm
+env_path: null
+
+activate_script: "conda activate "
+
+env: {}

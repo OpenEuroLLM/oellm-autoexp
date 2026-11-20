@@ -1,0 +1,10 @@
+train_data_path:
+ - /e/project1/jureap59/poeppel1/data/copy_nemotron_downsampled_15p/high-all
+
+valid_data_path:
+ - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+
+data_path: []
+split: null
+aux:
+  dataset: nemonicco

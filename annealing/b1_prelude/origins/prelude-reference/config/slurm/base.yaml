@@ -1,0 +1,23 @@
+defaults:
+  - _self_
+
+template_path: templates/base.sbatch
+script_dir: ${job.base_output_dir}
+log_dir: ${job.base_output_dir}
+array: false
+launcher_cmd: "python"
+launcher_env_passthrough: false
+env:
+  HF_HOME: ${oc.env:HF_HOME,""}
+  WANDB_MODE: offline
+srun: {}
+sbatch:
+  nodes: 1
+  ntasks_per_node: 1
+  cpus_per_task: 8
+  time: "48:00:00"
+  account: ${oc.env:SLURM_ACCOUNT,"dev"}
+  partition: ${oc.env:SLURM_PARTITION,"default"}
+  gres: "gpu:1"
+  gpus_per_node: 4
+  output: ${job.log_path}

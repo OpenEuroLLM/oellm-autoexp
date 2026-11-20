@@ -1,0 +1,115 @@
+# @package _global_
+
+# 9B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: auto_cancel
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - /backend/megatron/baby/data: oellm_256k_english3_lumi_train
+  - /experiments/baby/lumi_laif_runtime
+  - _self_
+
+job:
+  name: "baby_9b_dense_anneal100b_english3"
+  base_output_dir: /scratch/project_465002891/prelude-mid/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+backend:
+  megatron:
+    wandb_project: baby_9b_dense_anneal
+    wandb_entity: ltg
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    data_cache_path: /scratch/project_465002891/prelude-mid/cache
+
+    # LUMI/ROCm: fused kernels not supported by the ROCm build
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    masked_softmax_fusion: false
+    apply_rope_fusion: false
+    tp_comm_overlap: false
+
+    # Padded vocab must match the converted checkpoint: tokenizer len 262145
+    # -> multiple 32*TP4 = 128 -> 262272 rows (= HF checkpoint).
+    make_vocab_size_divisible_by: 32
+    micro_batch_size: 2
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # exit ~30 min before the 48h walltime
+    exit_duration_in_mins: 2850
+
+    # Annealing: branch off the 10T run at iter 953312 (7.997T tokens) and decay.
+    # The converted checkpoint has no optimizer/scheduler state, so the LR
+    # scheduler starts fresh at step 0: warmup/decay are expressed relative to
+    # the anneal window, while train_iters stays absolute (the data position is
+    # reconstructed by Megatron as iteration * global_batch_size).
+    # Short re-warmup because Adam moments start cold.
+    override_opt_param_scheduler: true
+    min_lr: 0.0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: minus_sqrt
+    lr_warmup_iters: 150        # short re-warmup for cold optimizer state (NOT the original 4000)
+    lr: 0.00035
+    train_iters: 965232         # 953312 + 11920
+    lr_decay_iters: 11920        # scheduler-relative window; 11920 = 100e9 / (seq_len 4096 * gbs 2048)
+    lr_wsd_decay_iters: 11770    # decay fills the window after warmup: 11920 - 150
+
+    save: ${job.base_output_dir}/checkpoints
+    # load: /scratch/project_465002891/prelude-mid/checkpoints/prelude_iter_0953312_megatron
+    # no_load_optim: true
+    # no_load_rng: true
+    exit_on_missing_checkpoint: true
+    load: ${.save}
+    no_load_optim: false
+    no_load_rng: false
+
+container:
+  image: /scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
+
+slurm:
+  # slurm/lumi.yaml puts this in the structured `srun:` block, which the sbatch
+  # generator silently drops — srun_opts is the string field that actually
+  # lands in the script. disable_rdzv_get is the Slingshot/CXI rendezvous
+  # workaround for RCCL collectives hanging at scale (first job hung in the
+  # initial cross-node all-gather at 64 nodes without it). Trailing space
+  # required: the template renders `srun {srun_opts}bash -c ...`.
+  srun_opts: "--network=disable_rdzv_get "
+  env:
+    HF_HOME: /scratch/project_465002891/prelude-mid/hf_cache/${oc.env:USER}
+    NCCL_DEBUG: info
+    WANDB_MODE: online
+    # MANDATORY with TP>1: the fork hard-asserts this at startup.
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # TE 2.4-ROCm's C++ rmsnorm_bwd computes a pathological ~54GB workspace for
+    # the qk-layernorm shape (width 128) — use TE's Triton norm kernels instead.
+    NVTE_USE_RMSNORM_TRITON: "1"
+    # node-local triton cache; the default ~/.triton on Lustre home would be
+    # hammered by 512 concurrently-compiling ranks
+    TRITON_CACHE_DIR: /tmp/$USER/triton-cache
+    # NOTE: do NOT add HSA_FORCE_FINE_GRAIN_PCIE / OMP_NUM_THREADS here — they
+    # were imported from better-bpe-llm's (different) container environment and
+    # correlate with the dataloader pin-memory hipHostMalloc OOM on TP-rank-0
+    # ranks in this container.
+    # slurm/lumi.yaml exports gcc-12, which does not exist INSIDE the container
+    # (only /usr/bin/gcc, g++); torch.compile/inductor needs a working compiler
+    CC: gcc
+    CXX: g++
+  sbatch:
+    account: project_465002891
+    partition: standard-g
+    nodes: 64
+    time: "48:00:00"
+
+    # slurm signal to process to stop training and checkpoint right before time limit
+    signal: "TERM@240"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"

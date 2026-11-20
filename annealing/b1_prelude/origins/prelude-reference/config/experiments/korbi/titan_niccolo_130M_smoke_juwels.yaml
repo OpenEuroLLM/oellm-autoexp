@@ -1,0 +1,111 @@
+# @package _global_
+# Titan translation of megatron_niccolo_130M_scaling_jupiter.yaml
+#
+# Architecture differences vs megatron:
+#   - add_qkv_bias / mlp_bias are now supported in qwen3_custom
+#   - Multi-stage sweep: stable (300B, no decay) + cooldown branches at multiple token budgets
+#     Titan equivalent of override_opt_param_scheduler: exclude_from_loading: [lr_scheduler]
+#
+# Model: ~130M params, 576d / 18L / 9H / ffn=2304 / head_dim=64
+#   GBS=128, LBS=16 → data_parallel=8 → 2 Jupiter nodes
+defaults:
+  - ../base
+  - /backend: titan
+  - /container: juwels_titan
+  - /slurm: juwels
+  - /sweep: none
+  - override /job: default
+  - override /backend/titan/model: qwen3_base
+  - override /backend/titan/data: nemonicco_juwels
+  - _self_
+
+aux:
+  experiment_group: "niccolo_130M_smoke"
+
+  tokens: 6_000_000_000
+  seq_len: 4096
+  gbs: 128
+  decay_fraction: 0.2
+  additional_tag: "wd_fix"
+
+stage: stable   # overridden by sweep
+
+backend:
+  titan:
+    training:
+      steps: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+      global_batch_size: ${aux.gbs}
+      local_batch_size: 16
+      seq_len: ${aux.seq_len}
+      max_norm: 1.0
+      dtype: float32
+      dataset: ""
+
+    model:
+      name: qwen3_custom
+      tokenizer_path: /p/project1/transfernetx/franke5/data/tokenizer/neox
+      vocab_size: 50304
+
+      dim: 576
+      n_layers: 18
+      n_heads: 9
+      n_kv_heads: 9       # full MHA (no GQA), matches num_query_groups=9
+      hidden_dim: 2304    # ffn_hidden_size
+      head_dim: 64        # kv_channels
+      qk_norm: true       # qk_layernorm
+      enable_weight_tying: true   # untie_embeddings_and_output_weights: False
+      qkv_bias: true
+      mlp_bias: true
+      rope_theta: 100000
+      depth_init: false
+      norm_eps: 1e-5
+
+    optimizer:
+      lr: 0.002
+      beta1: 0.9
+      beta2: 0.99         # adam_beta2
+      weight_decay: 0.1
+      eps: 1.0e-8
+
+    validation:
+      enable: true
+      freq: 1000
+      steps: 100
+      local_batch_size: -1
+      max_eval_samples: 100
+
+    lr_scheduler:
+      scheduler_type: wsd
+      warm_steps: 2000  # never use warmup_steps, use warm_steps
+      warm_ratio: 0.
+      cooldown_ratio: ${aux.decay_fraction}
+      cooldown_steps: 0
+      cooldown_type: linear
+      # min_lr: 1e-5 → min_lr_factor = 1e-5 / 0.002 = 0.005
+      min_lr_factor: 0.005
+
+    checkpoint:
+      enable: true
+      interval: 3000
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONPATH: "./submodules/titan-oellm:./submodules/titan-oellm/torchtitan:."
+    NCCL_SOCKET_TIMEOUT: 60000
+    NCCL_TIMEOUT: 1800
+    NCCL_IB_TIMEOUT: 100
+    NCCL_IB_RETRY_CNT: 20
+    NCCL_ALGO: Ring
+
+slurm:
+  sbatch:
+    nodes: 2
+
+job:
+  name: ti_dense_50M_02_lr${backend.titan.optimizer.lr}_gbsz${aux.gbs}_beta2${backend.titan.optimizer.beta2}_${aux.additional_tag}_${stage}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

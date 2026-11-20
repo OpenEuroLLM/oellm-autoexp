@@ -1,0 +1,38 @@
+# @package _global_
+# LLaMA 1.8B QK-LN, JUPITER (1 node, 4x GH200), ~495 TFLOPS (49.5% MFU)
+# Settings: TP=1, PP=1, DP=4, MBS=6, no recompute, FP8 e4m3
+# Note: FP8 uses Transformer Engine (transformer_impl: transformer_engine, already default)
+# PYTORCH_CUDA_ALLOC_CONF must not use expandable_segments (incompatible with FP8+TE)
+defaults:
+  - base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [llama1_8b_qkln,speed_test_jupiter]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 10
+    eval_interval: 1000
+    data_path:
+     - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+    save: null
+    load: null
+    lr: 1e-3
+    lr_warmup_iters: 0
+    # Throughput settings:
+    micro_batch_size: 6
+    recompute_activations: false
+    recompute_granularity: null
+    sequence_parallel: false       # TP=1: sequence_parallel=true adds useless all-gathers
+    fp8: e4m3                      # FP8 training via Transformer Engine: +25% vs BF16
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"  # expandable_segments incompatible with FP8
+
+job:
+  name: llama1_8b_tp1_mbs6_fp8

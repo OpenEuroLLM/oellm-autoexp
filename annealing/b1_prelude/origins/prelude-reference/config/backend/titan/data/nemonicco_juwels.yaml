@@ -1,0 +1,26 @@
+# @package backend.titan
+
+data:
+  dataloader: "DeterministicPackedDataset"
+  min_doc_len: 10
+  eos_id: null  # Do not insert extra EOS between documents (MMap data already ends each doc with token 0)
+
+  # data_prefix:
+  # - /e/project1/jureap59/poeppel1/data/copy_nemotron_downsampled_15p/high-all
+
+  # chunks_dir: ""
+  chunks_dir:
+   - /p/scratch/projectnucleus/poeppel1/data/copy_nemotron_downsampled_15p_chunked
+
+
+validation:
+  enable: true
+  # dataset: "slimpajama"
+  local_batch_size: -1
+  dataloader: "MMapDataset"
+  data_prefix: /p/scratch/projectnucleus/poeppel1/data/nemotron_downsampled_5p_valid/high-all
+  max_eval_samples: 50000
+  data_source: "offline"
+  split_samples: 0
+  split_seed: 42
+  eval_mode: "concatenated"

@@ -1,0 +1,5 @@
+defaults:
+  - jupiter
+  - _self_
+
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deepep-nvshmem_base2510_aarch64_202603050101.sif

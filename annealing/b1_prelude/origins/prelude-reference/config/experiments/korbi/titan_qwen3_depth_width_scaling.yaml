@@ -1,0 +1,126 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: titan
+  - /container: leonardo_titan
+  - /slurm: leonardo
+  - /backend/titan/model: qwen3
+  - /backend/titan/data: data_nemotron_cc
+  - /sweep: none
+  - _self_
+
+# will be overridden
+aux:
+  width: 512
+  nheads: 8
+  nkvheads: 2
+  layers: 12
+  ffn_scale: 3
+
+  total_tokens: ${oc.eval:${backend.titan.training.seq_length}*${backend.megatron.global_batch_size}*${backend.megatron.train_iters}}
+
+backend:
+  titan:
+    training:
+      steps: 24000
+      global_batch_size: 1024
+      seq_len: 4096
+
+    model:
+      vocab_size: 50384  # Qwen3 vocabulary size (must match tokenizer)
+      tokenizer_path: /leonardo_scratch/fast/EUHPC_D29_026/tokenizer/neox
+
+      dim: ${aux.width}
+      hidden_dim: ${oc.muli:${aux.width},${aux.ffn_scale}}
+      n_layers: ${aux.layers}
+      n_heads: ${aux.nheads}
+      n_kv_heads: ${aux.nheads}
+      enable_weight_tying: true
+
+    lr_scheduler:
+      warm_steps: 2000
+      decay_ratio: 0.2
+
+    checkpoint:
+      enable: true
+      interval: 2000
+
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+slurm:
+  sbatch:
+    nodes: 16
+
+
+job:
+  name: megatron_qwen3_depth_width_scaling_D${backend.megatron.aux.dataset}__W${aux.width}_NH${aux.nheads}_L${aux.layers}_FFNS${aux.ffn_scale}
+  base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/depth_width_scaling_dense,${job.name}${oc.if:${slurm.array}, "_${index}", ""}}
+
+sweep:
+  # Outer level: product (combines hyperparameters × stages)
+  type: product
+
+  groups:
+    - type: list
+      configs:
+      # normal wider
+        - aux.width: 512
+          aux.ffn_scale: 3
+          aux.nheads: 8
+          aux.nkvheads: 2
+          aux.layers: 26
+
+        - aux.width: 640
+          aux.ffn_scale: 3
+          aux.nheads: 10
+          aux.nkvheads: 2
+          aux.layers: 16
+
+        - aux.width: 768
+          aux.ffn_scale: 3
+          aux.nheads: 12
+          aux.nkvheads: 2
+          aux.layers: 10
+      # less heads
+        - aux.width: 512
+          aux.ffn_scale: 3
+          aux.nheads: 4
+          aux.nkvheads: 1
+          aux.layers: 30
+
+        - aux.width: 640
+          aux.ffn_scale: 3
+          aux.nheads: 5
+          aux.nkvheads: 1
+          aux.layers: 18
+
+        - aux.width: 768
+          aux.ffn_scale: 3
+          aux.nheads: 6
+          aux.nkvheads: 1
+          aux.layers: 12
+      # factor 4
+        - aux.width: 512
+          aux.ffn_scale: 4
+          aux.nheads: 8
+          aux.nkvheads: 2
+          aux.layers: 22
+
+        - aux.width: 640
+          aux.ffn_scale: 4
+          aux.nheads: 10
+          aux.nkvheads: 2
+          aux.layers: 13
+
+        - aux.width: 768
+          aux.ffn_scale: 4
+          aux.nheads: 12
+          aux.nkvheads: 2
+          aux.layers: 9

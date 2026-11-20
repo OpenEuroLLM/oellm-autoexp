@@ -1,0 +1,7 @@
+num_layers: 24
+hidden_size: 2048
+num_attention_heads: 32
+ffn_hidden_size: 5440
+
+aux:
+  model_name: "dense1.3B"

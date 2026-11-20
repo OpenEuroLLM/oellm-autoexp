@@ -1,0 +1,12 @@
+# A "bash" backend for exercising job-control configs (auto_cancel etc.) on a
+# real cluster WITHOUT launching a trainer. `command` is an arbitrary bash
+# string (echo + sleep + loops) returned verbatim as the launch command, so you
+# can emulate any training outcome and watch how the monitor reacts.
+#
+# The command runs under `srun ... bash -c '<command>'` (templates/base.sbatch),
+# so: NO single quotes (use double quotes) and NO `${...}` (OmegaConf would try
+# to interpolate it).
+class_name: BashBackend
+command: |
+  echo "[bash] no command configured -- override backend.command"
+env: {}

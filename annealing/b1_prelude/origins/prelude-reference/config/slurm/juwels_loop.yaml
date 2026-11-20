@@ -1,0 +1,49 @@
+defaults:
+  - base
+  - _self_
+
+template_path: templates/juwels_loop.sbatch
+launcher_cmd: "${oc.select:container.runtime,apptainer} exec --nv ${oc.select:container.image,container.sif}"
+srun:
+  exclusive: true
+  wait: 60
+  cpus_per_task: 8
+  threads_per_core: 1
+  gpu_bind: "none"
+launcher_env_passthrough: true
+env:
+  MACHINE_NAME: JUWELS
+  NCCL_SOCKET_IFNAME: ib0
+  GLOO_SOCKET_IFNAME: ib0
+  NCCL_SOCKET_FAMILY: AF_INET
+  GLOO_SOCKET_FAMILY: AF_INET
+  TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+  NCCL_IB_TIMEOUT: "18"
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_RETRY_CNT: "20"
+  NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
+  NCCL_NET_GDR_LEVEL: "2"
+  NCCL_NET_GDR_READ: "1"
+  HF_ALLOW_CODE_EVAL: "1"
+  HF_DATASETS_OFFLINE: "1"
+  HF_HOME: ${oc.env:HF_HOME}
+  TRANSFORMERS_OFFLINE: "1"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1)i | \
+    grep \"Address: \" | tail -n1 | awk '{print $2}')"
+  MASTER_PORT: "20074"
+  NUM_NODES: "$SLURM_JOB_NUM_NODES"
+  GPUS_PER_NODE: "4"
+  NUM_GPUS_PER_NODE: "4"
+  NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+  ARCH: "$(uname -m)"
+  SLURM_CPUS_PER_TASK: "12"
+  SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+sbatch:
+  nodes: 1
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  cpus_per_task: 32
+  gres: "gpu:4"
+  gpu_bind: "none"
+  time: "12:00:00"

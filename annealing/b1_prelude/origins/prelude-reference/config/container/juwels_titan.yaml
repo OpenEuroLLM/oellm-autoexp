@@ -1,0 +1,9 @@
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/titan_0.2.1_x86_64_202603201248.sif
+runtime: singularity
+bind: []
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUWELS"
+  PYTHONPATH: "."
+python: "python"

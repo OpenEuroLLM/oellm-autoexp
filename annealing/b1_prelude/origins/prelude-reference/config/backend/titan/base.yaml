@@ -1,0 +1,75 @@
+defaults:
+  - model: default
+  - data: nemotron_cc
+  - training: default
+  - parallelism: default
+  - _self_
+
+
+job:
+  dump_folder: ${job.base_output_dir}
+  continue_training: true
+
+metrics:
+  log_freq: 10
+  enable_tensorboard: true
+  save_tb_folder: "tb"
+  disable_color_printing: true
+
+optimizer:
+  name: "AdamW"
+  lr: 0.004
+  beta1: 0.9
+
+lr_scheduler:
+  scheduler_type: "wsd"
+  warmup_steps: 2000
+  decay_type: "linear"
+  main_decay_ratio: 0.2
+  warm_ratio: 0.1
+
+validation:
+  enable: false
+  freq: 1000
+  steps: -1
+  local_batch_size: -1
+  max_eval_samples: -1
+
+parameter_logging:
+  enabled: true
+  log_interval: 1000
+  log_parameters: true
+  log_gradients: true
+  log_optimizer_states: true
+  include_patterns: []
+  exclude_patterns: []
+
+
+experimental:
+  custom_import: "titan_oellm.models"
+
+benchmarks:
+  enable: false
+
+
+
+parallelism:
+  data_parallel_replicate_degree: 1
+  data_parallel_shard_degree: -1
+  tensor_parallel_degree: 1
+  pipeline_parallel_degree: 1
+  context_parallel_degree: 1
+
+compile:
+  enable: true
+  backend: "inductor"
+  components:
+    - model
+    - loss
+
+activation_checkpoint:
+  mode: "none"
+  selective_ac_option: "op"
+  early_stop: false
+  memory_budget: 0.5
+  visualize_memory_budget_pareto: false

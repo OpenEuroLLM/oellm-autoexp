@@ -1,0 +1,6 @@
+dataloader: "DeterministicPackedDataset"
+min_doc_len: 10
+
+data_prefix:
+ - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/cerebras-SlimPajama-627B/train/merged
+chunks_dir: ""

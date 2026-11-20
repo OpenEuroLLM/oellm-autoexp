@@ -1,0 +1,9 @@
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_base2512_x86_64_202602200350.sif
+runtime: singularity
+bind: []
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUWELS"
+  PYTHONPATH: "."
+python: "python"
