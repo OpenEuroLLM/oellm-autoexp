@@ -1,0 +1,13 @@
+# @package _global_
+# t18_flex_tune at the s3 testbed's attention shapes (10 query heads, 2 KV groups, head dim 128): do the H100 options
+# found at head dim 256 (8 warps / 2 stages, 1.6x) also pay at 128? One 64k document, 4 x 16k packed.
+defaults:
+  - t18_flex_tune_mn5
+  - _self_
+
+aux:
+  name: t18_flex_tune_d128
+  bench: >-
+    mkdir -p ${aux.out} && cd submodules/Megatron-LM
+    && python ../../scripts/korbi/campaign_midtraining/flex_tune_bench.py --docs 65536 --heads 10 --dim 128 --out ${aux.out}/64k_d128.json
+    && python ../../scripts/korbi/campaign_midtraining/flex_tune_bench.py --docs 16384 16384 16384 16384 --heads 10 --dim 128 --out ${aux.out}/4x16k_d128.json
