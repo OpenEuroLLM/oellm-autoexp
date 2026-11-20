@@ -736,8 +736,10 @@ class MegatronConfig(ConfigInterface):
     page_sparse_dense_forward: bool = False
 
     # page selectors' kernel: "flex" (FlexAttention, fused Triton forward / backward, a block
-    # mask of each query block's page union) or "gathered" (the exact torch reference);
-    # token_topk / compress_mean are always gathered.
+    # mask of each query block's page union), "gathered" (the exact torch reference) or
+    # "token" (per-token selection, select_block 1: every query token its own pages, NSA's
+    # selection kernel over the packed documents -- token_sparse.py; page_mean / page_maxpool
+    # / quest, CP 1); token_topk / compress_mean are always gathered.
     page_sparse_backend: str = "flex"
 
     # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
