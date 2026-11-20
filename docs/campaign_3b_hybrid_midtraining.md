@@ -1773,6 +1773,58 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
     switch (token-mode selection at inference, host-RAM + FP8 KV for decode). LSA remains the fastest decode scorer
     (0.25 vs 0.54 ms per layer at 1M) if page_maxpool's scoring cost matters.
 
+  - **t18: the open questions as experiments (2026-11-19 / 20; configs `t18_*_mn5.yaml`, `t19_*`).** Training on the s3
+    testbed (4 nodes per arm), all on the v8ml mix:
+    - adaptation to step 7000 (`t18_s3_sparse_adapt`, from the step-1000 branch point, same data per arm): dense,
+      page_maxpool_pg, page_mean_pg, csa2_fix, a learned page indexer (PageIndexer, KL to the dense page mass) and
+      D-LSA -- does a selector with a learning signal catch up? Long arms cross the pool's 8 h limit through exit saves
+      and `--branch-resume-from-save` (Megatron ee6a124ae: a restart resumes the arm's own save, not the branch point);
+    - ablations paired with t16 (`t18_s3_sparse_ablate`, step 1000 -> 3000): page_maxpool with select_block 16, layer 0
+      dense (`page_sparse_dense_layers`, Megatron 4934630c1 + the HF model), top 64, 32-token pages x 64, window 1024;
+      page_mean with top 64 / select_block 16;
+    - 256k continuation (`t18_s3_sparse_256k`, CP 4, 500 steps from t16's step 3000): dense, page_maxpool_pg,
+      page_mean_pg;
+    - from scratch, hybrid ratio (`t18_s3_scratch_ratio`, 3000 steps): 7:1 vs 3:1 attention (6 instead of 3 attention
+      layers), dense / page_maxpool_pg / page_mean_pg -- can cheap attention afford more attention layers?
+    - v4b-scale speed rerun after the selection speedups below (`t19_v4b_sparse_speed_c136`, 128 nodes, 64k / 256k).
+    Evals (`t18_eval_pack*`: one worker per GPU, items claimed from a list): training-free sparse attention (the dense
+    export with a sparse selector, `t18_trainfree_exports_mn5.sh`), NLL at 512k / 1M, retrieval at 512k / 1M, variable
+    tracking at 128k / 256k, the whole-model e2e prefill / decode bench, and realistic tasks (`long_realistic_eval.py`:
+    LongBench v1, NarrativeQA's longest, InfiniteBench en.mc / en.qa / code.debug at 64k / 128k / 256k).
+    Host history: host007 (p264) reached its 3-day wall time 2026-11-20 01:27 mid-run (arms saved at 1396-2497, they
+    resume); everything moved to c136 host005 (unparked 11-20 00:4x, its pool's session records rebuilt -- they were
+    zeroed when its monitor died 11-19 19:47), expected start 11-20 ~20:00.
+  - **t18 first results (eval pack 1, t16 step-3000 exports):**
+    - NLL at 512k (8 held-out documents >= 512k): dense 0.937, page_maxpool_pg 0.979, page_mean_pg 0.988, lsa_fix
+      1.019. Dense keeps improving with position (0.92 at 256-512k: NoPE extrapolates); the sparse gap grows with
+      position (+0.027 at 32-64k, ~+0.05 beyond 128k) -- no extrapolation advantage for sparse attention. 1M: only 3
+      documents (NLL ~2 beyond 64k: unusual text), same order.
+    - Training-free vs trained (NLL, 64k / 256k): page_maxpool 2.662 / 1.801 vs 2.641 / 1.783 (dense 2.551 / 1.708),
+      page_mean 2.670 / 1.817 vs 2.654 / 1.800, LSA 2.695 / 1.871 vs 2.680 / 1.846: training removes only ~0.015-0.025
+      of a ~0.11 NLL gap; the ranking is the same. Retrieval needs it for LSA (passkey 128k / 256k training-free 0.68 /
+      0.65, trained 1.00 / 1.00); training-free page_mean keeps passkey 0.88 / 0.98.
+    - Retrieval at 512k: dense multi-key 0.67 / passkey 1.00, lsa_fix 0.50 / 1.00. Variable tracking (4 hops) is ~0
+      for every arm incl. dense from 4k up: beyond this 3B base model, uninformative.
+  - **Speed work (2026-11-20, every change equivalence-tested):**
+    - page_maxpool's window means from quarter-page sums instead of a cumsum over the keys (torch's outer-dim scan was
+      72 % of its selection): selection 48.9 -> 13.5 ms per layer at 64k = page_mean's; fwd + bwd 609 -> 574 ms
+      (3090 Ti, single-call path). Megatron 65f660518 (test vs the cumsum formulation, float64).
+    - Page top-k over the select_block anchors' rows only, block lists sorted per KV group (70c67fa1f); the packed
+      output split instead of sliced per span (each slice backpropagated a full-size zero tensor), the scoring of
+      short documents that select every page anyway skipped (exact while blocks never straddle pages) (8e5ce2470);
+      the same split for the core attention's per-document q / k / v (df9939a5a). Packed path, 3090 Ti d128: 64k
+      one document 252 -> 247 ms, 64 x 1k documents 229 -> 92 ms.
+    - LSA flex: buckets padded to whole kv blocks (3ffa24690), one flex call over [raw keys | bucket-ordered keys]
+      with one exact mask (5953d34ea), index_select gather (586aa139c). One layer fwd + bwd on H100 (v4b shapes):
+      64k 548 -> 408 ms, 128k 1148 -> 835, 256k 2371 -> 1723 ms, peak memory halved (45 -> 22 GB at 256k); still
+      above dense at 64k (308 ms).
+    - Pitfalls found on the way: flex's eager fallback evaluates mask_mod alone (masks must be exact without the
+      block lists), two mask_mod closures at one call site crashed dynamo's recompile check into that fallback, and
+      inductor's decode kernel (< 128 queries) fails on the dynamic tiles (flex_kernel_options now forces the main
+      kernel).
+    - Left: the flex kernel itself is ~90 % of the packed step and runs at ~54 TFLOP/s on H100 at head dim 256 (dense
+      flash ~390). Kernel options sweep (`t18_flex_tune`, equivalence-checked) queued for host005.
+
 ## References
 
 - Soft-MTP: https://arxiv.org/abs/2610.38331 (code: github.com/JaydenTeoh/Soft-MTP)
