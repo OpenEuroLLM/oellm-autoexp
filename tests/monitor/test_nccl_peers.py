@@ -462,6 +462,77 @@ def test_fatal_signature_without_world_size_is_not_attributed(tmp_path):
     assert peers.scan(tmp_path, job, nodes, job_log=log)["exclude"] == []
 
 
+# MN5 job 48760471 (2026-11-19/20), pool run mn5-pool-p264.2052: GPU 3 of as01r2b12 was full
+# before the rank started; every v4b restart died in set_device for 4 h. Real lines, 4 GPUs/node.
+CONTEXT_OOM_LINES = [
+    "[default3]:torch.AcceleratorError: CUDA error: out of memory",
+    "[default3]:The CUDA driver logged these messages, which may provide useful details:",
+    "[default3]:Returning 2 (CUDA_ERROR_OUT_OF_MEMORY) from cuDevicePrimaryCtxRetain",
+]
+
+
+def summary(rank, exitcode, host="as01r2b12.bsc.mn"):
+    """One record of torchrun's failure summary."""
+    return [
+        "[0]:",
+        "  time      : 2026-11-20_01:10:29",
+        f"  host      : {host}",
+        f"  rank      : {rank} (local_rank: {rank % 4})",
+        f"  exitcode  : {exitcode} (pid: 705462) ",
+        "  error_file: <N/A>",
+    ]
+
+
+def context_oom_job(tmp_path, lines):
+    hosts = [f"as01r2b{i:02d}" for i in range(1, 9)]  # rank 31 -> hosts[7]
+    job = {
+        "job_id": "48760471",
+        "state": "FAILED",
+        "start": peers.stamp("2026-11-20T01:09:44"),
+        "end": peers.stamp("2026-11-20T01:10:44"),
+        "hosts": hosts,
+    }
+    log = tmp_path / "slurm-48760471.276-ambitious_v4b_learned_256.log"
+    log.write_text(
+        "\n".join(["[default0]:using world size: 32, data-parallel size: 32", *lines])
+        + "\n"
+        + "".join(f"srun: error: {h}: task {t}: Exited with exit code 1\n" for t, h in enumerate(hosts))
+    )
+    return job, {h: {"NodeName": h, "State": "ALLOCATED"} for h in hosts}, log
+
+
+def test_a_gpu_full_before_the_run_excludes_its_node(tmp_path):
+    victims = summary(28, -15) + summary(29, -15) + summary(30, -15)
+    lines = [*CONTEXT_OOM_LINES, "Root Cause (first observed failure):", *summary(31, 1), *victims]
+    job, nodes, log = context_oom_job(tmp_path, lines)
+    result = peers.scan(tmp_path, job, nodes, job_log=log)
+    assert result["exclude"] == ["as01r2b08"]
+    (event,) = result["events"]
+    assert event["rule"] == "fatal_rank_signature" and event["rank"] == 31
+    assert "cuDevicePrimaryCtxRetain" in event["log_line"]
+
+
+@pytest.mark.parametrize("case", ["no_context_oom", "only_signals", "no_summary"])
+def test_context_oom_needs_both_the_driver_line_and_an_error_exit(tmp_path, case):
+    lines = {
+        # a training OOM (or any crash) with an error exit: not a full GPU
+        "no_context_oom": ["[default3]:torch.OutOfMemoryError: CUDA out of memory.", *summary(31, 1)],
+        "only_signals": [*CONTEXT_OOM_LINES, *summary(31, -15)],
+        "no_summary": CONTEXT_OOM_LINES,
+    }[case]
+    job, nodes, log = context_oom_job(tmp_path, lines)
+    result = peers.scan(tmp_path, job, nodes, job_log=log)
+    assert result["exclude"] == [] and result["events"] == []
+
+
+def test_error_exits_on_many_hosts_with_a_context_oom_are_a_cascade(tmp_path):
+    lines = [*CONTEXT_OOM_LINES, *summary(3, 1), *summary(11, 1), *summary(31, 1)]
+    job, nodes, log = context_oom_job(tmp_path, lines)
+    result = peers.scan(tmp_path, job, nodes, job_log=log)
+    assert result["exclude"] == []
+    assert {e["rule"] for e in result["events"]} == {"fatal_rank_signature_unattributed"}
+
+
 def test_victim_nccl_errors_alone_exclude_nothing(tmp_path):
     job, nodes, log, host = fatal_job(tmp_path, "2391569")
     log.write_text(

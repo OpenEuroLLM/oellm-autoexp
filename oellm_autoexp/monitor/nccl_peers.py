@@ -27,6 +27,12 @@ fatal_rank_signature    A rank logged a node-local hardware/filesystem fault (GP
                         an error, or the site health check drained it after the attempt.
                         Jobs 2347262/2347802 (shard), 2387082, 2391569, 2400415, 2500294,
                         2500813, 2502095 (GPU) -- one host each, every time.
+                        A GPU that cannot even create its CUDA context (out of memory in
+                        cuDevicePrimaryCtxRetain, before the run allocated anything) is
+                        held by something outside the run; that line carries no rank, so
+                        the rank comes from torchrun's failure summary (the ranks that
+                        exited with an error code, not a signal). MN5 job 48760471: GPU 3
+                        of as01r2b12 failed every v4b restart for 4 h (2026-11-19/20).
 """
 
 from __future__ import annotations
@@ -78,6 +84,11 @@ FATAL_SIGNATURE = re.compile(
     r"|CUDA error: unspecified launch failure|CUDA error: unknown error"
     r"|GPU has fallen off the bus)"
 )
+# A GPU already full when the rank starts: the CUDA driver's message has no [rankN] prefix.
+CONTEXT_OOM = re.compile(r"CUDA_ERROR_OUT_OF_MEMORY\) from cuDevicePrimaryCtxRetain")
+# torchrun's failure summary: "  rank      : 31 (local_rank: 3)" then "  exitcode  : 1 (pid: ...)"
+ELASTIC_RANK = re.compile(r"^\s*rank\s+:\s+(\d+) \(local_rank: \d+\)")
+ELASTIC_EXIT = re.compile(r"^\s*exitcode\s+:\s+(-?\d+) ")
 SRUN_ERROR = re.compile(
     r"srun: error: (?P<host>[\w.-]+): task (?P<task>\d+): Exited with exit code"
 )
@@ -299,16 +310,28 @@ def fatal_signatures(job, nodes, job_log):
         return []
     hosts = job["hosts"]
     world, ranks, srun = None, {}, set()
+    context_oom, summary_rank, error_exits = None, None, []
     with path.open(errors="replace") as stream:
         for number, line in enumerate(stream, 1):
             if world is None and (m := WORLD_SIZE.search(line)):
                 world = int(m[1])
             if m := FATAL_SIGNATURE.search(line):
                 ranks.setdefault(int(m["rank"]), (number, line.strip(), m["sig"]))
+            if context_oom is None and CONTEXT_OOM.search(line):
+                context_oom = (number, line.strip())
+            if m := ELASTIC_RANK.match(line):
+                summary_rank = int(m[1])
+            elif summary_rank is not None and (m := ELASTIC_EXIT.match(line)):
+                if int(m[1]) > 0:  # an error exit; negative = killed by a signal (a victim)
+                    error_exits.append(summary_rank)
+                summary_rank = None
             if m := SRUN_ERROR.search(line):
                 task = int(m["task"])
                 if task < len(hosts) and hosts[task] == m["host"]:
                     srun.add(m["host"])
+    if context_oom:
+        for rank in error_exits:
+            ranks.setdefault(rank, (*context_oom, "CUDA_ERROR_OUT_OF_MEMORY creating the context"))
     if not ranks:
         return []
     per_node = world // len(hosts) if world and world % len(hosts) == 0 else None
