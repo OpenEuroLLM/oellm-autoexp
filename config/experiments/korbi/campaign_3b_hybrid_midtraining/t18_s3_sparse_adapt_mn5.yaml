@@ -3,6 +3,7 @@
 # branch (ctxlen4n_s3 s64k step 1000, v8ml mix, page 64 / top 32 / window 512 / select_block 64, flex) run to step
 # 7000 instead of 3000 (constant lr: only more steps), all arms on the SAME data (train_iters 7000 orders it):
 #   dense / page_maxpool_pg   -- the reference and the recommended parameter-free selector;
+#   page_mean_pg              -- the cheaper page score (faster than dense at v4b scale, t17);
 #   csa2_fix                  -- the learned lightning indexer on compressed entries (t16: gap -0.035 in 2000 steps);
 #   page_indexer              -- a learned page selector (PageIndexer, KL to the dense attention's page mass): the
 #                                page path with a learning signal for the pages it misses;
@@ -65,6 +66,9 @@ sweep:
           backend.megatron.page_sparse_selector: null
         - aux.arm: page_maxpool_pg
           backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.arm: page_mean_pg  # the selector that already speeds up v4b at 64k / 256k (t17)
+          backend.megatron.page_sparse_selector: page_mean
           backend.megatron.page_sparse_per_group: true
         - aux.arm: csa2_fix
           backend.megatron.page_sparse_selector: csa2

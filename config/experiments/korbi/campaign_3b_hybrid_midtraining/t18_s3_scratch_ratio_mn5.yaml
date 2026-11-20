@@ -64,3 +64,8 @@ sweep:
         - aux.arm: r3_pmp
           backend.megatron.page_sparse_selector: page_maxpool
           backend.megatron.hybrid_layer_pattern: "*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE"
+        - aux.arm: r7_pm
+          backend.megatron.page_sparse_selector: page_mean
+        - aux.arm: r3_pm
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.hybrid_layer_pattern: "*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE"
