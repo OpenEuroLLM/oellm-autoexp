@@ -1,0 +1,26 @@
+# @package _global_
+# Page-sparse CP tests (scripts/korbi/hybrid_speed/page_sparse_cp_tests.sh: PageSparseCoreAttention at CP 4 / 2 vs one
+# rank, aligned and straddling select blocks, and the whole-model CP test) on one node of c136 host005 -- after the
+# 2026-11-20 selection / packing changes, before the t19 256k (CP 4) speed arms. Priority above t18 / t19.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_cp_tests_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t18_cp_tests
+  bench: bash scripts/korbi/hybrid_speed/page_sparse_cp_tests.sh
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 1200
+  array_group: null
+  metadata:
+    pool_priority: 80
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
