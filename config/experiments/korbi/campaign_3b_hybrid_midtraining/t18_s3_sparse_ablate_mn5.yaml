@@ -7,6 +7,8 @@
 #   pmp_p32k64  -- 32-token pages, 64 of them (the same 2048 selected tokens at finer granularity)
 #   pmp_w1024 / pmp_w4096 / pmp_w8192 -- local window 1k / 4k / 8k instead of 512 (with 8k every token of a
 #                  document <= 8k attends densely as in the 8k phase; only long documents are capped)
+#   pmp_tok40 / pm_tok40 -- per-token selection in training (as at inference): every query its own top 32 among
+#                  its 64-query block's 40 most-voted pages (rowmask kernel, 2026-11-20)
 #   pm_k64 / pm_sb16 -- page_mean_pg (the faster score) with 64 pages / one selection per 16 queries: does a
 #                  cheap change close its long-context retrieval gap to page_maxpool?
 #   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_s3_sparse_ablate_mn5 \
@@ -73,3 +75,12 @@ sweep:
         - aux.arm: pm_sb16
           backend.megatron.page_sparse_selector: page_mean
           backend.megatron.page_sparse_select_block: 16
+        - aux.arm: pmp_tok40  # per-token selection in training: each token its own top 32 of its block's 40
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
+        - aux.arm: pm_tok40
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
