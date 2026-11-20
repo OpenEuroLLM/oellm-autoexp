@@ -1,0 +1,30 @@
+# @package _global_
+# Attention cost per training sequence on the phase-2 document layout (doclen_sample.py -> attn_packed_bench.py):
+# one H100, v4b shapes, dense (document-masked / full context) vs page_maxpool block-wise (flex / rowmask) vs
+# per-token tok40 (rowmask), masked and full context; mean and expected slowest of 384 / 512 ranks.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t18_attn_packed_bench
+  dir: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t18_evals
+  bench: >-
+    cd submodules/Megatron-LM
+    && python ../../scripts/korbi/campaign_midtraining/attn_packed_bench.py --seqs ${aux.dir}/seqs_64k.json --n 24
+    --out ${aux.dir}/attn_packed_64k.json
+    && python ../../scripts/korbi/campaign_midtraining/attn_packed_bench.py --seqs ${aux.dir}/seqs_256k.json --n 12
+    --steps 1 --variants dense_masked block block_rowmask tok40 --out ${aux.dir}/attn_packed_256k.json
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 3600
+  array_group: null
+  metadata:
+    pool_priority: 45
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
