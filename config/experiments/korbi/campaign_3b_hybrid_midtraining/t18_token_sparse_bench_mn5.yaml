@@ -18,7 +18,7 @@ aux:
 job:
   name: campaign_mid_${aux.name}
   metadata:
-    pool_priority: 90
+    pool_priority: 45
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
   est_step_time_s: 1800
   array_group: null
