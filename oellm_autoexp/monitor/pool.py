@@ -155,6 +155,13 @@ class PoolHostConfig:
     # it is given up; healthy ones (handover, wall clock, pool_ctl preempt) are
     # unlimited, a continuous run has one per segment
     max_attempts: int = 20
+    # Wait this long after a run's previous attempt ended before starting it again. Without it
+    # a failed attempt is retried within seconds, while the dead step's processes still hold
+    # their CUDA contexts on every node, and the retry dies at torch.cuda.set_device with
+    # "CUDA error: out of memory" although the GPUs are free (MN5 2026-11-20: attempts
+    # 1942-1948, 2027-2031, 2041-2045 -- rc 1 at ~90 s intervals, every retry OOMing at init).
+    # Set it above the time a dead step needs to release the GPUs; 0 = retry immediately.
+    retry_delay_s: float = 0.0
     # a RUNNING host whose supervisor heartbeat is older than this is cancelled (unless held)
     host_stale_s: float = 900.0
     # supervisor poll period
@@ -1591,6 +1598,20 @@ class PoolManager:
                     continue  # pool_ctl pin: this run may only take that host
                 cap = free + (free_excl if use_excl else 0)
                 if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
+                    # the previous attempt of this run may have ended moments ago and its step's
+                    # processes still hold the GPUs on every node: wait before retrying, or the
+                    # new attempt dies at CUDA init with out-of-memory (see retry_delay_s)
+                    if cfg.retry_delay_s > 0:
+                        prev_end = _mtime(layout.run_dir(rid) / "rc")
+                        if prev_end and now - prev_end < cfg.retry_delay_s:
+                            LOGGER.info(
+                                "[pool %s] %s: previous attempt ended %d s ago, retry in %d s",
+                                cfg.name,
+                                rid,
+                                int(now - prev_end),
+                                int(cfg.retry_delay_s - (now - prev_end)),
+                            )
+                            continue
                     claim = (
                         self._claim_singleton(
                             layout, singleton, rid, nodes, job_id, self._host_pref(cfg, host)
