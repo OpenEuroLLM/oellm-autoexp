@@ -1,0 +1,25 @@
+# @package _global_
+# Per-token page selection in training -- cost on one H100 at v4b's attention shapes (16 / 2 heads, head dim 256) and
+# the s3 testbed's (10 / 2, 128): dense flash vs the block-wise flex path vs per-token selection + FLA's NSA kernel
+# (scripts/korbi/campaign_midtraining/token_sparse_bench.py), 16k-128k.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t18_token_sparse_bench
+  bench: >-
+    cd submodules/Megatron-LM
+    && python ../../scripts/korbi/campaign_midtraining/token_sparse_bench.py --lengths 16384 65536 131072
+    && python ../../scripts/korbi/campaign_midtraining/token_sparse_bench.py --lengths 65536 --heads 10 --dim 128
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 1800
+  array_group: null
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
