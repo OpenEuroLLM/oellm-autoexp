@@ -22,3 +22,8 @@ ambitious_v4_cont_main_128	/gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_co
 ambitious_v4a_v6_pin_256	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4a_v6_pin/main
 ambitious_v4b_learned_256	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main
 ambitious_v4c_ramp_256	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4c_ramp/main
+# per-stream Engram gate arms from v4b 44000 (experiments/rluukkon/nucleus_engram_branch_gates_mn5, 2026-11-20), 500 steps
+# each, paired with ambitious_v4b_learned_256; read / learned wait harmlessly until their run dirs exist
+nucleus_engram_bg_stream	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/stream
+nucleus_engram_bg_read	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/read
+nucleus_engram_bg_learned	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/learned
