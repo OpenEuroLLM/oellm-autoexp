@@ -531,6 +531,25 @@ class MegatronConfig(ConfigInterface):
     # Engram off, the early one -- which carries the multilingual reading -- unchanged).
     engram_output_scale_layers: list[int] | None = None
 
+    # Per-stream Engram gates under mHC (the Engram paper's multi-branch integration): every
+    # residual stream m gets its own gate alpha_m from its own key projection, key norm and
+    # hidden norm, and takes its own output Y_m = SiLU(conv(alpha_m v)) + alpha_m v (one shared
+    # table, value projection and conv), instead of one gate on the mHC read whose output all
+    # streams take. Stream 0 keeps ``key_proj`` / ``key_norm`` / ``hidden_norm``; the others are
+    # ``key_proj_extra`` / ``key_norm_extra`` / ``hidden_norm_extra``. Copies of stream 0's
+    # (scripts/korbi/production/add_engram_branch_gates.py) and ``engram_branch_query="read"``
+    # continue a checkpoint without them exactly. Dense mHC only.
+    engram_branch_gates: bool = False
+
+    # The query of stream m's gate with ``engram_branch_gates``: "read" (the mHC read, the one
+    # query without per-stream gates), "stream" (stream m itself, as in the paper), or "learned"
+    # (read + lambda_m * (stream_m - read), lambda_m learnable from 0).
+    engram_branch_query: str = "read"
+
+    # A learnable factor per gate (per stream with ``engram_branch_gates``) on the gate's logit,
+    # from 1: lets the gate become selective. 1 = the gate as it is.
+    engram_gate_scale: bool = False
+
     # Hash multipliers of their own for every Engram layer (the reference code seeds them per
     # layer), so two Engram layers do not share their n-gram collisions. False: one set of
     # multipliers for all Engram layers.

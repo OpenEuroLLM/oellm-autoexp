@@ -2110,6 +2110,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "engram_branch_gates": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Per-stream Engram gates under mHC (the Engram paper's multi-branch integration): every residual stream m gets its own gate alpha_m from its own key projection, key norm and hidden norm, and takes its own output Y_m = SiLU(conv(alpha_m v)) + alpha_m v (one shared table, value projection and conv), instead of one gate on the mHC read whose output all streams take. Stream 0 keeps ``key_proj`` / ``key_norm`` / ``hidden_norm``; the others are ``key_proj_extra`` / ``key_norm_extra`` / ``hidden_norm_extra``. Copies of stream 0's (scripts/korbi/production/add_engram_branch_gates.py) and ``engram_branch_query=\"read\"`` continue a checkpoint without them exactly. Dense mHC only.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "engram_branch_query": MegatronArgMetadata(
+        arg_type=str,
+        default="read",
+        help="The query of stream m's gate with ``engram_branch_gates``: \"read\" (the mHC read, the one query without per-stream gates), \"stream\" (stream m itself, as in the paper), or \"learned\" (read + lambda_m * (stream_m - read), lambda_m learnable from 0).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "engram_clip_grad": MegatronArgMetadata(
         arg_type=float,
         default=None,
@@ -2172,6 +2188,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Width of one Engram table row; the memory vector concatenates len(engram_ngram_orders) * engram_num_heads rows.",
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "engram_gate_scale": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="A learnable factor per gate (per stream with ``engram_branch_gates``) on the gate's logit, from 1: lets the gate become selective. 1 = the gate as it is.",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "engram_gate_signed_sqrt": MegatronArgMetadata(
@@ -11078,6 +11102,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "engram_branch_gates": MegatronActionSpec(
+        option_strings=("--engram-branch-gates",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "engram_branch_query": MegatronActionSpec(
+        option_strings=("--engram-branch-query",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="read",
+    ),
     "engram_clip_grad": MegatronActionSpec(
         option_strings=("--engram-clip-grad",),
         action_type="store",
@@ -11133,6 +11171,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=64,
+    ),
+    "engram_gate_scale": MegatronActionSpec(
+        option_strings=("--engram-gate-scale",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "engram_gate_signed_sqrt": MegatronActionSpec(
         option_strings=("--engram-gate-signed-sqrt",),

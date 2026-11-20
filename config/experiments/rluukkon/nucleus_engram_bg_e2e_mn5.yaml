@@ -1,0 +1,111 @@
+# @package _global_
+# End-to-end check of per-stream Engram gates on 1 node: the Nucleus recipe (widths, mHC 4, MoonEP EP4,
+# Megatron-FSDP, muown_classical, fsdp_dtensor, Engram 2-4 x 8 + sign hash) on a 10-layer stack with two Engram
+# layers, mock data, small tables.
+#   phase save     ref     trains 20 steps from scratch, saves iter 20
+#   (surgery)      add_engram_branch_gates.py on ref's iter 20 -> surgery/{bg,bg_qmix}
+#   phase resume   ctrl    ref's iter 20, unchanged             (train to 30)
+#                  read    surgery/bg, query read                -> lm loss at 21 == ctrl's (warm start exact)
+#                  learned surgery/bg_qmix, query learned        -> == ctrl at 21, lambda moves
+#                  stream  surgery/bg, query stream              -> runs; loss jump at 21 vs ctrl
+# All output under ${aux.e2e_root} (own scratch).
+defaults:
+  - nucleus_engram_branch_gates_mn5
+  - _self_
+
+aux:
+  suite: engram_bg_e2e
+  phase: save
+  nodes: 1
+  e2e_root: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e
+  node_check: "off"
+
+backend:
+  megatron:
+    hybrid_layer_pattern: "*ENLE*ELEN"
+    # 360 experts (~8B parameters) OOM in the first optimizer step on 4 GPUs (job 49260778)
+    num_experts: 32
+    engram_table_size: 100003
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 1
+    global_batch_size: 16
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    mock_data: true
+    data_args_path: null
+    data_path: null
+    data_cache_path: ${aux.e2e_root}/data_cache
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    validation_set_names: null
+    full_validation: false
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    eval_interval: 100000
+    eval_iters: 0
+    train_iters: 30
+    exit_interval: 30
+    log_interval: 1
+    arch_metrics_interval: 1
+    save: ${job.base_output_dir}/ckpt
+    load: null
+    ckpt_step: null
+    save_interval: 20
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    wandb_project: null
+    wandb_exp_name: null
+
+job:
+  name: engram_bg_e2e_${aux.arm}
+  base_output_dir: ${aux.e2e_root}/runs/${aux.arm}
+  est_steps: 30
+  est_step_time_s: 5.0
+  start_condition: null
+  metadata:
+    pool_singleton: null
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_ehpc
+    time: "01:00:00"
+  # own caches (the inherited ones are Korbinian's, not writable)
+  env:
+    HF_HOME: ${aux.e2e_root}/cache/hf
+    TORCHINDUCTOR_CACHE_DIR: ${aux.e2e_root}/cache/inductor
+    TRITON_CACHE_DIR: ${aux.e2e_root}/cache/triton
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'(len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}) and (\"\\${aux.arm}\" == \"ref\") == (\"\\${aux.phase}\" == \"save\")'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ref
+          job.base_output_dir: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ref
+          backend.megatron.exit_interval: 20
+        - aux.arm: ctrl
+          job.base_output_dir: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ctrl
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ref/ckpt
+          backend.megatron.save_interval: 1000
+        - aux.arm: read
+          job.base_output_dir: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/read
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/surgery/bg/ckpt
+          backend.megatron.save_interval: 1000
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: read
+        - aux.arm: learned
+          job.base_output_dir: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/learned
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/surgery/bg_qmix/ckpt
+          backend.megatron.save_interval: 1000
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: learned
+        - aux.arm: stream
+          job.base_output_dir: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/stream
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/surgery/bg/ckpt
+          backend.megatron.save_interval: 1000
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: stream
