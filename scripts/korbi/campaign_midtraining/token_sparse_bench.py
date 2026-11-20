@@ -2,6 +2,8 @@
 """Per-token page selection in training: what would it cost? One attention layer, forward + backward, one GPU:
   dense      -- SDPA causal (flash)
   block      -- the current training path: page_maxpool_pg, one selection per 64 queries, packed flex
+  token_candU -- per-token choices inside per-block candidates: each 64-query block keeps the U pages most often in
+                its queries' own top-32, every query selects its top-32 among them (packed flex path, bounded union)
   token_fla  -- every query token its own pages (1 sink + the window's pages + top-32 page_mean pages, per KV group):
                 the per-token page scores + top-k (chunked), then FLA's NSA selection kernel (parallel_nsa) with the
                 query heads per KV group padded to 16 with zero heads (the kernel's minimum) -- an upper bound
@@ -24,6 +26,8 @@ def main() -> None:
     ap.add_argument("--kv", type=int, default=2)
     ap.add_argument("--dim", type=int, default=256)
     ap.add_argument("--steps", type=int, default=5)
+    ap.add_argument("--candidates", type=int, nargs="*", default=[48, 64])
+    ap.add_argument("--skip-fla", action="store_true", help="only dense / block / two-level")
     a = ap.parse_args()
 
     import torch
@@ -60,6 +64,14 @@ def main() -> None:
         res["block"] = timed(lambda: ps.flex_packed_page_attention([(q, k, v, 0, None)], cfg, a.dim**-0.5, 64)[0]
                              .sum().backward())
 
+        for U in a.candidates:  # per-token choices inside per-block candidates (two-level), the packed flex path
+            ccfg = ps.PageSparseConfig(selector="page_maxpool", page=page, topk=topk, window=512, sink_pages=sinks,
+                                       select_block=1, per_group=True, block_candidates=U, candidate_block=64)
+            res[f"token_cand{U}"] = timed(lambda: ps.flex_packed_page_attention([(q, k, v, 0, None)], ccfg,
+                                                                                a.dim**-0.5, 64)[0].sum().backward())
+        if a.skip_fla:
+            print(f"L={L}: " + "  ".join(f"{n} {t:.1f} ms" for n, t in res.items()), flush=True)
+            continue
         P = -(-L // page)
 
         def select():  # [1, L, kv, S] page indices per token and KV group (-1: none)
