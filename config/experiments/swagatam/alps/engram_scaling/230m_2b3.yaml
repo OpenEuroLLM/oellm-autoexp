@@ -206,8 +206,13 @@ backend:
     log_throughput: true
     log_interval: 1
     log_timers_to_tensorboard: true
-    eval_interval: 1000
+    eval_interval: 500
     eval_iters: 20
+
+    arch_metrics_interval: 50
+    moe_per_layer_logging: true
+    moe_expert_viability_metrics: true
+    moe_masked_layer_validation: true
 
     wandb_project: engram_scaling_clariden
     wandb_exp_name: ${job.name}
@@ -217,7 +222,7 @@ backend:
 
     save: ${job.base_output_dir}/ckpt
     load: ${job.base_output_dir}/ckpt
-    save_interval: 1000
+    save_interval: 500
     ckpt_format: torch_dist
 
     distributed_backend: nccl
