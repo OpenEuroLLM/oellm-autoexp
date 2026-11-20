@@ -43,10 +43,13 @@ def main() -> None:
     d = json.load(open(a.seqs))
     L, seqs = d["seq"], d["seqs"]
     rng = random.Random(0)
-    # half random, half from the longest-document tail (the stragglers), weights kept for the mean
-    order = sorted(range(len(seqs)), key=lambda i: max(seqs[i]))
-    tail = order[int(0.9 * len(order)):]
-    pick = rng.sample(range(len(seqs)), a.n // 2) + rng.sample(tail, a.n - a.n // 2)
+    # a third random, a third from the longest-document 10 %, a third from the most-documents 10 % (both kinds of
+    # straggler), mixed back at their frequencies for the estimate
+    n3 = a.n // 3
+    by_long = sorted(range(len(seqs)), key=lambda i: max(seqs[i]))[int(0.9 * len(seqs)):]
+    by_docs = sorted(range(len(seqs)), key=lambda i: len(seqs[i]))[int(0.9 * len(seqs)):]
+    pick = rng.sample(range(len(seqs)), a.n - 2 * n3) + rng.sample(by_long, n3) + rng.sample(by_docs, n3)
+    kind = ["random"] * (a.n - 2 * n3) + ["long"] * n3 + ["docs"] * n3
     dev, dt = "cuda", torch.bfloat16
     scale = a.dim**-0.5
     base = dict(selector="page_maxpool", page=64, topk=32, window=512, sink_pages=1, per_group=True)
@@ -76,7 +79,7 @@ def main() -> None:
         bounds = [0]
         for s in segs:
             bounds.append(bounds[-1] + s)
-        row = {"seq": si, "docs": len(segs), "longest": max(segs)}
+        row = {"seq": si, "kind": kind[len(rows)], "docs": len(segs), "longest": max(segs)}
         for var in a.variants:
             full = var.endswith("_full")
             if var == "dense_full":
@@ -99,32 +102,37 @@ def main() -> None:
                         tot.backward()
             else:
                 cfg, kern = cfgs[var.removesuffix("_full")]
-                spans = ([(q, k, v, 0, None)] if full else
-                         [(q[:, :, x:y], k[:, :, x:y], v[:, :, x:y], 0, None) for x, y in zip(bounds[:-1], bounds[1:])])
-                fn = lambda: sum(o.sum() for o in ps.flex_packed_page_attention(spans, cfg, scale, 64,
-                                                                                kernel=kern)).backward()
+                def fn(cfg=cfg, kern=kern, full=full):
+                    # documents as ONE split, as PageSparseCoreAttention does (slices backpropagate a full-size zero
+                    # tensor each)
+                    if full:
+                        spans = [(q, k, v, 0, None)]
+                    else:
+                        spans = [(a_, b_, c_, 0, None) for a_, b_, c_ in zip(q.split(segs, 2), k.split(segs, 2),
+                                                                             v.split(segs, 2))]
+                    sum(o.sum() for o in ps.flex_packed_page_attention(spans, cfg, scale, 64, kernel=kern)).backward()
             try:
                 row[var] = timed(fn)
             except torch.OutOfMemoryError:
                 row[var] = None
         rows.append(row)
         print(json.dumps(row), flush=True)
-    # estimate: random half -> the mean; all -> the tail; the slowest of R ranks by resampling the empirical layout
-    # costs (the tail picks stand for the top 10 % of layouts)
+    # estimate: random third -> the mean; a rank draws a long-tail / many-documents layout with 10 % each
     summary = {}
-    rnd, tl_ = rows[: a.n // 2], rows[a.n // 2:]
     for var in a.variants:
-        r = [x[var] for x in rnd if x.get(var) is not None]
-        t = [x[var] for x in tl_ if x.get(var) is not None]
-        if not r:
+        grp = {k: [x[var] for x in rows if x["kind"] == k and x.get(var) is not None] for k in ("random", "long", "docs")}
+        if not grp["random"]:
             continue
-        pool = r + t * max(1, round(len(r) / max(1, len(t)) / 9))  # tail at ~10 % weight
         est = {}
         for R in a.ranks:
-            # P(no rank draws from the top 10 %) = 0.9^R ~ 0 for R >= 100: the step ~ the tail's typical maximum
-            reps = [max(rng.choice(t if rng.random() < 0.1 else r) for _ in range(R)) for _ in range(200)] if t else []
-            est[f"slowest_of_{R}"] = statistics.mean(reps) if reps else None
-        summary[var] = {"mean": statistics.mean(r), "tail_mean": statistics.mean(t) if t else None, **est}
+            def draw():
+                u = rng.random()
+                g = grp["long"] if u < 0.1 and grp["long"] else grp["docs"] if u < 0.2 and grp["docs"] else grp["random"]
+                return rng.choice(g)
+            est[f"slowest_of_{R}"] = statistics.mean(max(draw() for _ in range(R)) for _ in range(200))
+        summary[var] = {"mean": statistics.mean(grp["random"]),
+                        "long_tail_mean": statistics.mean(grp["long"]) if grp["long"] else None,
+                        "docs_tail_mean": statistics.mean(grp["docs"]) if grp["docs"] else None, **est}
     print(json.dumps(summary, indent=1), flush=True)
     if a.out:
         json.dump({"args": vars(a), "gpu": torch.cuda.get_device_name(), "rows": rows, "summary": summary},
