@@ -2423,6 +2423,28 @@ class PoolManager:
             cfg.successor_nice,
         )
 
+    def _promote_one(
+        self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView], why: str
+    ) -> None:
+        """Unpark at most ONE parked successor; the others keep their age.
+
+        Called before a transition, not after it: the successor then
+        waits in the queue with full priority while the run still
+        trains, so the move costs one restart instead of a queue wait
+        (JUPITER 2026-11-20 00:54: the unpark came only after the wall-
+        clock stop).
+        """
+        if cfg.successor_nice <= 0 or not queued:
+            return
+        if any((layout.host_dir(h.hid) / "promoted").exists() for h in queued):
+            return  # a candidate is already unparked
+        parked = [h for h in queued if h.record.runtime.runtime_job_id]
+        if not parked:
+            return
+        oldest = min(parked, key=lambda h: float(h.record.runtime.start_ts or 0.0))
+        LOGGER.info("[pool %s] unparking a successor (%s)", cfg.name, why)
+        self._promote_host(layout, cfg, oldest)
+
     def _promote_for_capacity(
         self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView]
     ) -> None:
@@ -2433,15 +2455,7 @@ class PoolManager:
         starts, the others stay parked and keep their age; if it does not, the next poll
         promotes another.
         """
-        if cfg.successor_nice <= 0 or not queued:
-            return
-        if any((layout.host_dir(h.hid) / "promoted").exists() for h in queued):
-            return  # a candidate is already unparked
-        parked = [h for h in queued if h.record.runtime.runtime_job_id]
-        if not parked:
-            return
-        oldest = min(parked, key=lambda h: float(h.record.runtime.start_ts or 0.0))
-        self._promote_host(layout, cfg, oldest)
+        self._promote_one(layout, cfg, queued, "the run has no host")
 
     def _admission_manage_queued(
         self,
@@ -2453,18 +2467,19 @@ class PoolManager:
         block_end: float,
         est: float | None,
         now: float,
+        remaining: float | None = None,
     ) -> None:
         """Park, release or cancel the hosts already waiting in the queue."""
+        if remaining is None:
+            remaining = None
+        if remaining is not None and remaining <= cfg.successor_promote_lead_s:
+            # the training host is about to hit its wall clock: unpark now, so the successor
+            # is already up (or at least queued at full priority) when the run is preempted
+            self._promote_one(layout, cfg, queued, f"{remaining:.0f}s left on the run host")
+        elif cfg.handover and now >= block_end - cfg.successor_promote_lead_s:
+            self._promote_one(layout, cfg, queued, "handover window reached")
         for host in queued:
             hdir = layout.host_dir(host.hid)
-            if (
-                cfg.successor_nice > 0
-                and cfg.handover
-                and not (hdir / "promoted").exists()
-                and now >= block_end - cfg.successor_promote_lead_s
-            ):
-                self._promote_host(layout, cfg, host)
-                continue
             if now >= block_end:
                 continue
             if cfg.successor_nice > 0:
@@ -2545,7 +2560,10 @@ class PoolManager:
             return False
         est = self._start_estimate(layout, cfg, state, account, now)
         adm["last_est"] = est
-        self._admission_manage_queued(loop, layout, cfg, state, queued, block_end, est, now)
+        remaining = min((h.remaining_s(now) for h in run_hosts), default=None)
+        self._admission_manage_queued(
+            loop, layout, cfg, state, queued, block_end, est, now, remaining
+        )
         if cfg.successor_nice > 0:
             # parked successors are safe by construction: they queue behind other work and
             # only a promotion (nice 0) lets them run, so no estimate is needed

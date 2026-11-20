@@ -1499,9 +1499,16 @@ def test_parked_successors_are_submitted_with_nice_and_promoted_at_the_block(env
         + "\n"
     )
     env.poll()
-    jid = new.runtime.runtime_job_id
-    assert env.fake._nice.get(jid) == 0, f"host was not promoted (nice={env.fake._nice.get(jid)})"
-    assert (env.layout.host_dir(new.definition.metadata["pool_host_id"]) / "promoted").exists()
+    run_hid = env.hosts()[0].definition.metadata["pool_host_id"]
+    promoted = [
+        h
+        for h in env.hosts()
+        if h.definition.metadata["pool_host_id"] != run_hid
+        and env.fake._nice.get(h.runtime.runtime_job_id) == 0
+    ]
+    assert len(promoted) == 1, f"expected exactly one unparked successor, got {len(promoted)}"
+    hid_p = promoted[0].definition.metadata["pool_host_id"]
+    assert (env.layout.host_dir(hid_p) / "promoted").exists()
 
 
 def test_a_parked_successor_is_unparked_when_the_run_has_no_host(env, monkeypatch):
