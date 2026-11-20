@@ -3,7 +3,7 @@
 forward + backward of one attention layer at v4b's shapes for every variant on N sampled sequences, then the per-step
 estimate -- the mean, and the expected slowest of R data-parallel ranks (each rank one sequence: the step waits for
 it). Variants:
-  dense_masked  -- flash attention per document (the current production setting, document masking)
+  dense_masked  -- varlen flash attention over the documents (the production setting, document masking)
   dense_full    -- causal over the whole sequence (no document masking)
   block / block_rowmask -- page_maxpool_pg, one selection per 64 queries (flex / rowmask kernel), per document
   tok40         -- per-token selection inside 40 block candidates (rowmask), per document
@@ -82,12 +82,21 @@ def main() -> None:
             if var == "dense_full":
                 fn = lambda: F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True).sum().backward()
             elif var == "dense_masked":
-                def fn():
-                    tot = 0
-                    for x, y in zip(bounds[:-1], bounds[1:]):
-                        tot = tot + F.scaled_dot_product_attention(q[:, :, x:y], k[:, :, x:y], v[:, :, x:y],
-                                                                   is_causal=True, enable_gqa=True).sum()
-                    tot.backward()
+                try:  # the production kernel class: one varlen flash call for every document
+                    from flash_attn import flash_attn_varlen_func
+
+                    cu = torch.tensor(bounds, dtype=torch.int32, device=dev)
+                    mx = max(segs)
+                    fn = lambda: flash_attn_varlen_func(q[0].transpose(0, 1), k[0].transpose(0, 1),
+                                                        v[0].transpose(0, 1), cu, cu, mx, mx, causal=True,
+                                                        softmax_scale=scale).sum().backward()
+                except ImportError:  # one SDPA call per document (overstates many-document sequences)
+                    def fn():
+                        tot = 0
+                        for x, y in zip(bounds[:-1], bounds[1:]):
+                            tot = tot + F.scaled_dot_product_attention(q[:, :, x:y], k[:, :, x:y], v[:, :, x:y],
+                                                                       is_causal=True, enable_gqa=True).sum()
+                        tot.backward()
             else:
                 cfg, kern = cfgs[var.removesuffix("_full")]
                 spans = ([(q, k, v, 0, None)] if full else
