@@ -9,7 +9,8 @@
 #       bash scripts/rluukkon/launch_nucleus_engram_branch_gates.sh
 # Environment:
 #   POOL          the pool to enqueue the arms into (128 nodes each)
-#   PIN           optional: pin the enqueued arms to this host of POOL (pool_ctl pin)
+#   PIN           optional: print the pool_ctl pin command for this host of POOL (the run to pin exists only
+#                 once the surgery checkpoint does)
 #   STEP          the source save of v4b's ckpt_eval (default 44000); the arms train STEP -> STEP + 500
 #   ARMS          default read,learned,stream
 #   SURGERY_ARGS  sbatch options of the surgery job (default "-A ehpc533 -q acc_ehpc"; it needs one node, ~5 min)
@@ -60,10 +61,8 @@ PYTHONPATH=. HYBRID_OUTPUT_DIR=/gpfs/scratch/ehpc533/hybrid_nucleus scripts/korb
     --no-monitor --monitor-state-dir "$R/pool_state" --pool "$POOL" --config-name "$CONFIG" --yes "${OVERRIDES[@]}"
 
 if [ -n "${PIN:-}" ]; then
-    for arm in ${ARMS//,/ }; do
-        rid=$(grep -l "\"name\": \"nucleus_engram_bg_$arm\"" "$POOL"/runs/*/run.json 2>/dev/null \
-            | while read -r f; do d=$(dirname "$f"); [ -f "$d/rc" ] || [ -f "$d/started" ] || basename "$d"; done | tail -1)
-        [ -n "$rid" ] || { echo "no queued run nucleus_engram_bg_$arm in $POOL to pin"; continue; }
-        PYTHONPATH=. "$R/autoexp_env/bin/python" scripts/pool_ctl.py "$POOL" pin "$rid" "$PIN"
-    done
+    # the monitor creates the pool run only once the arm's start condition (the surgery checkpoint) passes,
+    # so the pin cannot be set here
+    echo "once the surgery is done and runs/<rid> exists, pin each arm:"
+    echo "  PYTHONPATH=. $R/autoexp_env/bin/python scripts/pool_ctl.py $POOL pin <rid> $PIN"
 fi
