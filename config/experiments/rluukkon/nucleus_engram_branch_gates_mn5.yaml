@@ -1,50 +1,60 @@
 # @package _global_
-# Per-stream Engram gates on the Nucleus (ambitious v4) main line. Today the two Engram layers (decoder
-# layers 2 and 49) gate their value once, on the mHC read, and all four residual streams take the same
-# output. The Engram paper's multi-branch integration gives every stream its own gate (own key projection,
-# key norm, hidden norm; one shared table, value projection and conv); in its 3B ablation, dropping that
-# cost the most of any component. Megatron: engram_branch_gates / engram_branch_query.
+# Per-stream Engram gates on the Nucleus main line, v4b (ambitious_v4b_learned_256: v4 + six copy-init V layers
+# with learnable gates). Today the two Engram layers (decoder layers 2 and 53 of v4b's 104) gate their value once,
+# on the mHC read, and all four residual streams take the same output. The Engram paper's multi-branch integration
+# gives every stream its own gate (own key projection, key norm, hidden norm; one shared table, value projection
+# and conv); in its 3B ablation, dropping that cost the most of any component. Megatron: engram_branch_gates /
+# engram_branch_query.
 #
 # Question: how much does switching to per-stream gates change training stability (loss, grad norm, gate
-# behaviour) on the trained model? A warm start of 500 steps from the main run's latest save (39218, where it
-# stopped on 2026-11-18; launcher STEP= for another), on the main run's own layout (128 nodes x mbs 1, reference
-# sampler dp 512 x mbs 1: the same batches as the main run), so loss differences are paired step by step.
-#   ctrl     nothing changed: the paired control (validation included), from a hard-linked copy of the source
-#            save (surgery/base: the main run's retain rule prunes non-multiples of 10000 once it saves again)
-#   read     per-stream gates, every gate's query the mHC read. At the start exactly the main run (the new
-#            parameters are copies); the four gates diverge only as their gradients differ
+# behaviour) on the trained model? A warm start of 500 steps from v4b's persistent save 44000 (its ckpt_eval copy,
+# safe from the run's pruning; launcher STEP= for another), on 128 nodes (reference sampler dp 512 x mbs 1: the
+# same batches as v4b on its 256 nodes), so losses are paired step by step with v4b itself:
+#   (v4b)    the control: the main run continues 44000 -> 44500 unchanged; its rolling save 44500 is pinned into
+#            ckpt_eval by the eval marks loop (scripts/korbi/eval_marks/marks.tsv) for the paired evals. v4b runs
+#            on 256 nodes, the arms on 128: the read arm's first step against v4b's 44001 is the layout noise floor
+#   read     per-stream gates, every gate's query the mHC read. At the start exactly v4b (the new parameters are
+#            copies); the four gates diverge only as their gradients differ
 #   learned  query = read + lambda_m (stream_m - read), lambda_m learnable from 0: starts as `read`, can move
 #            toward the paper's gate as far as the loss wants
-#   stream   the paper's gate at once (query = stream m): the abrupt variant, the stability stress test
+#   stream   the paper's gate at once (query = stream m): the abrupt variant, the stability stress test (first,
+#            user 2026-11-20)
+# (The first version of this suite, 2026-11-20, started from the plain v4 continuation's 39218 with a ctrl arm on
+# the same layout; it never ran.)
 #
-# Launch: scripts/rluukkon/launch_nucleus_engram_branch_gates.sh (checkpoint surgery, then this config).
+# Launch: scripts/rluukkon/launch_nucleus_engram_branch_gates.sh (checkpoint surgery, then this config) into
+# mn5_pool_c136 (host005; cns143 / acc_xlarge).
 # Validated end to end on a 10-layer model (experiments/rluukkon/nucleus_engram_bg_e2e_mn5, 2026-11-20):
-# read / learned match ctrl to bf16 noise at the first resumed step (relative 8e-5).
-# Readout: scripts/rluukkon/compare_runs_loss.py (lm loss / grad norm per step against ctrl), validation every
-# 200 steps, arch/engram/gate_s<m> and gate_stream_spread every 10 steps (TensorBoard).
+# read / learned match the control to bf16 noise at the first resumed step (relative 8e-5).
+# Readout: scripts/rluukkon/compare_runs_loss.py (lm loss / grad norm per step against v4b), validation every 200
+# steps (v4b validates every 1000: arm against arm only), arch/engram/gate_s<m> and gate_stream_spread every 10
+# steps (TensorBoard).
 defaults:
-  - /experiments/korbi/recall_surgery/v4_cont_mn5
+  - /experiments/korbi/recall_surgery/v4b_learned_mn5
   - _self_
 
 aux:
   suite: engram_branch_gates
-  arm: ctrl
+  arm: stream
   only: []
-  # the main run's layout: 2 micro-batches of one 64k sequence per step, its memory footprint (peak 45.7 of
-  # 63 GiB; the two per-stream Engram layers add ~1.3 GiB each in their recompute window)
+  # 128 nodes x mbs 1, 2 micro-batches of one 64k sequence per step (v4b's shape at 128 nodes: t17 dense 64k
+  # 0.81 memory; the two per-stream Engram layers add ~1.3 GiB each in their recompute window)
   nodes: 128
   steps: 500
-  start: 39218
-  end: 39718
-  start_iter: iter_0039218
+  start: 44000
+  end: 44500
+  start_iter: iter_0044000
   bg_root: ${aux.kv_root}/engram_branch_gates
-  main_ckpt: ${aux.kv_root}/runs/main/ckpt
+  # v4b's pinned saves (ckpt/ prunes older persistent saves)
+  main_ckpt: ${aux.kv_root}/runs/v4b_learned/main/ckpt_eval
   node_check: light
 
 backend:
   megatron:
-    load: ${aux.main_ckpt}
     ckpt_step: ${aux.start}
+    # v4b's value (kvshare_k_fresh5_mn5 sets it to ${aux.start}); read only by ckda_branch / v_block_gate_ramp,
+    # both off in v4b
+    ckda_branch_start_iteration: 35900
     exit_interval: ${aux.end}
     # one persistent save, at the end (1.1 TB per arm); no rolling saves: a crash restarts from the start
     save_interval: 1000000
@@ -59,20 +69,23 @@ job:
   name: nucleus_engram_bg_${aux.arm}
   base_output_dir: ${aux.bg_root}/runs/${aux.arm}
   est_steps: 500
-  est_step_time_s: 31.5
+  # v4b: 19.5 s/step on 256 nodes -> ~38 s on 128
+  est_step_time_s: 38.0
   est_startup_min: 40.0
-  # every arm waits for its checkpoint from scripts/rluukkon/engram_branch_gates_surgery.sbatch
-  start_condition:
-    class_name: FileExistsCondition
-    path: ${aux.bg_root}/surgery/base/ckpt/latest_checkpointed_iteration.txt
-    persistent_pass: true
+  # set per arm below: every arm waits for its checkpoint from scripts/rluukkon/engram_branch_gates_surgery.sbatch
+  start_condition: null
   metadata:
     pool_singleton: null
-    pool_priority: 60
+    # above the queued t19b speed runs (70) and early31 on c136
+    pool_priority: 80
+    pool_use_excluded_nodes: false
 
 slurm:
   sbatch:
+    nodes: ${aux.nodes}
     time: "10:00:00"
+    account: cns143
+    qos: acc_xlarge
 
 # literals in the entries: interpolations inside a sweep entry resolve against the base config
 sweep:
@@ -82,53 +95,30 @@ sweep:
   groups:
     - type: list
       configs:
-        - aux.arm: ctrl
-          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/runs/ctrl
-          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/base/ckpt
-          backend.megatron.ckda_branch: null
-          backend.megatron.ckda_branch_layers: null
-          backend.megatron.ckda_branch_kv_source_layers: null
-          backend.megatron.ckda_branch_crossfade: false
-          backend.megatron.ckda_branch_rest_dropout: 0.0
         - aux.arm: read
-          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/runs/read
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/read
           job.start_condition:
             class_name: FileExistsCondition
-            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/bg/ckpt/latest_checkpointed_iteration.txt
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/surgery/bg/ckpt/latest_checkpointed_iteration.txt
             persistent_pass: true
-          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/bg/ckpt
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/surgery/bg/ckpt
           backend.megatron.engram_branch_gates: true
           backend.megatron.engram_branch_query: read
-          backend.megatron.ckda_branch: null
-          backend.megatron.ckda_branch_layers: null
-          backend.megatron.ckda_branch_kv_source_layers: null
-          backend.megatron.ckda_branch_crossfade: false
-          backend.megatron.ckda_branch_rest_dropout: 0.0
         - aux.arm: learned
-          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/runs/learned
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/learned
           job.start_condition:
             class_name: FileExistsCondition
-            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/bg_qmix/ckpt/latest_checkpointed_iteration.txt
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/surgery/bg_qmix/ckpt/latest_checkpointed_iteration.txt
             persistent_pass: true
-          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/bg_qmix/ckpt
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/surgery/bg_qmix/ckpt
           backend.megatron.engram_branch_gates: true
           backend.megatron.engram_branch_query: learned
-          backend.megatron.ckda_branch: null
-          backend.megatron.ckda_branch_layers: null
-          backend.megatron.ckda_branch_kv_source_layers: null
-          backend.megatron.ckda_branch_crossfade: false
-          backend.megatron.ckda_branch_rest_dropout: 0.0
         - aux.arm: stream
-          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/runs/stream
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/stream
           job.start_condition:
             class_name: FileExistsCondition
-            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/bg/ckpt/latest_checkpointed_iteration.txt
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/surgery/bg/ckpt/latest_checkpointed_iteration.txt
             persistent_pass: true
-          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/v4_cont/engram_branch_gates/surgery/bg/ckpt
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/surgery/bg/ckpt
           backend.megatron.engram_branch_gates: true
           backend.megatron.engram_branch_query: stream
-          backend.megatron.ckda_branch: null
-          backend.megatron.ckda_branch_layers: null
-          backend.megatron.ckda_branch_kv_source_layers: null
-          backend.megatron.ckda_branch_crossfade: false
-          backend.megatron.ckda_branch_rest_dropout: 0.0
