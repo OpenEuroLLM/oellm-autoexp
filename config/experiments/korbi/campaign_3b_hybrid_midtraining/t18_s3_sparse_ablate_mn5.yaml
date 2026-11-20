@@ -5,7 +5,8 @@
 #   pmp_dense0  -- the first attention layer (layer 0, attention-first) dense, the other two sparse
 #   pmp_k64     -- 64 selected pages instead of 32 (4.6k keys per query)
 #   pmp_p32k64  -- 32-token pages, 64 of them (the same 2048 selected tokens at finer granularity)
-#   pmp_w1024   -- a 1024-token local window instead of 512
+#   pmp_w1024 / pmp_w4096 / pmp_w8192 -- local window 1k / 4k / 8k instead of 512 (with 8k every token of a
+#                  document <= 8k attends densely as in the 8k phase; only long documents are capped)
 #   pm_k64 / pm_sb16 -- page_mean_pg (the faster score) with 64 pages / one selection per 16 queries: does a
 #                  cheap change close its long-context retrieval gap to page_maxpool?
 #   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t18_s3_sparse_ablate_mn5 \
@@ -62,6 +63,10 @@ sweep:
           backend.megatron.page_sparse_topk: 64
         - aux.arm: pmp_w1024
           backend.megatron.page_sparse_window: 1024
+        - aux.arm: pmp_w4096  # dense up to 4k (most documents), pages beyond: the 64k straggler capped
+          backend.megatron.page_sparse_window: 4096
+        - aux.arm: pmp_w8192  # dense up to 8k as in the 8k phase, pages beyond
+          backend.megatron.page_sparse_window: 8192
         - aux.arm: pm_k64
           backend.megatron.page_sparse_selector: page_mean
           backend.megatron.page_sparse_topk: 64

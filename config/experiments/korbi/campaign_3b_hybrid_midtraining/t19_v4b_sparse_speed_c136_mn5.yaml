@@ -12,8 +12,45 @@ defaults:
 
 aux:
   suite: t19_v4b_sparse_speed_c136
-  only: [dense_c64k, page_mean_pg_c64k, page_maxpool_pg_c64k, dense_c256k, page_mean_pg_c256k, page_maxpool_pg_c256k]
+  only: [dense_c64k, page_mean_pg_c64k, page_maxpool_pg_c64k, pmp_w4096_c64k, pmp_w8192_c64k, dense_c256k,
+         page_mean_pg_c256k, page_maxpool_pg_c256k]
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19_v4b_sparse_speed_c136
 
 job:
   name: t19_speed128_${aux.arm}
+
+# the variants: t17's three, and page_maxpool with a 4k / 8k local window (dense like the 8k phase for documents <= 8k,
+# the long-document straggler rank capped at ~10k keys per token)
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: dense
+          backend.megatron.page_sparse_selector: null
+        - aux.variant: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: pmp_w4096
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_window: 4096
+        - aux.variant: pmp_w8192
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_window: 8192
+    - type: list
+      configs:
+        - aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 512
+          backend.megatron.context_parallel_size: 1
+        - aux.ctx: c256k
+          aux.seq: 262144
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 4
