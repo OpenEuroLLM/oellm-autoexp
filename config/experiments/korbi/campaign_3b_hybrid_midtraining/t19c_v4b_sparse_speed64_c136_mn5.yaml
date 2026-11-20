@@ -1,0 +1,61 @@
+# @package _global_
+# t19 on 64 nodes (fits next to the running t18 arms on c136 host005 -- 96 waited idle behind them, 2026-11-20;
+# memory at 128 nodes 0.79-0.89, ~+3 GB here): v4b shape, fresh init, 30 steps, long_64k, one sequence per GPU (64k: gbs 256, CP 1;
+# 256k: gbs 64, CP 4). Arms compare at equal node count, dense included. Adds per-token selection in training:
+# pmp_tok40 = page_maxpool, every query its own top 32 of the 40 pages its 64-query block's first query ranks best
+# (causal; rowmask kernel).
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19c_v4b_sparse_speed64_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19_v4b_sparse_speed_c136_mn5
+  - _self_
+
+aux:
+  suite: t19c_v4b_sparse_speed64_c136
+  nodes: 64
+  only: [dense_c64k, page_mean_pg_c64k, page_maxpool_pg_c64k, pmp_w8192_c64k, pmp_tok40_c64k, dense_c256k,
+         page_maxpool_pg_c256k, pmp_tok40_c256k]
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19c_v4b_sparse_speed64_c136
+
+job:
+  name: t19c_speed64_${aux.arm}
+
+slurm:
+  sbatch:
+    nodes: 64
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: dense
+          backend.megatron.page_sparse_selector: null
+        - aux.variant: page_mean_pg
+          backend.megatron.page_sparse_selector: page_mean
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: pmp_w8192
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_window: 8192
+        - aux.variant: pmp_tok40
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
+    - type: list
+      configs:
+        - aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+        - aux.ctx: c256k
+          aux.seq: 262144
+          aux.gbs: 64
+          backend.megatron.context_parallel_size: 4

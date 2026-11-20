@@ -265,6 +265,8 @@ engram_aux_ngram_orders: []  # A second set of Engram lookups (empty = off) over
 engram_aux_num_heads: 0  # Hash heads per order of the auxiliary lookups (0 = engram_num_heads).
 engram_aux_table_size: 0  # Rows per auxiliary table (0 = engram_table_size; distinct primes, after the main ones).
 engram_aux_token_map: null  # Token map of the auxiliary lookups (.npy, as engram_token_map); None = raw token ids.
+engram_branch_gates: false  # Per-stream Engram gates under mHC (the Engram paper's multi-branch integration): every residual stream m gets its own gate alpha_m from its own key projection, key norm and hidden norm, and takes its own output Y_m = SiLU(conv(alpha_m v)) + alpha_m v (one shared table, value projection and conv), instead of one gate on the mHC read whose output all streams take. Stream 0 keeps ``key_proj`` / ``key_norm`` / ``hidden_norm``; the others are ``key_proj_extra`` / ``key_norm_extra`` / ``hidden_norm_extra``. Copies of stream 0's (scripts/korbi/production/add_engram_branch_gates.py) and ``engram_branch_query="read"`` continue a checkpoint without them exactly. Dense mHC only.
+engram_branch_query: read  # The query of stream m's gate with ``engram_branch_gates``: "read" (the mHC read, the one query without per-stream gates), "stream" (stream m itself, as in the paper), or "learned" (read + lambda_m * (stream_m - read), lambda_m learnable from 0).
 engram_clip_grad: null  # Clip the Engram tables separately: take them out of the global norm (the dense parameters are then clipped with the norm of everything else, --clip-grad) and clip them with their own norm against this threshold. Default: off (tables in the global norm). The logged grad norm stays the total.
 engram_clip_rownorm: null  # Cap on the L2 norm of every Engram table row: after each update, rows above it are rescaled to it (Adam moments unchanged). Default: off.
 engram_clip_rownorm_ramp_start: 0  # Table-optimizer step (~ iteration) at which the row-norm cap or its ramp starts.
@@ -273,6 +275,7 @@ engram_clip_rownorm_start: null  # Start of a geometric ramp down to --engram-cl
 engram_conv_kernel_size: 4  # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
 engram_conv_prenorm: false  # RMS-normalize the gated value before Engram's causal conv (the reference code's ShortConv): Y = SiLU(conv(RMSNorm(v~))) + v~.
 engram_embed_dim: 64  # Width of one Engram table row; the memory vector concatenates len(engram_ngram_orders) * engram_num_heads rows.
+engram_gate_scale: false  # A learnable factor per gate (per stream with ``engram_branch_gates``) on the gate's logit, from 1: lets the gate become selective. 1 = the gate as it is.
 engram_gate_signed_sqrt: false  # Engram gate as in DeepSeek's reference code (engram_demo_v1.py): the scaled key-query dot product goes through a signed square root, sign(x) sqrt(|x|), before the sigmoid, which keeps the gate out of saturation. False: sigmoid of the dot product.
 engram_hash_per_layer: false  # Hash multipliers of their own for every Engram layer (the reference code seeds them per layer), so two Engram layers do not share their n-gram collisions. False: one set of multipliers for all Engram layers.
 engram_lr_mult: 5.0  # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
