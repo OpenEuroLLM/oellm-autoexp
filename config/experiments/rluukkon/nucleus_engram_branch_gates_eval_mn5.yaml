@@ -1,0 +1,93 @@
+# @package _global_
+# Paired validation of the per-stream Engram gate arms (nucleus_engram_branch_gates_mn5) against v4b at the same
+# step, 44500: v4b validates every 1000 steps (44000, 45000), the arms every 200 and not at their final 44500, so the
+# in-training numbers are 200+ steps and a node layout (256 vs 128) apart. Here every checkpoint gets the same
+# eval-only job: same code, same 128-node layout, the full validation (seven fixed sets, full_validation; the
+# loader from position 0 under skip_train), so what differs is the gates alone.
+#   v4b      ckpt_eval/iter_0044500 (v4b's rolling save, pinned by the eval marks loop)
+#   stream / read / learned   the arm's final save runs/<arm>/ckpt/iter_0044500 (waits for it)
+# Eval only: no optimizer state, no save, ~40 min load + ~10 min validation on 128 nodes.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/rluukkon/nucleus_engram_branch_gates_eval_mn5 \
+#       "aux.only=[v4b,stream]" --yes
+# Readout: the "validation-<set> loss at iteration 44500" lines of each job's log.
+defaults:
+  - nucleus_engram_branch_gates_mn5
+  - _self_
+
+aux:
+  suite: engram_branch_gates_eval
+  arm: v4b
+  step: 44500
+
+backend:
+  megatron:
+    skip_train: true
+    no_load_optim: true
+    no_load_rng: true
+    ckpt_step: ${aux.step}
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    # the job's own (empty) rolling dir: Megatron loads a newer rolling save instead of --ckpt-step
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: nucleus_engram_bg_eval_${aux.arm}
+  base_output_dir: ${aux.bg_root}/eval/${aux.arm}
+  est_steps: 1
+  est_step_time_s: 900.0
+  est_startup_min: 40.0
+  start_condition: null
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+
+# literals in the entries: interpolations inside a sweep entry resolve against the base config
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: v4b
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/eval/v4b
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+          backend.megatron.engram_branch_gates: false
+        - aux.arm: stream
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/eval/stream
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/stream/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*44500\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/stream/ckpt
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: stream
+        - aux.arm: read
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/eval/read
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/read/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*44500\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/read/ckpt
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: read
+        - aux.arm: learned
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/eval/learned
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/learned/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*44500\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/learned/ckpt
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: learned
