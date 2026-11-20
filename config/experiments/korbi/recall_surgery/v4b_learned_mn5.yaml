@@ -29,8 +29,13 @@ defaults:
 
 backend:
   megatron:
-    # the copy-init surgery of the same 35900 checkpoint (a new output tree, nothing edited in place)
-    load: ${aux.kv_root}/runs/v4b_src/ckpt
+    # Resume from this arm's OWN output tree (like v4c_ramp_mn5). The copy-init surgery source
+    # (runs/v4b_src/ckpt, the same 35900 checkpoint, nothing edited in place) was only needed for the
+    # first step into the tree. With --load on the source, Megatron compared it with the rolling dir
+    # only, so every restart skipped the arm's newer persistent saves: 2026-11-20 it resumed at the
+    # rolling 41900 instead of the 42081 exit save (181 steps, ~1 h). On the own tree it takes the
+    # newer of the persistent (incl. exit) and the rolling save.
+    load: ${aux.kv_root}/runs/v4b_learned/main/ckpt
     # g_v on the write, rho on the stream mixing; both 0 at insertion (mutually exclusive with the
     # v_block_gate_ramp schedule, which stays 0 here)
     v_block_learnable_gate: true
