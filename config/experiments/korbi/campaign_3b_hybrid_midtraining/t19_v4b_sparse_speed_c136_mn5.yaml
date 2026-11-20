@@ -1,0 +1,19 @@
+# @package _global_
+# t17's main-run-scale speed test again (v4b shape, 128 nodes, fresh init, 30 steps, long_64k documents) after the
+# page-selection speedups of 2026-11-20: page_maxpool's window scores without the key cumsum (Megatron 65f660518,
+# selection 48.9 -> 13.5 ms per layer at 64k = page_mean's), the top-k over the select_block anchors only and the
+# block lists sorted per KV group (70c67fa1f). Question for the pre-training decision: does page_maxpool_pg now match
+# page_mean_pg's -10 % (64k) / -15 % (256k) against dense (t17)? Runs first on c136 host005 (priority 70 > t18's 40).
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19_v4b_sparse_speed_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t17_v4b_sparse_speed128_mn5
+  - _self_
+
+aux:
+  suite: t19_v4b_sparse_speed_c136
+  only: [dense_c64k, page_mean_pg_c64k, page_maxpool_pg_c64k, dense_c256k, page_mean_pg_c256k, page_maxpool_pg_c256k]
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19_v4b_sparse_speed_c136
+
+job:
+  name: t19_speed128_${aux.arm}
