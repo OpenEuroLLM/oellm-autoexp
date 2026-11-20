@@ -1822,8 +1822,13 @@ The handoff patch needs either the recompute-compatible redesign (§3.1) or reco
       block lists), two mask_mod closures at one call site crashed dynamo's recompile check into that fallback, and
       inductor's decode kernel (< 128 queries) fails on the dynamic tiles (flex_kernel_options now forces the main
       kernel).
-    - Left: the flex kernel itself is ~90 % of the packed step and runs at ~54 TFLOP/s on H100 at head dim 256 (dense
-      flash ~390). Kernel options sweep (`t18_flex_tune`, equivalence-checked) queued for host005.
+    - Flex kernel options (`flex_tune_bench.py`, H100 on host008's spare node, every candidate checked against the
+      default's outputs / gradients first): at head dim 256, 8 warps / 2 stages make the packed page path's fwd + bwd
+      1.5-1.6x faster, bit-identical -- 64k 176 -> 111 ms, 4 x 16k 133 -> 83 ms, 256k 900 -> 597 ms (dense flash at
+      64k: 308 ms, so one sparse layer is now ~1/3 of dense). At head dim 128 (s3) no option wins consistently (8 warps
+      +11 %): `flex_kernel_options` sets them only at head dim >= 192 (Megatron 1b986409e). CP tests after all of the
+      above (host008): page-sparse CP 4 / 2 90 + 90 passed; whole model 6 / 7, the known expert-gradient case
+      (1.705e-01, unchanged) the only miss.
 
 ## References
 
