@@ -195,6 +195,14 @@ class PoolHostConfig:
     # Nice cannot stop a job in an idle cluster; it only keeps us out of the way of contenders.
     successor_nice: int = 0
     successor_promote_lead_s: float = 1800.0
+    # Every successor_probe_interval_s the monitor asks `sbatch --test-only` (read-only, plus the
+    # measured bias) when a NEW host would start, and unparks a successor early when that start
+    # lies past the transition point (wall clock - promote_lead, or the block end with handover):
+    # the host then builds real priority instead of waiting behind our own nice value. A
+    # `scontrol update Nice` peek is NOT used: JUPITER publishes no start estimate for an
+    # existing job (squeue --start N/A, StartTime unknown) and the peek can start the host early
+    # (probe 2026-11-20 14:02: 590 idle nodes, priority 56k -> 356k and back, no estimate).
+    successor_probe_interval_s: float = 1800.0
     # reuse a `--test-only` estimate for this long
     successor_est_ttl_s: float = 240.0
     # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
@@ -2478,6 +2486,30 @@ class PoolManager:
             self._promote_one(layout, cfg, queued, f"{remaining:.0f}s left on the run host")
         elif cfg.handover and now >= block_end - cfg.successor_promote_lead_s:
             self._promote_one(layout, cfg, queued, "handover window reached")
+        elif cfg.successor_nice > 0 and remaining is not None:
+            adm = state.setdefault("admission", {})
+            if now - float(adm.get("probe_ts") or 0.0) >= cfg.successor_probe_interval_s:
+                adm["probe_ts"] = now
+                transition_at = now + remaining - cfg.successor_promote_lead_s
+                if cfg.handover:
+                    transition_at = min(transition_at, block_end)
+                if est is not None and est >= transition_at:
+                    self._promote_one(
+                        layout,
+                        cfg,
+                        queued,
+                        "probe: start estimated "
+                        f"{time.strftime('%H:%M', time.localtime(est))} is past "
+                        f"{time.strftime('%H:%M', time.localtime(transition_at))}",
+                    )
+                else:
+                    LOGGER.info(
+                        "[pool %s] probe: start estimated %s, transition at %s: successors stay "
+                        "parked",
+                        cfg.name,
+                        "unknown" if est is None else time.strftime("%H:%M", time.localtime(est)),
+                        time.strftime("%H:%M", time.localtime(transition_at)),
+                    )
         for host in queued:
             hdir = layout.host_dir(host.hid)
             if now >= block_end:

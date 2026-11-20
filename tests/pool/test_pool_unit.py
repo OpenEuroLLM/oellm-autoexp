@@ -1540,3 +1540,46 @@ def test_a_parked_successor_is_unparked_when_the_run_has_no_host(env, monkeypatc
     env.poll()
     promoted = [h for h in parked if env.fake._nice.get(h.runtime.runtime_job_id) == 0]
     assert len(promoted) == 1, "a second successor was unparked while one was already waiting"
+
+
+def _probe_env(env, monkeypatch, estimate):
+    """Parked successors plus a run host whose allocation ends in 50 min (time limit 1 h, host
+    up for 10 min), so the transition point is 20 min away (remaining - promote_lead 1800 s)."""
+    _admission_env(
+        env,
+        monkeypatch,
+        estimate,
+        host_age_s=600,
+        successor_nice=100000,
+        successor_probe_interval_s=0,
+        successor_promote_lead_s=1800,
+    )
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=2)
+    env.layout.write_meta(meta)
+    env.poll(3)
+    run_hid = env.hosts()[0].definition.metadata["pool_host_id"]
+    return [h for h in env.hosts() if h.definition.metadata["pool_host_id"] != run_hid]
+
+
+def test_probe_unparks_early_when_the_estimate_is_past_the_transition(env, monkeypatch):
+    """Read-only probe, no scontrol peek: the start estimated for a NEW host
+    decides whether a parked successor may be unparked early."""
+    parked = _probe_env(env, monkeypatch, [time.time() + 5000])  # ~83 min out, transition 20 min
+    assert parked, "no parked successor to probe"
+    state = env.layout.load_state()
+    state.setdefault("admission", {})["probe_ts"] = 0
+    env.layout.write_state(state)
+    env.poll()
+    promoted = [h for h in parked if env.fake._nice.get(h.runtime.runtime_job_id) == 0]
+    assert len(promoted) == 1, f"the probe did not unpark exactly one successor ({len(promoted)})"
+
+
+def test_probe_leaves_successors_parked_when_the_estimate_is_too_early(env, monkeypatch):
+    parked = _probe_env(env, monkeypatch, [time.time() + 60])  # starts at once -> inside the block
+    state = env.layout.load_state()
+    state.setdefault("admission", {})["probe_ts"] = 0
+    env.layout.write_state(state)
+    env.poll()
+    promoted = [h for h in parked if env.fake._nice.get(h.runtime.runtime_job_id) == 0]
+    assert not promoted, "a successor was unparked although it would start inside the block"
