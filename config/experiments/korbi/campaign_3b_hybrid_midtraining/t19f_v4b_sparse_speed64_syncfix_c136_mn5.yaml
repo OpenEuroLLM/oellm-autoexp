@@ -1,0 +1,102 @@
+# @package _global_
+# The sparse speed arms again after the host-sync fix (Megatron 51f53ca63): the t19d profile showed the sparse step
+# giving its attention savings back to host syncs (24 extra .item() per pass: the cu bounds per layer and a
+# torch.unique; the GPU idled ~0.8 s in the forward and again in the recompute) plus a ~1.5 s straggler rank that
+# none of the six profiled ranks was. v4b, 64 nodes, fresh init, 24 steps, one sequence per GPU:
+#   - long_64k at 64k: dense (paired reference for this launch), page_maxpool_pg, pmp_tok40
+#   - phase-2 data at 64k: page_maxpool_pg, pmp_tok40 (dense: t19e dense_p2_c64k, same data, sparse code unused)
+#   - long_64k at 128k: page_maxpool_pg (dense: t19e, 23.97 s/step; old-code sparse 19.5 s)
+# Every arm: PyTorch profiler on step 20 on nine ranks, TORCH_LOGS=recompiles on every rank (a dynamic-shape
+# recompile on one rank is a straggler candidate).
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19f_v4b_sparse_speed64_syncfix_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19e_v4b_sparse_speed64_more_c136_mn5
+  - _self_
+
+aux:
+  suite: t19f_v4b_sparse_speed64_syncfix_c136
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19f_v4b_sparse_speed64_syncfix_c136
+
+backend:
+  env:
+    TORCH_LOGS: recompiles
+  megatron:
+    exit_interval: 24
+    tensorboard_dir: ${job.base_output_dir}/tb
+    profile: true
+    use_pytorch_profiler: true
+    profile_step_start: 20
+    profile_step_end: 21
+    profile_ranks: [0, 3, 37, 61, 99, 130, 160, 194, 255]
+    pytorch_profiler_collect_shapes: true
+
+job:
+  name: t19f_speed64_${aux.arm}
+  est_steps: 24
+  metadata:
+    pool_priority: 66
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: dense
+          aux.data: long64k
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: null
+        - aux.variant: page_maxpool_pg
+          aux.data: long64k
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: pmp_tok40
+          aux.data: long64k
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
+        - aux.variant: page_maxpool_pg
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+        - aux.variant: pmp_tok40
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+        - aux.variant: page_maxpool_pg
+          aux.data: long64k
+          aux.ctx: c128k
+          aux.seq: 131072
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 2
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
