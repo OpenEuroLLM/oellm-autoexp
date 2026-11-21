@@ -1,0 +1,27 @@
+# @package _global_
+# PREPARED, NOT LAUNCHED (user 2026-11-21: "make everything ready", no switch yet).
+#
+# The v4b main run (recall_surgery/v4b_learned_mn5, unchanged: same job name, output tree, load, data, sampler)
+# with cross-document packing plans from the next checkpoint on (docs/cross_doc_seqs/README.md):
+#   - packing_plan_path: the plans of cds_pipeline_mn5 (one directory per window, all loaded)
+#   - boundaries group: attention / CKDA state / Engram across related documents of a plan group only
+#     (docs/cross_doc_seqs/adaptation.md); switch to none at a later restart
+#   - at_end exit: refuse to start on an unplanned step, save + exit at the end of the planned range
+# Megatron >= 88efc4279 (packing plan + guards). Rendered Megatron arguments == v4b_learned_mn5's at the same
+# commit + these three flags (checked by dry run, 2026-11-21).
+#
+# Switching (only with the user's go): pool_ctl cancel the running v4b entry (graceful save), then from a fresh
+# snapshot: ... --pool .../mn5_pool_p264 --config-name experiments/korbi/cross_doc_seqs/v4b_learned_cds_mn5 ...
+# The plans must cover the checkpoint the run resumes from (the run refuses otherwise).
+defaults:
+  - ../recall_surgery/v4b_learned_mn5
+  - _self_
+
+aux:
+  cds_plans: /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e256_w500
+
+backend:
+  megatron:
+    packing_plan_path: ["${aux.cds_plans}"]
+    packing_plan_boundaries: group
+    packing_plan_at_end: exit
