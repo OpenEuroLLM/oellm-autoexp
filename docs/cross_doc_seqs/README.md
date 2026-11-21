@@ -183,10 +183,40 @@ checkpoint with
 plans must cover every step the segment will run: past the last window the run silently falls back
 to the regular stream.
 
+## Readiness for the main run (2026-11-21)
+
+Prepared, **not launched**. The user decides the switch, its timing and its first mode.
+
+| item | state |
+| --- | --- |
+| stream replay == Megatron | ✅ sampler replay == `MegatronPretrainingReferenceLayoutSampler` (production geometry, MN5); 64/64 random sequences == Megatron's `GPTDataset` (53 datasets) |
+| plans, logically | ✅ tests (`tests/unit/test_cross_doc_seqs.py`, 7; Megatron `tests/unit_tests/data/test_packing_plan.py`, 6): token conservation, copy separation, all boundary modes, coverage + geometry guards |
+| plans through Megatron's loader on the **real** blend | `check_plan.py` (pipeline stage `checkplan`): BlendedDataset rebuilt read-only from the cache (hash == plan), `wrap_with_packing_plans` with the run's geometry, per-window token conservation, served samples == plan segments in doc / group / none, unplanned samples unchanged. Runs at the end of the coverage job |
+| plan coverage 48,500 → 53,000 | pool job `cds_q3e256_ck48500_4500` (c136, 8 nodes; ~225 GPU-h), plans in `plan/q3e256_w500` (windows of 500) |
+| guards | Megatron 88efc4279: the plan's sampler geometry must match the run; the run refuses to start on an unplanned step and saves + exits at the end of the planned range (`--packing-plan-at-end exit`, default) |
+| main-run code | Megatron HEAD 88efc4279 differs from the running 4a0fab4a1 on v4b's code path only by the packing-plan commits. The other commits are page-sparse / rowmask modules, imported only with `page_sparse_selector`, which v4b does not set. The superproject's rendered v4b arguments == the live step script's, except three committed v4b config changes that apply at any re-enqueue: `--load` own tree, `--save-interval 1000`, `--save-extra-steps` |
+| switch config | `config/experiments/korbi/cross_doc_seqs/v4b_learned_cds_mn5.yaml`: renders to v4b's arguments + `--packing-plan-path …/plan/q3e256_w500 --packing-plan-boundaries group` |
+
+**Switch procedure** (only with the user's go, AGENTS.md):
+1. Plans cover the resume checkpoint and at least one daily segment; `checkplan` passed.
+2. Fresh snapshot (`./sync_to_marenostrum.sh <name>`, Megatron ≥ 88efc4279).
+3. `pool_ctl cancel` the running v4b entry. This is a graceful save, and the run resumes from it.
+4. Enqueue `experiments/korbi/cross_doc_seqs/v4b_learned_cds_mn5` into p264, the same way the main run is enqueued now.
+5. Check the start log for `> packing plans: … planned from <ckpt> to <end> (at the end: exit)`. Then watch validation, grad norm and the Engram row norms for the first few hundred steps ([adaptation.md](adaptation.md)).
+
 ## Runs
 
-| date | job | range | result |
+| date | pool run | range | result |
 | --- | --- | --- | --- |
-| 2026-11-21 | pool c136, `cds_q3e256_ck49000_100` (1 node) | 49000 + 100 steps, window 100 | benchmark: stream + verify + embedding speed + one plan (see below) |
+| 11-21 14:56 | c136.0167 | 49000 + 100 | failed at once: `--out` missing in run_pipeline.sh (fixed 857b70af) |
+| 11-21 15:00 | c136.0168 | 49000 + 100 | cancelled after 30 min in one chunk: random page faults into ~120 GB of memory-mapped index files on GPFS, CPU idle (fixed: bulk preload, ec07a715) |
+| 11-21 15:35 | c136.0169 | 49000 + 100 | **stream + verify OK**: preload 119 GB in 27 s, 102,400 slots / 5,446,398 pieces (53.2 documents per 64k sequence), sampler == Megatron's, **64/64 slots == Megatron's GPTDataset** (53 datasets). Embedding bench 229 docs/s/GPU, loader-bound (3 serial random reads per document); one GPU OOM in masked SDPA. Cancelled for the fixes 1e2317a4, e2fb4e89 |
+| 11-21 16:03 | c136.0170 | 49000 + 100 | stream reused; bench **314 docs/s/GPU, 98k tok/s, GPU-bound** (loader wait 4 s of 128 s, flash_attention_2); full embedding + first plan running |
 
-Results are added here as the runs finish.
+Measured costs (Qwen3-Embedding-0.6B, 512 tokens, mean 313 tokens per document):
+
+- **Stream:** seconds per 100 steps after a 27 s preload; free in practice.
+- **Embedding:** 100 steps hold ~5.4M distinct documents, so ~4,500 s per node = ~5 GPU-h per 100 steps.
+  - That is <1 % of the training compute of those steps (~570 GPU-h).
+  - 4,000 steps ≈ 200 GPU-h (50 node-hours); keeping pace with the main run (~4,400 steps/day) needs ~2.3 nodes.
+  - multilingual-e5-small would be ~5× cheaper, at lower multilingual/code quality.
