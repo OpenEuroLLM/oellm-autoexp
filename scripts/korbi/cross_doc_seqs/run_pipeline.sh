@@ -56,7 +56,7 @@ embeds_done() {
 embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --pooling "${CDS_EMB_POOLING:-last}"
             --prefix "${CDS_EMB_PREFIX:-}" --tokenizer "${CDS_TOKENIZER:?}" --dim "${CDS_EMB_DIM:-256}"
             --max-src-tokens "${CDS_EMB_SRC_TOKENS:-640}" --max-len "${CDS_EMB_MAX_LEN:-512}"
-            --batch-tokens "${CDS_EMB_BATCH_TOKENS:-131072}" --workers "${CDS_EMB_WORKERS:-8}"
+            --batch-tokens "${CDS_EMB_BATCH_TOKENS:-131072}" --workers "${CDS_EMB_WORKERS:-16}"
             --attn "${CDS_EMB_ATTN:-sdpa}")
 
 per_gpu() {  # per_gpu <log name> <command...>: one process per GPU of this node, fail if any fails

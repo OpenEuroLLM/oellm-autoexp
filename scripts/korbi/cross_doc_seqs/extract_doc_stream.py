@@ -55,6 +55,9 @@ def main() -> None:
     ap.add_argument("--check-megatron", action="store_true",
                     help="compare the sampler replay with Megatron's sampler at every chunk start")
     ap.add_argument("--workers", type=int, default=1, help="parallel chunks (processes)")
+    ap.add_argument("--no-preload", action="store_true",
+                    help="memory-map the index files instead of reading them (~120 GB for the main run)")
+    ap.add_argument("--preload-threads", type=int, default=32)
     ap.add_argument("--task-rank", type=int, default=0, help="this task extracts chunks rank, rank + world, ...")
     ap.add_argument("--task-world", type=int, default=1)
     ap.add_argument("--out", required=True)
@@ -95,6 +98,9 @@ def main() -> None:
         for c0, _ in chunks:
             sampler.check_against_megatron(c0)
         print(f"sampler replay == Megatron's sampler at {len(chunks)} chunk starts", flush=True)
+    if chunks and not a.no_preload:
+        # every chunk touches nearly every dataset: load the index arrays once, before forking
+        stream.preload(threads=a.preload_threads)
     global _CTX
     _CTX = (sampler, stream, entry, a)
     if a.workers > 1 and len(chunks) > 1:

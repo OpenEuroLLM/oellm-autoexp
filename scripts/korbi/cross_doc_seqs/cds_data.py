@@ -62,6 +62,11 @@ class IndexedTokens:
     def lengths(self) -> np.ndarray:
         return np.frombuffer(self._idx, np.int32, self.n_seq, self._off)
 
+    def load_lengths(self) -> None:
+        """Read the lengths into memory with one sequential read (random page faults into GPFS
+        memory maps cost milliseconds each; the replay looks up ~55 lengths per sequence)."""
+        self.__dict__["lengths"] = np.fromfile(self.prefix + ".idx", np.int32, self.n_seq, offset=self._off)
+
     @cached_property
     def pointers(self) -> np.ndarray:
         return np.frombuffer(self._idx, np.int64, self.n_seq, self._off + 4 * self.n_seq)
@@ -242,12 +247,36 @@ class BlendStream:
         self._gpt: dict[int, tuple] = {}
         self.tokens = [IndexedTokens(p) for p in e.prefixes]
 
-    def _arrays(self, ds: int):
+    def _arrays(self, ds: int, mmap: bool = True):
         if ds not in self._gpt:
             e, md5 = self.entry, self.entry.gpt_md5(ds)
-            self._gpt[ds] = tuple(np.load(e.path("GPTDataset", md5, n), mmap_mode="r")
+            self._gpt[ds] = tuple(np.load(e.path("GPTDataset", md5, n), mmap_mode="r" if mmap else None)
                                   for n in ("document_index", "sample_index", "shuffle_index"))
         return self._gpt[ds]
+
+    def preload(self, datasets=None, threads: int = 32) -> float:
+        """Read the blend's and the given datasets' index arrays and document lengths into memory
+        (parallel sequential reads; all datasets by default). Returns GB read."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        t0 = time.time()
+        e = self.entry
+        self.dataset_index = np.load(e.path("BlendedDataset", e.blend_md5, "dataset_index"))
+        self.dataset_sample_index = np.load(e.path("BlendedDataset", e.blend_md5, "dataset_sample_index"))
+        todo = sorted(set(range(len(self.tokens))) if datasets is None else set(int(d) for d in datasets))
+
+        def one(ds):
+            self._gpt.pop(ds, None)
+            arrs = self._arrays(ds, mmap=False)
+            self.tokens[ds].load_lengths()
+            return sum(a.nbytes for a in arrs) + self.tokens[ds].lengths.nbytes
+
+        with ThreadPoolExecutor(threads) as pool:
+            gb = sum(pool.map(one, todo)) / 1e9
+        gb += (self.dataset_index.nbytes + self.dataset_sample_index.nbytes) / 1e9
+        print(f"preloaded {len(todo)} datasets' indices: {gb:.1f} GB in {time.time() - t0:.0f} s", flush=True)
+        return gb
 
     def pieces(self, bidx: int) -> tuple[int, list[tuple[int, int, int]]]:
         """(dataset, [(doc, virtual offset, length), ...]) of blended sample ``bidx``: its first
