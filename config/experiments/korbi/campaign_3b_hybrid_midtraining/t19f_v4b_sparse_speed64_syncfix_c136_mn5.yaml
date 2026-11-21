@@ -4,7 +4,7 @@
 # torch.unique; the GPU idled ~0.8 s in the forward and again in the recompute) plus a ~1.5 s straggler rank that
 # none of the six profiled ranks was. v4b, 64 nodes, fresh init, 24 steps, one sequence per GPU:
 #   - long_64k at 64k: dense (paired reference for this launch), page_maxpool_pg, pmp_tok40
-#   - phase-2 data at 64k: page_maxpool_pg, pmp_tok40 (dense: t19e dense_p2_c64k, same data, sparse code unused)
+#   - phase-2 data at 64k: dense, page_maxpool_pg, pmp_tok40 (t19e's p2 arms died in the valid sampler)
 #   - long_64k at 128k: page_maxpool_pg (dense: t19e, 23.97 s/step; old-code sparse 19.5 s)
 # Every arm: PyTorch profiler on step 20 on nine ranks, TORCH_LOGS=recompiles on every rank (a dynamic-shape
 # recompile on one rank is a straggler candidate).
@@ -79,6 +79,9 @@ sweep:
           backend.megatron.page_sparse_per_group: true
           backend.megatron.data_path: null
           backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          # one validation batch never evaluated (eval_interval 1e6): eval_iters 0 left the blend a 0-sample valid
+          # split, and its sampler asserts (t19e p2 arms, 2026-11-21)
+          backend.megatron.eval_iters: 1
         - aux.variant: pmp_tok40
           aux.data: p2
           aux.ctx: c64k
@@ -92,6 +95,9 @@ sweep:
           backend.megatron.page_sparse_backend: rowmask
           backend.megatron.data_path: null
           backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          # one validation batch never evaluated (eval_interval 1e6): eval_iters 0 left the blend a 0-sample valid
+          # split, and its sampler asserts (t19e p2 arms, 2026-11-21)
+          backend.megatron.eval_iters: 1
         - aux.variant: page_maxpool_pg
           aux.data: long64k
           aux.ctx: c128k
@@ -100,3 +106,13 @@ sweep:
           backend.megatron.context_parallel_size: 2
           backend.megatron.page_sparse_selector: page_maxpool
           backend.megatron.page_sparse_per_group: true
+        - aux.variant: dense
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.eval_iters: 1
