@@ -3922,6 +3922,17 @@ class MegatronConfig(ConfigInterface):
     # larger micro-batches (packed sequences take micro batch 1) at the same context length N.
     dataloader_document_segment_length: int | None = None
 
+    # Packing plan directories (or directories of them): precomputed sequences served in place
+    # of the training samples they list (megatron/core/datasets/packing_plan.py; e.g.
+    # semantically grouped documents for steps from a given checkpoint on). Sampler, consumed
+    # samples and every unlisted sample stay as without the flag.
+    packing_plan_path: list[str] | None = None
+
+    # cu_seqlens of plan sequences (with --dataloader-inter-document-masking): doc = one
+    # segment per document piece, group = one per run of pieces of the same plan group
+    # (semantic cluster), none = the whole sequence (attention across documents).
+    packing_plan_boundaries: Literal["doc", "group", "none"] = "doc"
+
     # With --dataloader-inter-document-masking, print this rank's cu_seqlens for the first N
     # calls to get_batch. cu_seqlens is a few dozen bytes, so logging it is far cheaper than
     # any runtime cross-check -- and unlike a collective it cannot deadlock against the

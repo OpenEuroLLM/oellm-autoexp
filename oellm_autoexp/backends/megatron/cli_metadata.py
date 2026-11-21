@@ -6962,6 +6962,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "packing_plan_boundaries": MegatronArgMetadata(
+        arg_type=None,
+        default="doc",
+        help="cu_seqlens of plan sequences (with --dataloader-inter-document-masking): doc = one segment per document piece, group = one per run of pieces of the same plan group (semantic cluster), none = the whole sequence (attention across documents).",
+        choices=("doc", "group", "none"),
+        nargs=None,
+        element_type=None,
+    ),
+    "packing_plan_path": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help="Packing plan directories (or directories of them): precomputed sequences served in place of the training samples they list (megatron/core/datasets/packing_plan.py; e.g. semantically grouped documents for steps from a given checkpoint on). Sampler, consumed samples and every unlisted sample stay as without the flag.",
+        choices=None,
+        nargs="+",
+        element_type=str,
+    ),
     "pad_vocab_size": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -15186,6 +15202,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0,
+    ),
+    "packing_plan_boundaries": MegatronActionSpec(
+        option_strings=("--packing-plan-boundaries",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="doc",
+    ),
+    "packing_plan_path": MegatronActionSpec(
+        option_strings=("--packing-plan-path",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=None,
     ),
     "pad_vocab_size": MegatronActionSpec(
         option_strings=("--no-pad-vocab-size", "--disable-pad-vocab-size"),
