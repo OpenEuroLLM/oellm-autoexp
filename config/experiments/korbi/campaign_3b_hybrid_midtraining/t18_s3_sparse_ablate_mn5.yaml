@@ -80,6 +80,17 @@ sweep:
           backend.megatron.page_sparse_select_block: 1
           backend.megatron.page_sparse_block_candidates: 40
           backend.megatron.page_sparse_backend: rowmask
+        # the candidate budget between tok40 (+0.013 at 3000, causal first-query candidates) and pure per-token
+        # (+0.002): does a larger bounded union recover the per-token quality? (bounded = static list width, memory-safe;
+        # 2026-11-21)
+        - aux.arm: pmp_tok80
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 80
+          backend.megatron.page_sparse_backend: rowmask
+        - aux.arm: pmp_tok128
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 128
+          backend.megatron.page_sparse_backend: rowmask
         - aux.arm: pmp_tok  # pure per-token selection (each query its own top 32 of all pages): tok40's upper bound
           backend.megatron.page_sparse_select_block: 1
           backend.megatron.page_sparse_backend: token
