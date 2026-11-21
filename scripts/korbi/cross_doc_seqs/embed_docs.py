@@ -168,10 +168,11 @@ def main() -> None:
     ap.add_argument("--max-src-tokens", type=int, default=640)
     ap.add_argument("--max-len", type=int, default=512)
     ap.add_argument("--len-ratio", type=float, default=1.0, help="model tokens per source token (batching estimate)")
-    ap.add_argument("--batch-tokens", type=int, default=131072)
+    ap.add_argument("--batch-tokens", type=int, default=65536)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--read-threads", type=int, default=32, help="concurrent .bin reads per loader worker")
-    ap.add_argument("--attn", default="sdpa", help="attn_implementation (sdpa / flash_attention_2)")
+    ap.add_argument("--attn", default="flash_attention_2",
+                    help="attn_implementation (flash_attention_2: unpadded, no O(L^2) mask; falls back to sdpa)")
     ap.add_argument("--chunks", default=None, help="comma list of stream chunk names (default: all)")
     ap.add_argument("--bench", type=int, default=0, help="embed only this many docs of the first chunk, print speed")
     a = ap.parse_args()
@@ -191,7 +192,14 @@ def main() -> None:
     if rank == 0:
         json.dump(vars(a), open(os.path.join(root, "config.json"), "w"), indent=1)
     dtype = torch.bfloat16 if dev.type == "cuda" else torch.float32
-    model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation=a.attn).to(dev).eval()
+    try:
+        model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation=a.attn)
+    except (ImportError, ValueError) as e:  # e.g. flash_attention_2 unavailable: masked SDPA
+        print(f"rank {rank}: attn_implementation={a.attn} unavailable ({e}); using sdpa", flush=True)
+        model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation="sdpa")
+    model = model.to(dev).eval()
+    if rank == 0:
+        print(f"model {a.model}: attention {model.config._attn_implementation}", flush=True)
 
     chunks = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if not p.endswith(".tmp"))
     if a.chunks:

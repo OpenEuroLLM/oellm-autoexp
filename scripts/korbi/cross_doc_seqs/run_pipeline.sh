@@ -11,7 +11,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 PYTHONPATH=$(echo "${PYTHONPATH:-}" | tr ':' '\n' | sed "s#^\([^/]\)#$ROOT/\1#; s#^\.\$#$ROOT#" | paste -sd:)
-export PYTHONPATH TOKENIZERS_PARALLELISM=false
+export PYTHONPATH TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 D="$ROOT/scripts/korbi/cross_doc_seqs"
 NODE=${SLURM_PROCID:-0}
 NNODES=${SLURM_NTASKS:-1}
@@ -56,8 +56,8 @@ embeds_done() {
 embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --pooling "${CDS_EMB_POOLING:-last}"
             --prefix "${CDS_EMB_PREFIX:-}" --tokenizer "${CDS_TOKENIZER:?}" --dim "${CDS_EMB_DIM:-256}"
             --max-src-tokens "${CDS_EMB_SRC_TOKENS:-640}" --max-len "${CDS_EMB_MAX_LEN:-512}"
-            --batch-tokens "${CDS_EMB_BATCH_TOKENS:-131072}" --workers "${CDS_EMB_WORKERS:-16}"
-            --attn "${CDS_EMB_ATTN:-sdpa}")
+            --batch-tokens "${CDS_EMB_BATCH_TOKENS:-65536}" --workers "${CDS_EMB_WORKERS:-16}"
+            --attn "${CDS_EMB_ATTN:-flash_attention_2}")
 
 per_gpu() {  # per_gpu <log name> <command...>: one process per GPU of this node, fail if any fails
     local name=$1; shift
