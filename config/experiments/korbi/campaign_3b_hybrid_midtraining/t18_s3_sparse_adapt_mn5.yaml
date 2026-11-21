@@ -121,3 +121,13 @@ sweep:
           backend.megatron.page_sparse_lsa_latent: true
           backend.megatron.page_sparse_indexer_loss_coeff: 0.01
           backend.megatron.page_sparse_selector_adam: true
+        # pure per-token selection to step 7000 (2026-11-21): every query its own top 32 of all pages (page_maxpool, per
+        # KV group) -- +0.002 to dense at 3000 in t18_s3_sparse_ablate (token backend), +0.003 zero-shot on v4b (t19j step
+        # 1) vs block-wise +0.015 / +0.012. Does the edge hold over the long adaptation, paired with these arms? On the
+        # rowmask backend's head-packed per-token kernel (Megatron cba004cbb..ed9d8d8a0), its first training run.
+        - aux.arm: pmp_tok
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
