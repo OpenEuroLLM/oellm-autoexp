@@ -100,6 +100,20 @@ sweep:
           backend.megatron.page_sparse_lsa_kl_every: 64
           backend.megatron.page_sparse_indexer_loss_coeff: 0.01
           backend.megatron.page_sparse_selector_adam: true
+        # per-token D-LSA (user 2026-11-21: "train D-LSA with per-token queries"): every query its own buckets on the
+        # flex path (Megatron 8897a8e73; 4.9 s per s3 layer at 64k on a 3090 Ti vs 0.34 s at 64 -- affordable with 3
+        # attention layers, ~12 h for the 2000 steps); KL on every 64th query as the other D-LSA arms
+        - aux.arm: dlsa_tok
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_lsa_kl_every: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_selector_adam: true
         - aux.arm: pmp_dense0
           backend.megatron.page_sparse_dense_layers: [0]
         - aux.arm: pmp_k64
