@@ -1,0 +1,87 @@
+# @package _global_
+# Speed from TRAINED weights (2026-11-21): the fresh-init speed tests understate selection-dependent kernels -- an
+# untrained model's queries pick scattered pages, so pure per-token's head-packed tiles cover huge unions (t19g rank 0:
+# per-token attention kernels 3.75 s / step = dense's 3.91 s, block-wise flex 1.17 s), while the single-layer bench on
+# v4b's real selections gave 147 vs dense 308 ms. Here every arm loads the v4b main run's weights (protected eval copy
+# ckpt_eval/iter_0046000, read only: finetune = model only, iteration 0, no save) and runs the phase-2 data at 64k on
+# 64 nodes: dense, page_maxpool_pg (batched selection), pmp_tok40, pure per-token. Profiled on nine ranks like t19f.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19j_v4b_trained_speed64_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19f_v4b_sparse_speed64_syncfix_c136_mn5
+  - _self_
+
+aux:
+  suite: t19j_v4b_trained_speed64_c136
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19j_v4b_trained_speed64_c136
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+    ckpt_step: 46000
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+    exit_on_missing_checkpoint: true
+    save: null
+    pytorch_profiler_collect_shapes: false
+
+job:
+  name: t19j_speed64_${aux.arm}
+  est_step_time_s: 60.0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: dense
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.eval_iters: 1
+        - aux.variant: page_maxpool_pg
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.eval_iters: 1
+        - aux.variant: pmp_tok40
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.eval_iters: 1
+        - aux.variant: pmp_tok
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.eval_iters: 1
