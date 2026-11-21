@@ -951,5 +951,69 @@
    "sparse_attention"
   ],
   "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm pmp_w8192_c64k."
+ },
+ "x_t18_s3_sparse_adapt__csa2_cont": {
+  "name": "t18_s3_sparse_adapt_csa2_cont",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: CSA2 continued from csa2_fix's clean step-5500 save on other nodes (NaN of csa2_fix = node fault)."
+ },
+ "x_t18_s3_sparse_adapt__pmp_tok": {
+  "name": "t18_s3_sparse_adapt_pmp_tok",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: pure per-token page_maxpool (rowmask head-packed kernel) to step 7000."
+ },
+ "x_t18_s3_sparse_ablate__pmp_tok80": {
+  "name": "t18_s3_sparse_ablate_pmp_tok80",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: per-token selection inside 80 causal block candidates."
+ },
+ "x_t18_s3_sparse_ablate__pmp_tok128": {
+  "name": "t18_s3_sparse_ablate_pmp_tok128",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: per-token selection inside 128 causal block candidates."
+ },
+ "x_t18_s3_sparse_ablate__pmp_sb8": {
+  "name": "t18_s3_sparse_ablate_pmp_sb8",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page_maxpool, one selection per 8 queries."
+ },
+ "x_t18_s3_sparse_ablate__pmp_sb4": {
+  "name": "t18_s3_sparse_ablate_pmp_sb4",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page_maxpool, one selection per 4 queries."
+ },
+ "x_t21_v4b_sparse_branch__page_maxpool_pg": {
+  "name": "t21_v4b_sparse_branch_page_maxpool_pg",
+  "tags": [
+   "t21_v4b_sparse_branch",
+   "sparse_attention"
+  ],
+  "notes": "v4b main-run branch from step 46000 (full state, main data order) with block-wise page_maxpool, paired with v4b's logged losses."
+ },
+ "x_t21_v4b_sparse_branch__pmp_tok": {
+  "name": "t21_v4b_sparse_branch_pmp_tok",
+  "tags": [
+   "t21_v4b_sparse_branch",
+   "sparse_attention"
+  ],
+  "notes": "v4b main-run branch from step 46000 (full state, main data order) with pure per-token page_maxpool, paired with v4b's logged losses."
  }
 }
