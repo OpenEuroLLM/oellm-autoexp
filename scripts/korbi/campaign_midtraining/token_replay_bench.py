@@ -7,6 +7,8 @@ The kernel's time depends only on the masks, so random q / k / v with replayed m
 Per lists file (one document) and attention layer:
   rowmask64   -- rowmask_block_attention, 64-query tiles (each loops over its 64 queries' page union)
   hp<T>       -- rowmask_head_packed_attention, tiles of T queries x the group's 8 heads (union of T queries)
+  b<B>        -- one selection per B queries (--blocks): each query its anchor's (the B-block's first query's) real
+                 pages plus its own window and sinks, in head-packed tiles of token_tile queries (ub<B>: the union)
   u64 / u<T>  -- mean page union per tile
 and once per length: dense (SDPA causal), block (page_maxpool, one selection per 64 queries, packed flex and rowmask),
 tok40 (per-token inside 40 block candidates, rowmask), select (the pure per-token selection + head-packed lists on
@@ -31,6 +33,7 @@ def main() -> None:
     ap.add_argument("--heads", type=int, default=16)
     ap.add_argument("--dim", type=int, default=256)
     ap.add_argument("--tiles", type=int, nargs="+", default=[8, 16])
+    ap.add_argument("--blocks", type=int, nargs="*", default=[4, 8, 16])
     ap.add_argument("--layers", type=int, default=0, help="layers per file (0: all)")
     ap.add_argument("--steps", type=int, default=3)
     ap.add_argument("--out", default=None)
@@ -94,6 +97,20 @@ def main() -> None:
                 except Exception as e:  # noqa: BLE001  (shared memory on small GPUs)
                     row[f"hp{T}"] = f"{type(e).__name__}"
                 del lt
+            if a.blocks:  # one selection per B queries: the anchor's real pages, the query's own window / sinks
+                tqb = ps.token_tile(a.heads // G, dev)
+                p = torch.arange(P, device=dev)
+                cur = torch.arange(L, device=dev) // 64
+                fixed = (p[None, :] < 1) | ((p[None, :] >= (cur - 8)[:, None]) & (p[None, :] <= cur[:, None]))
+                for B in a.blocks:
+                    anc = (torch.arange(L, device=dev) // B) * B
+                    ab = (allowed[:, anc] | fixed[None]) & (p[None, None, :] <= cur[None, :, None])
+                    lt = ra.lists_from_allowed(ab, tq=tqb)
+                    del ab
+                    row[f"ub{B}"] = float(lt[2].float().mean())
+                    row[f"b{B}"] = timed(lambda: ra.rowmask_head_packed_attention(q, k, v, *lt, pos, pos, scale, tqb)
+                                         .sum().backward())
+                    del lt
             del allowed
             frow[name] = row
             print(f"{path} {name}: " + "  ".join(f"{x} {y:.1f}" if isinstance(y, float) else f"{x} {y}"
@@ -108,8 +125,11 @@ def main() -> None:
                 blk = ps.PageSparseConfig(**base, select_block=64)
                 tok40 = ps.PageSparseConfig(**base, select_block=1, block_candidates=40, candidate_block=64)
                 pure = ps.PageSparseConfig(**base, select_block=1)
-                for nm, cfg, kern in (("block", blk, "flex"), ("block_rowmask", blk, "rowmask"),
-                                      ("tok40", tok40, "rowmask"), ("token_path", pure, "rowmask")):
+                variants = [("block", blk, "flex"), ("block_rowmask", blk, "rowmask"), ("tok40", tok40, "rowmask"),
+                            ("token_path", pure, "rowmask")]
+                for B in a.blocks:  # the whole B-block training path (anchor scoring + lists + kernel), random q / k
+                    variants.append((f"b{B}_path", ps.PageSparseConfig(**base, select_block=B), "rowmask"))
+                for nm, cfg, kern in variants:
                     try:
                         ref[nm] = timed(lambda: ps.flex_packed_page_attention([(qq, kk, vv, 0, None)], cfg, scale, 64,
                                                                               kernel=kern)[0].sum().backward())

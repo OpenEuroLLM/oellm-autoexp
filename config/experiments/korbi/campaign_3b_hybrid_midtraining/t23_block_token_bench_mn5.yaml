@@ -1,0 +1,27 @@
+# @package _global_
+# One selection per B queries on the rowmask head-packed per-token path (Megatron 14772f454), H100, one node:
+#  1. token_replay_bench on v4b's real masks (64k, 256k): b<B> = each query its anchor's real pages + its own window /
+#     sinks in head-packed tiles (B 4 / 8 / 16), next to hp16 (pure per-token), rowmask64, and per length dense,
+#     block (flex / rowmask), tok40, token_path and the b<B> training paths (random q / k);
+#  2. attn_packed_bench on the phase-2 document layout (64k, 256k): dense, block, tok_b16 / tok_b8 / tok_b4 (random
+#     q / k: a tile's union is bounded by 16 / B + 1 selections) and token_real (pure per-token, v4b's masks) -- the
+#     expected slowest rank of a data-parallel step.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t23_block_token_bench_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t20_token_final_bench_mn5
+  - _self_
+
+aux:
+  name: t23_block_token_bench
+  bench: >-
+    mkdir -p ${aux.out} && cd submodules/Megatron-LM
+    && ${aux.replay} --lists ${aux.probe}/v4b/lists_64k_doc0.pt ${aux.probe}/v4b/lists_256k_doc0.pt
+    --tiles 16 --blocks 4 8 16 --layers 4 --out ${aux.out}/replay_v4bmasks.json
+    ; ${aux.packed} --seqs ${aux.evals}/seqs_64k.json --n 24 --masks ${aux.probe}/v4b/lists_256k_doc0.pt
+    --variants dense_masked block tok_b16 tok_b8 tok_b4 token_real --out ${aux.out}/packed_64k.json
+    ; ${aux.packed} --seqs ${aux.evals}/seqs_256k.json --n 12 --steps 1 --masks ${aux.probe}/v4b/lists_256k_doc0.pt
+    --variants dense_masked block tok_b16 tok_b4 token_real --out ${aux.out}/packed_256k.json
+
+job:
+  start_condition: null

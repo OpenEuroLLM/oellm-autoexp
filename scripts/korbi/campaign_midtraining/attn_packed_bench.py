@@ -9,6 +9,7 @@ it). Variants:
   tok40         -- per-token selection inside 40 block candidates (rowmask), per document
   token         -- pure per-token selection (each query its own top 32, head-packed rowmask tiles), per document, on
                    the random q / k (random queries pick near-disjoint pages: an upper bound)
+  tok_b4 / tok_b8 / tok_b16 -- one selection per 4 / 8 / 16 queries on the head-packed per-token path
   token_real    -- the same kernel with REAL page masks (--masks: token_union_probe.py's lists of one long held-out
                    document; a document of n tokens takes the first n queries' masks -- a query's selection depends
                    only on the keys before it) plus the selection's own cost (timed on the random q / k)
@@ -64,7 +65,12 @@ def main() -> None:
             "block_rowmask": (ps.PageSparseConfig(**base, select_block=64), "rowmask"),
             "tok40": (ps.PageSparseConfig(**base, select_block=1, block_candidates=40, candidate_block=64),
                       "rowmask"),
-            "token": (ps.PageSparseConfig(**base, select_block=1), "rowmask")}
+            "token": (ps.PageSparseConfig(**base, select_block=1), "rowmask"),
+            # one selection per B queries on the head-packed per-token path (anchor scoring; per tile at most
+            # 16 / B + 1 selections: random q / k bound the union)
+            "tok_b4": (ps.PageSparseConfig(**base, select_block=4), "rowmask"),
+            "tok_b8": (ps.PageSparseConfig(**base, select_block=8), "rowmask"),
+            "tok_b16": (ps.PageSparseConfig(**base, select_block=16), "rowmask")}
     real = None
     if a.masks:  # the real page masks [G, Lm, Pm] of one long document
         from megatron.core.transformer.experimental_attention_variant import rowmask_attention as ra
