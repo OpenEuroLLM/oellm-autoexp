@@ -15,11 +15,12 @@ aux:
   exports: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
   docs: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
-  probe: bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh token_union_probe.py
+  # the training image's python (as t16_long_evals_mn5.sh): the exports' own model code, FLA / Megatron on PYTHONPATH
+  probe: python scripts/korbi/campaign_midtraining/token_union_probe.py
   bench: >-
-    ${aux.probe} ${aux.exports}/t16_s3_dense_3000 ${aux.out}/s3_dense --docs ${aux.docs} --lists
-    ; ${aux.probe} ${aux.exports}/t16_s3_page_maxpool_pg_3000 ${aux.out}/s3_pmp --docs ${aux.docs} --replace-sparse
-    ; ${aux.probe} ${aux.exports}/ambitious_v4b_learned_fp8_40000 ${aux.out}/v4b --docs ${aux.docs} --lists
+    ${aux.probe} --model ${aux.exports}/t16_s3_dense_3000 --out ${aux.out}/s3_dense --docs ${aux.docs} --lists
+    ; ${aux.probe} --model ${aux.exports}/t16_s3_page_maxpool_pg_3000 --out ${aux.out}/s3_pmp --docs ${aux.docs} --replace-sparse
+    ; ${aux.probe} --model ${aux.exports}/ambitious_v4b_learned_fp8_40000 --out ${aux.out}/v4b --docs ${aux.docs} --lists
 
 job:
   name: campaign_mid_${aux.name}
