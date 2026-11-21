@@ -63,6 +63,43 @@ sweep:
           backend.megatron.page_sparse_select_block: 8
         - aux.arm: pmp_sb4
           backend.megatron.page_sparse_select_block: 4
+        # D-LSA at the same granularities (user 2026-11-21: per-token D-LSA vs page_maxpool): settings as the t18 adapt
+        # dlsa arm, distilled on every 64th query at every granularity (kl_every 64: the same KL signal); flex rows of 64
+        # queries over several selection blocks (Megatron 8897a8e73). Per-token D-LSA (select_block 1) is not run: 14x the
+        # select_block-64 layer time at 64k (4.9 vs 0.34 s on a 3090 Ti; select_block 4: 8.6x)
+        - aux.arm: dlsa_sb64
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_select_block: 64
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_lsa_kl_every: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.arm: dlsa_sb8
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_select_block: 8
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_lsa_kl_every: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.arm: dlsa_sb4
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_select_block: 4
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_lsa_kl_every: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_selector_adam: true
         - aux.arm: pmp_dense0
           backend.megatron.page_sparse_dense_layers: [0]
         - aux.arm: pmp_k64
