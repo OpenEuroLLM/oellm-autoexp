@@ -141,6 +141,24 @@ def lists_from_allowed(allowed):
 _MOD = {}
 
 
+def fresh_code_view(export: str) -> str:
+    """<export>_union_view: hard links to the export's weights, this checkout's model code (as run_hf_probe_mn5.sh)."""
+    import shutil
+    import subprocess
+
+    view = Path(export.rstrip("/") + "_union_view")
+    if not view.exists():
+        subprocess.run(["cp", "-al", export, str(view)], check=True)
+    src = lap.REPO / "oellm_autoexp/hf_export"
+    for f in [*(src / "oellm_ambitious").glob("*.py"), *(src / "oellm_hybrid").glob("*.py")]:
+        if f.name == "__init__.py":
+            continue
+        tmp = view / (f.name + ".new")
+        shutil.copyfile(f.resolve(), tmp)  # resolves page_sparse.py's symlink into Megatron
+        tmp.replace(view / f.name)  # replaces the hard link, never writes into the export's inode
+    return str(view)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model")
@@ -155,12 +173,16 @@ def main() -> None:
     ap.add_argument("--lists", action="store_true", help="save the 64-query tiles' lists per layer and length")
     ap.add_argument("--replace-sparse", action="store_true",
                     help="a sparse-trained export: attend densely and record the per-token selection anyway")
+    ap.add_argument("--fresh-code", action="store_true",
+                    help="an export from before the sparse hooks: a view of it (hard links) with this checkout's code")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     lengths = [int(x) for x in a.lengths.split(",")]
     ndocs = [int(x) for x in a.n_docs.split(",")]
     t0 = time.time()
+    if a.fresh_code and not a.tiny:
+        a.model = fresh_code_view(a.model)
     model = lap.rp.load_model(a.model, a.tiny)
     probe = UnionProbe([int(x) for x in a.tiles.split(",")], a.select_chunk, a.lists)
     names = []

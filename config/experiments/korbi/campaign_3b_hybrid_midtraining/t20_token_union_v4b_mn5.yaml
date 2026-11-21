@@ -1,0 +1,13 @@
+# @package _global_
+# t20_token_union_probe for v4b alone: its export predates the HF sparse hooks, so the probe loads a view of it (hard
+# links) with this checkout's model code (--fresh-code). One MN5 node.
+defaults:
+  - t20_token_union_probe_mn5
+  - _self_
+
+aux:
+  name: t20_token_union_v4b
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t20_token_union_probe2
+  bench: >-
+    ${aux.probe} --model ${aux.exports}/ambitious_v4b_learned_fp8_40000 --out ${aux.out}/v4b --docs ${aux.docs} --lists
+    --fresh-code
