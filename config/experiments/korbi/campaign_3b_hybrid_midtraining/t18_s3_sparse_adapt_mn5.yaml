@@ -80,6 +80,30 @@ sweep:
           backend.megatron.page_sparse_csa2_entry_bias: 1.3862944
           backend.megatron.page_sparse_csa2_entry_rms: true
           backend.megatron.page_sparse_selector_adam: true
+        # csa2_fix went NaN at step 5780 (healthy at 5779: lm loss 1.576, grad norm 0.238; forward loss NaN from 5780,
+        # weights corrupted since: NaN checks were off). Replay from its clean step-5500 save on the same data
+        # (train_iters 7000 orders it; data position = the save's own 5500 x 16): NaN checks on with the rerun engine
+        # (validate_results: a NaN step is re-run on the same GPU; reproducible -> checkpoint of the pre-step state +
+        # exit 16, else "Possible transient error" -> a hardware fault), PAGE_SPARSE_NAN_DEBUG names the first
+        # non-finite tensor per layer / part. Only to 5800 (aux.only=[csa2_replay]; ~16 GPU-h).
+        - aux.arm: csa2_replay
+          backend.megatron.page_sparse_selector: csa2
+          backend.megatron.page_sparse_compress: 4
+          backend.megatron.page_sparse_csa2_topk_entries: 512
+          backend.megatron.page_sparse_indexer_heads: 32
+          backend.megatron.page_sparse_indexer_dim: 128
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_csa2_entry_bias: 1.3862944
+          backend.megatron.page_sparse_csa2_entry_rms: true
+          backend.megatron.page_sparse_selector_adam: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t18_s3_sparse_adapt/csa2_fix/ckpt
+          backend.megatron.ckpt_step: 5500
+          backend.megatron.diag_consumed_train_samples: 88000  # = 5500 x 16, the save's own
+          backend.megatron.exit_interval: 5800
+          backend.megatron.check_for_nan_in_loss_and_grad: true
+          backend.megatron.rerun_mode: validate_results
+          slurm.env.PAGE_SPARSE_NAN_DEBUG: "1"
+          slurm.env.PAGE_SPARSE_NAN_DEBUG_MAX: "200"
         - aux.arm: page_indexer
           backend.megatron.page_sparse_selector: indexer
           backend.megatron.page_sparse_indexer_heads: 16
