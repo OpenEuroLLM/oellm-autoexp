@@ -29,6 +29,7 @@ from megatron.core.datasets.utils import compile_helpers  # noqa: E402
 
 import build_plan  # noqa: E402
 import extract_doc_stream  # noqa: E402
+import check_plan  # noqa: E402
 import verify_stream  # noqa: E402
 from cds_data import (BlendStream, SamplerGeometry, StepSampler, find_cache_entry, load_stream,  # noqa: E402
                       read_blend)
@@ -249,3 +250,17 @@ def test_megatron_serves_plan(blend, planned, mode):
         pos = got["position_ids"].numpy()
         for x, y in zip(cu[:-1], cu[1:]):
             assert pos[x:y].tolist() == list(range(y - x))
+
+
+def test_check_plan_through_megatron(blend, planned):
+    out, _ = planned
+    old = sys.argv
+    sys.argv = ["x", "--out", str(out), "--plan-name", "fake", "--data-cache-path", blend["cache"],
+                "--data-args-path", blend["mix"], "--bos-id", str(BOS), "--eod-id", str(EOD),
+                "--vocab-size", str(VOCAB), "--samples", "16"]
+    try:
+        with pytest.raises(SystemExit) as e:
+            check_plan.main()
+    finally:
+        sys.argv = old
+    assert e.value.code == 0

@@ -7,6 +7,8 @@
 #   bench    embedding speed on the first chunk (each GPU of node 0), nothing written
 #   embed    one embedding per document of the stream (all GPUs)
 #   plan     packing plans per CDS_WINDOW steps (windows split over all GPUs)
+#   checkplan node 0, once every window's plan exists: check_plan.py -- the plans through Megatron's
+#            loader on the run's real BlendedDataset (geometry, coverage, token conservation, all modes)
 # Between stages every node waits for the previous stage's files (file barrier on GPFS).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -108,6 +110,28 @@ for stage in ${STAGES//,/ }; do
         per_gpu "plan_$EMB" bash -c 'python "$0"/build_plan.py --out "$1" --emb "$2" --from-ckpt "$3" --steps "$4" \
             --window "$5" --device cuda:$LOCAL_RANK --task-rank $RANK --task-world $WORLD_SIZE $6' \
             "$D" "$CDS_OUT" "$EMB" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" "${CDS_PLAN_ARGS:-}"
+        ;;
+    checkplan)
+        PLAN_NAME=$(python - "$EMB" "${CDS_PLAN_ARGS:-}" <<'EOF2'
+import sys
+args = sys.argv[2].split()
+print(args[args.index("--name") + 1] if "--name" in args else sys.argv[1])
+EOF2
+)
+        plans_done() {
+            python - "$CDS_OUT/plan/$PLAN_NAME" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" <<'EOF2'
+import os, sys
+d, a, n, w = sys.argv[1], *(int(x) for x in sys.argv[2:])
+need = [f"ck{w0:07d}_{min(w0 + w, a + n):07d}" for w0 in range(a, a + n, w)]
+sys.exit(0 if all(os.path.isdir(os.path.join(d, x)) for x in need) else 1)
+EOF2
+        }
+        wait_for "plans" plans_done
+        if [ "$NODE" = 0 ]; then
+            python "$D/check_plan.py" --out "$CDS_OUT" --plan-name "$PLAN_NAME" --data-cache-path "$CDS_DATA_CACHE" \
+                --data-args-path "$CDS_DATA_ARGS" --tokenizer "$CDS_TOKENIZER" 2>&1 | tee "$CDS_OUT/logs/checkplan_$PLAN_NAME.log"
+            [ "${PIPESTATUS[0]}" = 0 ] || { log "checkplan FAILED"; exit 5; }
+        fi
         ;;
     *) log "unknown stage $stage"; exit 2 ;;
     esac
