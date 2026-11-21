@@ -63,14 +63,17 @@ embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --poolin
             --attn "${CDS_EMB_ATTN:-flash_attention_2}")
 
 embed_cmd() {  # embed_cmd <extra args...>: embed_docs.py under the right runtime (vLLM: shared vLLM runtime, 1 GPU)
-    if [[ " $* ${CDS_EMB_ENGINE:-} " == *"vllm"* ]]; then
+    local engine=${CDS_EMB_ENGINE:-hf} arg
+    for arg in "$@"; do [[ $arg == --engine=* ]] && engine=${arg#--engine=}; done
+    if [ "$engine" = vllm ]; then
         # R: the hybrid_v019 root of the shared vLLM runtime (a pool step sets R to its run directory)
-        R="${CDS_HYBRID_ENV:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}" \
+        # vLLM manages GPU memory itself: no expandable segments (allocator OOM warnings next to its pool)
+        R="${CDS_HYBRID_ENV:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}" PYTORCH_CUDA_ALLOC_CONF= \
         bash -c 'cd "$0" && source scripts/korbi/vllm/setup_vllm_shared.sh >/dev/null && \
             CUDA_VISIBLE_DEVICES=$LOCAL_RANK exec "$INFER_PY" "$@"' "$ROOT" "$D/embed_docs.py" "${embed_args[@]}" \
-            ${CDS_EMB_ENGINE:+--engine "$CDS_EMB_ENGINE"} "$@"
+            --engine vllm "$@"
     else
-        python "$D/embed_docs.py" "${embed_args[@]}" "$@"
+        python "$D/embed_docs.py" "${embed_args[@]}" --engine hf "$@"
     fi
 }
 

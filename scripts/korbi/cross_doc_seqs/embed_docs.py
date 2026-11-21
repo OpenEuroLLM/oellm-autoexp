@@ -252,7 +252,7 @@ def main() -> None:
     ap.add_argument("--engine", choices=["hf", "vllm"], default="hf",
                     help="hf: transformers forward; vllm: vLLM's pooling runner (run under setup_vllm_shared.sh)")
     ap.add_argument("--vllm-mem", type=float, default=0.85, help="vLLM gpu_memory_utilization")
-    ap.add_argument("--vllm-batch-tokens", type=int, default=65536, help="vLLM max_num_batched_tokens")
+    ap.add_argument("--vllm-batch-tokens", type=int, default=131072, help="vLLM max_num_batched_tokens")
     ap.add_argument("--vllm-max-seqs", type=int, default=1024, help="vLLM max_num_seqs")
     ap.add_argument("--check-against", default=None,
                     help="bench: cosine of the bench vectors vs an existing embedding run's for the same documents")
@@ -417,3 +417,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # every output is written (atomically) by now: skip the interpreter teardown, where vLLM's engine
+    # threads abort the process ("terminate called without an active exception", exit 134) and a
+    # finished GPU would count as failed; errors above still exit non-zero with their traceback
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
