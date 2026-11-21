@@ -90,3 +90,11 @@ sweep:
           backend.megatron.page_sparse_select_block: 8
           backend.megatron.page_sparse_block_candidates: 0
           backend.megatron.page_sparse_backend: rowmask
+        # one selection per 16 queries on the rowmask kernel: the fastest variant end to end (t19m: 15.4-15.5 s, -16 %,
+        # no spikes), zero-shot +0.0072 (2026-11-21)
+        - aux.variant: pmp_sb16_rm
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 16
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
