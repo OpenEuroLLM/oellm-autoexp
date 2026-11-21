@@ -239,6 +239,7 @@ def main() -> None:
     ap.add_argument("--pack", choices=["auto", "on", "off"], default="auto",
                     help="padding-free batches (varlen flash attention); auto = on with flash_attention_2")
     ap.add_argument("--compile", action="store_true", help="torch.compile the model (dynamic shapes)")
+    ap.add_argument("--liger", action="store_true", help="Liger fused RMSNorm / RoPE / SwiGLU kernels (HF engine)")
     ap.add_argument("--check", type=int, default=0,
                     help="first embed this many docs both packed and padded and print their cosine")
     ap.add_argument("--workers", type=int, default=8)
@@ -289,6 +290,14 @@ def main() -> None:
         a.pack = True  # the batches carry per-document token lists (cu)
         detail = f"vLLM pooling runner, {a.vllm_batch_tokens} tokens per scheduler step"
     else:
+        if a.liger:  # fused Triton RMSNorm / RoPE / SwiGLU: the unfused fp32 elementwise ops were ~75 % of GPU time
+            from transformers import AutoConfig
+
+            mtype = AutoConfig.from_pretrained(a.model).model_type
+            import liger_kernel.transformers as lk
+
+            patch = getattr(lk, f"apply_liger_kernel_to_{mtype}")
+            patch(rope=True, rms_norm=True, swiglu=True, cross_entropy=False, fused_linear_cross_entropy=False)
         try:
             model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation=a.attn)
         except (ImportError, ValueError) as e:  # e.g. flash_attention_2 unavailable: masked SDPA
@@ -300,7 +309,8 @@ def main() -> None:
         assert not a.pack or flash, "--pack on needs flash_attention_2 (varlen kernels)"
         if a.compile:
             model = torch.compile(model, dynamic=True)
-        detail = f"attention {model.config._attn_implementation}, packed {a.pack}, compile {a.compile}"
+        detail = (f"attention {model.config._attn_implementation}, packed {a.pack}, compile {a.compile}, "
+                  f"liger {a.liger}")
     if a.batch_tokens is None:
         a.batch_tokens = 262144 if a.pack else 65536
     if rank == 0:
