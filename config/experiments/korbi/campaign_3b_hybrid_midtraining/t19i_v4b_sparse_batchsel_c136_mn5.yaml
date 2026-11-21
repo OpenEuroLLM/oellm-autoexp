@@ -16,8 +16,6 @@ aux:
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19i_v4b_sparse_batchsel_c136
 
 backend:
-  env:
-    TORCH_LOGS: ""
   megatron:
     pytorch_profiler_collect_shapes: false
 
