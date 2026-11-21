@@ -1,0 +1,36 @@
+# @package _global_
+# Pure per-token page selection timed on REAL selections (scripts/korbi/campaign_midtraining/token_replay_bench.py):
+# the page masks of t20_token_union_probe (page_maxpool top 32, window 512, 1 sink, per KV group, real activations)
+# replayed on one H100 -- rowmask 64-query tiles vs head-packed tiles of 8 / 16 queries, against dense, block-wise
+# (flex / rowmask), tok40 and the selection's own cost. v4b shapes (16 / 2, head dim 256) with the s3 masks and (when
+# the probe wrote them) v4b's own; the s3 shapes (10 / 2, 128) with the s3 masks.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t20_token_replay_bench
+  probe: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t20_token_union_probe2
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  run: python ../../scripts/korbi/campaign_midtraining/token_replay_bench.py
+  bench: >-
+    mkdir -p ${aux.out} && cd submodules/Megatron-LM
+    && ${aux.run} --lists ${aux.probe}/s3_dense/lists_64k_doc0.pt ${aux.probe}/s3_dense/lists_64k_doc1.pt
+    ${aux.probe}/s3_dense/lists_256k_doc0.pt --out ${aux.out}/s3masks_v4bshape.json
+    && ${aux.run} --lists ${aux.probe}/s3_dense/lists_64k_doc0.pt --heads 10 --dim 128
+    --out ${aux.out}/s3masks_s3shape.json
+    && { [ ! -f ${aux.probe}/v4b/lists_64k_doc0.pt ] || ${aux.run} --lists ${aux.probe}/v4b/lists_64k_doc0.pt
+    ${aux.probe}/v4b/lists_256k_doc0.pt --out ${aux.out}/v4bmasks.json; }
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 3600
+  array_group: null
+  metadata:
+    pool_priority: 45
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
