@@ -3,9 +3,10 @@
 # not the login node). The first node to take the lock refreshes, the others wait for it; a marker per export and
 # Megatron commit makes reruns skip it.
 #
-#   refresh_then_pack_mn5.sh <export dir>[,<export dir>...] <queue dir> <arm:task[:step]> ...
+#   REFRESH_EXPORTS="<export dir> ..." refresh_then_pack_mn5.sh <queue dir> <arm:task[:step]> ...
+# (an env variable: a list in a Hydra override would need commas, which Hydra reads as a sweep)
 set -u
-exports=${1//,/ }; shift
+exports=${REFRESH_EXPORTS:-}
 Q=$1
 mkdir -p "$Q"
 rev=$(git -C submodules/Megatron-LM rev-parse --short HEAD 2>/dev/null || head -c 12 SYNC_STAMP)
