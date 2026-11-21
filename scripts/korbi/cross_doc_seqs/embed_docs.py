@@ -56,6 +56,10 @@ class DocTexts:
         self._pool = None
 
     def _init(self):
+        # (re)initialize per process: a DataLoader worker forked from a process that already used this
+        # object inherits a thread pool without threads (its reads would wait forever) and shared fds
+        if getattr(self, "_pid", None) != os.getpid():
+            self._tok, self._fds, self._pool, self._pid = None, {}, None, os.getpid()
         if self._tok is None:
             from concurrent.futures import ThreadPoolExecutor
 
