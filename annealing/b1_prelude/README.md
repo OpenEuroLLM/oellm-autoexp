@@ -1,19 +1,103 @@
 # Standalone B1 annealing on JUPITER
 
-This package prepares separate B1 32B annealing experiments from a retained native tensorwise checkpoint, using either the Prelude multilingual1+dominant1 or multilingual1+dominant2 blend. TP4/PP4, sequence4096, GBS4096, FP8 tensorwise with BF16 edge layers, Adam/RNG restoration and sample-based WSD `minus_sqrt` follow the B1 production setup. The new data phase starts at the fork; its mixture is consumed from offset zero. Original9B linear-WSD configs and all original mixture inputs are under [origins](origins/README.md), with source paths and hashes. The executable preparer here is for32B; those9B historical examples require a separate JUPITER port and validation.
+This package prepares separate B1 32B annealing experiments from a retained native tensorwise checkpoint, using either the Prelude `multilingual1+dominant1` or `multilingual1+dominant2` blend. TP4/PP4, sequence length 4,096, GBS 4,096, FP8 tensorwise with BF16 edge layers, Adam/RNG restoration and sample-based WSD `minus_sqrt` follow B1 production. The new data phase starts at the fork and consumes its mixture from offset zero. The executable preparer supports B1 32B. The original 9B linear-WSD examples need a separate JUPITER port and validation. [Original configs, mixture inputs and provenance](origins/README.md)
 
-Use a dedicated checkout of `prod/oellm_32b_dense`, initialize its pinned Megatron submodule and activate the existing autoexp environment. The tested base is `5df9c35c16b3bce8b74f608bc62f7fdd2b7aaa70`, Megatron `c9cf7e84cf584dee5ca456124180c5acc98e80ba`. No package installation is needed on the prepared JSC environment.
+## Start from a fresh JUPITER login
+
+You need GitHub read access to `OpenEuroLLM/oellm-autoexp` and its Megatron fork, JUPITER Container Runtime Engine access, a Slurm Booster allocation account and storage visible from login and compute nodes. Your account also needs read access to the B1 checkpoint, pinned training image, tokenizer and both frozen blends. The example below uses the B1 project `e-ext-2025e02-108`. Set `ACCOUNT` to an account you can charge and `RUN_PARENT` to your own writable scratch directory. Project storage and Slurm account names can differ. [JUPITER access](https://apps.fz-juelich.de/jsc/hps/jupiter/access.html) · [Container runtime access](https://apps.fz-juelich.de/jsc/hps/jupiter/container-runtime.html)
+
+Run the walkthrough inside a named tmux session. Clone the branch into shared scratch and initialize the Megatron revision recorded by that branch.
 
 ```bash
-git submodule update --init submodules/Megatron-LM
-source /e/fscratch/e-sta-openeurollm/jj1/envs/oellm-autoexp/bin/activate
-export SEED=/absolute/checkpoints/iter_0416000
-export RUN=/new/absolute/scratch/anneal-dominant1
-python annealing/b1_prelude/prepare.py --root "$RUN" --seed "$SEED" \
-  --mix dominant1 --tokens 20000000000 --nodes 512 --attempts 4 --walltime 12:00:00
+tmux new -s b1-annealing
 ```
 
-Preparation does not submit training. It checks all indexed seed shards, every294dataset-prefix pair, creates an arm-owned checkpoint tree with a seed symlink, copies the frozen mixture and renders the model/config/batch script. Review `recipe.json`, `config/annealing_arm.yaml` and `training_core/job_*.sbatch`. All logs, monitor state, persistent/rolling checkpoints and cache belong to the new arm. Optional `--cache /absolute/existing/cache` reuses compatible indices only after exact preparation/coverage checks; it never assumes that the presence of files makes them valid. The seed must remain available until a validated replacement exists.
+```bash
+export ACCOUNT=e-ext-2025e02-108
+export RUN_PARENT="/e/fscratch/e-ext-2025e02-108/$USER/annealing"
+mkdir -p "$RUN_PARENT"
+test -w "$RUN_PARENT"
+df -h "$RUN_PARENT"
+df -i "$RUN_PARENT"
+sacctmgr -nP show assoc where user="$USER" account="$ACCOUNT" format=Account,Partition,QOS
+command -v git apptainer sbatch squeue sacct flock
+
+git clone --branch prod/oellm_32b_dense https://github.com/OpenEuroLLM/oellm-autoexp.git \
+  "$RUN_PARENT/oellm-autoexp"
+cd "$RUN_PARENT/oellm-autoexp"
+git submodule update --init submodules/Megatron-LM
+git rev-parse HEAD
+git submodule status submodules/Megatron-LM
+```
+
+Create and activate your own Python 3.12 environment on JUPITER. If you are starting without Python or a package manager, use the repository's Micromamba bootstrap and the environment creation and activation commands. Set its example scratch paths to your own and use the install commands below in the B1 checkout. The linked walkthrough's Qwen-specific image and model setup apply to its own example. [Micromamba bootstrap](../../JUPITER_SETUP_GUIDE.md#1-micromamba) · [Environment creation and activation](../../JUPITER_SETUP_GUIDE.md#3-env)
+
+```bash
+cd "$RUN_PARENT/oellm-autoexp"
+test -n "${CONDA_PREFIX:-${VIRTUAL_ENV:-}}"
+test "$(command -v python)" = "${CONDA_PREFIX:-${VIRTUAL_ENV:-}}/bin/python"
+python -m pip install -e .
+python -m pip check
+python -c 'import compoconf, oellm_autoexp, omegaconf'
+```
+
+The host environment runs the preparer and Slurm monitor. The pinned training image supplies the GPU runtime. These are the actual JUPITER inputs used for the validated checkpoint and both mixtures. Check readability as your own account before submitting anything. `prepare.py` checks the checkpoint's indexed shards and all 294 `.bin`/`.idx` pairs for the selected mixture.
+
+```bash
+export SEED=/e/scratch/e-ext-2025e02-108/oellm_32b_dense_b1/b1_conservative60k_100k_tensorwise/training_ckpts/checkpoints/iter_0416000
+export TRAIN_IMAGE=/e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+export TOKENIZER=/e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k
+test -r "$SEED/.metadata"
+test -r "$TRAIN_IMAGE"
+test -r "$TOKENIZER/tokenizer.model"
+```
+
+`TRAIN_IMAGE` and `TOKENIZER` above are access checks for the inputs already pinned by the resolved config. Check the generated batch scripts against those paths. The dataset paths live in the [dominant1](datamix/dominant1.txt) and [dominant2](datamix/dominant2.txt) files. Allow roughly 71 GiB per smoke cache based on the measured caches, plus space for logs, and budget separately for indices and checkpoints at your full run size. Check your project quota as well as filesystem free space and inodes. Keep the linked seed available until your arm has a validated replacement checkpoint.
+
+## Validate both mixtures with short runs
+
+The coordinator below reproduces the published smoke shape for iteration 416000. Each arm restores the optimizer and RNG, resets the validation cursor for the new blend, and takes three updates on 32 nodes in one ten-minute allocation, with checkpoint writes and retries disabled. Cache construction is a separate job and must pass before training. The two preparations reserve up to 32 GPU-hours total, and the two smokes up to 42.67 GPU-hours total.
+
+```bash
+CAMPAIGN=$(mktemp -d "$RUN_PARENT/b1-smoke.XXXXXX")
+ARM1="$CAMPAIGN/smoke-dominant1"
+ARM2="$CAMPAIGN/smoke-dominant2"
+STATE="$CAMPAIGN/validation"
+
+for mix in dominant1 dominant2; do
+  arm="$CAMPAIGN/smoke-$mix"
+  python annealing/b1_prelude/prepare.py --root "$arm" --seed "$SEED" \
+    --mix "$mix" --tokens 20000000000 --nodes 32 --smoke --account "$ACCOUNT"
+  python annealing/b1_prelude/cache.py prepare --root "$arm"
+done
+```
+
+Review `recipe.json`, `config/annealing_arm.yaml`, `training_core/job_*.sbatch`, and the `settings.json`, `render.json` and batch script in each arm's `cache-preparation/`. Both `prepare` commands render files without submitting. After reviewing the resolved shape and allocation, submit the preparations and start the cache-gated coordinator in the same tmux session.
+
+```bash
+for arm in "$ARM1" "$ARM2"; do
+  sbatch --test-only "$arm"/cache-preparation/job_*.sbatch &&
+    python annealing/b1_prelude/cache.py submit --root "$arm" || break
+done
+python annealing/b1_prelude/validate.py init --root "$STATE" --arm "$ARM1" --arm "$ARM2" &&
+  python annealing/b1_prelude/validate.py watch --root "$STATE" --execute &&
+  python annealing/b1_prelude/validate.py verify --root "$STATE"
+```
+
+The coordinator waits for the two cache jobs and checks each arm's cache before submitting its smoke once. Inspect `status.json`, the per-arm step CSVs and `all_passed.json` under `$STATE`. After a disconnect, reconnect with `tmux attach -t b1-annealing`. If the watcher exited, use the same repository, environment and state path to restart `watch`. A `STOP` file in the validation state directory holds new admissions. A passing smoke requires the expected checkpoint restore and cursor reset, three consecutive finite loss and gradient updates with positive LR and throughput, zero skipped/NaN updates and a Slurm `COMPLETED` job with exit code zero. It records the consecutive loss changes. [November 20 validation result](validation_result.json)
+
+## Prepare and launch a full arm
+
+Use a new run root and size `--tokens`, `--nodes`, `--attempts` and `--walltime` to your allocation. This example renders a dominant1 run with a 20B target. At 512 nodes each allocation uses 2,048 GPUs, so four 12-hour allocations cap this example at 98,304 reserved GPU-hours. Check the live partition, QoS and project budget before choosing these parameters.
+
+```bash
+FULL_CAMPAIGN=$(mktemp -d "$RUN_PARENT/b1-full.XXXXXX")
+RUN="$FULL_CAMPAIGN/dominant1-20b"
+python annealing/b1_prelude/prepare.py --root "$RUN" --seed "$SEED" \
+  --mix dominant1 --tokens 20000000000 --nodes 512 --attempts 4 \
+  --walltime 12:00:00 --account "$ACCOUNT"
+python annealing/b1_prelude/cache.py prepare --root "$RUN"
+```
 
 | Token budget | Updates | Actual tokens |
 |---|---:|---:|
@@ -23,51 +107,44 @@ Preparation does not submit training. It checks all indexed seed shards, every29
 |300B|17,882|300,010,176,512|
 |2T|119,210|2,000,011,919,360|
 
-The endpoint is seed iteration plus `ceil(tokens/16,777,216)`. At512nodes each allocation uses2,048GPUs; the hard reserved upper bound is GPUs×walltime×maximum allocations. The prior2T plan used up to32allocations of12hours, with roughly13allocations forecast from historical speed. Forecast and hard maximum are different quantities. Run cache preparation and smoke validation before admitting any full experiment. Full runs retain rolling saves every125updates and the bounded production continuation policy; interrupted full-state resume and terminal rolling cleanup require their own validation, beyond the three-update smoke provided here.
+The endpoint is seed iteration plus `ceil(tokens / 16,777,216)`. The reserved upper bound is GPUs × walltime × maximum allocations. The prior 2T plan used up to 32 allocations of 12 hours, with roughly 13 allocations forecast from historical speed. Each full arm retains its own checkpoints, logs and monitor state. The supplied smoke covers startup. Interrupted full-state resume and terminal rolling cleanup require their own validation before running at scale.
 
-## Prepare and verify data before training
-
-```bash
-python annealing/b1_prelude/cache.py prepare --root "$RUN"
-# Review cache-preparation/settings.json, render.json and the batch script.
-sbatch --test-only "$RUN"/cache-preparation/job_*.sbatch
-python annealing/b1_prelude/cache.py submit --root "$RUN"
-# Once Slurm reports COMPLETED:
-python annealing/b1_prelude/cache.py check --root "$RUN"
-```
-
-The adapter inherits production `data_cache_build_fscratch_trainshape.yaml`: one rank, two-layer stand-in model, full tokenizer, real data builder, one actual tiny-model update and no checkpoint writes. Preparation has its own four-hour/four-GPU maximum16GPU-hours. It derives the exact train phase and validation sample counts from the resolved target, including evaluation timing at the fork; its sizing regression executes the corresponding function from the pinned Megatron source. The supported recipes have no test split; nonzero test splits are rejected rather than silently mis-sized. The original production header/array-size checker must pass, and the adapter requires the matching train/valid blend descriptions, ordered294prefixes, weights, per-child sample counts, tokenizer/seed/sequence/split identities and successful preparation completion. Cached files alone do not pass the gate.
-
-Cache construction and training take the same cache-writer lease. Do not overlap other writers or manually delete partial arrays. Interrupted groups must be quarantined with quiescent writers before rebuilding; retain complete reusable groups. Changing tokenizer/data/sampling settings invalidates the matching preparation evidence. The initial `launch.sh` runs the cache checker before submission; the continuous autoexp monitor uses the existing restart rules thereafter. STOP prevents new admission. Preserve submission intents and reconcile uncertain scheduler submissions rather than retrying blindly.
-
-The November12 jobs failed after successful dataset construction because `eval_iters=0` yielded an empty validation sampler (`no sample to consume: 0`). This was not a disk-quota failure. On November17 fscratch had about26TiB free and8.2million free inodes; the project limit was40/44TB and each reusable arm cache about70.773GiB. The corrected smoke uses one16-sample validation iteration. The cache preparer verifies a positive validation sample count before submission. The project quota utility's fscratch usage field was zero while `df` showed actual usage, so use both quota policy and actual filesystem/write probes for capacity checks.
-
-## Short validation, then full execution
-
-Use a new root with `--smoke --nodes 32` to request three updates in a single ten-minute allocation, with checkpoint writes and retries disabled. This preserves the production global batch and optimizer state. Use a sufficiently large node count to fit three updates plus restore inside ten minutes; the earlier16-node smoke did not establish throughput. Preparation remains a separate allocation and must pass first. Smoke validation reads complete logs, requires restoration of the selected seed, three consecutive finite loss/gradient updates with positive LR/timing/throughput and zero skipped/NaN updates, and Slurm COMPLETED/exit0. It records each step and consecutive loss changes; it does not demand monotonically falling loss over three updates.
-
-For the tested two-arm campaign the standalone coordinator is:
+Review the rendered training and preparation files as for the smokes. Build the full arm's indices with its own resolved budget, then check the completed allocation and cache before using `launch.sh` in the named tmux session.
 
 ```bash
-python annealing/b1_prelude/validate.py init --root "$STATE" --arm "$ARM1" --arm "$ARM2"
-python annealing/b1_prelude/validate.py watch --root "$STATE" --execute
-python annealing/b1_prelude/validate.py verify --root "$STATE"
+sbatch --test-only "$RUN"/cache-preparation/job_*.sbatch &&
+  python annealing/b1_prelude/cache.py submit --root "$RUN"
+CACHE_JOB=$(python -c 'import json, sys; print(json.load(open(sys.argv[1]))["job"])' \
+  "$RUN/cache-preparation/submitted.json")
+sacct -X -j "$CACHE_JOB" --format=JobID,State,ExitCode
 ```
 
-It pins exact scripts/configs/sources and calls the cache gate before submitting each short training job once. `status.json`, per-arm response reports/step CSVs and `all_passed.json` distinguish pending jobs, failed jobs and validated training. A finite failed smoke remains a review block; the coordinator never claims a passing test because its watcher is alive. The November 20 smoke attempts and reused preparation receipts are tracked under `/e/fscratch/e-ext-2025e02-108/jitsev1/b1-annealing-20261111/validation-20261120`. A publication guard re-verifies both actual training results and the reviewed package before publishing; `publication.json` is the publication receipt. Until it exists with `published_commit`, this package is not claimed published on the target branch. `validation_result.json`, included only after successful validation, records the tested outcome and limitations.
+Once the cache job reports `COMPLETED` with exit code `0:0`, check the cache and start training.
 
-At initial restore, the package runs native Megatron setup and then resets the validation cursor to zero for the new blend. A resume from a later checkpoint in the arm keeps its saved validation cursor. The smoke report checks for the reset in the job log. Both November 17 smoke jobs restored iteration 416000, then failed because the checkpoint supplied a validation offset of 1,679,360 samples to a 294-sample validation blend.
+```bash
+python annealing/b1_prelude/cache.py check --root "$RUN" &&
+  "$RUN/launch.sh"
+```
 
-A new arm with matching cache inputs can reuse an existing completed preparation. First render its own preparation with `cache.py prepare`. Then run `cache.py reuse --root "$RUN" --from-root "$PRIOR"`. This checks the same Megatron gitlink, normalized data settings, mixture, tokenizer and cache path, verifies the original preparation and reruns the checker and coverage test. The November 20 retries reuse preparations 2967355 and 2967358.
+The initial launch checks the cache again before submitting. Full runs save rolling checkpoints every 125 updates and use the bounded autoexp continuation policy. Retain `$RUN/monitor` and restore its existing session if the monitor exits. Keep each arm's optimizer, RNG, data cursor and schedule state together on continuation. A `STOP` file in `$RUN` prevents new admissions. [Autoexp monitor restoration](../../README.md#monitoring-sessions)
 
-After smoke validation, execute a separately prepared full arm with `$RUN/launch.sh` in a named tmux workflow. Retain its monitor session and standalone restoration command. Keep checkpoint/optimizer/RNG/data-position/schedule state intact on continuation, preserve the explicit endpoint and cumulative budget, and never point multiple experiments at the same rolling checkpoint directory. The full training source remains the normal autoexp/production implementation; no Megatron training-source modification is required for this package.
+The prebuild uses the production `data_cache_build_fscratch_trainshape.yaml` recipe with one rank, a two-layer model, the actual tokenizer and data builder, one update and no checkpoint writes. Each preparation can reserve up to 16 GPU-hours. The gate checks the exact data phase and validation sample counts, successful Slurm completion, the production header/array-size check, and ordered blend and child coverage. `--cache` can point to a known cache from an earlier arm. To reuse a completed preparation, render the new arm and preparation with the same cache path, then run `cache.py reuse --root "$RUN" --from-root "$PRIOR"` with `PRIOR` set to the original arm directory containing its successful preparation receipt. The gate verifies both sets of inputs. A smoke cache is only reusable for a matching target shape. The shared writer lease covers cache preparation and training for each cache. If a writer was interrupted, quarantine its partial groups after writers are quiescent and keep the valid groups.
+
+## Set up downstream evaluation separately
+
+Training and its in-run validation use the Megatron image. For benchmark scoring, follow the `oellm-eval` JUPITER guide in a separate environment. It starts with a fresh clone and covers the CLI, pinned ARM64 vLLM image, offline benchmark assets and a GPU acceptance run. [Install and run oellm-eval on JUPITER from scratch](https://github.com/OpenEuroLLM/oellm-eval/blob/feat/vllm-data-parallel/docs/machines/jupiter/from-scratch.md)
+
+Export the native `torch_dist` checkpoint to Hugging Face format using the B1 model configuration and tokenizer. When following the downstream conversion guide, register your annealing arm's checkpoint directory, set `WORK_ROOT` to your own writable conversion workspace, point `MEGATRON_REPO` at the checkout used for training and use the arm's resolved training config as `ARCH_YAML`. Use the exported model with the recipe and evaluator revision pinned by the benchmark campaign you want to reproduce. [Checkpoint conversion and model registration](../../scripts/downstream_eval/README.md#adding-a-model) · [Evaluating a custom model](https://github.com/OpenEuroLLM/oellm-eval/blob/feat/vllm-data-parallel/docs/machines/jupiter/from-scratch.md#12-evaluate-other-models-or-benchmark-groups)
 
 ## Reproduce source mixtures and inspect provenance
 
 ```bash
-python annealing/b1_prelude/datamix/rebuild.py --mix dominant1 --output /new/dominant1.txt
-cmp /new/dominant1.txt annealing/b1_prelude/datamix/dominant1.txt
+REBUILT=$(mktemp -d "$RUN_PARENT/b1-mixtures.XXXXXX")
+for mix in dominant1 dominant2; do
+  python annealing/b1_prelude/datamix/rebuild.py --mix "$mix" --output "$REBUILT/$mix.txt"
+  cmp "$REBUILT/$mix.txt" "annealing/b1_prelude/datamix/$mix.txt"
+done
 python -m unittest discover -s annealing/b1_prelude -p 'test_*.py' -v
 ```
 
-Both blends retain the original weights and prefix order, including the original AgentTrove prefix. Current B1 production pretraining uses a separately filtered AgentTrove index; this annealing package does not silently substitute it. Full LUMI/JSC byte comparison is still incomplete:431/588matches, zero mismatches,157pending/39.194TB at the November17 snapshot. The bounded CPU continuation and receipt locations are documented in `origins/README.md`. This is explicitly a remaining provenance limitation, separate from JSC cache/training sanity validation.
+Both blends retain the original weights and prefix order, including the original AgentTrove prefix. At the November 17 LUMI/JUPITER byte-comparison snapshot, 431 of 588 files matched, with zero mismatches and 157 files still pending (39.194 TB). [Verification continuation and receipts](origins/README.md)
