@@ -9,6 +9,7 @@
 # into the arm's own tree (to extend it); nothing is written next to the main run.
 #   page_maxpool_pg -- block-wise selection per 64 queries (flex), the confirmed -14 % arm
 #   pmp_tok         -- pure per-token selection (rowmask head-packed kernel, Megatron c14ef8f16..db3357056)
+#   pmp_sb8_rm      -- one selection per 8 queries on the same kernel (Megatron 14772f454)
 #   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t21_v4b_sparse_branch_c136_mn5 \
 #       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
 defaults:
@@ -79,5 +80,13 @@ sweep:
           backend.megatron.page_sparse_selector: page_maxpool
           backend.megatron.page_sparse_per_group: true
           backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
+        # one selection per 8 queries on the rowmask head-packed kernel (Megatron 14772f454): block-wise speed end to end
+        # (t19m: 15.7-15.9 s vs 15.75), zero-shot +0.0055 vs block +0.012 / per-token +0.003 (2026-11-21)
+        - aux.variant: pmp_sb8_rm
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 8
           backend.megatron.page_sparse_block_candidates: 0
           backend.megatron.page_sparse_backend: rowmask
