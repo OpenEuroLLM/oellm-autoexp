@@ -173,8 +173,9 @@ Outputs go to `/gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/{s
 **Switching the start step** (49k → 50k, or anything else): `aux.from_ckpt=50000`. The stream of
 49000–50000 is simply not used, and windows are counted from `from_ckpt`. Plans for an already
 extracted range can be rebuilt with other parameters under a new name, e.g.
-`aux.plan_name=q3e256_w1000 aux.window=1000` (extra `build_plan.py` options go comma-separated, without spaces,
-into `aux.plan_args`, e.g. `--dup-cos=0.98`).
+`aux.plan_name=q3e256_w1000 aux.window=1000` (extra `build_plan.py` options go
+into `aux.plan_args` joined by `+`, e.g. `--dup-cos=0.98+--coarse=8192`; the container's `--env` splits values at
+`,` and cannot carry spaces).
 
 **Applying it later** (not done, needs the user's go): re-enqueue the main run from the start
 checkpoint with

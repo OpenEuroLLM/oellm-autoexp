@@ -24,10 +24,10 @@ WINDOW=${CDS_WINDOW:-500}
 STAGES=${CDS_STAGES:-extract,embed,plan}
 EMB=${CDS_EMB_NAME:-q3e256}
 PLAN_NAME=${CDS_PLAN_NAME:-$EMB}
-# extra build_plan.py arguments, comma separated without spaces (the container --env cannot carry spaces),
-# e.g. CDS_PLAN_ARGS=--coarse=8192,--dup-cos=0.98
+# extra build_plan.py arguments joined by "+" (the container --env splits values at "," and cannot carry
+# spaces), e.g. CDS_PLAN_ARGS=--coarse=8192+--dup-cos=0.98
 PLAN_ARGS=${CDS_PLAN_ARGS:-}
-PLAN_ARGS=${PLAN_ARGS//,/ }
+PLAN_ARGS=${PLAN_ARGS//+/ }
 mkdir -p "$CDS_OUT/logs"
 log() { echo "[cds node $NODE/$NNODES $(date +%H:%M:%S)] $*"; }
 
@@ -101,11 +101,11 @@ for stage in ${STAGES//,/ }; do
         fi
         ;;
     bench)
-        # CDS_BENCH_VARIANTS: comma-separated variants "label+--arg=v+--arg2" (no spaces: the container --env
-        # cannot carry them); default: the configured embedding as is
+        # CDS_BENCH_VARIANTS: variants separated by ":", each "label+--arg=v+--arg2" (the container --env splits
+        # values at "," and cannot carry spaces); default: the configured embedding as is
         if [ "$NODE" = 0 ]; then
             first=$(chunk_names | cut -d' ' -f1)
-            IFS=',' read -ra variants <<< "${CDS_BENCH_VARIANTS:-default}"
+            IFS=':' read -ra variants <<< "${CDS_BENCH_VARIANTS:-default}"
             for variant in "${variants[@]}"; do
                 label=${variant%%+*}
                 extra=""
