@@ -64,6 +64,8 @@ embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --poolin
 
 embed_cmd() {  # embed_cmd <extra args...>: embed_docs.py under the right runtime (vLLM: shared vLLM runtime, 1 GPU)
     if [[ " $* ${CDS_EMB_ENGINE:-} " == *"vllm"* ]]; then
+        # R: the hybrid_v019 root of the shared vLLM runtime (a pool step sets R to its run directory)
+        R="${CDS_HYBRID_ENV:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}" \
         bash -c 'cd "$0" && source scripts/korbi/vllm/setup_vllm_shared.sh >/dev/null && \
             CUDA_VISIBLE_DEVICES=$LOCAL_RANK exec "$INFER_PY" "$@"' "$ROOT" "$D/embed_docs.py" "${embed_args[@]}" \
             ${CDS_EMB_ENGINE:+--engine "$CDS_EMB_ENGINE"} "$@"

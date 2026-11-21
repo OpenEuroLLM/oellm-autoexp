@@ -57,6 +57,7 @@ backend:
   command: bash scripts/korbi/cross_doc_seqs/run_pipeline.sh
   env:
     CDS_OUT: ${aux.out}
+    CDS_HYBRID_ENV: ${aux.hybrid_env}
     CDS_FROM: "${aux.from_ckpt}"
     CDS_STEPS: "${aux.steps}"
     CDS_CHUNK: "${aux.chunk}"
