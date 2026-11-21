@@ -1,0 +1,97 @@
+# @package _global_
+# Cross-document packing pipeline for the v4b main run (docs/cross_doc_seqs/README.md): replay the
+# training data stream from a checkpoint on, embed every document, build packing plans that group
+# similar documents into the same 64k sequences (Megatron --packing-plan-path). Nothing here touches the
+# running training; the plans are only read by a future (re-)enqueue that passes the flag.
+#
+# The range is a parameter, never a constant: aux.from_ckpt (first step = the one taken from that
+# checkpoint) and aux.steps. A later range extends the same output directory (done chunks / parts /
+# windows are skipped), so 49000 -> 50000 is a one-word change.
+#
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_c136 \
+#       --config-name experiments/korbi/cross_doc_seqs/cds_pipeline_mn5 \
+#       aux.from_ckpt=49000 aux.steps=100 aux.stages=extract,verify,bench,embed,plan aux.window=100 \
+#       slurm.sbatch.nodes=1 slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: cds_${aux.emb_name}_ck${aux.from_ckpt}_${aux.steps}
+  from_ckpt: 49000
+  steps: 4000
+  chunk: 100
+  window: 500
+  stages: extract,verify,embed,plan
+  # the main run's data (v4b_learned_mn5 -> ... -> hybrid_ambitious_v4_2ph_hd256_p2cont_mn5): phase 2 from
+  # 23691, 64k, gbs 1024, reference layout 512 x 1, train_iters 236733 -- cache entry 09a2a1c4... (11-02)
+  data_args: ${aux.hybrid_env}/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+  data_cache: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_shared
+  blend_md5: 09a2a1c43379c8fa39237a9bdc9d3115
+  train_iters: 236733
+  phase_start: 23691
+  ref_dp: 512
+  ref_mbs: 1
+  gbs: 1024
+  seq: 65536
+  tokenizer: /gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent
+  # Qwen3-Embedding-0.6B (multilingual + code, Matryoshka): the first 512 model tokens of a document
+  emb_name: q3e256
+  emb_model: /gpfs/projects/ehpc533/users/korbip/models/Qwen3-Embedding-0.6B
+  emb_pooling: last
+  emb_prefix: ""
+  emb_dim: 256
+  plan_args: ""
+  # outputs on /gpfs/projects (the data TLD), not the near-full scratch: ~1 MB of stream and ~30 MB of
+  # embeddings per step
+  out: /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2
+
+backend:
+  command: bash scripts/korbi/cross_doc_seqs/run_pipeline.sh
+  env:
+    CDS_OUT: ${aux.out}
+    CDS_FROM: "${aux.from_ckpt}"
+    CDS_STEPS: "${aux.steps}"
+    CDS_CHUNK: "${aux.chunk}"
+    CDS_WINDOW: "${aux.window}"
+    CDS_STAGES: ${aux.stages}
+    CDS_DATA_ARGS: ${aux.data_args}
+    CDS_DATA_CACHE: ${aux.data_cache}
+    CDS_BLEND_MD5: ${aux.blend_md5}
+    CDS_TRAIN_ITERS: "${aux.train_iters}"
+    CDS_PHASE_START: "${aux.phase_start}"
+    CDS_REF_DP: "${aux.ref_dp}"
+    CDS_REF_MBS: "${aux.ref_mbs}"
+    CDS_GBS: "${aux.gbs}"
+    CDS_SEQ: "${aux.seq}"
+    CDS_TOKENIZER: ${aux.tokenizer}
+    CDS_EMB_NAME: ${aux.emb_name}
+    CDS_EMB_MODEL: ${aux.emb_model}
+    CDS_EMB_POOLING: ${aux.emb_pooling}
+    CDS_EMB_PREFIX: "${aux.emb_prefix}"
+    CDS_EMB_DIM: "${aux.emb_dim}"
+    CDS_PLAN_ARGS: "${aux.plan_args}"
+
+job:
+  name: ${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/cross_doc_seqs/${aux.name}"
+  est_step_time_s: 7200
+  array_group: null
+  metadata:
+    pool_priority: 45  # below every main-run job
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "pool run limit -- the rerun skips the finished chunks"}
+    - name: timeout_completing
+      transition: ["COMPLETING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 2}
+      action: {class_name: RestartAction, reason: "pool run limit -- the rerun skips the finished chunks"}
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
