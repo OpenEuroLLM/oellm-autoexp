@@ -287,19 +287,19 @@ def load_embeddings(emb_root: str, keys_needed: np.ndarray, w0: int | None = Non
             if b_ <= w0 or a_ >= w1:
                 continue
         files += sorted(glob.glob(os.path.join(d, "part_*.npz")))
-    for f in files:
-        z = np.load(f)
-        k = z["keys"]
-        m = np.isin(k, keys_needed)
-        if m.any():
-            ks.append(k[m])
-            vs.append(z["vec"][m])
+    for f in files:  # every part of the window's chunks: concatenate, filter once (np.isin per file
+        z = np.load(f)  # against tens of millions of needed keys re-sorted them for every file)
+        ks.append(z["keys"])
+        vs.append(z["vec"])
     if not ks:
         return np.zeros(0, np.int64), None
     k = np.concatenate(ks)
     v = np.concatenate(vs)
     k, first = np.unique(k, return_index=True)
-    return k, v[first]
+    need = np.unique(keys_needed)
+    r = np.searchsorted(need, k)
+    keep = (r < len(need)) & (need[np.minimum(r, max(len(need) - 1, 0))] == k)
+    return k[keep], v[first[keep]]
 
 
 def build_units(win: dict):
