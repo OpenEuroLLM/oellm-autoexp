@@ -1,0 +1,27 @@
+# @package _global_
+# Find the sparse straggler (2026-11-21): in t19d / t19f every profiled rank of the sparse arms waited ~1.44 s at the
+# backward's first global sync (the MoE token-count all-reduce) for an unprofiled rank, and the MoonEP intra-node sync
+# grew 142 -> 785 ms on rank 255: the sparse forward's cost varies by rank (suspect: ranks with many mid-length
+# documents, selected one document at a time). page_maxpool_pg at 64k on long_64k (t19f's arm: same data, so the same
+# step-20 layout), profiled on EVERY rank for step 20 (no shapes, to keep the traces small); the straggler is the rank
+# that does not wait.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19h_v4b_sparse_profile_all_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19f_v4b_sparse_speed64_syncfix_c136_mn5
+  - _self_
+
+aux:
+  suite: t19h_v4b_sparse_profile_all_c136
+  only: [page_maxpool_pg_long64k_c64k]
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19h_v4b_sparse_profile_all_c136
+
+backend:
+  env:
+    TORCH_LOGS: ""
+  megatron:
+    profile_ranks: []
+    pytorch_profiler_collect_shapes: false
+
+job:
+  name: t19h_prof_all_${aux.arm}
