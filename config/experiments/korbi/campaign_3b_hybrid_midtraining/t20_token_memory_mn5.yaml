@@ -11,12 +11,17 @@ defaults:
 aux:
   name: t20_token_memory
   evals: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t18_evals
-  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t20_token_memory
+  probe: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t20_token_union_probe2
+  configs: "--configs"
+  tag: ""
   tests: "tests/unit_tests/transformer/test_rowmask_attention.py tests/unit_tests/transformer/test_page_sparse_attention.py"
   bench: >-
     mkdir -p ${aux.out} && cd submodules/Megatron-LM
     && python ../../scripts/korbi/campaign_midtraining/token_memory_bench.py --seqs ${aux.evals}/seqs_64k.json
-    --layouts single,mid,long_tail,many --configs --out ${aux.out}/memory.json
+    --layouts single,mid,long_tail,many ${aux.configs} --out ${aux.out}/memory${aux.tag}.json
+    && python ../../scripts/korbi/campaign_midtraining/token_replay_bench.py --tiles 16 --steps 3
+    --lists ${aux.probe}/v4b/lists_64k_doc0.pt --layers 4 --out ${aux.out}/replay${aux.tag}.json
 
 job:
   name: campaign_mid_${aux.name}
