@@ -1,0 +1,61 @@
+# @package _global_
+# Pure per-token page selection end to end (user 2026-11-19: per-token selection in training, faster than dense at
+# 64k): every query its own top 32 of all pages (page_maxpool, per KV group; the t18 pmp_tok arm's selection, +0.002
+# to dense at 3000 steps) on the rowmask backend's head-packed tiles (16 queries x a KV group's 8 heads on H100) with
+# the fused Triton selection (Megatron cba004cbb .. 31313edbe; one layer at 64k: 147 ms vs dense 308). Same layouts,
+# profiling and recompile logging as t19f, whose dense / page_maxpool / tok40 arms are the references.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19g_v4b_tokpure_speed64_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19f_v4b_sparse_speed64_syncfix_c136_mn5
+  - _self_
+
+aux:
+  suite: t19g_v4b_tokpure_speed64_c136
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19g_v4b_tokpure_speed64_c136
+
+job:
+  name: t19g_speed64_${aux.arm}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: pmp_tok
+          aux.data: long64k
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
+        - aux.variant: pmp_tok
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.eval_iters: 1
+        - aux.variant: pmp_tok
+          aux.data: long64k
+          aux.ctx: c128k
+          aux.seq: 131072
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 2
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
