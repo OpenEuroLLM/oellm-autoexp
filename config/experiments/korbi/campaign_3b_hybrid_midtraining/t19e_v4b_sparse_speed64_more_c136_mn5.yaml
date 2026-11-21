@@ -1,0 +1,82 @@
+# @package _global_
+# The follow-up speed tests after t19d (user 2026-11-21: "run all the other speed tests then subsequently"), v4b shape,
+# 64 nodes, fresh init, 30 steps, one sequence per GPU, arms at equal node count with dense included:
+#   - *_p2_c64k: the main run's phase-2 data (datamix_v8ml_opt81_8k64k_stage2, median ~38 documents per 64k
+#     sequence, ~10 % one full document) instead of long_64k: the real document-masking stragglers, i.e. the per-step
+#     gain the main run would actually see. Its index is prebuilt on one rank first
+#     (t19e_data_cache_prebuild_c136_mn5) so the 64-node arms don't idle through a cold build.
+#   - *_c128k: long_64k at 128k (CP 2 inside a node, gbs 128): the crossover between 64k (no gain, t19c) and 256k
+#     (-38 %).
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19e_v4b_sparse_speed64_more_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19c_v4b_sparse_speed64_c136_mn5
+  - _self_
+
+aux:
+  suite: t19e_v4b_sparse_speed64_more_c136
+  data: long64k
+  arm: ${aux.variant}_${aux.data}_${aux.ctx}
+  only: []
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19e_v4b_sparse_speed64_more_c136
+
+job:
+  name: t19e_speed64_${aux.arm}
+  metadata:
+    # behind t19d (70): the profiled pair goes first
+    pool_priority: 65
+
+# explicit arms (sweep entries: literals only)
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: dense
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+        - aux.variant: page_maxpool_pg
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+        - aux.variant: pmp_tok40
+          aux.data: p2
+          aux.ctx: c64k
+          aux.seq: 65536
+          aux.gbs: 256
+          backend.megatron.context_parallel_size: 1
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 40
+          backend.megatron.page_sparse_backend: rowmask
+          backend.megatron.data_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+        - aux.variant: dense
+          aux.data: long64k
+          aux.ctx: c128k
+          aux.seq: 131072
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 2
+          backend.megatron.page_sparse_selector: null
+        - aux.variant: page_maxpool_pg
+          aux.data: long64k
+          aux.ctx: c128k
+          aux.seq: 131072
+          aux.gbs: 128
+          backend.megatron.context_parallel_size: 2
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true

@@ -1,0 +1,43 @@
+# @package _global_
+# One-rank prebuild of the dataset index t19e's phase-2 speed arms read (data_cache_shared): the cache key is the data
+# / schedule only, so it matches t19e's p2 arms exactly -- stage-2 blend, seq 65536, gbs 256, train_iters 236733,
+# split 998,2,0, eval_iters 0, the agent tokenizer -- on the ambitious prebuild's 2-layer stand-in model.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19e_data_cache_prebuild_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../production/data_cache_prebuild_ambitious_mn5
+  - _self_
+
+aux:
+  suite: t19e_data_cache_prebuild
+  arm: p2_64k_gbs256
+
+backend:
+  megatron:
+    data_path: null
+    data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+    seq_length: 65536
+    global_batch_size: 256
+    eval_global_batch_size: 256
+    micro_batch_size: 1
+    train_iters: 236733
+    eval_interval: 1000000
+    eval_iters: 0
+    full_validation: false
+    fixed_valid_data_path: null
+    split: "998,2,0"
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+
+job:
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19e_data_cache_prebuild
+  metadata:
+    pool_singleton: null
+    pool_priority: 80
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
