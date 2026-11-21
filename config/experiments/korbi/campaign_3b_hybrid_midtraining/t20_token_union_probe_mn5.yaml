@@ -1,0 +1,35 @@
+# @package _global_
+# Pure per-token page selection on real activations: the page union per tile of 8 / 16 / 32 / 64 queries (what a
+# block-sparse kernel looping over a tile's pages pays), page_maxpool top 32, window 512, 1 sink, per KV group, on
+# held-out long documents (64k x 2, 256k x 1), and the 64-query tiles' kernel lists for the replay benchmark
+# (scripts/korbi/campaign_midtraining/token_union_probe.py). v4b (dense, 6 attention + 6 kvshare layers) and the s3
+# testbed (dense t16 and page_maxpool_pg t16 at 3000). One MN5 node:
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t20_token_union_probe_mn5 --yes
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t20_token_union_probe
+  exports: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  docs: /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
+  probe: bash scripts/korbi/campaign_midtraining/run_hf_probe_mn5.sh token_union_probe.py
+  bench: >-
+    ${aux.probe} ${aux.exports}/t16_s3_dense_3000 ${aux.out}/s3_dense --docs ${aux.docs} --lists
+    ; ${aux.probe} ${aux.exports}/t16_s3_page_maxpool_pg_3000 ${aux.out}/s3_pmp --docs ${aux.docs} --replace-sparse
+    ; ${aux.probe} ${aux.exports}/ambitious_v4b_learned_fp8_40000 ${aux.out}/v4b --docs ${aux.docs} --lists
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 5400
+  array_group: null
+  metadata:
+    pool_priority: 45
+
+slurm:
+  sbatch:
+    time: "02:30:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
