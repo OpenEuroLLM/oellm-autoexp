@@ -26,7 +26,8 @@ EMB=${CDS_EMB_NAME:-q3e256}
 PLAN_NAME=${CDS_PLAN_NAME:-$EMB}
 # extra build_plan.py arguments, comma separated without spaces (the container --env cannot carry spaces),
 # e.g. CDS_PLAN_ARGS=--coarse=8192,--dup-cos=0.98
-PLAN_ARGS=${CDS_PLAN_ARGS//,/ }
+PLAN_ARGS=${CDS_PLAN_ARGS:-}
+PLAN_ARGS=${PLAN_ARGS//,/ }
 mkdir -p "$CDS_OUT/logs"
 log() { echo "[cds node $NODE/$NNODES $(date +%H:%M:%S)] $*"; }
 
@@ -100,10 +101,20 @@ for stage in ${STAGES//,/ }; do
         fi
         ;;
     bench)
+        # CDS_BENCH_VARIANTS: comma-separated variants "label+--arg=v+--arg2" (no spaces: the container --env
+        # cannot carry them); default: the configured embedding as is
         if [ "$NODE" = 0 ]; then
             first=$(chunk_names | cut -d' ' -f1)
-            per_gpu bench python "$D/embed_docs.py" "${embed_args[@]}" --chunks "$first" --bench "${CDS_BENCH_DOCS:-40000}" || true
-            grep -h BENCH "$CDS_OUT"/logs/bench_r*.log || true
+            IFS=',' read -ra variants <<< "${CDS_BENCH_VARIANTS:-default}"
+            for variant in "${variants[@]}"; do
+                label=${variant%%+*}
+                extra=""
+                [ "$label" != "$variant" ] && extra=${variant#*+} && extra=${extra//+/ }
+                log "bench $label: $extra"
+                per_gpu "bench_$label" python "$D/embed_docs.py" "${embed_args[@]}" --chunks "$first" \
+                    --bench "${CDS_BENCH_DOCS:-40000}" $extra || true
+                grep -h "BENCH\|CHECK\|Error\|packed" "$CDS_OUT"/logs/bench_${label}_r*.log | sed "s/^/[$label] /" || true
+            done
         fi
         ;;
     embed)

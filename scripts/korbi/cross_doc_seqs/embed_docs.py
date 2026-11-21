@@ -88,6 +88,12 @@ class DocTexts:
         eos = mt.eos_token_id
         if a.pooling == "last" and not self._adds_end and eos is not None:  # pool on an end token
             enc = [e + [eos] for e in enc]
+        if a.pack:  # padding-free: documents concatenated, varlen flash attention, positions restart
+            lens = np.array([len(e) for e in enc], np.int64)
+            ids = np.fromiter((t for e in enc for t in e), dtype=np.int64, count=int(lens.sum()))
+            pos = np.concatenate([np.arange(n) for n in lens])
+            cu = np.r_[0, np.cumsum(lens)].astype(np.int32)
+            return {"keys": keys, "ids": ids, "pos": pos, "cu": cu, "maxlen": int(lens.max())}
         L = max(1, max(len(e) for e in enc))
         pad = mt.pad_token_id if mt.pad_token_id is not None else (eos or 0)
         ids = np.full((len(enc), L), pad, dtype=np.int64)
@@ -99,7 +105,39 @@ class DocTexts:
             else:
                 ids[i, :len(e)] = e
                 mask[i, :len(e)] = 1
-        return keys, ids, mask
+        return {"keys": keys, "ids": ids, "mask": mask}
+
+
+def embed_batch(model, b, a, dev):
+    """(vectors [n, dim] float32 normalized, model tokens) of one batch from DocTexts.batch."""
+    import torch
+
+    if "cu" in b:
+        ids = torch.as_tensor(b["ids"], device=dev)[None]
+        pos = torch.as_tensor(b["pos"], device=dev)[None]
+        cu = torch.as_tensor(b["cu"], device=dev, dtype=torch.int32)
+        m = int(b["maxlen"])
+        h = model(input_ids=ids, position_ids=pos, cu_seq_lens_q=cu, cu_seq_lens_k=cu,
+                  max_length_q=m, max_length_k=m).last_hidden_state[0]
+        if a.pooling == "last":
+            v = h[cu[1:].long() - 1]
+        else:
+            lens = (cu[1:] - cu[:-1]).long()
+            seg = torch.repeat_interleave(torch.arange(len(lens), device=dev), lens)
+            v = torch.zeros(len(lens), h.shape[-1], device=dev, dtype=torch.float32).index_add_(0, seg, h.float())
+            v = v / lens.clamp(min=1)[:, None]
+        n_tok = int(b["cu"][-1])
+    else:
+        ids = torch.as_tensor(b["ids"], device=dev)
+        mask = torch.as_tensor(b["mask"], device=dev)
+        h = model(input_ids=ids, attention_mask=mask).last_hidden_state
+        if a.pooling == "last":
+            v = h[:, -1]
+        else:
+            mk = mask.unsqueeze(-1).to(h.dtype)
+            v = (h * mk).sum(1) / mk.sum(1).clamp(min=1)
+        n_tok = int(b["mask"].sum())
+    return torch.nn.functional.normalize(v.float()[:, : a.dim], dim=-1), n_tok
 
 
 class _Batches:
@@ -138,15 +176,18 @@ def make_batches(keys, ds, off, ntok, a) -> list:
     """Batches of about --batch-tokens model tokens, by estimated length (source tokens)."""
     est = np.minimum(ntok * a.len_ratio + 8, a.max_len).astype(np.int64)
     order = np.argsort(est, kind="stable")
-    batches, cur, cur_max = [], [], 0
+    batches, cur, cur_max, sum_est = [], [], 0, 0
     for i in order:
         m = max(cur_max, int(est[i]))
-        if cur and m * (len(cur) + 1) > a.batch_tokens:
+        # padded: the batch costs its longest document x its size; packed: the sum of the lengths
+        cost = (sum_est + int(est[i])) if a.pack else m * (len(cur) + 1)
+        if cur and cost > a.batch_tokens:
             c = np.asarray(cur)
             batches.append((keys[c], ds[c], off[c], ntok[c]))
-            cur, m = [], int(est[i])
+            cur, m, sum_est = [], int(est[i]), 0
         cur.append(i)
         cur_max = m
+        sum_est += int(est[i])
     if cur:
         c = np.asarray(cur)
         batches.append((keys[c], ds[c], off[c], ntok[c]))
@@ -168,7 +209,13 @@ def main() -> None:
     ap.add_argument("--max-src-tokens", type=int, default=640)
     ap.add_argument("--max-len", type=int, default=512)
     ap.add_argument("--len-ratio", type=float, default=1.0, help="model tokens per source token (batching estimate)")
-    ap.add_argument("--batch-tokens", type=int, default=65536)
+    ap.add_argument("--batch-tokens", type=int, default=None,
+                    help="model tokens per batch (default: 131072 packed, 65536 padded)")
+    ap.add_argument("--pack", choices=["auto", "on", "off"], default="auto",
+                    help="padding-free batches (varlen flash attention); auto = on with flash_attention_2")
+    ap.add_argument("--compile", action="store_true", help="torch.compile the model (dynamic shapes)")
+    ap.add_argument("--check", type=int, default=0,
+                    help="first embed this many docs both packed and padded and print their cosine")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--read-threads", type=int, default=32, help="concurrent .bin reads per loader worker")
     ap.add_argument("--attn", default="flash_attention_2",
@@ -198,8 +245,16 @@ def main() -> None:
         print(f"rank {rank}: attn_implementation={a.attn} unavailable ({e}); using sdpa", flush=True)
         model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation="sdpa")
     model = model.to(dev).eval()
+    flash = model.config._attn_implementation == "flash_attention_2"
+    a.pack = (a.pack == "on") or (a.pack == "auto" and flash)
+    assert not a.pack or flash, "--pack on needs flash_attention_2 (varlen kernels)"
+    if a.batch_tokens is None:
+        a.batch_tokens = 131072 if a.pack else 65536
+    if a.compile:
+        model = torch.compile(model, dynamic=True)
     if rank == 0:
-        print(f"model {a.model}: attention {model.config._attn_implementation}", flush=True)
+        print(f"model {a.model}: attention {model.config._attn_implementation}, packed {a.pack}, "
+              f"batch {a.batch_tokens} tokens, compile {a.compile}", flush=True)
 
     chunks = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if not p.endswith(".tmp"))
     if a.chunks:
@@ -219,6 +274,19 @@ def main() -> None:
         t_res = time.time() - t_res
         texts = DocTexts(prefixes, dtypes, a)
         batches = make_batches(keys, ds_, off_, ntok_, a)
+        if a.check and a.pack:
+            n = min(a.check, len(keys))
+            item = (keys[:n], ds_[:n], off_[:n], ntok_[:n])
+            with torch.inference_mode():
+                vp, _ = embed_batch(model, texts.batch(item), a, dev)
+                a.pack = False
+                pad_texts = DocTexts(prefixes, dtypes, a)
+                vq = torch.cat([embed_batch(model, pad_texts.batch(tuple(x[j:j + 64] for x in item)), a, dev)[0]
+                                for j in range(0, n, 64)])
+                a.pack = True
+            cos = (vp * vq).sum(-1)
+            print(f"CHECK rank {rank}: packed vs padded over {n} docs: cosine min {float(cos.min()):.5f}, "
+                  f"mean {float(cos.mean()):.5f}", flush=True)
         loader = torch.utils.data.DataLoader(_Batches(texts, batches), batch_size=None, shuffle=False,
                                              num_workers=a.workers, prefetch_factor=4 if a.workers else None,
                                              persistent_workers=False)
@@ -226,22 +294,14 @@ def main() -> None:
         t_wait = t_gpu = 0.0
         tw = time.time()
         with torch.inference_mode():
-            for i, (bk, ids, mask) in enumerate(loader):
+            for i, b in enumerate(loader):
                 t_wait += time.time() - tw
                 tg = time.time()
-                ids = torch.as_tensor(ids, device=dev)
-                mask = torch.as_tensor(mask, device=dev)
-                h = model(input_ids=ids, attention_mask=mask).last_hidden_state
-                if a.pooling == "last":
-                    v = h[:, -1]
-                else:
-                    m = mask.unsqueeze(-1).to(h.dtype)
-                    v = (h * m).sum(1) / m.sum(1).clamp(min=1)
-                v = torch.nn.functional.normalize(v.float()[:, : a.dim], dim=-1)
-                out_k.append(np.asarray(bk))
+                v, n_tok = embed_batch(model, b, a, dev)
+                out_k.append(np.asarray(b["keys"]))
                 out_v.append(v.to(torch.float16).cpu().numpy())
-                ntok += int(mask.sum())
-                done += len(bk)
+                ntok += n_tok
+                done += len(b["keys"])
                 t_gpu += time.time() - tg
                 tw = time.time()
                 if rank == 0 and (i % 200 == 0 or i == len(batches) - 1):
