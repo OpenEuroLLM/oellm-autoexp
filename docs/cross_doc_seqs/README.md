@@ -215,7 +215,31 @@ Prepared, **not launched**. The user decides the switch, its timing and its firs
 | 11-21 15:35 | c136.0169 | 49000 + 100 | **stream + verify OK**: preload 119 GB in 27 s, 102,400 slots / 5,446,398 pieces (53.2 documents per 64k sequence), sampler == Megatron's, **64/64 slots == Megatron's GPTDataset** (53 datasets). Embedding bench 229 docs/s/GPU, loader-bound (3 serial random reads per document); one GPU OOM in masked SDPA. Cancelled for the fixes 1e2317a4, e2fb4e89 |
 | 11-21 16:03 | c136.0170 | 49000 + 100 | stream reused; bench **314 docs/s/GPU, 98k tok/s, GPU-bound** (loader wait 4 s of 128 s, flash_attention_2); full embedding + first plan running |
 
-Measured costs (Qwen3-Embedding-0.6B, 512 tokens, mean 313 tokens per document):
+| 11-21 18:04 | c136.0196 | 48500 + 4500 (8 nodes) | stream 4,500 steps in 3 min; verify 64/64 (60 datasets); HF embedding at ~240 docs/s/GPU; 9 of 45 chunks done, then cancelled for the faster engine (chunks kept) |
+| 11-21 19:19 – 20:00 | c136.0199 / .0202 / .0204 | bench | embedding speed (below) |
+| 11-21 20:05 | coverage, 24 nodes | 48500 + 4500 | vLLM engine; plans `q3e256_w500` + `checkplan` |
+
+**Embedding speed** (Qwen3-Embedding-0.6B, 20k documents per GPU, H100). Every variant was checked
+against the HF vectors of the same documents.
+
+| engine / variant | docs/s per GPU | speedup | cosine vs. HF |
+| --- | --- | --- | --- |
+| HF, padded batches (first version) | 310 | 1.00× | — |
+| HF, padding-free (varlen flash attention), 128k / 256k tokens | 355 / 370 | 1.19× | ≥ 0.9997 (packed vs. padded) |
+| HF, `torch.compile` (dynamic shapes) | 226 | 0.73× | recompiles dominate |
+| HF, packed, 256-token truncation | ~515 | 1.66× | (less text per document) |
+| HF, packed + Liger (fused RMSNorm / RoPE / SwiGLU) | 555 | 1.79× | ≥ 0.9990, mean 0.99984 |
+| **vLLM pooling runner, 128k tokens per step** (default) | **~790** | **2.55×** | ≥ 0.9990, mean 0.99982 |
+
+The profile of the HF forward explains the gap:
+- GEMMs were 16 % of GPU time and flash attention 6 %;
+- the rest was unfused fp32 elementwise work: RMSNorm on hidden states and on per-head q / k, RoPE copies, SwiGLU.
+
+vLLM and Liger fuse exactly that. With vLLM the loader becomes the limit at ~20 % wait: detokenizing with the
+training tokenizer and re-tokenizing for Qwen.
+
+Measured costs (first version: HF padded, Qwen3-Embedding-0.6B, 512 tokens, mean 313 tokens per document;
+divide the embedding numbers by ~2.5 for the vLLM default):
 
 - **Stream:** seconds per 100 steps after a 27 s preload; free in practice.
 - **Embedding:** 100 steps hold ~5.4M distinct documents, so ~4,500 s per node = ~5 GPU-h per 100 steps.
