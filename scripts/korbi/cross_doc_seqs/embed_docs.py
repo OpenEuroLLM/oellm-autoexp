@@ -45,36 +45,43 @@ def chunk_keys(stream_path: str) -> np.ndarray:
 
 
 class DocTexts:
-    """Batches of (keys, model inputs) for a list of keys, built in DataLoader workers."""
+    """Batches of (keys, model inputs), built in DataLoader workers. A batch arrives with every
+    document's (dataset, byte offset, token count) resolved in the parent, so a worker does one read
+    per document, all of a batch's reads in flight at once (GPFS random reads are latency-bound)."""
 
-    def __init__(self, prefixes, keys, a):
-        self.prefixes, self.keys, self.a = prefixes, keys, a
+    def __init__(self, prefixes, dtypes, a):
+        self.prefixes, self.dtypes, self.a = prefixes, dtypes, a
         self._tok = None
-        self._src = None
-        self._model_tok = None
+        self._fds: dict = {}
+        self._pool = None
 
     def _init(self):
-        if self._src is None:
+        if self._tok is None:
+            from concurrent.futures import ThreadPoolExecutor
+
             from transformers import AutoTokenizer
 
-            self._src = {}
             self._tok = AutoTokenizer.from_pretrained(self.a.tokenizer)
             self._model_tok = AutoTokenizer.from_pretrained(self.a.model)
             # does the tokenizer append its own end token (Qwen3-Embedding: <|endoftext|>, the state
             # last-token pooling reads)? Then nothing is appended here.
             mt = self._model_tok
             self._adds_end = len(mt("a")["input_ids"]) > len(mt("a", add_special_tokens=False)["input_ids"])
+            self._pool = ThreadPoolExecutor(self.a.read_threads)
 
-    def tokens(self, key: int) -> np.ndarray:
-        ds, doc = key >> KEY_SHIFT, key & ((1 << KEY_SHIFT) - 1)
-        if ds not in self._src:
-            self._src[ds] = IndexedTokens(self.prefixes[ds])
-        return self._src[ds].get(int(doc), 0, self.a.max_src_tokens)
+    def _read(self, ds: int, off: int, n: int) -> list:
+        fd = self._fds.get(ds)
+        if fd is None:
+            fd = self._fds[ds] = os.open(self.prefixes[ds] + ".bin", os.O_RDONLY)
+        dt = self.dtypes[ds]
+        return np.frombuffer(os.pread(fd, n * dt.itemsize, off), dtype=dt).tolist()
 
-    def batch(self, keys: np.ndarray):
+    def batch(self, item):
         self._init()
+        keys, ds, off, ntok = item
         a = self.a
-        texts = self._tok.batch_decode([self.tokens(int(k)).tolist() for k in keys], skip_special_tokens=True)
+        toks = list(self._pool.map(self._read, ds.tolist(), off.tolist(), ntok.tolist()))
+        texts = self._tok.batch_decode(toks, skip_special_tokens=True)
         texts = [a.prefix + t for t in texts]
         mt = self._model_tok
         enc = mt(texts, add_special_tokens=True, truncation=True, max_length=a.max_len - 1)["input_ids"]
@@ -96,7 +103,7 @@ class DocTexts:
 
 
 class _Batches:
-    """torch Dataset over precomputed key batches (sorted by length, so padding stays small)."""
+    """torch Dataset over precomputed batches (sorted by length, so padding stays small)."""
 
     def __init__(self, texts: DocTexts, batches):
         self.texts, self.batches = texts, batches
@@ -108,26 +115,41 @@ class _Batches:
         return self.texts.batch(self.batches[i])
 
 
-def make_batches(prefixes, keys: np.ndarray, a) -> list:
-    """Key batches of about --batch-tokens model tokens, by estimated length (source tokens)."""
-    lens = np.empty(len(keys), np.int64)
-    ds = keys >> KEY_SHIFT
+def resolve(prefixes, keys: np.ndarray, max_src: int):
+    """Per key: dataset, byte offset of the document in its .bin, tokens to read (sorted vectorized
+    lookups of the .idx lengths / pointers: near-sequential page access)."""
+    ds = (keys >> KEY_SHIFT).astype(np.int64)
     doc = keys & ((1 << KEY_SHIFT) - 1)
+    off = np.empty(len(keys), np.int64)
+    ntok = np.empty(len(keys), np.int64)
+    dtypes = {}
     for d in np.unique(ds):
-        m = ds == d
-        lens[m] = np.minimum(IndexedTokens(prefixes[int(d)]).lengths[doc[m]], a.max_src_tokens)
-    est = np.minimum(lens * a.len_ratio + 8, a.max_len).astype(np.int64)
+        m = np.nonzero(ds == d)[0]
+        it = IndexedTokens(prefixes[int(d)])
+        dtypes[int(d)] = it.dtype
+        o = np.argsort(doc[m], kind="stable")
+        idx = doc[m][o]
+        ntok[m[o]] = np.minimum(np.asarray(it.lengths[idx]), max_src)
+        off[m[o]] = np.asarray(it.pointers[idx])
+    return ds, off, ntok, dtypes
+
+
+def make_batches(keys, ds, off, ntok, a) -> list:
+    """Batches of about --batch-tokens model tokens, by estimated length (source tokens)."""
+    est = np.minimum(ntok * a.len_ratio + 8, a.max_len).astype(np.int64)
     order = np.argsort(est, kind="stable")
     batches, cur, cur_max = [], [], 0
     for i in order:
         m = max(cur_max, int(est[i]))
         if cur and m * (len(cur) + 1) > a.batch_tokens:
-            batches.append(keys[np.asarray(cur)])
+            c = np.asarray(cur)
+            batches.append((keys[c], ds[c], off[c], ntok[c]))
             cur, m = [], int(est[i])
         cur.append(i)
         cur_max = m
     if cur:
-        batches.append(keys[np.asarray(cur)])
+        c = np.asarray(cur)
+        batches.append((keys[c], ds[c], off[c], ntok[c]))
     rng = np.random.default_rng(0)
     rng.shuffle(batches)  # mix lengths over time (steady throughput, honest progress estimates)
     return batches
@@ -148,6 +170,7 @@ def main() -> None:
     ap.add_argument("--len-ratio", type=float, default=1.0, help="model tokens per source token (batching estimate)")
     ap.add_argument("--batch-tokens", type=int, default=131072)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--read-threads", type=int, default=32, help="concurrent .bin reads per loader worker")
     ap.add_argument("--attn", default="sdpa", help="attn_implementation (sdpa / flash_attention_2)")
     ap.add_argument("--chunks", default=None, help="comma list of stream chunk names (default: all)")
     ap.add_argument("--bench", type=int, default=0, help="embed only this many docs of the first chunk, print speed")
@@ -183,14 +206,21 @@ def main() -> None:
         if a.bench:
             keys = keys[: a.bench]
         t0 = time.time()
-        texts = DocTexts(prefixes, keys, a)
-        batches = make_batches(prefixes, keys, a)
+        t_res = time.time()
+        ds_, off_, ntok_, dtypes = resolve(prefixes, keys, a.max_src_tokens)
+        t_res = time.time() - t_res
+        texts = DocTexts(prefixes, dtypes, a)
+        batches = make_batches(keys, ds_, off_, ntok_, a)
         loader = torch.utils.data.DataLoader(_Batches(texts, batches), batch_size=None, shuffle=False,
                                              num_workers=a.workers, prefetch_factor=4 if a.workers else None,
                                              persistent_workers=False)
         out_k, out_v, ntok, done = [], [], 0, 0
+        t_wait = t_gpu = 0.0
+        tw = time.time()
         with torch.inference_mode():
             for i, (bk, ids, mask) in enumerate(loader):
+                t_wait += time.time() - tw
+                tg = time.time()
                 ids = torch.as_tensor(ids, device=dev)
                 mask = torch.as_tensor(mask, device=dev)
                 h = model(input_ids=ids, attention_mask=mask).last_hidden_state
@@ -204,6 +234,8 @@ def main() -> None:
                 out_v.append(v.to(torch.float16).cpu().numpy())
                 ntok += int(mask.sum())
                 done += len(bk)
+                t_gpu += time.time() - tg
+                tw = time.time()
                 if rank == 0 and (i % 200 == 0 or i == len(batches) - 1):
                     dt = time.time() - t0
                     print(f"[{name}] rank 0: {done}/{len(keys)} docs, {done / dt:.0f} docs/s, "
@@ -213,7 +245,8 @@ def main() -> None:
         dt = time.time() - t0
         if a.bench:
             print(f"BENCH rank {rank}: {len(k)} docs in {dt:.1f} s = {len(k) / dt:.0f} docs/s, "
-                  f"{ntok / dt / 1e3:.0f}k model tok/s, mean {ntok / max(len(k), 1):.0f} tok/doc", flush=True)
+                  f"{ntok / dt / 1e3:.0f}k model tok/s, mean {ntok / max(len(k), 1):.0f} tok/doc; "
+                  f"resolve {t_res:.1f} s, loader wait {t_wait:.1f} s, GPU {t_gpu:.1f} s", flush=True)
             return
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         tmp = dst[:-4] + ".tmp.npz"
