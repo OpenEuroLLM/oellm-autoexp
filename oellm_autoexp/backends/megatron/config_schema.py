@@ -835,6 +835,12 @@ class MegatronConfig(ConfigInterface):
     # (audit 2026-11-18). Use a cluster span equal to the window.
     page_sparse_lsa_visibility: str = "window"
 
+    # lsa (D-LSA): distill on every max(page_sparse_select_block, this)-th query only (the
+    # anchor grid). The KL target is the dense attention mass, so a per-token KL under per-
+    # token selection costs dense attention again; 64 gives every selection granularity the
+    # distillation signal of select_block 64.
+    page_sparse_lsa_kl_every: int = 1
+
     # csa2: added to every compressed entry's logit. An entry's logit is the mean of its m
     # tokens' logits, so the softmax under-weights compressed context;
     # log(page_sparse_compress) restores the m tokens' share for redundant ones (audit

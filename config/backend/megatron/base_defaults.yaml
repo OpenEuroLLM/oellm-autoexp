@@ -885,6 +885,7 @@ page_sparse_indexer_heads: 4  # indexer: index-query heads.
 page_sparse_indexer_loss_coeff: 0.0  # indexer: weight of the KL to the dense attention's page mass (0: trained only through the LM loss, which does not reach the selection).
 page_sparse_lsa_block: 512  # lsa: pooled keys per cluster block.
 page_sparse_lsa_buckets: 32  # lsa: buckets per cluster block (page_sparse_topk buckets are selected).
+page_sparse_lsa_kl_every: 1  # lsa (D-LSA): distill on every max(page_sparse_select_block, this)-th query only (the anchor grid). The KL target is the dense attention mass, so a per-token KL under per-token selection costs dense attention again; 64 gives every selection granularity the distillation signal of select_block 64.
 page_sparse_lsa_latent: false  # lsa: D-LSA -- cluster and score in a learned latent space (per-KV-group key / query maps, identity at init), trained by KL to the dense attention mass per bucket (page_sparse_indexer_loss_coeff; with page_sparse_dense_forward as its warm-up).
 page_sparse_lsa_pool: 4  # lsa: tokens per pooled key.
 page_sparse_lsa_visibility: window  # lsa: which buckets a query may select. "window": buckets whose whole cluster block ends before the query's window (up to page_sparse_lsa_pool x page_sparse_lsa_block tokens before the window are unreachable); "block": the reference's rule -- buckets of cluster blocks closed before the query's own block, their members inside the raw window skipped (audit 2026-11-18). Use a cluster span equal to the window.

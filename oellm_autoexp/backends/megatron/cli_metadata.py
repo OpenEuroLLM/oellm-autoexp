@@ -7122,6 +7122,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "page_sparse_lsa_kl_every": MegatronArgMetadata(
+        arg_type=int,
+        default=1,
+        help="lsa (D-LSA): distill on every max(page_sparse_select_block, this)-th query only (the anchor grid). The KL target is the dense attention mass, so a per-token KL under per-token selection costs dense attention again; 64 gives every selection granularity the distillation signal of select_block 64.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "page_sparse_lsa_latent": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -15342,6 +15350,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=32,
+    ),
+    "page_sparse_lsa_kl_every": MegatronActionSpec(
+        option_strings=("--page-sparse-lsa-kl-every",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1,
     ),
     "page_sparse_lsa_latent": MegatronActionSpec(
         option_strings=("--page-sparse-lsa-latent",),
