@@ -761,8 +761,10 @@ class MegatronConfig(ConfigInterface):
     # selection kernel over the packed documents -- token_sparse.py; page_mean / page_maxpool
     # / quest, CP 1) or "rowmask" (the packed flex path's selection with a Triton kernel
     # taking one bit word per (64-query tile, page): per-token choices inside block candidates
-    # at near block-wise cost -- rowmask_attention.py; page 64, flex_q_block 64); token_topk /
-    # compress_mean are always gathered.
+    # at near block-wise cost -- rowmask_attention.py; page 64, flex_q_block 64; pure per-
+    # token selection -- select_block 1, no block candidates, per_group -- runs head-packed
+    # tiles of 8 queries x the group's heads, whose page union is that of 8 queries, with the
+    # selection built chunk-wise); token_topk / compress_mean are always gathered.
     page_sparse_backend: str = "flex"
 
     # flex: queries per block-mask row (smaller: tighter page unions, more blocks).
