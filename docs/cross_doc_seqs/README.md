@@ -193,8 +193,8 @@ Prepared, **not launched**. The user decides the switch, its timing and its firs
 | --- | --- |
 | stream replay == Megatron | ✅ sampler replay == `MegatronPretrainingReferenceLayoutSampler` (production geometry, MN5); 64/64 random sequences == Megatron's `GPTDataset` (53 datasets) |
 | plans, logically | ✅ tests (`tests/unit/test_cross_doc_seqs.py`, 7; Megatron `tests/unit_tests/data/test_packing_plan.py`, 6): token conservation, copy separation, all boundary modes, coverage + geometry guards |
-| plans through Megatron's loader on the **real** blend | `check_plan.py` (pipeline stage `checkplan`): BlendedDataset rebuilt read-only from the cache (hash == plan), `wrap_with_packing_plans` with the run's geometry, per-window token conservation, served samples == plan segments in doc / group / none, unplanned samples unchanged. Runs at the end of the coverage job |
-| plan coverage 48,500 → 53,000 | pool job `cds_q3e256_ck48500_4500` (c136, 8 nodes; ~225 GPU-h), plans in `plan/q3e256_w500` (windows of 500) |
+| plans through Megatron's loader on the **real** blend | ✅ `check_plan.py` (pipeline stage `checkplan`): BlendedDataset rebuilt read-only from the cache (hash == plan), `wrap_with_packing_plans` with the run's geometry, per-window token conservation, served samples == plan segments in doc / group / none, unplanned samples unchanged |
+| plan coverage 48,500 → 53,000 | ✅ `plan/q3e256_w500` (9 windows of 500 steps), `checkplan` 0 failures (2026-11-21 22:03) |
 | guards | Megatron 88efc4279: the plan's sampler geometry must match the run; the run refuses to start on an unplanned step and saves + exits at the end of the planned range (`--packing-plan-at-end exit`, default) |
 | main-run code | Megatron HEAD 88efc4279 differs from the running 4a0fab4a1 on v4b's code path only by the packing-plan commits. The other commits are page-sparse / rowmask modules, imported only with `page_sparse_selector`, which v4b does not set. The superproject's rendered v4b arguments == the live step script's, except three committed v4b config changes that apply at any re-enqueue: `--load` own tree, `--save-interval 1000`, `--save-extra-steps` |
 | switch config | `config/experiments/korbi/cross_doc_seqs/v4b_learned_cds_mn5.yaml`: renders to v4b's arguments + `--packing-plan-path …/plan/q3e256_w500 --packing-plan-boundaries group` |
@@ -217,7 +217,22 @@ Prepared, **not launched**. The user decides the switch, its timing and its firs
 
 | 11-21 18:04 | c136.0196 | 48500 + 4500 (8 nodes) | stream 4,500 steps in 3 min; verify 64/64 (60 datasets); HF embedding at ~240 docs/s/GPU; 9 of 45 chunks done, then cancelled for the faster engine (chunks kept) |
 | 11-21 19:19 – 20:00 | c136.0199 / .0202 / .0204 | bench | embedding speed (below) |
-| 11-21 20:05 | coverage, 24 nodes | 48500 + 4500 | vLLM engine; plans `q3e256_w500` + `checkplan` |
+| 11-21 20:05 | c136.0205, 24 nodes | 48500 + 4500 | vLLM embedding of the remaining 36 chunks in 88 min (~460 docs/s/GPU under shared GPFS load); plan stage failed: the repair rounds could not separate a class of ~94k near-identical documents (replaced by `place_copies`, 04c2fa56) |
+| 11-21 21:48 | c136.0215, 3 nodes | 48500 + 4500 | **9 plans built (~2.5 min each, 7 GB) and `checkplan` passed: 0 failures** |
+
+**Plans `q3e256_w500`, steps 48,501–53,000** (per window of 500 steps):
+- 26.7–26.8M documents and ~427.7k repacked sequences;
+- ~84k solo sequences (16 %) left as they are;
+- ~491k near duplicates and ~40k repeats; the largest conflict class has ~94k members;
+- **0 copies forced, 0 units sharing a sequence with a copy**;
+- mean cosine between the documents of a sequence: **0.22 → 0.53** (0.49 with 100-step windows);
+- ~22.5 dataset shards per sequence.
+
+`checkplan` through Megatron's loader on the real blend:
+- BlendedDataset hash `09a2a1c4…` matches;
+- `wrap_with_packing_plans`: planned from 48,500 to 53,000, and a plan for another global batch size is refused;
+- per window: slots == the window's non-solo slots, and exactly its ~28.0B owned tokens;
+- served samples == the plan segments in doc / group / none, and unplanned samples are unchanged.
 
 **Embedding speed** (Qwen3-Embedding-0.6B, 20k documents per GPU, H100). Every variant was checked
 against the HF vectors of the same documents.
