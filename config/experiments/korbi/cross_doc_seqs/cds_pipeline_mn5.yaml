@@ -42,6 +42,8 @@ aux:
   emb_pooling: last
   emb_prefix: ""
   emb_dim: 256
+  plan_name: ${aux.emb_name}
+  # extra build_plan.py arguments, comma separated, no spaces (e.g. --coarse=8192,--dup-cos=0.98)
   plan_args: ""
   # outputs on /gpfs/projects (the data TLD), not the near-full scratch: ~1 MB of stream and ~30 MB of
   # embeddings per step
@@ -71,6 +73,7 @@ backend:
     CDS_EMB_POOLING: ${aux.emb_pooling}
     CDS_EMB_PREFIX: "${aux.emb_prefix}"
     CDS_EMB_DIM: "${aux.emb_dim}"
+    CDS_PLAN_NAME: ${aux.plan_name}
     CDS_PLAN_ARGS: "${aux.plan_args}"
 
 job:

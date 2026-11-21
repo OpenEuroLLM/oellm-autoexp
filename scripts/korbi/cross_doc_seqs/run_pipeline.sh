@@ -23,6 +23,10 @@ CHUNK=${CDS_CHUNK:-100}
 WINDOW=${CDS_WINDOW:-500}
 STAGES=${CDS_STAGES:-extract,embed,plan}
 EMB=${CDS_EMB_NAME:-q3e256}
+PLAN_NAME=${CDS_PLAN_NAME:-$EMB}
+# extra build_plan.py arguments, comma separated without spaces (the container --env cannot carry spaces),
+# e.g. CDS_PLAN_ARGS=--coarse=8192,--dup-cos=0.98
+PLAN_ARGS=${CDS_PLAN_ARGS//,/ }
 mkdir -p "$CDS_OUT/logs"
 log() { echo "[cds node $NODE/$NNODES $(date +%H:%M:%S)] $*"; }
 
@@ -107,17 +111,11 @@ for stage in ${STAGES//,/ }; do
         wait_for "embeddings" embeds_done
         ;;
     plan)
-        per_gpu "plan_$EMB" bash -c 'python "$0"/build_plan.py --out "$1" --emb "$2" --from-ckpt "$3" --steps "$4" \
-            --window "$5" --device cuda:$LOCAL_RANK --task-rank $RANK --task-world $WORLD_SIZE $6' \
-            "$D" "$CDS_OUT" "$EMB" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" "${CDS_PLAN_ARGS:-}"
+        per_gpu "plan_$PLAN_NAME" bash -c 'python "$0"/build_plan.py --out "$1" --emb "$2" --name "$3" --from-ckpt "$4" \
+            --steps "$5" --window "$6" --device cuda:$LOCAL_RANK --task-rank $RANK --task-world $WORLD_SIZE $7' \
+            "$D" "$CDS_OUT" "$EMB" "$PLAN_NAME" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" "$PLAN_ARGS"
         ;;
     checkplan)
-        PLAN_NAME=$(python - "$EMB" "${CDS_PLAN_ARGS:-}" <<'EOF2'
-import sys
-args = sys.argv[2].split()
-print(args[args.index("--name") + 1] if "--name" in args else sys.argv[1])
-EOF2
-)
         plans_done() {
             python - "$CDS_OUT/plan/$PLAN_NAME" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" <<'EOF2'
 import os, sys
