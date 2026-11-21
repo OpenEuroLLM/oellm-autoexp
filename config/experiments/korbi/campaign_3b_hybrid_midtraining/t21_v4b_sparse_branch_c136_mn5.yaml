@@ -1,0 +1,83 @@
+# @package _global_
+# Sparse attention on the v4b main run at production scale, paired with the main run itself (user 2026-11-21): a branch
+# from v4b's protected eval copy ckpt_eval/iter_0046000 (full state: optimizer + rng) that continues EXACTLY like the
+# main run -- same data order (phase transition 23691 + variable batch, reference-layout sampler dp 512 / mbs 1, gbs 1024,
+# train_iters), same schedule (lr 8.5e-4 at 46000), same validation -- except for sparse attention. v4b's logged losses
+# at 46001..46100 are the dense arm on identical batches, so (branch - main) per step is the switching cost; zero-shot it
+# was +0.012 (page_maxpool) / +0.003 (pure per-token) on the step-46000 weights (t19j step 1).
+# 64 nodes (gbs 1024 = 4 micro-batches per GPU, ~63 s / step), 100 steps (6.7B tokens, ~450 GPU-h per arm), exit save
+# into the arm's own tree (to extend it); nothing is written next to the main run.
+#   page_maxpool_pg -- block-wise selection per 64 queries (flex), the confirmed -14 % arm
+#   pmp_tok         -- pure per-token selection (rowmask head-packed kernel, Megatron c14ef8f16..db3357056)
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t21_v4b_sparse_branch_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t17_v4b_sparse_speed128_mn5
+  - _self_
+
+aux:
+  suite: t21_v4b_sparse_branch
+  variant: page_maxpool_pg
+  arm: ${aux.variant}
+  nodes: 64
+  seq: 65536
+  gbs: 1024
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t21_v4b_sparse_branch
+
+backend:
+  megatron:
+    # the main run's state at 46000 (read only)
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+    ckpt_step: 46000
+    exit_on_missing_checkpoint: true
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 1000
+    exit_interval: 46100
+    # the main run's data order and schedule
+    data_path: null
+    data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+    phase_transition_iterations: 23691
+    phase_transition_variable_batch: true
+    data_sampler_reference_dp_size: 512
+    data_sampler_reference_micro_batch_size: 1
+    context_parallel_size: 1
+    # the main run's validation (none falls inside 46001..46100)
+    eval_interval: 1000
+    eval_iters: 10
+    full_validation: true
+    fixed_valid_data_path:
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/all_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/web_en_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/multilingual_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/code_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/math_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/reasoning_text_document
+      - /gpfs/projects/ehpc533/users/korbip/data/v8ml-valid/long_64k_text_document
+
+job:
+  name: t21_v4b_branch_${aux.arm}
+  est_steps: 100
+  est_step_time_s: 65.0
+  metadata:
+    pool_priority: 64  # after the t19l per-token speed check (66): its result decides whether pmp_tok runs
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "04:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: page_maxpool_pg
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+        - aux.variant: pmp_tok
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
