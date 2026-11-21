@@ -6962,6 +6962,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "packing_plan_at_end": MegatronArgMetadata(
+        arg_type=None,
+        default="exit",
+        help="With --packing-plan-path: at the end of the planned steps save and exit (exit; also refuses to start on an unplanned step) or train on the regular samples from there on (continue).",
+        choices=("exit", "continue"),
+        nargs=None,
+        element_type=None,
+    ),
     "packing_plan_boundaries": MegatronArgMetadata(
         arg_type=None,
         default="doc",
@@ -15210,6 +15218,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0,
+    ),
+    "packing_plan_at_end": MegatronActionSpec(
+        option_strings=("--packing-plan-at-end",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="exit",
     ),
     "packing_plan_boundaries": MegatronActionSpec(
         option_strings=("--packing-plan-boundaries",),

@@ -3939,6 +3939,11 @@ class MegatronConfig(ConfigInterface):
     # (semantic cluster), none = the whole sequence (attention across documents).
     packing_plan_boundaries: Literal["doc", "group", "none"] = "doc"
 
+    # With --packing-plan-path: at the end of the planned steps save and exit (exit; also
+    # refuses to start on an unplanned step) or train on the regular samples from there on
+    # (continue).
+    packing_plan_at_end: Literal["exit", "continue"] = "exit"
+
     # With --dataloader-inter-document-masking, print this rank's cu_seqlens for the first N
     # calls to get_batch. cu_seqlens is a few dozen bytes, so logging it is far cheaper than
     # any runtime cross-check -- and unlike a collective it cannot deadlock against the
