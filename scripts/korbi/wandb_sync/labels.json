@@ -535,5 +535,421 @@
    "recall_surgery"
   ],
   "notes": "V layers copied from their source attention (v4c_src surgery) and brought in by a 100-step schedule ramp: bit-exact parent at 35900, full branch weight from 36000, gradient proportional to r from step 1. Never export inside [35900, 36000). Docs: docs/v4c_plan.md."
+ },
+ "x_t15_s3_sparse_learned__dlsa": {
+  "name": "t15_s3_sparse_learned_dlsa",
+  "tags": [
+   "t15_s3_sparse_learned",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: learned page selectors (D-LSA, page indexer) adapted from the 64k dense parent: arm dlsa."
+ },
+ "x_t15_s3_sparse_learned__dlsa_s2": {
+  "name": "t15_s3_sparse_learned_dlsa_s2",
+  "tags": [
+   "t15_s3_sparse_learned",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: learned page selectors (D-LSA, page indexer) adapted from the 64k dense parent: arm dlsa_s2."
+ },
+ "x_t15_s3_sparse_learned__indexer": {
+  "name": "t15_s3_sparse_learned_indexer",
+  "tags": [
+   "t15_s3_sparse_learned",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: learned page selectors (D-LSA, page indexer) adapted from the 64k dense parent: arm indexer."
+ },
+ "x_t15_s3_sparse_learned__indexer_s2": {
+  "name": "t15_s3_sparse_learned_indexer_s2",
+  "tags": [
+   "t15_s3_sparse_learned",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: learned page selectors (D-LSA, page indexer) adapted from the 64k dense parent: arm indexer_s2."
+ },
+ "x_t16_megatron_fixedvalid__dense": {
+  "name": "t16_megatron_fixedvalid_dense",
+  "tags": [
+   "t16_megatron_fixedvalid",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms, 3000 steps from the 64k dense parent, fixed validation: arm dense."
+ },
+ "x_t16_megatron_fixedvalid__page_maxpool_pg": {
+  "name": "t16_megatron_fixedvalid_page_maxpool_pg",
+  "tags": [
+   "t16_megatron_fixedvalid",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms, 3000 steps from the 64k dense parent, fixed validation: arm page_maxpool_pg."
+ },
+ "x_t16_megatron_fixedvalid__page_mean_pg": {
+  "name": "t16_megatron_fixedvalid_page_mean_pg",
+  "tags": [
+   "t16_megatron_fixedvalid",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms, 3000 steps from the 64k dense parent, fixed validation: arm page_mean_pg."
+ },
+ "x_t16_megatron_fixedvalid__nsa_adam": {
+  "name": "t16_megatron_fixedvalid_nsa_adam",
+  "tags": [
+   "t16_megatron_fixedvalid",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms, 3000 steps from the 64k dense parent, fixed validation: arm nsa_adam."
+ },
+ "x_t16_megatron_fixedvalid__lsa_fix": {
+  "name": "t16_megatron_fixedvalid_lsa_fix",
+  "tags": [
+   "t16_megatron_fixedvalid",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms, 3000 steps from the 64k dense parent, fixed validation: arm lsa_fix."
+ },
+ "x_t16_megatron_fixedvalid__csa2_fix": {
+  "name": "t16_megatron_fixedvalid_csa2_fix",
+  "tags": [
+   "t16_megatron_fixedvalid",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms, 3000 steps from the 64k dense parent, fixed validation: arm csa2_fix."
+ },
+ "x_t16_s3_sparse_fixed__dense": {
+  "name": "t16_s3_sparse_fixed_dense",
+  "tags": [
+   "t16_s3_sparse_fixed",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms (paired with dense), training-free and learned selectors: arm dense."
+ },
+ "x_t16_s3_sparse_fixed__page_maxpool_pg": {
+  "name": "t16_s3_sparse_fixed_page_maxpool_pg",
+  "tags": [
+   "t16_s3_sparse_fixed",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms (paired with dense), training-free and learned selectors: arm page_maxpool_pg."
+ },
+ "x_t16_s3_sparse_fixed__page_mean_pg": {
+  "name": "t16_s3_sparse_fixed_page_mean_pg",
+  "tags": [
+   "t16_s3_sparse_fixed",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms (paired with dense), training-free and learned selectors: arm page_mean_pg."
+ },
+ "x_t16_s3_sparse_fixed__nsa_adam": {
+  "name": "t16_s3_sparse_fixed_nsa_adam",
+  "tags": [
+   "t16_s3_sparse_fixed",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms (paired with dense), training-free and learned selectors: arm nsa_adam."
+ },
+ "x_t16_s3_sparse_fixed__lsa_fix": {
+  "name": "t16_s3_sparse_fixed_lsa_fix",
+  "tags": [
+   "t16_s3_sparse_fixed",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms (paired with dense), training-free and learned selectors: arm lsa_fix."
+ },
+ "x_t16_s3_sparse_fixed__csa2_fix": {
+  "name": "t16_s3_sparse_fixed_csa2_fix",
+  "tags": [
+   "t16_s3_sparse_fixed",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse-attention arms (paired with dense), training-free and learned selectors: arm csa2_fix."
+ },
+ "x_t18_s3_sparse_ablate__pm_k64": {
+  "name": "t18_s3_sparse_ablate_pm_k64",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pm_k64."
+ },
+ "x_t18_s3_sparse_ablate__pm_sb16": {
+  "name": "t18_s3_sparse_ablate_pm_sb16",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pm_sb16."
+ },
+ "x_t18_s3_sparse_ablate__pm_tok40": {
+  "name": "t18_s3_sparse_ablate_pm_tok40",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pm_tok40."
+ },
+ "x_t18_s3_sparse_ablate__pmp_dense0": {
+  "name": "t18_s3_sparse_ablate_pmp_dense0",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_dense0."
+ },
+ "x_t18_s3_sparse_ablate__pmp_k64": {
+  "name": "t18_s3_sparse_ablate_pmp_k64",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_k64."
+ },
+ "x_t18_s3_sparse_ablate__pmp_p32k64": {
+  "name": "t18_s3_sparse_ablate_pmp_p32k64",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_p32k64."
+ },
+ "x_t18_s3_sparse_ablate__pmp_sb16": {
+  "name": "t18_s3_sparse_ablate_pmp_sb16",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_sb16."
+ },
+ "x_t18_s3_sparse_ablate__pmp_tok": {
+  "name": "t18_s3_sparse_ablate_pmp_tok",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_tok."
+ },
+ "x_t18_s3_sparse_ablate__pmp_tok40": {
+  "name": "t18_s3_sparse_ablate_pmp_tok40",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_tok40."
+ },
+ "x_t18_s3_sparse_ablate__pmp_w1024": {
+  "name": "t18_s3_sparse_ablate_pmp_w1024",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_w1024."
+ },
+ "x_t18_s3_sparse_ablate__pmp_w4096": {
+  "name": "t18_s3_sparse_ablate_pmp_w4096",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_w4096."
+ },
+ "x_t18_s3_sparse_ablate__pmp_w8192": {
+  "name": "t18_s3_sparse_ablate_pmp_w8192",
+  "tags": [
+   "t18_s3_sparse_ablate",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: page-sparse ablations (top-k, select block, per-token selection, window, page size), paired with t16 dense: arm pmp_w8192."
+ },
+ "x_t18_s3_sparse_adapt__dense": {
+  "name": "t18_s3_sparse_adapt_dense",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse adaptation to step 7000 (CSA2 NaN from step 5780): arm dense."
+ },
+ "x_t18_s3_sparse_adapt__page_maxpool_pg": {
+  "name": "t18_s3_sparse_adapt_page_maxpool_pg",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse adaptation to step 7000 (CSA2 NaN from step 5780): arm page_maxpool_pg."
+ },
+ "x_t18_s3_sparse_adapt__page_mean_pg": {
+  "name": "t18_s3_sparse_adapt_page_mean_pg",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse adaptation to step 7000 (CSA2 NaN from step 5780): arm page_mean_pg."
+ },
+ "x_t18_s3_sparse_adapt__page_indexer": {
+  "name": "t18_s3_sparse_adapt_page_indexer",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse adaptation to step 7000 (CSA2 NaN from step 5780): arm page_indexer."
+ },
+ "x_t18_s3_sparse_adapt__dlsa": {
+  "name": "t18_s3_sparse_adapt_dlsa",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse adaptation to step 7000 (CSA2 NaN from step 5780): arm dlsa."
+ },
+ "x_t18_s3_sparse_adapt__csa2_fix": {
+  "name": "t18_s3_sparse_adapt_csa2_fix",
+  "tags": [
+   "t18_s3_sparse_adapt",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse adaptation to step 7000 (CSA2 NaN from step 5780): arm csa2_fix."
+ },
+ "x_t18_s3_sparse_256k__dense": {
+  "name": "t18_s3_sparse_256k_dense",
+  "tags": [
+   "t18_s3_sparse_256k",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: 256k continuation, dense vs page-sparse: arm dense."
+ },
+ "x_t18_s3_sparse_256k__page_maxpool_pg": {
+  "name": "t18_s3_sparse_256k_page_maxpool_pg",
+  "tags": [
+   "t18_s3_sparse_256k",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: 256k continuation, dense vs page-sparse: arm page_maxpool_pg."
+ },
+ "x_t18_s3_sparse_256k__page_mean_pg": {
+  "name": "t18_s3_sparse_256k_page_mean_pg",
+  "tags": [
+   "t18_s3_sparse_256k",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: 256k continuation, dense vs page-sparse: arm page_mean_pg."
+ },
+ "x_t18_s3_scratch_ratio__r3_dense": {
+  "name": "t18_s3_scratch_ratio_r3_dense",
+  "tags": [
+   "t18_s3_scratch_ratio",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse from scratch, attention ratio 1:3 vs 1:7: arm r3_dense."
+ },
+ "x_t18_s3_scratch_ratio__r3_pm": {
+  "name": "t18_s3_scratch_ratio_r3_pm",
+  "tags": [
+   "t18_s3_scratch_ratio",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse from scratch, attention ratio 1:3 vs 1:7: arm r3_pm."
+ },
+ "x_t18_s3_scratch_ratio__r3_pmp": {
+  "name": "t18_s3_scratch_ratio_r3_pmp",
+  "tags": [
+   "t18_s3_scratch_ratio",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse from scratch, attention ratio 1:3 vs 1:7: arm r3_pmp."
+ },
+ "x_t18_s3_scratch_ratio__r7_dense": {
+  "name": "t18_s3_scratch_ratio_r7_dense",
+  "tags": [
+   "t18_s3_scratch_ratio",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse from scratch, attention ratio 1:3 vs 1:7: arm r7_dense."
+ },
+ "x_t18_s3_scratch_ratio__r7_pm": {
+  "name": "t18_s3_scratch_ratio_r7_pm",
+  "tags": [
+   "t18_s3_scratch_ratio",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse from scratch, attention ratio 1:3 vs 1:7: arm r7_pm."
+ },
+ "x_t18_s3_scratch_ratio__r7_pmp": {
+  "name": "t18_s3_scratch_ratio_r7_pmp",
+  "tags": [
+   "t18_s3_scratch_ratio",
+   "sparse_attention"
+  ],
+  "notes": "s3 testbed: sparse from scratch, attention ratio 1:3 vs 1:7: arm r7_pmp."
+ },
+ "x_t19_v4b_sparse_speed_c136__page_maxpool_pg_c256k": {
+  "name": "t19_v4b_sparse_speed_c136_page_maxpool_pg_c256k",
+  "tags": [
+   "t19_v4b_sparse_speed_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b speed test (128 nodes), sparse attention: arm page_maxpool_pg_c256k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__dense_c256k": {
+  "name": "t19c_v4b_sparse_speed64_c136_dense_c256k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm dense_c256k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__dense_c64k": {
+  "name": "t19c_v4b_sparse_speed64_c136_dense_c64k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm dense_c64k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__page_maxpool_pg_c256k": {
+  "name": "t19c_v4b_sparse_speed64_c136_page_maxpool_pg_c256k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm page_maxpool_pg_c256k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__page_maxpool_pg_c64k": {
+  "name": "t19c_v4b_sparse_speed64_c136_page_maxpool_pg_c64k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm page_maxpool_pg_c64k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__page_mean_pg_c64k": {
+  "name": "t19c_v4b_sparse_speed64_c136_page_mean_pg_c64k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm page_mean_pg_c64k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__pmp_tok40_c256k": {
+  "name": "t19c_v4b_sparse_speed64_c136_pmp_tok40_c256k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm pmp_tok40_c256k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__pmp_tok40_c64k": {
+  "name": "t19c_v4b_sparse_speed64_c136_pmp_tok40_c64k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm pmp_tok40_c64k."
+ },
+ "x_t19c_v4b_sparse_speed64_c136__pmp_w8192_c64k": {
+  "name": "t19c_v4b_sparse_speed64_c136_pmp_w8192_c64k",
+  "tags": [
+   "t19c_v4b_sparse_speed64_c136",
+   "sparse_attention"
+  ],
+  "notes": "v4b end-to-end speed test on 64 nodes (long_64k data), dense vs sparse at 64k/256k: arm pmp_w8192_c64k."
  }
 }
