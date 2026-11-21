@@ -57,6 +57,12 @@ sweep:
       configs:
         - aux.arm: pmp_sb16
           backend.megatron.page_sparse_select_block: 16
+        # query aggregation (user 2026-11-21): one selection per 8 / 4 queries, between per 16 (+0.009) and per token
+        # (+0.002); the LSA paper and DeepSeek V4.1 both select per query token (V4.1's "Reuse" is across layers)
+        - aux.arm: pmp_sb8
+          backend.megatron.page_sparse_select_block: 8
+        - aux.arm: pmp_sb4
+          backend.megatron.page_sparse_select_block: 4
         - aux.arm: pmp_dense0
           backend.megatron.page_sparse_dense_layers: [0]
         - aux.arm: pmp_k64
