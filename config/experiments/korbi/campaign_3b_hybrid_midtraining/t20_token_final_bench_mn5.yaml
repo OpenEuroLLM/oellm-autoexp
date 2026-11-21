@@ -1,0 +1,44 @@
+# @package _global_
+# Pure per-token selection, the final H100 numbers (one node, after t20_token_union_v4b wrote v4b's masks):
+#  1. token_replay_bench: v4b's own masks (64k, 256k) at v4b shapes -- rowmask 64-query tiles vs head-packed 8 / 16
+#     query tiles, dense, block (flex / rowmask), tok40, the selection (fused scoring) -- and the s3 masks again;
+#  2. attn_packed_bench on the phase-2 document layout (64k, 256k) with v4b's real masks (token_real: kernel + its
+#     selection) next to dense / block / tok40: the expected slowest rank of a data-parallel step.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t20_token_final_bench
+  probe: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t20_token_union_probe2
+  evals: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t18_evals
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/${aux.name}
+  replay: python ../../scripts/korbi/campaign_midtraining/token_replay_bench.py
+  packed: python ../../scripts/korbi/campaign_midtraining/attn_packed_bench.py
+  bench: >-
+    mkdir -p ${aux.out} && cd submodules/Megatron-LM
+    && ${aux.replay} --lists ${aux.probe}/v4b/lists_64k_doc0.pt ${aux.probe}/v4b/lists_64k_doc1.pt
+    ${aux.probe}/v4b/lists_256k_doc0.pt --out ${aux.out}/replay_v4bmasks.json
+    ; ${aux.packed} --seqs ${aux.evals}/seqs_64k.json --n 24 --masks ${aux.probe}/v4b/lists_256k_doc0.pt
+    --variants dense_masked block block_rowmask tok40 token_real --out ${aux.out}/packed_64k.json
+    ; ${aux.packed} --seqs ${aux.evals}/seqs_256k.json --n 12 --steps 1 --masks ${aux.probe}/v4b/lists_256k_doc0.pt
+    --variants dense_masked block tok40 token_real --out ${aux.out}/packed_256k.json
+    ; ${aux.replay} --lists ${aux.probe}/s3_dense/lists_64k_doc0.pt ${aux.probe}/s3_dense/lists_256k_doc0.pt
+    --out ${aux.out}/replay_s3masks.json
+
+job:
+  name: campaign_mid_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}"
+  est_step_time_s: 5400
+  array_group: null
+  metadata:
+    pool_priority: 45
+  start_condition:  # v4b's masks (t20_token_union_v4b)
+    class_name: FileExistsCondition
+    path: ${aux.probe}/v4b/lists_256k_doc0.pt
+    persistent_pass: true
+
+slurm:
+  sbatch:
+    time: "02:30:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}

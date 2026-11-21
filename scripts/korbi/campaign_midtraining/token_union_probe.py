@@ -150,7 +150,10 @@ def fresh_code_view(export: str) -> str:
     if not view.exists():
         subprocess.run(["cp", "-al", export, str(view)], check=True)
     src = lap.REPO / "oellm_autoexp/hf_export"
-    for f in [*(src / "oellm_ambitious").glob("*.py"), *(src / "oellm_hybrid").glob("*.py")]:
+    # page_sparse.py's lazy "from .rowmask_attention import" is a relative import transformers' remote-code check
+    # requires next to the model code (the hf_export package does not link it yet)
+    rowmask = lap.REPO / "submodules/Megatron-LM/megatron/core/transformer/experimental_attention_variant/rowmask_attention.py"
+    for f in [*(src / "oellm_ambitious").glob("*.py"), *(src / "oellm_hybrid").glob("*.py"), rowmask]:
         if f.name == "__init__.py":
             continue
         tmp = view / (f.name + ".new")

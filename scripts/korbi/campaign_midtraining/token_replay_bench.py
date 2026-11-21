@@ -115,7 +115,7 @@ def main() -> None:
                                                                               kernel=kern)[0].sum().backward())
                     except torch.OutOfMemoryError:
                         ref[nm] = None
-                tq = ps.token_tile(a.heads // G)
+                tq = ps.token_tile(a.heads // G, dev)
                 with torch.no_grad():
                     ref["select"] = timed(lambda: ps.token_span_lists(qq, kk, pure, 0, scale, None, tq))
                 res["per_length"][str(L)] = ref

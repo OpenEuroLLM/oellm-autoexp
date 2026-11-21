@@ -7,9 +7,14 @@ it). Variants:
   dense_full    -- causal over the whole sequence (no document masking)
   block / block_rowmask -- page_maxpool_pg, one selection per 64 queries (flex / rowmask kernel), per document
   tok40         -- per-token selection inside 40 block candidates (rowmask), per document
+  token         -- pure per-token selection (each query its own top 32, head-packed rowmask tiles), per document, on
+                   the random q / k (random queries pick near-disjoint pages: an upper bound)
+  token_real    -- the same kernel with REAL page masks (--masks: token_union_probe.py's lists of one long held-out
+                   document; a document of n tokens takes the first n queries' masks -- a query's selection depends
+                   only on the keys before it) plus the selection's own cost (timed on the random q / k)
   *_full        -- the sparse variants without document masking (one span)
 
-    attn_packed_bench.py --seqs seqs_64k.json [--n 24] [--ranks 384 512] [--out json]
+    attn_packed_bench.py --seqs seqs_64k.json [--n 24] [--ranks 384 512] [--masks lists_256k_doc0.pt] [--out json]
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ def main() -> None:
     ap.add_argument("--variants", nargs="+",
                     default=["dense_masked", "dense_full", "block", "block_rowmask", "tok40", "block_full",
                              "tok40_full"])
+    ap.add_argument("--masks", default=None, help="token_union_probe lists (.pt) for token_real")
+    ap.add_argument("--mask-layer", type=int, default=0, help="which attention layer's masks")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
@@ -56,7 +63,25 @@ def main() -> None:
     cfgs = {"block": (ps.PageSparseConfig(**base, select_block=64), "flex"),
             "block_rowmask": (ps.PageSparseConfig(**base, select_block=64), "rowmask"),
             "tok40": (ps.PageSparseConfig(**base, select_block=1, block_candidates=40, candidate_block=64),
-                      "rowmask")}
+                      "rowmask"),
+            "token": (ps.PageSparseConfig(**base, select_block=1), "rowmask")}
+    real = None
+    if a.masks:  # the real page masks [G, Lm, Pm] of one long document
+        from megatron.core.transformer.experimental_attention_variant import rowmask_attention as ra
+
+        layers = torch.load(a.masks)
+        idx_m, bits_m, cnt_m = (t.to(dev) for t in layers[list(layers)[a.mask_layer]])
+        G_, nq_, NB_ = idx_m.shape
+        Pm = nq_
+        valid = torch.arange(NB_, device=dev)[None, None] < cnt_m[..., None]
+        ii = torch.where(valid, idx_m.long(), Pm)
+        rows_ = ((bits_m[..., None] >> torch.arange(64, device=dev)) & 1).bool()
+        real = torch.zeros(G_, nq_, 64, Pm + 1, dtype=torch.bool, device=dev)
+        real.scatter_(3, ii[:, :, None, :].expand(G_, nq_, 64, NB_), rows_.permute(0, 1, 3, 2))
+        real = real[..., :Pm].reshape(G_, nq_ * 64, Pm)
+        del idx_m, bits_m, cnt_m, rows_, ii, valid
+        tq_real = ps.token_tile(a.heads // a.kv, dev)
+        span_all = base["sink_pages"] + base["window"] // base["page"] + 1 + base["topk"]  # pages selected anyway
 
     def timed(fn):
         fn()
@@ -100,6 +125,36 @@ def main() -> None:
                             tot = tot + F.scaled_dot_product_attention(q[:, :, x:y], k[:, :, x:y], v[:, :, x:y],
                                                                        is_causal=True, enable_gqa=True).sum()
                         tot.backward()
+            elif var == "token_real":
+                if real is None or max(segs) > real.shape[1]:
+                    continue
+                cfg, kern = cfgs["token"]
+                lens = list(segs)
+                long_ = [i for i, n in enumerate(lens) if -(-n // 64) > span_all]
+                short_ = [i for i in range(len(lens)) if i not in long_]
+                qs_, ks_, vs_ = q.split(lens, 2), k.split(lens, 2), v.split(lens, 2)
+                sels = [ra.lists_from_allowed(real[:, :lens[i], :-(-lens[i] // 64)].contiguous(), tq=tq_real)
+                        for i in long_]
+
+                def fn(cfg=cfg, long_=long_, short_=short_, qs_=qs_, ks_=ks_, vs_=vs_, sels=sels):
+                    outs = []
+                    if short_:  # documents that select every page: the dense fast path, as in training
+                        outs += ps.flex_packed_page_attention([(qs_[i], ks_[i], vs_[i], 0, None) for i in short_],
+                                                              cfg, scale, 64, kernel="rowmask")
+                    if long_:
+                        outs += ps.flex_packed_page_attention([(qs_[i], ks_[i], vs_[i], 0, None) for i in long_],
+                                                              cfg, scale, 64, selections=sels, kernel="rowmask")
+                    sum(o.sum() for o in outs).backward()
+
+                def sel_fn(long_=long_, qs_=qs_, ks_=ks_):
+                    with torch.no_grad():
+                        for i in long_:
+                            ps.token_span_lists(qs_[i], ks_[i], cfgs["token"][0], 0, scale, None, tq_real)
+
+                try:
+                    row["token_real_select"] = timed(sel_fn) if long_ else 0.0
+                except torch.OutOfMemoryError:
+                    row["token_real_select"] = None
             else:
                 cfg, kern = cfgs[var.removesuffix("_full")]
                 def fn(cfg=cfg, kern=kern, full=full):
@@ -118,8 +173,11 @@ def main() -> None:
         rows.append(row)
         print(json.dumps(row), flush=True)
     # estimate: random third -> the mean; a rank draws a long-tail / many-documents layout with 10 % each
+    for x in rows:  # the per-token training path's cost: its kernel plus its selection
+        if x.get("token_real") is not None and x.get("token_real_select") is not None:
+            x["token_real_total"] = x["token_real"] + x["token_real_select"]
     summary = {}
-    for var in a.variants:
+    for var in a.variants + (["token_real_total"] if "token_real" in a.variants else []):
         grp = {k: [x[var] for x in rows if x["kind"] == k and x.get(var) is not None] for k in ("random", "long", "docs")}
         if not grp["random"]:
             continue
