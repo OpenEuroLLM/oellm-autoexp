@@ -16,9 +16,9 @@ For every window of --window steps (steps taken from checkpoints [w0, w1)):
    leaves of ~--leaf-tokens tokens -> leaves chained greedily by centroid similarity inside the
    coarse cluster, coarse clusters chained greedily (in-context pretraining's nearest-neighbour
    traversal, made hierarchical so it scales to tens of millions of documents).
-   Exact repeats and near duplicates (cosine >= --dup-cos inside a coarse cluster) are deferred to
-   a later pool, ordered on their own and appended: a copy never shares a sequence with its source
-   (a copy in context is a free lunch for the loss and teaches copying, not language).
+   Exact repeats and near duplicates (cosine >= --dup-cos inside a coarse cluster) are taken out of the
+   semantic order and spread over it so that no sequence holds two units of one conflict class
+   (place_copies; a copy in context is a free lunch for the loss and teaches copying, not language).
    Optional metadata groups (--group-keys) are kept together inside a leaf.
 4. Concatenate the units' pieces in that order and cut the stream into sequences of seq_length
    (+ 1 label token), exactly like Megatron's own packing -- so the window's tokens are conserved
@@ -162,34 +162,112 @@ def conflict_classes(ukey: np.ndarray, pairs: list) -> np.ndarray:
     return cls
 
 
-def repair_conflicts(uorder: np.ndarray, utok: np.ndarray, cls: np.ndarray, S: int, rng, max_iter: int = 100):
-    """Move units that share a sequence with another unit of their class (a copy / near duplicate) to
-    random places of the order until no sequence holds two of a class. Returns (order, moves)."""
+def count_conflicts(uorder: np.ndarray, utok: np.ndarray, cls: np.ndarray, S: int) -> int:
+    """Units that share a sequence with another unit of their conflict class (0 = every copy separated)."""
     multi = np.bincount(cls, minlength=len(cls))[cls] > 1
-    moves = 0
-    for _ in range(max_iter):
-        if not multi.any():
-            return uorder, moves
-        start = np.r_[0, np.cumsum(utok[uorder])[:-1]]
-        pos = np.empty(len(uorder), np.int64)
-        pos[uorder] = np.arange(len(uorder))
-        cand = np.nonzero(multi)[0]
-        s0 = start[pos[cand]]
-        c0, c1 = s0 // S, (s0 + utok[cand] - 1) // S
-        n = c1 - c0 + 1
-        unit = np.repeat(cand, n)
-        chunk = ranges(c0, n)
-        o = np.lexsort((pos[unit], chunk, cls[unit]))
-        unit, chunk = unit[o], chunk[o]
-        clash = np.r_[False, (cls[unit][1:] == cls[unit][:-1]) & (chunk[1:] == chunk[:-1])]
-        bad = np.unique(unit[clash])
-        if len(bad) == 0:
-            return uorder, moves
-        keep = uorder[~np.isin(uorder, bad)]
-        ins = np.sort(rng.integers(0, len(keep) + 1, len(bad)))
-        uorder = np.insert(keep, ins, rng.permutation(bad))
-        moves += len(bad)
-    raise SystemExit(f"could not separate copies after {max_iter} rounds")
+    if not multi.any():
+        return 0
+    start = np.r_[0, np.cumsum(utok[uorder])[:-1]]
+    pos = np.empty(len(uorder), np.int64)
+    pos[uorder] = np.arange(len(uorder))
+    cand = np.nonzero(multi)[0]
+    s0 = start[pos[cand]]
+    c0, c1 = s0 // S, (s0 + utok[cand] - 1) // S
+    n = c1 - c0 + 1
+    unit, chunk = np.repeat(cand, n), ranges(c0, n)
+    o = np.lexsort((pos[unit], chunk, cls[unit]))
+    unit, chunk = unit[o], chunk[o]
+    clash = np.r_[False, (cls[unit][1:] == cls[unit][:-1]) & (chunk[1:] == chunk[:-1])]
+    return int(len(np.unique(unit[clash])))
+
+
+def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np.ndarray, S: int, rng):
+    """Insert the copies (repeated documents, near duplicates) into the semantic base order so that no
+    sequence of S tokens holds two units of one conflict class (a class has at most one unit in the base).
+
+    Every class is spread evenly over the whole base (copy r of m aims at (r + offset) / m of it); the
+    copies, taken in the order of their aims, go in at the next insertion point where the sequence holds no
+    other unit of their class. Insertion points only move forward, so positions already decided never shift
+    relative to each other: one pass, no repair rounds. Returns (order, copies placed without separation)."""
+    from collections import deque
+    import bisect
+
+    nB, M = len(base), len(copies)
+    if M == 0:
+        return base, 0
+    base_cum = np.r_[0, np.cumsum(utok[base])]
+    in_base = np.full(len(cls), -1, np.int64)
+    in_base[base] = np.arange(nB)
+    copy_cls = set(cls[copies].tolist())
+    kept = {int(cls[u]): int(in_base[u]) for u in base[np.isin(cls[base], list(copy_cls))]}
+    # every class spread evenly over the whole base: copy r of a class with m copies aims at base position
+    # (r + offset) / m (a random offset per class), all copies taken in the order of their aims
+    perm = rng.permutation(M)
+    c = copies[perm]
+    o = np.argsort(cls[c], kind="stable")
+    c = c[o]
+    first = np.r_[True, cls[c][1:] != cls[c][:-1]]
+    grp = np.cumsum(first) - 1
+    grp_start = np.nonzero(first)[0]
+    size = np.diff(np.r_[grp_start, M])
+    rank = np.arange(M) - grp_start[grp]
+    aim = (rank + rng.random(len(size))[grp]) / size[grp]
+    o = np.argsort(aim, kind="stable")
+    c = c[o]
+    targets = np.minimum((aim[o] * nB).astype(np.int64), nB)
+    ins_idx, ins_cum, out_j, out_u = [], [], [], []
+    last_end: dict = {}
+    off = 0
+
+    def try_place(u: int, j: int, force: bool = False) -> bool:
+        nonlocal off
+        k = int(cls[u])
+        L = int(utok[u])
+        P = int(base_cum[j]) + off
+        s0, s1 = P // S, (P + L - 1) // S
+        ok = s0 > last_end.get(k, -1)
+        q = kept.get(k, -1)
+        if ok and 0 <= q < j:  # the class's base unit lies before: its (final) end sequence
+            n_before = bisect.bisect_right(ins_idx, q)
+            offq = ins_cum[n_before - 1] if n_before else 0
+            ok = s0 > (int(base_cum[q + 1]) + offq - 1) // S
+        if ok and q >= j:  # it lies after: it starts at least here (later insertions only push it on)
+            ok = s1 < (int(base_cum[q]) + off + L) // S
+        if not ok and not force:
+            return False
+        ins_idx.append(j)
+        off += L
+        ins_cum.append(off)
+        last_end[k] = max(last_end.get(k, -1), s1)
+        out_j.append(j)
+        out_u.append(u)
+        return True
+
+    pending: deque = deque()
+    for idx in range(M):
+        j = int(targets[idx])
+        for _ in range(min(len(pending), 64)):  # earlier copies that did not fit yet
+            u = pending.popleft()
+            if not try_place(u, j):
+                pending.append(u)
+        u = int(c[idx])
+        if not try_place(u, j):
+            pending.append(u)
+    forced = 0
+    while pending:  # the rest goes after the base, separated where the tail allows
+        progress = False
+        for _ in range(len(pending)):
+            u = pending.popleft()
+            if try_place(u, nB):
+                progress = True
+            else:
+                pending.append(u)
+        if not progress:
+            u = pending.popleft()
+            try_place(u, nB, force=True)
+            forced += 1
+    order = np.insert(base, np.asarray(out_j, np.int64), np.asarray(out_u, np.int64))
+    return order, forced
 
 
 # ------------------------------------------------------------------------------------------ order
@@ -434,38 +512,23 @@ def build_window(a, w0: int, w1: int, dev) -> None:
         okg = (gi < len(gk["keys"])) & (gk["keys"][np.minimum(gi, len(gk["keys"]) - 1)] == ukey)
         groups = np.where(okg, gk["group"][np.minimum(gi, len(gk["keys"]) - 1)], -1 - np.arange(n_units))
 
-    # pools: layer-0 units first; repeats (layer >= 1) and near duplicates go to later pools, each
-    # ordered on its own and appended. From pool max_pools + 2 on nothing is deferred any more.
-    pool_of = np.minimum(ulayer, a.max_pools - 1)
-    order_all, leaf_all, pool_stats = [], np.zeros(n_units, np.int64), []
-    leaf_base, pool = 0, 0
-    pending = np.zeros(n_units, bool)
-    dup_pairs: list = []
-    while True:
-        members = np.nonzero((pool_of == pool) | pending)[0]
-        pending[:] = False
-        if len(members):
-            sub = argparse.Namespace(**vars(a))
-            if pool >= a.max_pools + 2:
-                sub.dup_cos = 2.0
-            order, leaf, deferred, pairs = order_pool(emb[torch.as_tensor(members, device=dev)], utok[members],
-                                                      None if groups is None else groups[members], sub,
-                                                      a.seed + 7 * pool, dev)
-            dup_pairs.extend((int(members[x]), int(members[y])) for x, y in pairs)
-            kept = members[order]
-            order_all.append(kept)
-            leaf_all[kept] = leaf[order] + leaf_base
-            leaf_base += int(leaf.max()) + 1
-            pending[members[deferred]] = True
-            pool_stats.append({"pool": pool, "units": int(len(members)), "deferred": int(deferred.sum())})
-        pool += 1
-        if not pending.any() and not (pool_of >= pool).any():
-            break
-    uorder = np.concatenate(order_all)
-    assert len(uorder) == n_units and len(np.unique(uorder)) == n_units
-    # a copy (same document again, or a near duplicate) must never share a sequence with its source
+    # semantic order of the first occurrences; near duplicates found inside a coarse cluster leave it
+    l0 = np.nonzero(ulayer == 0)[0]
+    order, leaf, deferred, pairs = order_pool(emb[torch.as_tensor(l0, device=dev)], utok[l0],
+                                              None if groups is None else groups[l0], a, a.seed, dev)
+    base = l0[order]
+    leaf_all = np.zeros(n_units, np.int64)
+    leaf_all[base] = leaf[order]
+    dup_pairs = [(int(l0[x]), int(l0[y])) for x, y in pairs]
+    # copies: near duplicates and repeated occurrences; spread so that no sequence holds two of a class
+    copies = np.r_[l0[deferred], np.nonzero(ulayer > 0)[0]].astype(np.int64)
     cls = conflict_classes(ukey, dup_pairs)
-    uorder, moves = repair_conflicts(uorder, utok, cls, S, g)
+    uorder, forced = place_copies(base, copies, cls, utok, S, g)
+    leaf_all[copies] = int(leaf_all.max()) + 1 + np.arange(len(copies))  # each copy its own group
+    assert len(uorder) == n_units and len(np.unique(uorder)) == n_units
+    unseparated = count_conflicts(uorder, utok, cls, S)
+    pool_stats = [{"base": int(len(base)), "near_duplicates": int(deferred.sum()),
+                   "repeats": int((ulayer > 0).sum()), "largest_class": int(np.bincount(cls).max())}]
 
     # pieces in unit order
     ustart = u["unit_start"]
@@ -491,8 +554,8 @@ def build_window(a, w0: int, w1: int, dev) -> None:
     o_ds, o_doc = win["seg_ds"][okeep], win["seg_doc"][okeep]
     stats = {
         "window": [w0, w1], "slots": int(len(solo)), "solo_slots": int(solo.sum()), "units": n_units,
-        "units_missing_embedding": miss, "pools": pool_stats, "near_duplicate_pairs": len(dup_pairs),
-        "conflict_moves": int(moves),
+        "units_missing_embedding": miss, "copies": pool_stats, "near_duplicate_pairs": len(dup_pairs),
+        "copies_forced": int(forced), "units_sharing_a_sequence_with_a_copy": int(unseparated),
         "pieces_per_seq_before": float(okeep.sum() / max(len(slots), 1)),
         "segments_per_seq_after": float(len(seg["ds"]) / max(n_seq, 1)),
         "datasets_per_seq_before": float(np.mean([len(np.unique(o_ds[optr[i]:optr[i + 1]]))
@@ -522,7 +585,7 @@ def build_window(a, w0: int, w1: int, dev) -> None:
             "geometry": {k: geometry.get(k) for k in ("global_batch_size", "ref_dp", "ref_mbs", "ref_gbs",
                                                       "phase_start", "train_iters", "total_samples")},
             "embedding": a.emb, "params": {k: getattr(a, k) for k in ("coarse", "leaf_tokens", "iters", "dup_cos",
-                                                                       "max_pools", "seed", "group_keys")}}
+                                                                       "seed", "group_keys")}}
     json.dump(meta, open(os.path.join(tmp, "meta.json"), "w"), indent=1)
     json.dump(stats, open(os.path.join(tmp, "stats.json"), "w"), indent=1)
     os.replace(tmp, dst)
@@ -541,7 +604,6 @@ def main() -> None:
     ap.add_argument("--leaf-tokens", type=int, default=32768, help="tokens per leaf (fine cluster)")
     ap.add_argument("--iters", type=int, default=10, help="k-means iterations")
     ap.add_argument("--dup-cos", type=float, default=0.97, help="near-duplicate cosine (>= : deferred)")
-    ap.add_argument("--max-pools", type=int, default=4)
     ap.add_argument("--max-missing", type=float, default=0.001, help="tolerated fraction of units without embedding")
     ap.add_argument("--group-keys", default=None, help="npz {keys, group}: metadata groups kept together")
     ap.add_argument("--stat-seqs", type=int, default=2000)

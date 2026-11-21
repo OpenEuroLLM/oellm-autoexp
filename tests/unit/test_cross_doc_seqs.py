@@ -264,3 +264,31 @@ def test_check_plan_through_megatron(blend, planned):
     finally:
         sys.argv = old
     assert e.value.code == 0
+
+
+def test_place_copies_separates_a_giant_class():
+    """Production windows hold one class of tens of thousands of near-identical documents: spread over a
+    third of the sequences, none of them may share a sequence (one pass, no repair rounds)."""
+    rng = np.random.default_rng(3)
+    S = 65536
+    n_base = 20000
+    utok_base = rng.integers(50, 2400, n_base)
+    giant = 300
+    small = rng.integers(2, 6, 40)
+    n_copies = giant + int(small.sum())
+    utok = np.r_[utok_base, rng.integers(50, 2400, n_copies)].astype(np.int64)
+    n = len(utok)
+    cls = np.arange(n, dtype=np.int64)
+    copies = np.arange(n_base, n)
+    cls[copies[:giant]] = 7  # base unit 7 is the giant class's kept member
+    o = giant
+    for i, k in enumerate(small):
+        cls[copies[o:o + k]] = 100 + i  # base unit 100+i is that class's kept member
+        o += k
+    base = rng.permutation(n_base)
+    order, forced = build_plan.place_copies(base, copies, cls, utok, S, rng)
+    assert sorted(order.tolist()) == list(range(n))
+    assert forced == 0
+    assert build_plan.count_conflicts(order, utok, cls, S) == 0
+    n_seq = int(utok.sum()) // S
+    assert giant > n_seq // 2  # the class really is large against the sequences
