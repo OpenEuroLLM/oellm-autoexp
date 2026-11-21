@@ -81,7 +81,7 @@ for stage in ${STAGES//,/ }; do
             --seq-length "${CDS_SEQ:-65536}" --global-batch-size "${CDS_GBS:-1024}" --train-iters "${CDS_TRAIN_ITERS:?}" \
             --phase-start "${CDS_PHASE_START:?}" --ref-dp "${CDS_REF_DP:?}" --ref-mbs "${CDS_REF_MBS:-1}" \
             --from-ckpt "$CDS_FROM" --steps "$CDS_STEPS" --chunk "$CHUNK" --workers "${CDS_EXTRACT_WORKERS:-16}" \
-            --task-rank "$NODE" --task-world "$NNODES" $( [ "$NODE" = 0 ] && echo --check-megatron ) \
+            --task-rank "$NODE" --task-world "$NNODES" --out "$CDS_OUT" $( [ "$NODE" = 0 ] && echo --check-megatron ) \
             2>&1 | tee "$CDS_OUT/logs/extract_n$NODE.log"
         wait_for "stream" streams_done
         ;;
