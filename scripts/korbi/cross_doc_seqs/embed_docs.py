@@ -33,6 +33,18 @@ from cds_data import IndexedTokens, load_stream  # noqa: E402
 KEY_SHIFT = 40
 
 
+def chunk_complete(emb_chunk_dir: str) -> bool:
+    """A chunk is embedded when every part of SOME world size exists (part_<r>_of_<W>, r < W): a job restarted
+    with another number of GPUs keeps the chunks an earlier job finished."""
+    worlds: dict = {}
+    for f in glob.glob(os.path.join(emb_chunk_dir, "part_*_of_*.npz")):
+        if f.endswith(".tmp.npz"):
+            continue
+        r, w = os.path.basename(f)[5:-4].split("_of_")
+        worlds.setdefault(int(w), set()).add(int(r))
+    return any(len(rs) == w for w, rs in worlds.items())
+
+
 def chunk_keys(stream_path: str) -> np.ndarray:
     """Sorted unique document keys of the chunk's non-solo slots."""
     arr, _ = load_stream(stream_path)
@@ -214,7 +226,7 @@ def main() -> None:
     ap.add_argument("--max-len", type=int, default=512)
     ap.add_argument("--len-ratio", type=float, default=1.0, help="model tokens per source token (batching estimate)")
     ap.add_argument("--batch-tokens", type=int, default=None,
-                    help="model tokens per batch (default: 131072 packed, 65536 padded)")
+                    help="model tokens per batch (default: 262144 packed, 65536 padded)")
     ap.add_argument("--pack", choices=["auto", "on", "off"], default="auto",
                     help="padding-free batches (varlen flash attention); auto = on with flash_attention_2")
     ap.add_argument("--compile", action="store_true", help="torch.compile the model (dynamic shapes)")
@@ -225,8 +237,14 @@ def main() -> None:
     ap.add_argument("--attn", default="flash_attention_2",
                     help="attn_implementation (flash_attention_2: unpadded, no O(L^2) mask; falls back to sdpa)")
     ap.add_argument("--chunks", default=None, help="comma list of stream chunk names (default: all)")
+    ap.add_argument("--profile", type=int, default=0,
+                    help="bench: profile this many batches after 3 warm-up batches, print the top CUDA kernels")
+    ap.add_argument("--done", default=None, help="only check: exit 0 if every listed chunk (comma list) is embedded")
     ap.add_argument("--bench", type=int, default=0, help="embed only this many docs of the first chunk, print speed")
     a = ap.parse_args()
+    if a.done is not None:
+        root = os.path.join(a.out, "emb", a.name)
+        sys.exit(0 if all(chunk_complete(os.path.join(root, c)) for c in a.done.split(",") if c) else 1)
 
     import torch
     from transformers import AutoModel
@@ -253,7 +271,7 @@ def main() -> None:
     a.pack = (a.pack == "on") or (a.pack == "auto" and flash)
     assert not a.pack or flash, "--pack on needs flash_attention_2 (varlen kernels)"
     if a.batch_tokens is None:
-        a.batch_tokens = 131072 if a.pack else 65536
+        a.batch_tokens = 262144 if a.pack else 65536
     if a.compile:
         model = torch.compile(model, dynamic=True)
     if rank == 0:
@@ -267,7 +285,7 @@ def main() -> None:
     for cpath in chunks:
         name = os.path.basename(cpath)
         dst = os.path.join(root, name, f"part_{rank:04d}_of_{world:04d}.npz")
-        if os.path.exists(dst) and not a.bench:
+        if not a.bench and (os.path.exists(dst) or chunk_complete(os.path.dirname(dst))):
             continue
         keys = chunk_keys(cpath)[rank::world]
         if a.bench:
@@ -298,10 +316,29 @@ def main() -> None:
         t_wait = t_gpu = 0.0
         tw = time.time()
         with torch.inference_mode():
+            prof = None
             for i, b in enumerate(loader):
                 t_wait += time.time() - tw
                 tg = time.time()
+                if a.profile and i == 3:
+                    torch.cuda.synchronize()
+                    prof = torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
+                                                              torch.profiler.ProfilerActivity.CUDA])
+                    prof.__enter__()
+                    t_prof, tok_prof = time.time(), 0
                 v, n_tok = embed_batch(model, b, a, dev)
+                if prof is not None:
+                    tok_prof += n_tok
+                    if i == 3 + a.profile - 1:
+                        torch.cuda.synchronize()
+                        dt_p = time.time() - t_prof
+                        prof.__exit__(None, None, None)
+                        if rank == 0:
+                            print(f"PROFILE {a.profile} batches, {tok_prof} tokens in {dt_p:.2f} s "
+                                  f"({tok_prof / dt_p / 1e3:.0f}k tok/s)", flush=True)
+                            print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=25,
+                                                            max_name_column_width=70), flush=True)
+                        return
                 out_k.append(np.asarray(b["keys"]))
                 out_v.append(v.to(torch.float16).cpu().numpy())
                 ntok += n_tok

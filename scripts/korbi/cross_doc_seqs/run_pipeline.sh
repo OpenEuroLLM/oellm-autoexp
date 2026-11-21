@@ -50,14 +50,10 @@ wait_for() {  # wait_for <description> <command that succeeds when done>
 }
 
 streams_done() { for c in $(chunk_names); do [ -d "$CDS_OUT/stream/$c" ] || return 1; done; }
-embeds_done() {
-    local w=$((NNODES * GPUS)) c r
-    for c in $(chunk_names); do
-        [ -f "$CDS_OUT/emb/$EMB/$c/part_0000_of_$(printf %04d $w).npz" ] || return 1
-        for r in $(seq 0 $((w - 1))); do
-            [ -f "$CDS_OUT/emb/$EMB/$c/part_$(printf %04d $r)_of_$(printf %04d $w).npz" ] || return 1
-        done
-    done
+embeds_done() {  # every chunk embedded by some job (any world size: restarts with other node counts keep chunks)
+    local names
+    names=$(chunk_names | tr ' ' ',')
+    python "$D/embed_docs.py" --out "$CDS_OUT" --name "$EMB" --model x --pooling last --tokenizer x --done "$names"
 }
 
 embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --pooling "${CDS_EMB_POOLING:-last}"
