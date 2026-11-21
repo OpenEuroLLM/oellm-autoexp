@@ -4,13 +4,16 @@
 # sparse_attention.py), the current model code, check_export. One MN5 node:
 #
 #   t16_hf_export_mn5.sh <arm> [step]
+#
+# EXPORT_SUITE (default t16_s3_sparse_fixed) / EXPORT_PREFIX (default t16_s3): another suite's arms (production/
+# <suite>/<arm>) into hf_exports/<prefix>_<arm>_<step> (the prefix t16_long_evals_mn5.sh reads as EVAL_EXPORT_PREFIX).
 set -euo pipefail
 arm=$1; step=${2:-3000}
 R=${HYBRID_OUTPUT_ROOT:-/gpfs/scratch/ehpc533/hybrid_nucleus}
-run=$R/production/t16_s3_sparse_fixed/$arm
+run=$R/production/${EXPORT_SUITE:-t16_s3_sparse_fixed}/$arm
 ckpt=$run/ckpt/iter_$(printf %07d "$step")
 [ -d "$ckpt" ] || { echo "no step-$step checkpoint under $run" >&2; exit 1; }
-out=$R/hf_exports/t16_s3_${arm}_${step}
+out=$R/hf_exports/${EXPORT_PREFIX:-t16_s3}_${arm}_${step}
 config=$(readlink -f "$(ls -t "$run"/current_*.yaml | head -1)")
 tok=$(python - "$config" <<'PY'
 import sys

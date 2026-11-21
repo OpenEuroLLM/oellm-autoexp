@@ -1,0 +1,41 @@
+# @package _global_
+# Long-context evals of the t18_s3_sparse_adapt step-7000 arms beyond the 64k training length (eval_pack_mn5.sh: one
+# worker per GPU, items in turn, done markers): does a learned selector (page indexer, D-LSA; CSA2 / pure per-token in
+# pack 2 once they reach 7000) beat training-free page_maxpool at 128k-1M? (user 2026-11-21: a good indexer learned at
+# 64k would make 256k+ training far cheaper). Each arm with its trained (block-wise) selection; page_maxpool_pg also
+# with per-token selection at inference (_tok). Exports: t22_hf_export_mn5 (hf_exports/t18a_s3_<arm>_7000), results:
+# campaign_midtraining/t22_evals/<task>/<arm>.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t22_eval_pack_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t18_eval_pack_mn5
+  - _self_
+
+aux:
+  name: t22_eval_pack
+  items: >-
+    dense:nll_512k:7000 page_maxpool_pg:nll_512k:7000 page_indexer:nll_512k:7000 dlsa:nll_512k:7000
+    dense:retr_512k:7000 page_maxpool_pg:retr_512k:7000 page_indexer:retr_512k:7000 dlsa:retr_512k:7000
+    page_maxpool_pg:retr_512k_tok:7000
+    dense:retr_vt_long:7000 page_maxpool_pg:retr_vt_long:7000 page_indexer:retr_vt_long:7000 dlsa:retr_vt_long:7000
+    page_maxpool_pg:retr_vt_long_tok:7000
+    dense:retr_long60:7000 page_maxpool_pg:retr_long60:7000 page_indexer:retr_long60:7000 dlsa:retr_long60:7000
+    page_maxpool_pg:retr_long60_tok:7000
+    dense:real_inf128k:7000 page_maxpool_pg:real_inf128k:7000 page_indexer:real_inf128k:7000 dlsa:real_inf128k:7000
+    page_maxpool_pg:real_inf128k_tok:7000
+    dense:real_inf256k:7000 page_maxpool_pg:real_inf256k:7000 page_indexer:real_inf256k:7000 dlsa:real_inf256k:7000
+    page_maxpool_pg:real_inf256k_tok:7000
+    dense:nll_1m:7000 page_maxpool_pg:nll_1m:7000 page_indexer:nll_1m:7000 dlsa:nll_1m:7000
+    dense:retr_1m:7000 page_maxpool_pg:retr_1m:7000 page_indexer:retr_1m:7000 dlsa:retr_1m:7000
+    page_maxpool_pg:retr_1m_tok:7000
+
+backend:
+  env:
+    EVAL_EXPORT_PREFIX: t18a_s3
+    EVAL_OUT: t22_evals
+
+job:
+  start_condition:  # the last export of the four (all are enqueued together; their checks finish within minutes)
+    class_name: FileExistsCondition
+    path: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/t18a_s3_dlsa_7000/.check_done
+    persistent_pass: true

@@ -1,0 +1,42 @@
+# @package _global_
+# HF side of the t22 parity check (t16_hf_parity_mn5.sh with EXPORT_SUITE / EXPORT_PREFIX): each t18_s3_sparse_adapt arm's
+# step-7000 export scores the seeded 32-sample long_64k subset at 64k; t22_megatron_fixedvalid_mn5 scores the same
+# samples in Megatron. One MN5 node per arm, after its export was checked.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t22_hf_parity_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t16_hf_parity_mn5
+  - _self_
+
+aux:
+  name: t22_hf_parity_${aux.arm}
+  step: 7000
+  bench: "bash scripts/korbi/campaign_midtraining/t16_hf_parity_mn5.sh ${aux.arm} ${aux.step}"
+
+backend:
+  env:
+    EXPORT_SUITE: t18_s3_sparse_adapt
+    EXPORT_PREFIX: t18a_s3
+
+job:
+  metadata:
+    pool_priority: 45
+  start_condition:
+    class_name: FileExistsCondition
+    path: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports/t18a_s3_${aux.arm}_${aux.step}/.check_done
+    persistent_pass: true
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dense
+        - aux.arm: page_maxpool_pg
+        - aux.arm: page_indexer
+        - aux.arm: dlsa
+        - aux.arm: csa2_cont
+        - aux.arm: pmp_tok
+        - aux.arm: dlsa_tok
