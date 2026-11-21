@@ -89,7 +89,8 @@ def main() -> None:
     with open(tmp, "w") as f:
         json.dump({"blend_md5": entry.blend_md5, "prefixes": prefixes, "size": entry.size,
                    "seq_length": a.seq_length, "add_bos": entry.add_bos, "data_args_path": a.data_args_path,
-                   "geometry": geo.__dict__}, f, indent=1)
+                   "geometry": {**geo.__dict__, "train_iters": a.train_iters, "next_phase": a.next_phase}},
+                  f, indent=1)
     os.replace(tmp, os.path.join(a.out, "blend.json"))
 
     chunks = [(c0, min(c0 + a.chunk, a.from_ckpt + a.steps)) for c0 in range(a.from_ckpt, a.from_ckpt + a.steps, a.chunk)]

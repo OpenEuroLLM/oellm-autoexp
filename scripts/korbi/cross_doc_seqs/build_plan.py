@@ -516,7 +516,11 @@ def build_window(a, w0: int, w1: int, dev) -> None:
     np.save(os.path.join(tmp, "seg_off.npy"), seg["off"].astype(np.int64))
     np.save(os.path.join(tmp, "seg_len.npy"), seg["len"].astype(np.int32))
     np.save(os.path.join(tmp, "seg_group.npy"), seg["grp"].astype(np.int64))
+    # the sampler geometry the replaced indices belong to (Megatron refuses a plan for another one)
+    geometry = json.load(open(os.path.join(a.out, "blend.json")))["geometry"]
     meta = {"format": 1, "blend_md5": win["blend_md5"], "seq_length": S, "from_ckpt": w0, "to_ckpt": w1,
+            "geometry": {k: geometry.get(k) for k in ("global_batch_size", "ref_dp", "ref_mbs", "ref_gbs",
+                                                      "phase_start", "train_iters", "total_samples")},
             "embedding": a.emb, "params": {k: getattr(a, k) for k in ("coarse", "leaf_tokens", "iters", "dup_cos",
                                                                        "max_pools", "seed", "group_keys")}}
     json.dump(meta, open(os.path.join(tmp, "meta.json"), "w"), indent=1)
