@@ -1,0 +1,36 @@
+# @package _global_
+# t19c's 64k pair (dense vs page_maxpool_pg, v4b shape, 64 nodes, fresh init, long_64k: every sequence one 64k
+# document) with profiling (user 2026-11-21): the kernel benchmarks predict ~200 ms less per attention layer at
+# 64k, yet the full step was 18.21 s dense vs 18.00 s sparse (t19c). Both arms run concurrently (2 x 64 of host005's
+# 136 nodes) so they share the launch time:
+#   - PyTorch profiler on one step (20, after compile / warm-up) on six ranks spread over the nodes:
+#     <tb dir>/../torch_profile/rank-<r>.json.gz
+#   - timing_log_level 2 with min / max across ranks: the straggler spread of forward-backward, the optimizer and
+#     the FSDP collectives on every logged step
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t19d_v4b_sparse_profile64_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t19c_v4b_sparse_speed64_c136_mn5
+  - _self_
+
+aux:
+  suite: t19d_v4b_sparse_profile64_c136
+  only: [dense_c64k, page_maxpool_pg_c64k]
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_mid/t19d_v4b_sparse_profile64_c136
+
+backend:
+  megatron:
+    exit_interval: 24
+    tensorboard_dir: ${job.base_output_dir}/tb
+    profile: true
+    use_pytorch_profiler: true
+    profile_step_start: 20
+    profile_step_end: 21
+    profile_ranks: [0, 3, 61, 130, 194, 255]
+    pytorch_profiler_collect_shapes: true
+    timing_log_level: 2
+    timing_log_option: minmax
+
+job:
+  name: t19d_prof64_${aux.arm}
+  est_steps: 24
