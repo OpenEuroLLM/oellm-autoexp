@@ -62,6 +62,16 @@ embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --poolin
             ${CDS_EMB_BATCH_TOKENS:+--batch-tokens "$CDS_EMB_BATCH_TOKENS"} --workers "${CDS_EMB_WORKERS:-16}"
             --attn "${CDS_EMB_ATTN:-flash_attention_2}")
 
+embed_cmd() {  # embed_cmd <extra args...>: embed_docs.py under the right runtime (vLLM: shared vLLM runtime, 1 GPU)
+    if [[ " $* ${CDS_EMB_ENGINE:-} " == *"vllm"* ]]; then
+        bash -c 'cd "$0" && source scripts/korbi/vllm/setup_vllm_shared.sh >/dev/null && \
+            CUDA_VISIBLE_DEVICES=$LOCAL_RANK exec "$INFER_PY" "$@"' "$ROOT" "$D/embed_docs.py" "${embed_args[@]}" \
+            ${CDS_EMB_ENGINE:+--engine "$CDS_EMB_ENGINE"} "$@"
+    else
+        python "$D/embed_docs.py" "${embed_args[@]}" "$@"
+    fi
+}
+
 per_gpu() {  # per_gpu <log name> <command...>: one process per GPU of this node, fail if any fails
     local name=$1; shift
     local pids=() i
@@ -107,14 +117,13 @@ for stage in ${STAGES//,/ }; do
                 extra=""
                 [ "$label" != "$variant" ] && extra=${variant#*+} && extra=${extra//+/ }
                 log "bench $label: $extra"
-                per_gpu "bench_$label" python "$D/embed_docs.py" "${embed_args[@]}" --chunks "$first" \
-                    --bench "${CDS_BENCH_DOCS:-40000}" $extra || true
+                per_gpu "bench_$label" embed_cmd --chunks "$first" --bench "${CDS_BENCH_DOCS:-40000}" $extra || true
                 grep -h "BENCH\|CHECK\|Error\|packed" "$CDS_OUT"/logs/bench_${label}_r*.log | sed "s/^/[$label] /" || true
             done
         fi
         ;;
     embed)
-        per_gpu "embed_$EMB" python "$D/embed_docs.py" "${embed_args[@]}"
+        per_gpu "embed_$EMB" embed_cmd
         wait_for "embeddings" embeds_done
         ;;
     plan)

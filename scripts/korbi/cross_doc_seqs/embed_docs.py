@@ -128,6 +128,15 @@ def embed_batch(model, b, a, dev):
     """(vectors [n, dim] float32 normalized, model tokens) of one batch from DocTexts.batch."""
     import torch
 
+    if a.engine == "vllm":  # model = vllm.LLM; the loader's token ids as prompts (same inputs as HF)
+        from vllm.inputs import TokensPrompt
+
+        cu = b["cu"]
+        ids = b["ids"].tolist()
+        prompts = [TokensPrompt(prompt_token_ids=ids[cu[i]:cu[i + 1]]) for i in range(len(cu) - 1)]
+        outs = model.embed(prompts, use_tqdm=False)
+        v = torch.tensor([o.outputs.embedding[: a.dim] for o in outs], dtype=torch.float32)
+        return torch.nn.functional.normalize(v, dim=-1), int(cu[-1])
     if "cu" in b:
         ids = torch.as_tensor(b["ids"], device=dev)[None]
         pos = torch.as_tensor(b["pos"], device=dev)[None]
@@ -239,6 +248,13 @@ def main() -> None:
     ap.add_argument("--chunks", default=None, help="comma list of stream chunk names (default: all)")
     ap.add_argument("--profile", type=int, default=0,
                     help="bench: profile this many batches after 3 warm-up batches, print the top CUDA kernels")
+    ap.add_argument("--engine", choices=["hf", "vllm"], default="hf",
+                    help="hf: transformers forward; vllm: vLLM's pooling runner (run under setup_vllm_shared.sh)")
+    ap.add_argument("--vllm-mem", type=float, default=0.85, help="vLLM gpu_memory_utilization")
+    ap.add_argument("--vllm-batch-tokens", type=int, default=65536, help="vLLM max_num_batched_tokens")
+    ap.add_argument("--vllm-max-seqs", type=int, default=1024, help="vLLM max_num_seqs")
+    ap.add_argument("--check-against", default=None,
+                    help="bench: cosine of the bench vectors vs an existing embedding run's for the same documents")
     ap.add_argument("--done", default=None, help="only check: exit 0 if every listed chunk (comma list) is embedded")
     ap.add_argument("--bench", type=int, default=0, help="embed only this many docs of the first chunk, print speed")
     a = ap.parse_args()
@@ -247,7 +263,9 @@ def main() -> None:
         sys.exit(0 if all(chunk_complete(os.path.join(root, c)) for c in a.done.split(",") if c) else 1)
 
     import torch
-    from transformers import AutoModel
+
+    if a.engine == "hf":
+        from transformers import AutoModel
 
     # RANK / WORLD_SIZE / LOCAL_RANK (run_pipeline.sh: one process per GPU), else one task per GPU
     rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0)))
@@ -261,22 +279,32 @@ def main() -> None:
     if rank == 0:
         json.dump(vars(a), open(os.path.join(root, "config.json"), "w"), indent=1)
     dtype = torch.bfloat16 if dev.type == "cuda" else torch.float32
-    try:
-        model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation=a.attn)
-    except (ImportError, ValueError) as e:  # e.g. flash_attention_2 unavailable: masked SDPA
-        print(f"rank {rank}: attn_implementation={a.attn} unavailable ({e}); using sdpa", flush=True)
-        model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation="sdpa")
-    model = model.to(dev).eval()
-    flash = model.config._attn_implementation == "flash_attention_2"
-    a.pack = (a.pack == "on") or (a.pack == "auto" and flash)
-    assert not a.pack or flash, "--pack on needs flash_attention_2 (varlen kernels)"
+    if a.engine == "vllm":
+        from vllm import LLM
+
+        # one GPU per process (run_pipeline.sh sets CUDA_VISIBLE_DEVICES); packed batches from the loader
+        model = LLM(model=a.model, runner="pooling", dtype="bfloat16", max_model_len=a.max_len,
+                    gpu_memory_utilization=a.vllm_mem, enable_prefix_caching=False, seed=0,
+                    max_num_batched_tokens=a.vllm_batch_tokens, max_num_seqs=a.vllm_max_seqs)
+        a.pack = True  # the batches carry per-document token lists (cu)
+        detail = f"vLLM pooling runner, {a.vllm_batch_tokens} tokens per scheduler step"
+    else:
+        try:
+            model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation=a.attn)
+        except (ImportError, ValueError) as e:  # e.g. flash_attention_2 unavailable: masked SDPA
+            print(f"rank {rank}: attn_implementation={a.attn} unavailable ({e}); using sdpa", flush=True)
+            model = AutoModel.from_pretrained(a.model, dtype=dtype, attn_implementation="sdpa")
+        model = model.to(dev).eval()
+        flash = model.config._attn_implementation == "flash_attention_2"
+        a.pack = (a.pack == "on") or (a.pack == "auto" and flash)
+        assert not a.pack or flash, "--pack on needs flash_attention_2 (varlen kernels)"
+        if a.compile:
+            model = torch.compile(model, dynamic=True)
+        detail = f"attention {model.config._attn_implementation}, packed {a.pack}, compile {a.compile}"
     if a.batch_tokens is None:
         a.batch_tokens = 262144 if a.pack else 65536
-    if a.compile:
-        model = torch.compile(model, dynamic=True)
     if rank == 0:
-        print(f"model {a.model}: attention {model.config._attn_implementation}, packed {a.pack}, "
-              f"batch {a.batch_tokens} tokens, compile {a.compile}", flush=True)
+        print(f"model {a.model}: {detail}, batch {a.batch_tokens} tokens", flush=True)
 
     chunks = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if not p.endswith(".tmp"))
     if a.chunks:
@@ -296,7 +324,7 @@ def main() -> None:
         t_res = time.time() - t_res
         texts = DocTexts(prefixes, dtypes, a)
         batches = make_batches(keys, ds_, off_, ntok_, a)
-        if a.check and a.pack:
+        if a.check and a.pack and a.engine == "hf":
             n = min(a.check, len(keys))
             item = (keys[:n], ds_[:n], off_[:n], ntok_[:n])
             with torch.inference_mode():
@@ -352,6 +380,19 @@ def main() -> None:
         k = np.concatenate(out_k) if out_k else np.zeros(0, np.int64)
         v = np.concatenate(out_v) if out_v else np.zeros((0, a.dim), np.float16)
         dt = time.time() - t0
+        if a.bench and a.check_against:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from build_plan import load_embeddings
+
+            rk, rv = load_embeddings(os.path.join(a.out, "emb", a.check_against), np.unique(k))
+            r = np.searchsorted(rk, k)
+            ok = (r < len(rk)) & (rk[np.minimum(r, max(len(rk) - 1, 0))] == k)
+            if ok.any():
+                cos = (v[ok].astype(np.float32) * rv[r[ok]].astype(np.float32)).sum(-1)
+                print(f"CHECK rank {rank}: vs {a.check_against} over {int(ok.sum())} docs: cosine min "
+                      f"{cos.min():.5f}, mean {cos.mean():.5f}", flush=True)
+            else:
+                print(f"CHECK rank {rank}: no document of the bench in {a.check_against}", flush=True)
         if a.bench:
             print(f"BENCH rank {rank}: {len(k)} docs in {dt:.1f} s = {len(k) / dt:.0f} docs/s, "
                   f"{ntok / dt / 1e3:.0f}k model tok/s, mean {ntok / max(len(k), 1):.0f} tok/doc; "
