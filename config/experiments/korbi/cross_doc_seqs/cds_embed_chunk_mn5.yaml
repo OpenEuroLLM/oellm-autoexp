@@ -1,0 +1,27 @@
+# @package _global_
+# One embedding job per stream chunk (100 steps, ~5.4M documents, ~1 h on one node): many small pool jobs, no
+# overlap -- the pool runs as many as fit, and the pool's run list shows which chunks are done
+# (also <out>/emb/<name>/STATUS.txt). The chunk's stream must exist (a separate extract run:
+# cds_pipeline_mn5 with aux.stages=extract); a job waits for it. Batches of chunks are generated sweeps:
+#   python scripts/korbi/cross_doc_seqs/gen_embed_chunks.py --from 63000 --to 236733 --batch 100
+#   -> config/experiments/korbi/cross_doc_seqs/chunks/emb_<name>_<a>_<b>.yaml (one sweep entry per chunk)
+defaults:
+  - cds_pipeline_mn5
+  - _self_
+
+aux:
+  name: cds_emb_${aux.emb_name}_ck${aux.from_ckpt}
+  steps: 100
+  chunk: 100
+  stages: embed
+  emb_slices: 0  # the node's 4 GPUs split the chunk (part_<r>_of_0004)
+
+job:
+  est_step_time_s: 3600
+  metadata:
+    pool_priority: 40  # below the pipeline jobs and every main-run job
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:30:00"
