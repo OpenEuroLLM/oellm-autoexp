@@ -2550,7 +2550,12 @@ class PoolManager:
             self._reselect_candidate(layout, cfg, queued, "a requeue reset a host's queue age")
 
     def _rebalance_candidate(
-        self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView]
+        self,
+        layout: PoolLayout,
+        cfg: PoolHostConfig,
+        state: dict,
+        queued: list[HostView],
+        busy: set[str],
     ) -> None:
         """Switch the unparked host when another parked one is clearly better
         by live priority.
@@ -2581,10 +2586,31 @@ class PoolManager:
         if str(best.record.runtime.runtime_job_id) not in prio:
             return
         gain = eff(best) - eff(cur)
-        if gain > cfg.successor_rebalance_margin:
-            self._reselect_candidate(
-                layout, cfg, queued, f"{best.hid} is {gain:.0f} priority points better"
-            )
+        if gain <= cfg.successor_rebalance_margin:
+            return
+        # Do not unpark a candidate that would start INSIDE the block: with handover on, such a
+        # host is a standby that is released after a minute (JUPITER 2026-11-22 16:32/13:06 --
+        # each burn ~1 min of 516 nodes). The estimate must lie past the transition point, the
+        # same rule the probe uses.
+        est = self._start_estimate(layout, cfg, state, None, time.time())
+        if est is None:
+            return
+        run_hosts = [h for h in self._hosts.get(str(layout.root), {}).values() if h.hid in busy]
+        if run_hosts:
+            block_end = max(h.start_ts for h in run_hosts) + cfg.handover_min_age_s
+            if est < block_end:
+                LOGGER.info(
+                    "[pool %s] not switching to %s yet: start estimated %s is before the block "
+                    "end %s",
+                    cfg.name,
+                    best.hid,
+                    time.strftime("%H:%M", time.localtime(est)),
+                    time.strftime("%H:%M", time.localtime(block_end)),
+                )
+                return
+        self._reselect_candidate(
+            layout, cfg, queued, f"{best.hid} is {gain:.0f} priority points better"
+        )
 
     def _reselect_candidate(
         self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView], why: str
@@ -2762,7 +2788,7 @@ class PoolManager:
         # nothing trains (training down, run waiting for a host): that is exactly when the
         # candidates queue up and a requeue changes which one should be unparked.
         self._detect_requeues(layout, cfg, state, queued)
-        self._rebalance_candidate(layout, cfg, queued)
+        self._rebalance_candidate(layout, cfg, state, queued, busy)
         run_hosts = [h for h in running if h.hid in busy]
         if not run_hosts and busy and running:
             # a handover: the run is leaving a retiring host for the newest live one
