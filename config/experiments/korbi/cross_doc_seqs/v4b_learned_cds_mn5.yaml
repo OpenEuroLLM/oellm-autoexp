@@ -1,5 +1,5 @@
 # @package _global_
-# PREPARED, NOT LAUNCHED (user 2026-11-21: "make everything ready", no switch yet).
+# LIVE since checkpoint 51,000 (user 2026-11-22: "Go ahead with the switch at 51k in group mode"; p264.2083).
 #
 # The v4b main run (recall_surgery/v4b_learned_mn5, unchanged: same job name, output tree, load, data, sampler)
 # with cross-document packing plans from the next checkpoint on (docs/cross_doc_seqs/README.md):
@@ -10,7 +10,7 @@
 # Megatron >= 88efc4279 (packing plan + guards). Rendered Megatron arguments == v4b_learned_mn5's at the same
 # commit + these three flags (checked by dry run, 2026-11-21).
 #
-# Switching (only with the user's go): the plan is ONE window from checkpoint 51,000 to 61,000 (user 2026-11-22), so
+# Switching (done 2026-11-22, docs/cross_doc_seqs/README.md): the plan is ONE window from checkpoint 51,000 to 61,000 (user 2026-11-22), so
 # the run must resume from EXACTLY checkpoint 51,000 -- steps after 51,000 already trained without the plan would
 # otherwise lose their documents to it. After the 51,000 save: pool_ctl cancel the running v4b entry (graceful stop
 # save at 51,000 + k), set that stop save aside and point ckpt/latest_checkpointed_iteration.txt at 51000 (as at the
