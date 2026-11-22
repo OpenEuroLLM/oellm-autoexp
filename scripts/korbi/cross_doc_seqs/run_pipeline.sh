@@ -7,6 +7,8 @@
 #   bench    embedding speed on the first chunk (each GPU of node 0), nothing written
 #   embed    one embedding per document of the stream (all GPUs)
 #   plan     packing plans per CDS_WINDOW steps (windows split over all GPUs)
+#   global   ONE plan over the whole range (build_plan_global.py): gcentroids (node 0) -> gassign (all GPUs) ->
+#            gorder (all GPUs, one bucket each) -> gassemble (node 0); plan name CDS_PLAN_NAME
 #   checkplan node 0, once every window's plan exists: check_plan.py -- the plans through Megatron's
 #            loader on the run's real BlendedDataset (geometry, coverage, token conservation, all modes)
 # Between stages every node waits for the previous stage's files (file barrier on GPFS).
@@ -137,6 +139,29 @@ for stage in ${STAGES//,/ }; do
         per_gpu "plan_$PLAN_NAME" bash -c 'python "$0"/build_plan.py --out "$1" --emb "$2" --name "$3" --from-ckpt "$4" \
             --steps "$5" --window "$6" --device cuda:$LOCAL_RANK --task-rank $RANK --task-world $WORLD_SIZE $7' \
             "$D" "$CDS_OUT" "$EMB" "$PLAN_NAME" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" "$PLAN_ARGS"
+        ;;
+    global)
+        G=(python "$D/build_plan_global.py" --out "$CDS_OUT" --emb "$EMB" --name "$PLAN_NAME" --from-ckpt "$CDS_FROM"
+           --steps "$CDS_STEPS" $PLAN_ARGS)
+        GDIR="$CDS_OUT/global/$PLAN_NAME"
+        W=$((NNODES * GPUS))
+        if [ "$NODE" = 0 ]; then
+            CUDA_VISIBLE_DEVICES=0 "${G[@]}" --stage centroids --buckets "$W" --device cuda 2>&1 | tee "$CDS_OUT/logs/g_${PLAN_NAME}_centroids.log"
+        fi
+        wait_for "centroids" test -f "$GDIR/centroids.npz"
+        per_gpu "g_${PLAN_NAME}_assign" bash -c '"${@:1:$#-2}" --stage assign --task-rank $RANK --task-world $WORLD_SIZE \
+            --device cuda:$LOCAL_RANK' _ "${G[@]}" x x
+        # exact names: a finished stage dir is r0000 / b0000 (in-flight ones are r0000.tmp)
+        assign_done() { [ "$(ls "$GDIR"/assign/r[0-9][0-9][0-9][0-9]/done 2>/dev/null | wc -l)" -ge "$W" ]; }
+        wait_for "assign" assign_done
+        per_gpu "g_${PLAN_NAME}_order" bash -c '"${@:1:$#-2}" --stage order --task-rank $RANK --task-world $WORLD_SIZE \
+            --device cuda:$LOCAL_RANK' _ "${G[@]}" x x
+        order_done() { [ "$(ls "$GDIR"/order/b[0-9][0-9][0-9][0-9]/done 2>/dev/null | wc -l)" -ge "$W" ]; }
+        wait_for "order" order_done
+        if [ "$NODE" = 0 ]; then
+            "${G[@]}" --stage assemble --device cpu 2>&1 | tee "$CDS_OUT/logs/g_${PLAN_NAME}_assemble.log"
+            [ "${PIPESTATUS[0]}" = 0 ] || { log "global assemble FAILED"; exit 6; }
+        fi
         ;;
     checkplan)
         plans_done() {

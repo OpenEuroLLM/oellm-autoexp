@@ -148,10 +148,14 @@ def stage_centroids(a, dev) -> None:
         nseg = np.diff(np.asarray(arr["seg_ptr"]))
         n_est += int(nseg[nseg > 1].sum())
     k = max(1, int(round(n_est / a.coarse)))
-    files = []
-    for c0, c1, _ in chunks:
-        files += sorted(f for f in glob.glob(os.path.join(a.out, "emb", a.emb, f"ck{c0:07d}_{c1:07d}", "part_*.npz"))
-                        if not f.endswith(".tmp.npz"))
+    files = []  # the window's chunk directories (and any non-chunk directory, like load_embeddings)
+    for d in sorted(glob.glob(os.path.join(a.out, "emb", a.emb, "*"))):
+        b = os.path.basename(d)
+        if b.startswith("ck") and "_" in b:
+            c0, c1 = (int(x) for x in b[2:].split("_"))
+            if c0 < a.w0 or c1 > a.w1:
+                continue
+        files += sorted(f for f in glob.glob(os.path.join(d, "part_*.npz")) if not f.endswith(".tmp.npz"))
     rng = np.random.default_rng(a.seed)
     rng.shuffle(files)
     vs, n = [], 0

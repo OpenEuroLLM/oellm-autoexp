@@ -292,3 +292,42 @@ def test_place_copies_separates_a_giant_class():
     assert build_plan.count_conflicts(order, utok, cls, S) == 0
     n_seq = int(utok.sum()) // S
     assert giant > n_seq // 2  # the class really is large against the sequences
+
+
+def test_global_single_window_plan(blend, planned):
+    """build_plan_global.py: one window over the whole extracted range, sharded (2 assign / 3 order processes,
+    run in turn here), checked like any plan by check_plan through Megatron's loader."""
+    import build_plan_global
+
+    out, _ = planned
+
+    def run(*args):
+        old = sys.argv
+        sys.argv = ["x", "--out", str(out), "--emb", "fake", "--name", "gfake", "--from-ckpt", "12", "--steps", "20",
+                    "--coarse", "40", "--sample", "100000", "--batch", "64", "--epochs", "3", "--leaf-tokens", "48",
+                    "--iters", "4", "--device", "cpu", *args]
+        try:
+            build_plan_global.main()
+        finally:
+            sys.argv = old
+
+    run("--stage", "centroids", "--buckets", "3")
+    for r in range(2):
+        run("--stage", "assign", "--task-rank", str(r), "--task-world", "2")
+    for r in range(3):
+        run("--stage", "order", "--task-rank", str(r), "--task-world", "3")
+    run("--stage", "assemble")
+    plans = sorted((out / "plan" / "gfake").iterdir())
+    assert [p.name for p in plans] == ["ck0000012_0000032"]
+    stats = __import__("json").load(open(plans[0] / "stats.json"))
+    assert stats["units_sharing_a_sequence_with_a_copy"] == 0 and stats["copies_forced"] == 0
+    old = sys.argv
+    sys.argv = ["x", "--out", str(out), "--plan-name", "gfake", "--data-cache-path", blend["cache"],
+                "--data-args-path", blend["mix"], "--bos-id", str(BOS), "--eod-id", str(EOD),
+                "--vocab-size", str(VOCAB), "--samples", "16"]
+    try:
+        with pytest.raises(SystemExit) as e:
+            check_plan.main()
+    finally:
+        sys.argv = old
+    assert e.value.code == 0
