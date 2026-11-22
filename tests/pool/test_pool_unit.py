@@ -1706,3 +1706,27 @@ def test_rebalance_switches_when_the_promoted_host_is_clearly_worse(env, monkeyp
         "the better host was not unparked"
     )
     assert env.fake._nice.get(cur.runtime.runtime_job_id) == 100000, "the worse host was not parked"
+
+
+def test_rebalance_never_switches_on_a_missing_priority_entry(env, monkeypatch):
+    """Sprio can miss a job (hiccup); a missing entry used to look like
+    priority 0, which made a switch look 354k points better when the hosts were
+    within 35 (JUPITER 2026-11-22 11:41)."""
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_nice=100000)
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=2, successor_rebalance_margin=2000)
+    env.layout.write_meta(meta)
+    env.poll(3)
+    parked = [h for h in env.hosts()[1:] if h.runtime.runtime_job_id]
+    assert len(parked) >= 2
+    cur, other = parked[0], parked[-1]
+    (env.layout.host_dir(cur.definition.metadata["pool_host_id"]) / "promoted").write_text("0\n")
+    env.fake._nice[cur.runtime.runtime_job_id] = 0
+    # the promoted host has no entry at all
+    prio = {str(other.runtime.runtime_job_id): (5000.0, 100000)}
+    monkeypatch.setattr(PoolManager, "_sprio_map", staticmethod(lambda ids: prio))
+    env.poll()
+    assert env.fake._nice.get(other.runtime.runtime_job_id) != 0, (
+        "switched although the promoted host's priority was unknown"
+    )

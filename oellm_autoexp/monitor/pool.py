@@ -2492,9 +2492,14 @@ class PoolManager:
         prio = self._live_priorities(cands)
         if not prio:
             return min(cands, key=lambda h: float(h.record.runtime.start_ts or 0.0))
+        # a host without an entry (sprio hiccup) must not look like priority 0: rank only the
+        # hosts whose priority is actually known
+        known = [h for h in cands if str(h.record.runtime.runtime_job_id) in prio]
+        if not known:
+            return min(cands, key=lambda h: float(h.record.runtime.start_ts or 0.0))
         return max(
-            cands,
-            key=lambda h: sum(prio.get(str(h.record.runtime.runtime_job_id), (0.0, 0))),
+            known,
+            key=lambda h: sum(prio[str(h.record.runtime.runtime_job_id)]),
         )
 
     def _detect_requeues(
@@ -2570,7 +2575,11 @@ class PoolManager:
             return float(p) + float(n)
 
         cur = promoted[0]
+        if str(cur.record.runtime.runtime_job_id) not in prio:
+            return  # priority unknown (sprio hiccup): never switch on a missing value
         best = max(parked, key=eff)
+        if str(best.record.runtime.runtime_job_id) not in prio:
+            return
         gain = eff(best) - eff(cur)
         if gain > cfg.successor_rebalance_margin:
             self._reselect_candidate(
