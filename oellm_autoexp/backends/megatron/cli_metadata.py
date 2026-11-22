@@ -1237,6 +1237,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "dataloader_index_bundle": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help="Prefix of an index bundle (<prefix>.bin + <prefix>.json, built by tools/prepare_cache.py --write-index-bundle): the cached dataset indices it holds are byte-identical views of one file instead of one file each, and no rank waits for rank 0 to build first. An index it lacks is loaded from --data-cache-path.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "dataloader_inter_document_masking": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -10398,6 +10406,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "dataloader_index_bundle": MegatronActionSpec(
+        option_strings=("--dataloader-index-bundle",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "dataloader_inter_document_masking": MegatronActionSpec(
         option_strings=("--dataloader-inter-document-masking",),

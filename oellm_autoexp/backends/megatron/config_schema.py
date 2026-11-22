@@ -3865,6 +3865,12 @@ class MegatronConfig(ConfigInterface):
     # dataset caches to be built and stored in --data-cache-path.
     dataloader_fast_cache_load: bool = False
 
+    # Prefix of an index bundle (<prefix>.bin + <prefix>.json, built by tools/prepare_cache.py
+    # --write-index-bundle): the cached dataset indices it holds are byte-identical views of
+    # one file instead of one file each, and no rank waits for rank 0 to build first. An index
+    # it lacks is loaded from --data-cache-path.
+    dataloader_index_bundle: Any | None = None
+
     # Defer the mmap of the dataset indexes (.npy files) until the first access. Requires all
     # the dataset caches to be built and stored in --data-cache-path.
     dataloader_defer_npy_index_mmap: bool = False
