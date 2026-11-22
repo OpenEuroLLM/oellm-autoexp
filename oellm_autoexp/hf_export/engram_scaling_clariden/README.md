@@ -490,6 +490,38 @@ model = AutoModelForCausalLM.from_pretrained(d, trust_remote_code=True, dtype="b
 
 (It needs `flash-linear-attention` on the GPU, as in the training container; the CPU path is plain torch.)
 
+### Using an export on another machine
+
+Each `hf/iter_*` directory is a complete model. Upload that directory, not the parent `hf/` folder, and the other machine does not need this repository or the Megatron checkpoint.
+
+The directory holds the weights (`model-0000N-of-0000M.safetensors` and `model.safetensors.index.json`), `config.json` (its `auto_map` points at the model code), `configuration_oellm_engram.py`, `modeling_oellm_engram.py`, the tokenizer files, and `generation_config.json`. The copied tokenizer already uses `<eos>` as its pad token. `megatron_source.json` only records where the checkpoint came from, including paths on this cluster; loading ignores it, so leave it out of a public repository.
+
+On the other machine install `torch`, `transformers`, and `flash-linear-attention` (imported as `fla`). These exports were checked with transformers 5.12.1 and flash-linear-attention 0.4.2. The GPU gated-delta-net path needs `fla`; without it a forward pass only runs on the CPU, through the slow reference recurrence. Leave `fix_mistral_regex` off. `trust_remote_code=True` is required because the forward pass is the Python shipped in the directory.
+
+One repository per run and one revision per checkpoint keeps `config.json` at the revision root:
+
+```bash
+hf auth login
+REPO=your-org/engram-100m-cons-rho40
+BASE=output/engram_100m_1b_cons_E40_rho40_N1_clariden/hf
+for d in "$BASE"/iter_*; do
+  rev=$(basename "$d")
+  hf upload "$REPO" "$d" --revision "$rev" --exclude "megatron_source.json"
+done
+```
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+repo = "your-org/engram-100m-cons-rho40"
+tok = AutoTokenizer.from_pretrained(repo, revision="iter_0001000", trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    repo, revision="iter_0001000", trust_remote_code=True, dtype="bfloat16"
+).cuda()
+```
+
+A 100m export is about 2.3 GB and a 230m export about 4.6 GB, so the 55 exported 100m checkpoints are about 126 GB. Create the repository as private first if the weights should not be public.
+
 ### What the exporter does, step by step
 
 1. **Architecture**: `hf_config.hf_config` on the run's resolved config, with its guards (stage 2).
