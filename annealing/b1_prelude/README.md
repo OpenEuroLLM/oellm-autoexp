@@ -1,5 +1,7 @@
 # Standalone B1 annealing on JUPITER
 
+For MareNostrum 5, use the [BSC launcher, mixture recipes and runbook](bsc/README.md).
+
 This package prepares separate B1 32B annealing experiments from a retained native tensorwise checkpoint, using either the Prelude `multilingual1+dominant1` or `multilingual1+dominant2` blend. TP4/PP4, sequence length 4,096, GBS 4,096, FP8 tensorwise with BF16 edge layers, Adam/RNG restoration and sample-based WSD `minus_sqrt` follow B1 production. The new data phase starts at the fork and consumes its mixture from offset zero. The executable preparer supports B1 32B. The original 9B linear-WSD examples need a separate JUPITER port and validation. [Original configs, mixture inputs and provenance](origins/README.md)
 
 ## Start from a fresh JUPITER login

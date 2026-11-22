@@ -1,0 +1,48 @@
+{
+  "autoexp": "https://github.com/OpenEuroLLM/oellm-autoexp@dd112d92f99d175a8ab1701b57c8dea0363b53f2",
+  "autoexp_branch": "prod/oellm_32b_dense",
+  "megatron": "c9cf7e84cf584dee5ca456124180c5acc98e80ba",
+  "jupiter_smoke_jobs": [
+    "3028326",
+    "3028327"
+  ],
+  "jupiter_prebuild_jobs": [
+    "2967355",
+    "2967358"
+  ],
+  "seed_metadata_sha256": "0be54419fb617c9893b94a5166e0675adf9d31addee720884401a082a3722ccd",
+  "tokenizer": "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k",
+  "tokenizer_files": {
+    ".gitattributes": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+    "README.md": "7bc549da70b28851ede0df1d6e1f30f46061aaff55b0349eceb622af3241ae0c",
+    "added_tokens.json": "8301006588f1bee825ad0e2ea54a3dadf08f80dceb1804e5c6a177bf0812d08c",
+    "special_tokens_map.json": "a875ea19f9f2494d7e643d9f2151a60eb927f31ba98f8adb96e4253100212a6a",
+    "tokenizer.model": "ac214401227404105817141c21c6693e3b17c878465a42765d2c345310e003ce",
+    "tokenizer_config.json": "df2af457275bb148c34709eb3d0238ce9ae5d2e412396e3b7e1fdeafc01ad560"
+  },
+  "cache_samples": [
+    12288,
+    16,
+    16
+  ],
+  "cache_target": {
+    "seq_length": 4096,
+    "seed": 1234,
+    "split": "998,2,0",
+    "mid_level_dataset_surplus": 0.005
+  },
+  "input_hashes": {
+    "dominant1.txt": "d9f84e855fda8ca57a49ac5d2513d87539472b455a3f2f86a2e7ae535fbfabed",
+    "dominant2.txt": "807519ef11176af9f2a420f96af99cc4d6fb20a032a7ec6e95a75842a0f7a2f0",
+    "expected.json": "4bb9a4827e24a0470a666a50e99339a46e4d653be9e46772324b8509e3515f92",
+    "vectors.json": "4130a2d8b6ccf3a58707ef1c3157bb88173e7ce10a1ee72e979ed6d2bf645aca"
+  },
+  "source_archives": {
+    "autoexp.tar.gz": "7b0ab23c1385c415255a806a95b61c504b8a4b402ed0e69b61b75ebda106435a",
+    "megatron.tar.gz": "f97074b9d8a2273693c54049c7fcb32c0ee58dcfa18c68920c8a3f3b5e4f2b42"
+  },
+  "jupiter_flag_roots": [
+    "/e/fscratch/e-sta-openeurollm/training_v2/training/collection/flag",
+    "/e/data1/datasets/playground/mmlaion/oellm/container/data/training/collection/flag"
+  ]
+}

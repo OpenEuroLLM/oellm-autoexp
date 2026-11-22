@@ -1,0 +1,36 @@
+{
+  "job": "49294507",
+  "result": "COMPLETED",
+  "exit_code": "0:0",
+  "elapsed_seconds": 152,
+  "nodes": 1,
+  "allocated_gpus": 4,
+  "allocated_gpu_hours": 0.1688888889,
+  "node": "as03r4b24",
+  "runtime": {
+    "BSC_B1_RUNTIME": "passed",
+    "world": 4,
+    "torch": "2.14.0a0+b2c75dd062.nv26.09",
+    "cuda": "13.4",
+    "transformer_engine": "2.19.0+5e52befd",
+    "device": "NVIDIA H100"
+  },
+  "scope": "Existing BSC x86_64 image, Slurm GPU binding, host-backed tmp, pinned Megatron import, FP8 forward/backward and NCCL collective",
+  "next_cache_job": "49294699",
+  "transfer": {
+    "mover": "transfer3.bsc.es",
+    "verified_benchmark_MBps": 141.07762165263668,
+    "parallel_transfers": 32,
+    "copy_started": true,
+    "state": "/e/fscratch/e-ext-2025e02-108/jitsev1/b1-bsc-anneal-seed-20261121-v2",
+    "requires_full_sha256_after_copy": true,
+    "copied_at_utc": "2026-11-21T12:43:57Z",
+    "verified_at_utc": "2026-11-21T12:50:06Z",
+    "bytes": 474561285787,
+    "files": 2050,
+    "sha256_verified": true,
+    "inventory_sha256": "fa5a965d0c88aa579e0c9938e4f305f286083c761ffe584061b6c25908b72033",
+    "manifest_sha256": "540b26c0f45bae25b3bf29aa9b1faf43e6f338a09dd8a717a86a6ca09803abc1",
+    "metadata_sha256": "0be54419fb617c9893b94a5166e0675adf9d31addee720884401a082a3722ccd"
+  }
+}

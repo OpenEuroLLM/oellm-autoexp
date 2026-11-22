@@ -1,0 +1,112 @@
+{
+  "date": "2026-11-22",
+  "site_timezone": "Europe/Madrid",
+  "login_user": "fzju647849",
+  "slurm_partition": "acc",
+  "slurm_account": "ehpc533",
+  "slurm_association_qos": [
+    "acc_debug",
+    "acc_ehpc",
+    "acc_interactive",
+    "acc_xehpc"
+  ],
+  "qos_limits": {
+    "acc_ehpc": {
+      "nodes": 100,
+      "cpus": 16000
+    },
+    "acc_xehpc": {
+      "nodes": 512,
+      "cpus": 81920
+    }
+  },
+  "operator_node_cap": 256,
+  "scheduler_checks": [
+    {
+      "nodes": 128,
+      "qos": "acc_ehpc",
+      "exit_code": 1,
+      "reason": "QOSMaxCpuPerJobLimit"
+    },
+    {
+      "nodes": 128,
+      "qos": "acc_xehpc",
+      "exit_code": 0,
+      "forecast_site_time": "2026-11-27T13:41:01"
+    },
+    {
+      "nodes": 256,
+      "qos": "acc_ehpc",
+      "exit_code": 1,
+      "reason": "QOSMaxCpuPerJobLimit"
+    },
+    {
+      "nodes": 256,
+      "qos": "acc_xehpc",
+      "exit_code": 0,
+      "forecast_site_time": "2026-11-28T04:19:47"
+    }
+  ],
+  "scheduler_check_scope": "sbatch --test-only, four H100s and 160 CPU threads per node, ten-minute limit, without reservation. Zero allocations submitted at 128 or 256 nodes.",
+  "inspected_run_settings": {
+    "ambitious_hd256_128n": {
+      "account": "cns144",
+      "qos": "acc_xehpc",
+      "tp_comm_overlap": false
+    },
+    "qwen35_conservative_pool": {
+      "account": "ehpc533",
+      "qos": "acc_xehpc",
+      "tp_comm_overlap": false
+    }
+  },
+  "original_smokes": [
+    {
+      "arm": "dominant1",
+      "job": "49295562",
+      "state": "FAILED",
+      "exit_code": "15:0",
+      "nodes": 64,
+      "elapsed_seconds": 70
+    },
+    {
+      "arm": "dominant2",
+      "job": "49295814",
+      "state": "FAILED",
+      "exit_code": "15:0",
+      "nodes": 64,
+      "elapsed_seconds": 85
+    }
+  ],
+  "original_failure": "Transformer Engine initialize_ub() aborted when asked to initialize communication and GEMM overlap with CUDA multicast. No training updates completed.",
+  "original_failed_acc_node_hours": 2.7555555556,
+  "bsc_launch_fix": "Remove --tp-comm-overlap while retaining tensor and pipeline parallelism, FP8, sequence parallelism and data-parallel overlap flags.",
+  "retry_runtime": "/gpfs/projects/ehpc533/users/fzju647849/runtime/b1-annealing-20261122",
+  "retry_controller": "oellm-b1-bsc-20261122",
+  "retry_cache_jobs": [
+    "49294699",
+    "49295564"
+  ],
+  "retry_additional_acc_node_hours_ceiling": 21.3333333333,
+  "validation_scope": "FP8 and NCCL runtime probe and both native cache builds passed. Corrected 64-node end-to-end training is tracked separately.",
+  "retry_smokes": [
+    {
+      "arm": "dominant1",
+      "job": "49305685",
+      "state_at_publication": "PENDING",
+      "nodes": 64,
+      "limit_minutes": 10,
+      "script_sha256": "675867e8b14c609331bdf8276073d83bc5dd978aede6e80b51f37497a5a35fb4"
+    },
+    {
+      "arm": "dominant2",
+      "job": "49305693",
+      "state_at_publication": "PENDING",
+      "nodes": 64,
+      "limit_minutes": 10,
+      "script_sha256": "a2ef88f008957f62eef804c2720bfaedae132f5f501b2a443d931ab80c4530a6"
+    }
+  ],
+  "training_source_revision": "dd112d92f99d175a8ab1701b57c8dea0363b53f2",
+  "release_base": "c8b69dfa0bd9edc6da5d10ea98e2d631ae2b14b9"
+}

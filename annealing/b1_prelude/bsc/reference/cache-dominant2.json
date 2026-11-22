@@ -1,0 +1,26 @@
+{
+  "job": "49295564",
+  "state": "COMPLETED",
+  "exit_code": "0:0",
+  "seconds": 931,
+  "nodes": 1,
+  "tres": "billing=160,cpu=160,gres/gpu=4,mem=500000M,node=1",
+  "limit_minutes": 30,
+  "cache_coverage": {
+    "train": {
+      "requested_samples": 12288,
+      "blend_samples": 12429,
+      "prefixes": 294,
+      "description": "/gpfs/projects/ehpc533/users/fzju647849/runtime/b1-annealing-20261121/arms/dominant2/cache/f72b929ba0ea868dab8811291af721c6-BlendedDataset-train-description.txt",
+      "sha256": "9a07e685303fbddc03d9dedba497a0855c5f20971f493fc2e7fcaa97c1e9f408"
+    },
+    "valid": {
+      "requested_samples": 16,
+      "blend_samples": 294,
+      "prefixes": 294,
+      "description": "/gpfs/projects/ehpc533/users/fzju647849/runtime/b1-annealing-20261121/arms/dominant2/cache/373e480ad9b469b620e7ed8968932b4e-BlendedDataset-valid-description.txt",
+      "sha256": "f38036a93873672286186d907e8ad32be8e2ac6cc40d5ff781441484bbc477ef"
+    }
+  },
+  "checker": "cache dir : /gpfs/projects/ehpc533/users/fzju647849/runtime/b1-annealing-20261121/arms/dominant2/cache\nprefixes  : 590\nhealthy   : 590\nBAD       : 0\n"
+}
