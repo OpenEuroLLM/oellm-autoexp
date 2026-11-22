@@ -24,12 +24,14 @@ aux:
   bundle_name: v4b_p2_09a2a1c4
   bundle_out: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_bundles/${aux.bundle_name}
   bundle_world: 1024  # the run's world size (data-parallel size and sample counts follow from it)
+  bundle_iteration: 51000  # a step of the run's phase (phase 2 from 23691: its dataset sizes)
 
 backend:
   env:
     CDS_BUNDLE_STEP: ${aux.bundle_step}
     CDS_BUNDLE_OUT: ${aux.bundle_out}
     CDS_BUNDLE_WORLD: "${aux.bundle_world}"
+    CDS_BUNDLE_ITERATION: "${aux.bundle_iteration}"
 
 job:
   est_step_time_s: 2400

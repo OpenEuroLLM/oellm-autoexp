@@ -195,8 +195,10 @@ EOF2
             [ -s "$CDS_BUNDLE_OUT.args" ] || { log "no Megatron arguments in $CDS_BUNDLE_STEP"; exit 7; }
             eval "set -- $(tr '\n' ' ' < "$CDS_BUNDLE_OUT.args")"
             BLOG="$CDS_OUT/logs/bundle_$(basename "$CDS_BUNDLE_OUT").log"
-            python "$ROOT/submodules/Megatron-LM/tools/prepare_cache.py" "$@" \
-                --prepare-cache-world-size "$CDS_BUNDLE_WORLD" --write-index-bundle "$CDS_BUNDLE_OUT" 2>&1 | tee "$BLOG"
+            # validate_args checks the training environment (FSDP refuses CUDA_DEVICE_MAX_CONNECTIONS=1)
+            env -u CUDA_DEVICE_MAX_CONNECTIONS python "$ROOT/submodules/Megatron-LM/tools/prepare_cache.py" "$@" \
+                --prepare-cache-world-size "$CDS_BUNDLE_WORLD" --prepare-cache-iteration "${CDS_BUNDLE_ITERATION:-$CDS_FROM}" \
+                --write-index-bundle "$CDS_BUNDLE_OUT" 2>&1 | tee "$BLOG"
             [ "${PIPESTATUS[0]}" = 0 ] || { log "bundle FAILED"; exit 8; }
             grep -q "train: BlendedDataset $CDS_BLEND_MD5" "$BLOG" \
                 || { log "bundle: the training blend is not $CDS_BLEND_MD5 (other arguments?)"; exit 9; }
