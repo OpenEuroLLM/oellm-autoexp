@@ -76,6 +76,16 @@ case $task in
   real_inf128k|real_inf256k) L=$([ $task = real_inf128k ] && echo 131072 || echo 262144)
         python scripts/korbi/campaign_midtraining/long_realistic_eval.py --model "$model" \
           --data "$D/long_evals" --out "$out" --tasks en_mc en_qa code_debug --max-len $L --n 50 ;;
+  # 3x the samples where the default counts were too noisy to separate arms (2026-11-22): InfiniteBench 150 per task,
+  # key-value retrieval 180 per length at 128k / 256k and 90 at 512k / 1M (passkey saturates, vt is ~0 at s3 scale)
+  real_inf128k_x3|real_inf256k_x3) L=$([ $task = real_inf128k_x3 ] && echo 131072 || echo 262144)
+        python scripts/korbi/campaign_midtraining/long_realistic_eval.py --model "$model" \
+          --data "$D/long_evals" --out "$out" --tasks en_mc en_qa code_debug --max-len $L --n 150 ;;
+  kv_long_x3) python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths 131072 262144 --n 180 --tasks kv ;;
+  kv_512k_x3|kv_1m_x3) L=$([ $task = kv_512k_x3 ] && echo 524288 || echo 1048576)
+        python scripts/korbi/campaign_midtraining/retrieval_gen.py --model "$model" --raw "$DS/raw.jsonl" \
+          --out "$out" --lengths $L --n 90 --tasks kv ;;
   *) echo "unknown task $task" >&2; exit 2 ;;
 esac
 echo "[t16_long_evals] $arm $task done"

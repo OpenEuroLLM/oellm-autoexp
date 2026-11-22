@@ -1,0 +1,46 @@
+# @package _global_
+# Megatron side of the t23 parity check: the two per-token-trained t18_s3_sparse_ablate arms at step 3000 (dlsa_tok:
+# per-token D-LSA, latent maps, KL every 64; pmp_tok: per-token page_maxpool, token backend) on the seeded 32-sample
+# long_64k subset at 64k, as trained -- for the HF exports' paired check (t22_hf_parity with EXPORT_SUITE
+# t18_s3_sparse_ablate / EXPORT_PREFIX t18b_s3 / step 3000). Load, evaluate, exit; nothing saved.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t23_megatron_fixedvalid_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t22_megatron_fixedvalid_mn5
+  - _self_
+
+aux:
+  suite: t23_megatron_fixedvalid
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t18_s3_sparse_ablate/${aux.arm}/ckpt
+    ckpt_step: 3000
+    train_iters: 3000
+
+job:
+  name: t23_megatron_fixedvalid_${aux.arm}
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: dlsa_tok
+          backend.megatron.page_sparse_selector: lsa
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_lsa_pool: 4
+          backend.megatron.page_sparse_lsa_block: 128
+          backend.megatron.page_sparse_lsa_buckets: 8
+          backend.megatron.page_sparse_lsa_visibility: block
+          backend.megatron.page_sparse_lsa_latent: true
+          backend.megatron.page_sparse_lsa_kl_every: 64
+          backend.megatron.page_sparse_indexer_loss_coeff: 0.01
+          backend.megatron.page_sparse_selector_adam: true
+        - aux.arm: pmp_tok
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_backend: token
