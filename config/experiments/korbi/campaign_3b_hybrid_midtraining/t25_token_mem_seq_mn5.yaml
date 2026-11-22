@@ -15,12 +15,7 @@ aux:
   spans: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/cds_spans_52000_4096.json
   tag: ""
   tests: ""
-  bench: >-
-    mkdir -p ${aux.out} && cd submodules/Megatron-LM
-    && for v in tok sb16 dense; do python ../../scripts/korbi/campaign_midtraining/token_layer_seq_bench.py
-    --spans ${aux.spans} --variant $v --out ${aux.out}/${aux.tag}$v.json || echo "variant $v failed"; done
-    && python ../../scripts/korbi/campaign_midtraining/token_layer_seq_bench.py --spans ${aux.spans} --variant tok
-    --rough --out ${aux.out}/${aux.tag}tok_rough.json || echo "tok rough failed"
+  bench: "cd submodules/Megatron-LM && bash ../../scripts/korbi/campaign_midtraining/t25_run.sh ${aux.spans} ${aux.out} ${aux.tag}"
 
 job:
   name: campaign_mid_${aux.name}${aux.tag}
