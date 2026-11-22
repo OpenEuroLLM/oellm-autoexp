@@ -1,0 +1,31 @@
+# @package _global_
+# Validation of the per-token fixes on 128 nodes (2026-11-22, before the main-run restart): t24's pmp_tok setup (the v4b
+# main run's cross-document config from the pinned rolling save 51500, per-token page_maxpool on the rowmask kernel,
+# 128 nodes, gbs 1024) with Megatron 474345e52 -- constant per-token tensor sizes (TOKEN_FIXED_PAD), bucketed fallback,
+# dk/dv 16-row chunks with skips, longest-first launch order, one-copy THD glue -- 200 steps to 51700. Compare with t24
+# pmp_tok (old code: 34.2 s median, mem 0.81) and the main run's dense losses at 51501-51700; watch the allocator's
+# "expandable_segments: memory mapping failed" warnings and the mem metric over the steps.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t26_v4b_cds_tok_fixed_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t24_v4b_cds_sparse_branch_c136_mn5
+  - _self_
+
+aux:
+  suite: t26_v4b_cds_tok_fixed
+  only: [pmp_tok]
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t26_v4b_cds_tok_fixed
+
+backend:
+  megatron:
+    exit_interval: 51700
+
+job:
+  name: t26_v4b_cds_tok_fixed_${aux.arm}
+  est_steps: 200
+  metadata:
+    pool_priority: 95
+
+slurm:
+  sbatch:
+    time: "03:30:00"
