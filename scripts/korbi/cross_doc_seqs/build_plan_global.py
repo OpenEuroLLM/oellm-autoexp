@@ -36,7 +36,7 @@ from cds_data import load_stream  # noqa: E402
 
 
 def gdir(a) -> str:
-    return os.path.join(a.out, "global", a.name)
+    return a.work or os.path.join(a.out, "global", a.name)
 
 
 def window_chunks(a) -> list:
@@ -420,6 +420,7 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--emb", required=True)
     ap.add_argument("--name", required=True, help="plan name (<out>/plan/<name>, work dir <out>/global/<name>)")
+    ap.add_argument("--work", default=None, help="work dir of the stages (default <out>/global/<name>; ~310 GB per 10k steps)")
     ap.add_argument("--from-ckpt", dest="w0", type=int, required=True)
     ap.add_argument("--steps", type=int, required=True)
     ap.add_argument("--dim", type=int, default=None, help="Matryoshka truncation of the stored vectors")

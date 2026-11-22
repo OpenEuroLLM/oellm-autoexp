@@ -11,6 +11,7 @@
 #            gorder (all GPUs, one bucket each) -> gassemble (node 0); plan name CDS_PLAN_NAME
 #   checkplan node 0, once every window's plan exists: check_plan.py -- the plans through Megatron's
 #            loader on the run's real BlendedDataset (geometry, coverage, token conservation, all modes)
+#   cleanglobal node 0: remove the global work dir (CDS_GLOBAL_WORK) after a passed checkplan
 #   bundle   node 0: the main run's dataset index bundle (Megatron --dataloader-index-bundle): its exact
 #            Megatron arguments from CDS_BUNDLE_STEP (a pool step.sh of the run) -> tools/prepare_cache.py
 #            --write-index-bundle CDS_BUNDLE_OUT at world size CDS_BUNDLE_WORLD; fails unless the training
@@ -145,9 +146,9 @@ for stage in ${STAGES//,/ }; do
             "$D" "$CDS_OUT" "$EMB" "$PLAN_NAME" "$CDS_FROM" "$CDS_STEPS" "$WINDOW" "$PLAN_ARGS"
         ;;
     global)
+        GDIR=${CDS_GLOBAL_WORK:-$CDS_OUT/global/$PLAN_NAME}
         G=(python "$D/build_plan_global.py" --out "$CDS_OUT" --emb "$EMB" --name "$PLAN_NAME" --from-ckpt "$CDS_FROM"
-           --steps "$CDS_STEPS" $PLAN_ARGS)
-        GDIR="$CDS_OUT/global/$PLAN_NAME"
+           --steps "$CDS_STEPS" --work "$GDIR" $PLAN_ARGS)
         W=$((NNODES * GPUS))
         if [ "$NODE" = 0 ]; then
             CUDA_VISIBLE_DEVICES=0 "${G[@]}" --stage centroids --buckets "$W" --device cuda 2>&1 | tee "$CDS_OUT/logs/g_${PLAN_NAME}_centroids.log"
@@ -182,6 +183,17 @@ EOF2
             python "$D/check_plan.py" --out "$CDS_OUT" --plan-name "$PLAN_NAME" --data-cache-path "$CDS_DATA_CACHE" \
                 --data-args-path "$CDS_DATA_ARGS" --tokenizer "$CDS_TOKENIZER" 2>&1 | tee "$CDS_OUT/logs/checkplan_$PLAN_NAME.log"
             [ "${PIPESTATUS[0]}" = 0 ] || { log "checkplan FAILED"; exit 5; }
+        fi
+        ;;
+    cleanglobal)
+        # node 0: the global stages' work dir goes once the plan exists and its checkplan log has 0 failures
+        if [ "$NODE" = 0 ]; then
+            GDIR=${CDS_GLOBAL_WORK:-$CDS_OUT/global/$PLAN_NAME}
+            if grep -q "check_plan $PLAN_NAME: 0 failures" "$CDS_OUT/logs/checkplan_$PLAN_NAME.log" 2>/dev/null; then
+                rm -rf "$GDIR" && log "removed work dir $GDIR"
+            else
+                log "cleanglobal: checkplan of $PLAN_NAME did not pass, keeping $GDIR"; exit 11
+            fi
         fi
         ;;
     bundle)
