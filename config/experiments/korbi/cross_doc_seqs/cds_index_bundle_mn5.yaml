@@ -1,0 +1,42 @@
+# @package _global_
+# The v4b main run's dataset index bundle (Megatron --dataloader-index-bundle, megatron/core/datasets/
+# index_bundle.py), built ahead on one node: every cached index the run's datasets load, byte for byte, in one
+# file -- a 256-node start then opens one file per rank instead of ~3,200 and skips the rank-0-alone pass.
+# The data order is unchanged (the same arrays reach the same datasets); the job checks it before it succeeds:
+# byte equality per array, the datasets built from the bundle alone == those built from the cache files
+# (lengths, blend indices, sample tokens), and the training blend == aux.blend_md5.
+#
+# The Megatron arguments are the run's own: aux.bundle_step is a pool step.sh of the run (its launch line).
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state \
+#       --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_c136 \
+#       --config-name experiments/korbi/cross_doc_seqs/cds_index_bundle_mn5 \
+#       aux.bundle_step=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264/runs/<run>/step.sh \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+# Then the run's config gets backend.megatron.dataloader_index_bundle: ${aux.bundle_out} (a re-enqueue).
+defaults:
+  - cds_pipeline_mn5
+  - _self_
+
+aux:
+  name: cds_bundle_${aux.bundle_name}
+  stages: bundle
+  bundle_step: ???
+  bundle_name: v4b_p2_09a2a1c4
+  bundle_out: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_bundles/${aux.bundle_name}
+  bundle_world: 1024  # the run's world size (data-parallel size and sample counts follow from it)
+
+backend:
+  env:
+    CDS_BUNDLE_STEP: ${aux.bundle_step}
+    CDS_BUNDLE_OUT: ${aux.bundle_out}
+    CDS_BUNDLE_WORLD: "${aux.bundle_world}"
+
+job:
+  est_step_time_s: 2400
+  metadata:
+    pool_priority: 60  # ahead of the embedding chunks (40): one node, next free
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"

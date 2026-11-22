@@ -11,6 +11,10 @@
 #            gorder (all GPUs, one bucket each) -> gassemble (node 0); plan name CDS_PLAN_NAME
 #   checkplan node 0, once every window's plan exists: check_plan.py -- the plans through Megatron's
 #            loader on the run's real BlendedDataset (geometry, coverage, token conservation, all modes)
+#   bundle   node 0: the main run's dataset index bundle (Megatron --dataloader-index-bundle): its exact
+#            Megatron arguments from CDS_BUNDLE_STEP (a pool step.sh of the run) -> tools/prepare_cache.py
+#            --write-index-bundle CDS_BUNDLE_OUT at world size CDS_BUNDLE_WORLD; fails unless the training
+#            blend is CDS_BLEND_MD5 and the bundle check (byte equality, datasets equal) passed
 # Between stages every node waits for the previous stage's files (file barrier on GPFS).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -178,6 +182,26 @@ EOF2
             python "$D/check_plan.py" --out "$CDS_OUT" --plan-name "$PLAN_NAME" --data-cache-path "$CDS_DATA_CACHE" \
                 --data-args-path "$CDS_DATA_ARGS" --tokenizer "$CDS_TOKENIZER" 2>&1 | tee "$CDS_OUT/logs/checkplan_$PLAN_NAME.log"
             [ "${PIPESTATUS[0]}" = 0 ] || { log "checkplan FAILED"; exit 5; }
+        fi
+        ;;
+    bundle)
+        : "${CDS_BUNDLE_STEP:?}" "${CDS_BUNDLE_OUT:?}" "${CDS_BUNDLE_WORLD:?}" "${CDS_BLEND_MD5:?}"
+        if [ "$NODE" = 0 ]; then
+            mkdir -p "$(dirname "$CDS_BUNDLE_OUT")"
+            # the Megatron arguments of the run's launch line (inside the step's quoted command: the last
+            # line ends in a quote), shell-quoted as the step passes them
+            awk '/pretrain_(hybrid|gpt)\.py/{f=1; next} f{print; if ($0 !~ /\\$/) exit}' "$CDS_BUNDLE_STEP" \
+                | sed -e 's/\\$//' -e "\$ s/'\$//" > "$CDS_BUNDLE_OUT.args"
+            [ -s "$CDS_BUNDLE_OUT.args" ] || { log "no Megatron arguments in $CDS_BUNDLE_STEP"; exit 7; }
+            eval "set -- $(tr '\n' ' ' < "$CDS_BUNDLE_OUT.args")"
+            BLOG="$CDS_OUT/logs/bundle_$(basename "$CDS_BUNDLE_OUT").log"
+            python "$ROOT/submodules/Megatron-LM/tools/prepare_cache.py" "$@" \
+                --prepare-cache-world-size "$CDS_BUNDLE_WORLD" --write-index-bundle "$CDS_BUNDLE_OUT" 2>&1 | tee "$BLOG"
+            [ "${PIPESTATUS[0]}" = 0 ] || { log "bundle FAILED"; exit 8; }
+            grep -q "train: BlendedDataset $CDS_BLEND_MD5" "$BLOG" \
+                || { log "bundle: the training blend is not $CDS_BLEND_MD5 (other arguments?)"; exit 9; }
+            grep -q "index bundle check passed" "$BLOG" || { log "bundle check missing"; exit 10; }
+            log "bundle $CDS_BUNDLE_OUT ready"
         fi
         ;;
     *) log "unknown stage $stage"; exit 2 ;;
