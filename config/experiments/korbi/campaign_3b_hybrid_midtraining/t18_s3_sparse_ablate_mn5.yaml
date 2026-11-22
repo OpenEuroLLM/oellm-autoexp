@@ -148,6 +148,18 @@ sweep:
           backend.megatron.page_sparse_select_block: 1
           backend.megatron.page_sparse_block_candidates: 128
           backend.megatron.page_sparse_backend: rowmask
+        # Quest (max + min pooling of the keys within a page; a page's score is the upper bound
+        # sum_d max(q_d kmax_d, q_d kmin_d) over its KV group's query heads) vs page_maxpool's InfLLM-v2 windows
+        # (user 2026-11-22): block-wise (vs page_maxpool_pg +0.015) and per token on the same exact token backend as
+        # pmp_tok (+0.0019)
+        - aux.arm: quest_pg
+          backend.megatron.page_sparse_selector: quest
+          backend.megatron.page_sparse_per_group: true
+        - aux.arm: quest_tok
+          backend.megatron.page_sparse_selector: quest
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_backend: token
         - aux.arm: pmp_tok  # pure per-token selection (each query its own top 32 of all pages): tok40's upper bound
           backend.megatron.page_sparse_select_block: 1
           backend.megatron.page_sparse_backend: token
