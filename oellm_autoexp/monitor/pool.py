@@ -211,6 +211,11 @@ class PoolHostConfig:
     # detected requeue re-selects: the promoted host is parked again and the parked host with
     # the highest unparked priority takes its place.
     successor_reselect: bool = True
+    # Keep the unparked candidate the best one even when no submit time changed: a requeue that
+    # happened before the monitor saw the job (its baseline) is invisible to the change test,
+    # so every poll compares the promoted host with the parked ones and switches on a clear
+    # margin (priority points) -- no flapping on noise.
+    successor_rebalance_margin: float = 2000.0
     # reuse a `--test-only` estimate for this long
     successor_est_ttl_s: float = 240.0
     # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
@@ -2537,6 +2542,39 @@ class PoolManager:
         if cfg.successor_reselect:
             self._reselect_candidate(layout, cfg, queued, "a requeue reset a host's queue age")
 
+    def _rebalance_candidate(
+        self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView]
+    ) -> None:
+        """Switch the unparked host when another parked one is clearly better
+        by live priority.
+
+        Covers the case the submit-time comparison cannot see: the requeue happened before the
+        monitor's first poll (baseline), so nothing "changed" while it watched -- but the
+        promoted host may already be the worst candidate (JUPITER 2026-11-22 07:27: host221 was
+        requeued before the monitor restarted at 08:41).
+        """
+        if cfg.successor_nice <= 0 or len(queued) < 2:
+            return
+        promoted = [h for h in queued if (layout.host_dir(h.hid) / "promoted").exists()]
+        parked = [h for h in queued if h not in promoted]
+        if len(promoted) != 1 or not parked:
+            return
+        prio = self._live_priorities(queued)
+        if not prio:
+            return
+
+        def eff(host: HostView) -> float:
+            p, n = prio.get(str(host.record.runtime.runtime_job_id), (0.0, 0))
+            return float(p) + float(n)
+
+        cur = promoted[0]
+        best = max(parked, key=eff)
+        gain = eff(best) - eff(cur)
+        if gain > cfg.successor_rebalance_margin:
+            self._reselect_candidate(
+                layout, cfg, queued, f"{best.hid} is {gain:.0f} priority points better"
+            )
+
     def _reselect_candidate(
         self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView], why: str
     ) -> None:
@@ -2713,6 +2751,7 @@ class PoolManager:
         # nothing trains (training down, run waiting for a host): that is exactly when the
         # candidates queue up and a requeue changes which one should be unparked.
         self._detect_requeues(layout, cfg, state, queued)
+        self._rebalance_candidate(layout, cfg, queued)
         run_hosts = [h for h in running if h.hid in busy]
         if not run_hosts and busy and running:
             # a handover: the run is leaving a retiring host for the newest live one
