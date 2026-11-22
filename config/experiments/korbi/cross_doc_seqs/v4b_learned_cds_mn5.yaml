@@ -10,15 +10,20 @@
 # Megatron >= 88efc4279 (packing plan + guards). Rendered Megatron arguments == v4b_learned_mn5's at the same
 # commit + these three flags (checked by dry run, 2026-11-21).
 #
-# Switching (only with the user's go): pool_ctl cancel the running v4b entry (graceful save), then from a fresh
-# snapshot: ... --pool .../mn5_pool_p264 --config-name experiments/korbi/cross_doc_seqs/v4b_learned_cds_mn5 ...
-# The plans must cover the checkpoint the run resumes from (the run refuses otherwise).
+# Switching (only with the user's go): the plan is ONE window from checkpoint 51,000 to 61,000 (user 2026-11-22), so
+# the run must resume from EXACTLY checkpoint 51,000 -- steps after 51,000 already trained without the plan would
+# otherwise lose their documents to it. After the 51,000 save: pool_ctl cancel the running v4b entry (graceful stop
+# save at 51,000 + k), set that stop save aside and point ckpt/latest_checkpointed_iteration.txt at 51000 (as at the
+# 25k restart), then from a fresh snapshot: ... --pool .../mn5_pool_p264 --config-name
+# experiments/korbi/cross_doc_seqs/v4b_learned_cds_mn5 ... The run refuses to start on an unplanned step and saves +
+# exits at 61,000 (plan end).
 defaults:
   - ../recall_surgery/v4b_learned_mn5
   - _self_
 
 aux:
-  cds_plans: /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e256_w500
+  # single window 51,000-61,000 (build_plan_global.py); q3e256_w500 holds the earlier 500-step windows
+  cds_plans: /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e256_g51000
 
 backend:
   megatron:
