@@ -1,0 +1,28 @@
+# @package _global_
+# t25c (2026-11-22): the constant-size per-token layout (page_sparse.TOKEN_FIXED_PAD = 8192: every per-token tensor
+# the same size every step) vs the bucketed one on one H100 at v4b shapes over 40 real cross-document layouts in one
+# process: reserved memory flat after warm-up?, time; dense as the reference.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t25c_token_fixed
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t25c_token_fixed
+  spans: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/cds_spans_52000_4096.json
+  tag: ""
+  tests: ""
+  bench: "cd submodules/Megatron-LM && bash ../../scripts/korbi/campaign_midtraining/t25_fixed.sh ${aux.spans} ${aux.out}"
+
+job:
+  name: campaign_mid_${aux.name}${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}${aux.tag}"
+  est_step_time_s: 2400
+  array_group: null
+  metadata:
+    pool_priority: 70
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}

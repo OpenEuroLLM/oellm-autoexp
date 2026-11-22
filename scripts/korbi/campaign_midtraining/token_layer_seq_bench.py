@@ -27,6 +27,7 @@ def main() -> None:
     ap.add_argument("--long", type=int, default=10)
     ap.add_argument("--passes", type=int, default=2)
     ap.add_argument("--rough", action="store_true")
+    ap.add_argument("--fixed-pad", type=int, default=None, help="page_sparse.TOKEN_FIXED_PAD (0: bucketed path)")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
@@ -55,6 +56,10 @@ def main() -> None:
     pick += [i for i in longest if i not in pick]
 
     att = None
+    if a.fixed_pad is not None:
+        from megatron.core.transformer.experimental_attention_variant import page_sparse as ps_
+
+        ps_.TOKEN_FIXED_PAD = a.fixed_pad
     if a.variant != "dense":
         from megatron.core.transformer.experimental_attention_variant.page_sparse_attention import (
             PageSparseCoreAttention,
@@ -116,7 +121,10 @@ def main() -> None:
             print(json.dumps({k_: (round(v_, 3) if isinstance(v_, float) else v_) for k_, v_ in row.items()}), flush=True)
             del q, k, v, o
     last = [r for r in rows if r["p"] == a.passes - 1]
-    summ = dict(variant=a.variant, rough=a.rough,
+    warm = [r for r in rows if r["p"] > 0] or rows[len(rows) // 2:]
+    summ = dict(variant=a.variant, rough=a.rough, fixed_pad=a.fixed_pad,
+                reserved_gb_after_warmup_min=min(r["reserved_gb"] for r in warm),
+                reserved_gb_after_warmup_max=max(r["reserved_gb"] for r in warm),
                 ms_mean=sum(r["fwd_ms"] + r["bwd_ms"] for r in last) / len(last),
                 ms_max=max(r["fwd_ms"] + r["bwd_ms"] for r in last),
                 peak_gb_max=max(r["peak_gb"] for r in rows), reserved_gb_end=rows[-1]["reserved_gb"],
