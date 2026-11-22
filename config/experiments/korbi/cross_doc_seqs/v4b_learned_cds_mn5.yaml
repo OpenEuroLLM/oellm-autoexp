@@ -30,3 +30,8 @@ backend:
     packing_plan_path: ["${aux.cds_plans}"]
     packing_plan_boundaries: group
     packing_plan_at_end: exit
+    # the run's cached dataset indices in one file (cds_index_bundle_mn5, checked 2026-11-22: 3,211 indices,
+    # byte-identical, datasets from the bundle == from the cache files, blend 09a2a1c4): one file per rank
+    # instead of ~3,200 at the start, no rank-0-alone pass. Same data order; a missing index loads from its
+    # file. Needs Megatron >= f2f6b0835.
+    dataloader_index_bundle: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_bundles/v4b_p2_09a2a1c4
