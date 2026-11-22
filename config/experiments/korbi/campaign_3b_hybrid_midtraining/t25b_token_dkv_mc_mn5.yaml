@@ -1,0 +1,28 @@
+# @package _global_
+# t25b (2026-11-22): the per-token dk/dv kernel's row-chunk size (128 = no chunking; smaller chunks without a listed
+# query are skipped, Megatron after 5d76b00c0) on one H100 at v4b shapes over the real cross-document layouts, smooth
+# and scattered inputs; with the bucketed packed lengths and longest-first launch order.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t25b_token_dkv_mc
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t25b_token_dkv_mc
+  spans: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/cds_spans_52000_4096.json
+  tag: ""
+  tests: ""
+  bench: "cd submodules/Megatron-LM && bash ../../scripts/korbi/campaign_midtraining/t25_mc.sh ${aux.spans} ${aux.out}"
+
+job:
+  name: campaign_mid_${aux.name}${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}${aux.tag}"
+  est_step_time_s: 2400
+  array_group: null
+  metadata:
+    pool_priority: 70
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
