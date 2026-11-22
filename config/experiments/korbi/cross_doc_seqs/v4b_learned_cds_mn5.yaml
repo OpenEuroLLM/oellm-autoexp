@@ -22,12 +22,14 @@ defaults:
   - _self_
 
 aux:
-  # single window 51,000-61,000 (build_plan_global.py); q3e256_w500 holds the earlier 500-step windows
+  # single windows (build_plan_global.py), contiguous: 51,000-61,000 (q3e256) and 61,000-71,000 (2026-11-22, q3e128mix:
+  # q3e256 61k-63k + q3e128 63k+, read at 128 dims; checkplan 0 failures); q3e256_w500 holds the earlier 500-step windows
   cds_plans: /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e256_g51000
+  cds_plans_next: /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g61000
 
 backend:
   megatron:
-    packing_plan_path: ["${aux.cds_plans}"]
+    packing_plan_path: ["${aux.cds_plans}", "${aux.cds_plans_next}"]
     packing_plan_boundaries: group
     packing_plan_at_end: exit
     # the run's cached dataset indices in one file (cds_index_bundle_mn5, checked 2026-11-22: 3,211 indices,
