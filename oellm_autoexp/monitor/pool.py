@@ -203,6 +203,14 @@ class PoolHostConfig:
     # existing job (squeue --start N/A, StartTime unknown) and the peek can start the host early
     # (probe 2026-11-20 14:02: 590 idle nodes, priority 56k -> 356k and back, no estimate).
     successor_probe_interval_s: float = 1800.0
+    # A SLURM requeue (prologue health check failure, node failure) rewrites the job's
+    # SubmitTime and therefore RESETS its queue age -- the asset a parked successor is meant to
+    # build (JUPITER 2026-11-21: host216 at 04:23, host219 at 18:06, both after a prologue
+    # failure; their unparked priority fell ~5k below an untouched host). So the candidate is
+    # chosen by its LIVE priority (sprio prio + nice), not by the pool's submit time, and a
+    # detected requeue re-selects: the promoted host is parked again and the parked host with
+    # the highest unparked priority takes its place.
+    successor_reselect: bool = True
     # reuse a `--test-only` estimate for this long
     successor_est_ttl_s: float = 240.0
     # Hold the pool's runs (`pool_ctl set hold_runs=true`): nothing is assigned, a host with
@@ -2431,6 +2439,138 @@ class PoolManager:
             cfg.successor_nice,
         )
 
+    # set by tests; defaults: sprio / squeue calls for this pool's hosts
+    _sprio_map = None
+    _submit_time = None
+
+    def _live_priorities(self, hosts: list[HostView]) -> dict[str, tuple[float, int]]:
+        """Job id -> (priority, nice) from SLURM, for choosing the best
+        candidate.
+
+        The pool's own submit times cannot answer this: a requeue rewrites SubmitTime, so a
+        host created first may carry the least age. `sprio` is one call for all of them.
+        """
+        ids = [h.record.runtime.runtime_job_id for h in hosts if h.record.runtime.runtime_job_id]
+        if not ids:
+            return {}
+        if self._sprio_map is not None:
+            return self._sprio_map(ids)
+        out: dict[str, tuple[float, int]] = {}
+        try:
+            proc = subprocess.run(
+                ["sprio", "-h", "-o", "%i %Y %N", "-j", ",".join(str(i) for i in ids)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            LOGGER.warning("[pool] sprio failed: %s", exc)
+            return out
+        for line in proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            try:
+                out[parts[0]] = (float(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+            except ValueError:
+                continue
+        return out
+
+    def _best_candidate(self, layout: PoolLayout, hosts: list[HostView]) -> HostView | None:
+        """The queued host that would start soonest if unparked (highest prio +
+        nice)."""
+        cands = [h for h in hosts if h.record.runtime.runtime_job_id]
+        if not cands:
+            return None
+        prio = self._live_priorities(cands)
+        if not prio:
+            return min(cands, key=lambda h: float(h.record.runtime.start_ts or 0.0))
+        return max(
+            cands,
+            key=lambda h: sum(prio.get(str(h.record.runtime.runtime_job_id), (0.0, 0))),
+        )
+
+    def _detect_requeues(
+        self, layout: PoolLayout, cfg: PoolHostConfig, state: dict, queued: list[HostView]
+    ) -> None:
+        """Warn when SLURM requeued a host (its queue age was reset) and re-
+        select."""
+        if cfg.successor_nice <= 0 or not queued:
+            return
+        adm = state.setdefault("admission", {})
+        seen = adm.setdefault("submit_ts", {})
+        changed = []
+        for host in queued:
+            jid = str(host.record.runtime.runtime_job_id or "")
+            if not jid:
+                continue
+            if self._submit_time is not None:
+                submit = str(self._submit_time(jid) or "").strip()
+            else:
+                try:
+                    proc = subprocess.run(
+                        ["squeue", "-h", "-j", jid, "-o", "%V"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    submit = (proc.stdout or "").strip()
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+            if not submit:
+                continue
+            if jid in seen and seen[jid] != submit:
+                changed.append((host, seen[jid], submit))
+            seen[jid] = submit
+        if not changed:
+            return
+        for host, old_ts, new_ts in changed:
+            LOGGER.warning(
+                "[pool %s] host %s (job %s) was requeued by SLURM: submit time %s -> %s, its "
+                "queue age was RESET",
+                cfg.name,
+                host.hid,
+                host.record.runtime.runtime_job_id,
+                old_ts,
+                new_ts,
+            )
+        if cfg.successor_reselect:
+            self._reselect_candidate(layout, cfg, queued, "a requeue reset a host's queue age")
+
+    def _reselect_candidate(
+        self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView], why: str
+    ) -> None:
+        """Park the promoted host and unpark the parked one with the best live
+        priority."""
+        if cfg.successor_nice <= 0 or not queued:
+            return
+        promoted = [h for h in queued if (layout.host_dir(h.hid) / "promoted").exists()]
+        parked = [h for h in queued if h not in promoted]
+        if not parked:
+            return
+        best = self._best_candidate(layout, parked)
+        if best is None:
+            return
+        for host in promoted:
+            jid = host.record.runtime.runtime_job_id
+            if not jid or self._slurm_nice is None:
+                continue
+            try:
+                self._slurm_nice(jid, int(cfg.successor_nice))
+            except Exception as exc:  # pragma: no cover - best effort
+                LOGGER.warning("[pool] could not re-park host %s: %s", host.hid, exc)
+                continue
+            (layout.host_dir(host.hid) / "promoted").unlink(missing_ok=True)
+            LOGGER.info(
+                "[pool %s] re-parked host %s (%s): nice 0 -> %d",
+                cfg.name,
+                host.hid,
+                why,
+                int(cfg.successor_nice),
+            )
+        LOGGER.info("[pool %s] unparking the best-priority successor (%s)", cfg.name, why)
+        self._promote_host(layout, cfg, best)
+
     def _promote_one(
         self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView], why: str
     ) -> None:
@@ -2446,12 +2586,11 @@ class PoolManager:
             return
         if any((layout.host_dir(h.hid) / "promoted").exists() for h in queued):
             return  # a candidate is already unparked
-        parked = [h for h in queued if h.record.runtime.runtime_job_id]
-        if not parked:
+        best = self._best_candidate(layout, queued)
+        if best is None:
             return
-        oldest = min(parked, key=lambda h: float(h.record.runtime.start_ts or 0.0))
         LOGGER.info("[pool %s] unparking a successor (%s)", cfg.name, why)
-        self._promote_host(layout, cfg, oldest)
+        self._promote_host(layout, cfg, best)
 
     def _promote_for_capacity(
         self, layout: PoolLayout, cfg: PoolHostConfig, queued: list[HostView]
@@ -2590,6 +2729,7 @@ class PoolManager:
                 time.strftime("%H:%M:%S", time.localtime(retry_after)),
             )
             return False
+        self._detect_requeues(layout, cfg, state, queued)
         est = self._start_estimate(layout, cfg, state, account, now)
         adm["last_est"] = est
         remaining = min((h.remaining_s(now) for h in run_hosts), default=None)

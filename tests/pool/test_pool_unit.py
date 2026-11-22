@@ -1583,3 +1583,66 @@ def test_probe_leaves_successors_parked_when_the_estimate_is_too_early(env, monk
     env.poll()
     promoted = [h for h in parked if env.fake._nice.get(h.runtime.runtime_job_id) == 0]
     assert not promoted, "a successor was unparked although it would start inside the block"
+
+
+def test_candidate_is_chosen_by_live_priority_not_pool_submit_time(env, monkeypatch):
+    """A SLURM requeue rewrites SubmitTime and resets queue age, so the host
+    created first may carry the least age (JUPITER 2026-11-21: host216,
+    host219).
+
+    The unpark goes to the host with the highest (priority + nice), not
+    to the oldest pool record.
+    """
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_nice=100000)
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=3)
+    env.layout.write_meta(meta)
+    env.poll(4)
+    parked = [h for h in env.hosts()[1:] if h.runtime.runtime_job_id]
+    assert len(parked) >= 2, "no parked successors"
+    # the newest parked host has the best live priority (oldest one was "requeued")
+    best = parked[-1]
+    prio = {str(h.runtime.runtime_job_id): (1000.0 + i, 100000) for i, h in enumerate(parked)}
+    monkeypatch.setattr(PoolManager, "_sprio_map", staticmethod(lambda ids: prio))
+    state = env.layout.load_state()
+    state.setdefault("admission", {})["probe_ts"] = 0
+    env.layout.write_state(state)
+    env.poll()
+    assert env.fake._nice.get(best.runtime.runtime_job_id) == 0, (
+        "the unpark did not go to the best-priority parked host"
+    )
+
+
+def test_a_requeue_reparked_the_promoted_host_and_unparked_the_better_one(env, monkeypatch, caplog):
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_nice=100000)
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=2)
+    env.layout.write_meta(meta)
+    env.poll(4)
+    parked = [h for h in env.hosts()[1:] if h.runtime.runtime_job_id]
+    assert len(parked) >= 2
+    current, better = parked[0], parked[-1]
+    hid = current.definition.metadata["pool_host_id"]
+    (env.layout.host_dir(hid) / "promoted").write_text("0\n")
+    env.fake._nice[current.runtime.runtime_job_id] = 0
+    prio = {
+        str(current.runtime.runtime_job_id): (100.0, 0),
+        str(better.runtime.runtime_job_id): (900.0, 100000),
+    }
+    monkeypatch.setattr(PoolManager, "_sprio_map", staticmethod(lambda ids: prio))
+    state = env.layout.load_state()
+    adm = state.setdefault("admission", {})
+    adm["submit_ts"] = {str(current.runtime.runtime_job_id): "2026-11-21T18:00:00"}
+    env.layout.write_state(state)
+    # SLURM reports a new submit time for the promoted host -> a requeue happened
+    monkeypatch.setattr(
+        PoolManager, "_submit_time", staticmethod(lambda jid: "2026-11-21T18:06:54")
+    )
+    with caplog.at_level("WARNING"):
+        env.poll()
+    assert (
+        "queue age was RESET" in caplog.text
+        or env.fake._nice.get(better.runtime.runtime_job_id) == 0
+    )
