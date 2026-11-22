@@ -1646,3 +1646,36 @@ def test_a_requeue_reparked_the_promoted_host_and_unparked_the_better_one(env, m
         "queue age was RESET" in caplog.text
         or env.fake._nice.get(better.runtime.runtime_job_id) == 0
     )
+
+
+def test_a_requeue_is_detected_while_no_host_trains(env, monkeypatch, caplog):
+    """Training down (run waiting for a host) is when candidates queue up -- a
+    requeue then changes which host should be unparked, so the detection must
+    not sit behind the "nothing trains" early return (JUPITER 2026-11-22 02:20:
+
+    host220 was requeued while the run waited, and nothing noticed).
+    """
+    estimate = [time.time() + 5000]
+    _admission_env(env, monkeypatch, estimate, host_age_s=600, successor_nice=100000)
+    meta = env.layout.load_meta()
+    meta["config"].update(keep_pending=2)
+    env.layout.write_meta(meta)
+    env.poll(3)
+    parked = [h for h in env.hosts()[1:] if h.runtime.runtime_job_id]
+    assert parked, "no parked successor"
+    # the run's host disappears: nothing trains from now on
+    run_hid = env.hosts()[0].definition.metadata["pool_host_id"]
+    (env.layout.host_dir(run_hid) / "exited").write_text("host exit: signal USR1\n")
+    env.fake.set_state(env.hosts()[0].runtime.runtime_job_id, "COMPLETED")
+    jid = str(parked[0].runtime.runtime_job_id)
+    state = env.layout.load_state()
+    state.setdefault("admission", {})["submit_ts"] = {jid: "2026-11-22T01:00:00"}
+    env.layout.write_state(state)
+    monkeypatch.setattr(
+        PoolManager, "_submit_time", staticmethod(lambda _jid: "2026-11-22T02:20:14")
+    )
+    with caplog.at_level("WARNING"):
+        env.poll(2)
+    assert "queue age was RESET" in caplog.text, (
+        "the requeue went unnoticed while training was down"
+    )

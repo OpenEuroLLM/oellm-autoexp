@@ -2709,6 +2709,10 @@ class PoolManager:
         adm = state.setdefault("admission", {})
         adm["last_est"] = None
         self._record_estimate_bias(layout, cfg, state, now)
+        # A requeue resets a host's queue age, so this must run on EVERY poll -- also while
+        # nothing trains (training down, run waiting for a host): that is exactly when the
+        # candidates queue up and a requeue changes which one should be unparked.
+        self._detect_requeues(layout, cfg, state, queued)
         run_hosts = [h for h in running if h.hid in busy]
         if not run_hosts and busy and running:
             # a handover: the run is leaving a retiring host for the newest live one
@@ -2729,7 +2733,6 @@ class PoolManager:
                 time.strftime("%H:%M:%S", time.localtime(retry_after)),
             )
             return False
-        self._detect_requeues(layout, cfg, state, queued)
         est = self._start_estimate(layout, cfg, state, account, now)
         adm["last_est"] = est
         remaining = min((h.remaining_s(now) for h in run_hosts), default=None)
