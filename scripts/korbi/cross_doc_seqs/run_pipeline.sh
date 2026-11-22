@@ -60,7 +60,8 @@ embed_args=(--out "$CDS_OUT" --name "$EMB" --model "${CDS_EMB_MODEL:?}" --poolin
             --prefix "${CDS_EMB_PREFIX:-}" --tokenizer "${CDS_TOKENIZER:?}" --dim "${CDS_EMB_DIM:-256}"
             --max-src-tokens "${CDS_EMB_SRC_TOKENS:-640}" --max-len "${CDS_EMB_MAX_LEN:-512}"
             ${CDS_EMB_BATCH_TOKENS:+--batch-tokens "$CDS_EMB_BATCH_TOKENS"} --workers "${CDS_EMB_WORKERS:-16}"
-            --attn "${CDS_EMB_ATTN:-flash_attention_2}")
+            --attn "${CDS_EMB_ATTN:-flash_attention_2}"
+            --claim-slices "${CDS_EMB_SLICES:-0}" --chunk-range "$CDS_FROM:$((CDS_FROM + CDS_STEPS))" --chunk "$CHUNK")
 
 embed_cmd() {  # embed_cmd <extra args...>: embed_docs.py under the right runtime (vLLM: shared vLLM runtime, 1 GPU)
     local engine=${CDS_EMB_ENGINE:-hf} arg
@@ -129,6 +130,7 @@ for stage in ${STAGES//,/ }; do
         ;;
     embed)
         per_gpu "embed_$EMB" embed_cmd
+        python "$D/embed_docs.py" --out "$CDS_OUT" --name "$EMB" --model x --pooling last --tokenizer x --status || true
         wait_for "embeddings" embeds_done
         ;;
     plan)

@@ -40,6 +40,9 @@ aux:
   # Engine vllm (pooling runner, 2026-11-21 bench: ~790 docs/s/GPU vs 310 HF padded, 555 HF + Liger; vectors
   # cosine >= 0.999 to the HF ones); hf = transformers (+ --liger via aux.emb_args)
   emb_engine: vllm
+  # work queue: every chunk in 16 slices (~12 GPU-minutes each) claimed by whichever GPU is free -- any number of
+  # jobs can embed the same range together; progress in <out>/emb/<name>/{progress.log,STATUS.txt}
+  emb_slices: 16
   emb_name: q3e256
   emb_model: /gpfs/projects/ehpc533/users/korbip/models/Qwen3-Embedding-0.6B
   emb_pooling: last
@@ -82,6 +85,7 @@ backend:
     CDS_EMB_PREFIX: "${aux.emb_prefix}"
     CDS_EMB_DIM: "${aux.emb_dim}"
     CDS_EMB_ENGINE: ${aux.emb_engine}
+    CDS_EMB_SLICES: "${aux.emb_slices}"
     CDS_PLAN_NAME: ${aux.plan_name}
     CDS_BENCH_VARIANTS: ${aux.bench_variants}
     CDS_BENCH_DOCS: "${aux.bench_docs}"

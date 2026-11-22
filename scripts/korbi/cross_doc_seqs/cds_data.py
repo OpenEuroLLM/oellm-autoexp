@@ -320,14 +320,23 @@ STREAM_KEYS = ("slot_iter", "slot_pos", "slot_bidx", "seg_ptr", "seg_ds", "seg_d
 
 
 def save_stream(path: str, arrays: dict, meta: dict) -> None:
-    """One extracted step range: <path>/{<key>.npy, meta.json}, written atomically (tmp dir + rename)."""
-    tmp = path + ".tmp"
+    """One extracted step range: <path>/{<key>.npy, meta.json}, written atomically (private tmp dir + rename;
+    another job that wrote the same range first wins, the result is identical)."""
+    import shutil
+    import socket
+
+    tmp = f"{path}.tmp.{socket.gethostname()}.{os.getpid()}"
     os.makedirs(tmp, exist_ok=True)
     for k in STREAM_KEYS:
         np.save(os.path.join(tmp, k + ".npy"), arrays[k])
     with open(os.path.join(tmp, "meta.json"), "w") as f:
         json.dump(meta, f, indent=1)
-    os.replace(tmp, path)
+    try:
+        os.rename(tmp, path)
+    except OSError:
+        if not os.path.isdir(path):
+            raise
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def load_stream(path: str) -> tuple[dict, dict]:

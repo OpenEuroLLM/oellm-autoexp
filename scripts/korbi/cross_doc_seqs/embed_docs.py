@@ -45,6 +45,74 @@ def chunk_complete(emb_chunk_dir: str) -> bool:
     return any(len(rs) == w for w, rs in worlds.items())
 
 
+def claim(dst: str, timeout_s: float) -> bool:
+    """Take the work unit whose output is dst: an atomic mkdir of dst.claim (a claim nobody touched for
+    timeout_s -- a killed job's -- is taken over). False if done or held by another process."""
+    import shutil
+    import socket
+
+    lock = dst + ".claim"
+    for _ in range(2):
+        if os.path.exists(dst):
+            return False
+        try:
+            os.mkdir(lock)
+            open(os.path.join(lock, "owner"), "w").write(f"{socket.gethostname()} {os.getpid()} {time.ctime()}\n")
+            return True
+        except FileExistsError:
+            try:
+                age = time.time() - os.stat(lock).st_mtime
+            except FileNotFoundError:
+                continue
+            if age < timeout_s:
+                return False
+            shutil.rmtree(lock, ignore_errors=True)  # stale: retry once
+    return False
+
+
+def release(dst: str) -> None:
+    import shutil
+
+    shutil.rmtree(dst + ".claim", ignore_errors=True)
+
+
+def emb_status(out: str, name: str) -> str:
+    """Which stream chunks (step ranges) are embedded: the contiguous complete ranges, partial chunks, totals."""
+    root = os.path.join(out, "emb", name)
+    chunks = []
+    for p in sorted(glob.glob(os.path.join(out, "stream", "ck*_*"))):
+        b = os.path.basename(p)
+        if ".tmp" in b:
+            continue
+        c0, c1 = (int(x) for x in b[2:].split("_"))
+        d = os.path.join(root, b)
+        done = chunk_complete(d)
+        parts = len(glob.glob(os.path.join(d, "part_*_of_*.npz"))) if os.path.isdir(d) else 0
+        chunks.append((c0, c1, done, parts))
+    ranges, cur = [], None
+    for c0, c1, done, _ in chunks:
+        if done and cur and cur[1] == c0:
+            cur[1] = c1
+        elif done:
+            cur = [c0, c1]
+            ranges.append(cur)
+    n_done = sum(1 for c in chunks if c[2])
+    partial = [f"ck{c0}_{c1} ({parts} parts)" for c0, c1, done, parts in chunks if not done and parts]
+    lines = [f"{time.strftime('%Y-%m-%d %H:%M:%S')} embeddings {name}: {n_done} of {len(chunks)} stream chunks complete",
+             "embedded step ranges (steps from checkpoints): " + (", ".join(f"{a_}-{b_}" for a_, b_ in ranges) or "none"),
+             f"in progress: {len(partial)} chunks" + (": " + ", ".join(partial[:12]) + (" ..." if len(partial) > 12 else "")
+                                                     if partial else "")]
+    return "\n".join(lines) + "\n"
+
+
+def write_status(out: str, name: str) -> None:
+    text = emb_status(out, name)
+    path = os.path.join(out, "emb", name, "STATUS.txt")
+    tmp = f"{path}.{os.getpid()}"
+    open(tmp, "w").write(text)
+    os.replace(tmp, path)
+
+
 def chunk_keys(stream_path: str) -> np.ndarray:
     """Sorted unique document keys of the chunk's non-solo slots."""
     arr, _ = load_stream(stream_path)
@@ -256,9 +324,20 @@ def main() -> None:
     ap.add_argument("--vllm-max-seqs", type=int, default=1024, help="vLLM max_num_seqs")
     ap.add_argument("--check-against", default=None,
                     help="bench: cosine of the bench vectors vs an existing embedding run's for the same documents")
+    ap.add_argument("--claim-slices", type=int, default=0,
+                    help="work queue: every chunk in this many slices, each taken by whichever GPU claims it "
+                         "first (any number of jobs can share a range); 0 = the classic rank / world split")
+    ap.add_argument("--claim-timeout", type=float, default=3600.0, help="seconds after which a silent claim is stale")
+    ap.add_argument("--chunk-range", default=None, help="only chunks inside checkpoints A:B")
+    ap.add_argument("--chunk", type=int, default=100, help="steps per stream chunk (to know the range's chunks)")
+    ap.add_argument("--status", action="store_true", help="only print (and write) the embedding status")
     ap.add_argument("--done", default=None, help="only check: exit 0 if every listed chunk (comma list) is embedded")
     ap.add_argument("--bench", type=int, default=0, help="embed only this many docs of the first chunk, print speed")
     a = ap.parse_args()
+    if a.status:
+        write_status(a.out, a.name)
+        print(open(os.path.join(a.out, "emb", a.name, "STATUS.txt")).read(), end="")
+        sys.exit(0)
     if a.done is not None:
         root = os.path.join(a.out, "emb", a.name)
         sys.exit(0 if all(chunk_complete(os.path.join(root, c)) for c in a.done.split(",") if c) else 1)
@@ -316,16 +395,43 @@ def main() -> None:
     if rank == 0:
         print(f"model {a.model}: {detail}, batch {a.batch_tokens} tokens", flush=True)
 
-    chunks = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if not p.endswith(".tmp"))
+    while True:  # claim mode: rescan until every chunk of the range is embedded (by any job)
+        remaining = embed_pass(a, model, dev, rank, world, prefixes, root)
+        if not (a.claim_slices and a.chunk_range and not a.bench) or remaining == 0:
+            break
+        print(f"rank {rank}: {remaining} chunks of the range not complete yet (other jobs / extraction): waiting",
+              flush=True)
+        time.sleep(60)
+
+
+def embed_pass(a, model, dev, rank, world, prefixes, root) -> int:
+    """One pass over the work items; returns how many chunks of --chunk-range are not complete yet."""
+    import torch
+
+    chunks = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if ".tmp" not in os.path.basename(p))
     if a.chunks:
         want = set(a.chunks.split(","))
         chunks = [c for c in chunks if os.path.basename(c) in want]
-    for cpath in chunks:
+    if a.chunk_range:
+        lo, hi = (int(x) for x in a.chunk_range.split(":"))
+        chunks = [c for c in chunks if int(os.path.basename(c)[2:9]) >= lo and int(os.path.basename(c)[10:17]) <= hi]
+    # work items: (chunk, first key, key stride, output part); classic: this rank's share of every chunk; claim:
+    # every slice of every chunk, in chunk order (so the embedded step range grows from the start)
+    if a.claim_slices and not a.bench:
+        S = a.claim_slices
+        items = [(c, sl, S, f"part_{sl:04d}_of_{S:04d}.npz") for c in chunks for sl in range(S)]
+    else:
+        items = [(c, rank, world, f"part_{rank:04d}_of_{world:04d}.npz") for c in chunks]
+    for cpath, k0, kstep, part in items:
         name = os.path.basename(cpath)
-        dst = os.path.join(root, name, f"part_{rank:04d}_of_{world:04d}.npz")
+        dst = os.path.join(root, name, part)
         if not a.bench and (os.path.exists(dst) or chunk_complete(os.path.dirname(dst))):
             continue
-        keys = chunk_keys(cpath)[rank::world]
+        if a.claim_slices and not a.bench:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if not claim(dst, a.claim_timeout):
+                continue
+        keys = chunk_keys(cpath)[k0::kstep]
         if a.bench:
             keys = keys[: a.bench]
         t0 = time.time()
@@ -383,6 +489,8 @@ def main() -> None:
                 done += len(b["keys"])
                 t_gpu += time.time() - tg
                 tw = time.time()
+                if a.claim_slices and i % 50 == 0 and os.path.isdir(dst + ".claim"):
+                    os.utime(dst + ".claim")  # heartbeat: the claim stays ours
                 if rank == 0 and (i % 200 == 0 or i == len(batches) - 1):
                     dt = time.time() - t0
                     print(f"[{name}] rank 0: {done}/{len(keys)} docs, {done / dt:.0f} docs/s, "
@@ -409,10 +517,21 @@ def main() -> None:
                   f"resolve {t_res:.1f} s, loader wait {t_wait:.1f} s, GPU {t_gpu:.1f} s", flush=True)
             return
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        tmp = dst[:-4] + ".tmp.npz"
+        tmp = f"{dst[:-4]}.{os.getpid()}.tmp.npz"
         np.savez(tmp, keys=k, vec=v)
         os.replace(tmp, dst)
-        print(f"[{name}] rank {rank}: {len(k)} docs, {dt:.0f} s ({len(k) / max(dt, 1e-9):.0f} docs/s)", flush=True)
+        print(f"[{name}] {part} rank {rank}: {len(k)} docs, {dt:.0f} s ({len(k) / max(dt, 1e-9):.0f} docs/s)", flush=True)
+        if a.claim_slices:
+            release(dst)
+            if chunk_complete(os.path.dirname(dst)):  # the last slice of a chunk: log it, refresh the status
+                with open(os.path.join(root, "progress.log"), "a") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {name} complete ({os.uname().nodename})\n")
+                write_status(a.out, a.name)
+    if not a.chunk_range:
+        return 0
+    lo, hi = (int(x) for x in a.chunk_range.split(":"))
+    expect = [f"ck{c0:07d}_{min(c0 + a.chunk, hi):07d}" for c0 in range(lo, hi, a.chunk)]
+    return sum(1 for e in expect if not chunk_complete(os.path.join(root, e)))
 
 
 if __name__ == "__main__":

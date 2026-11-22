@@ -51,7 +51,7 @@ def main() -> None:
         bos, eod, vocab = hf.bos_token_id, hf.eos_token_id, len(hf)
     mb = MegatronBlend(entry, bos, eod, vocab)
 
-    chunk = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if not p.endswith(".tmp"))[0]
+    chunk = sorted(p for p in glob.glob(os.path.join(a.out, "stream", "ck*_*")) if ".tmp" not in os.path.basename(p))[0]
     arr, _ = load_stream(chunk)
     rng = np.random.default_rng(a.seed)
     slots = rng.choice(len(arr["slot_bidx"]), size=min(a.slots, len(arr["slot_bidx"])), replace=False)

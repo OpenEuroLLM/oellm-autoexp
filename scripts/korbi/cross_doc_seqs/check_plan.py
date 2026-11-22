@@ -97,7 +97,7 @@ def main() -> None:
     # 1. the run's BlendedDataset, through Megatron
     blended = MegatronBlend(entry, bos, eod, vocab).blended(a.data_args_path)
     check(blended.unique_description_hash == entry.blend_md5, f"BlendedDataset hash {blended.unique_description_hash}")
-    plan_dirs = sorted(p for p in glob.glob(os.path.join(a.out, "plan", a.plan_name, "ck*_*")) if not p.endswith(".tmp"))
+    plan_dirs = sorted(p for p in glob.glob(os.path.join(a.out, "plan", a.plan_name, "ck*_*")) if ".tmp" not in os.path.basename(p))
     assert plan_dirs, f"no plans under {a.out}/plan/{a.plan_name}"
     metas = [json.load(open(os.path.join(p, "meta.json"))) for p in plan_dirs]
 

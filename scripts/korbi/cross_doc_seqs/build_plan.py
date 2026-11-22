@@ -340,7 +340,7 @@ def load_window(out: str, w0: int, w1: int) -> dict:
     """Slots with steps from checkpoints [w0, w1) (logged iterations w0+1 .. w1) and their pieces."""
     parts = []
     for p in sorted(glob.glob(os.path.join(out, "stream", "ck*_*"))):
-        if p.endswith(".tmp"):
+        if ".tmp" in os.path.basename(p):
             continue
         arr, meta = load_stream(p)
         if meta["to_ckpt"] <= w0 or meta["from_ckpt"] >= w1:
@@ -376,7 +376,7 @@ def load_embeddings(emb_root: str, keys_needed: np.ndarray, w0: int | None = Non
             a_, b_ = (int(x) for x in name[2:].split("_"))
             if b_ <= w0 or a_ >= w1:
                 continue
-        files += sorted(glob.glob(os.path.join(d, "part_*.npz")))
+        files += sorted(f for f in glob.glob(os.path.join(d, "part_*.npz")) if not f.endswith(".tmp.npz"))
     for f in files:  # every part of the window's chunks: concatenate, filter once (np.isin per file
         z = np.load(f)  # against tens of millions of needed keys re-sorted them for every file)
         ks.append(z["keys"])

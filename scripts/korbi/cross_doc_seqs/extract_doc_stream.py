@@ -85,7 +85,7 @@ def main() -> None:
     print(f"blend {entry.blend_md5}: {len(prefixes)} datasets, {entry.size} samples, seq {a.seq_length}, "
           f"add_bos {entry.add_bos}; sampler B={geo.mb_per_epoch}", flush=True)
     os.makedirs(os.path.join(a.out, "stream"), exist_ok=True)
-    tmp = os.path.join(a.out, f"blend.json.tmp{a.task_rank}")
+    tmp = os.path.join(a.out, f"blend.json.tmp.{os.uname().nodename}.{os.getpid()}")
     with open(tmp, "w") as f:
         json.dump({"blend_md5": entry.blend_md5, "prefixes": prefixes, "size": entry.size,
                    "seq_length": a.seq_length, "add_bos": entry.add_bos, "data_args_path": a.data_args_path,
@@ -95,6 +95,7 @@ def main() -> None:
 
     chunks = [(c0, min(c0 + a.chunk, a.from_ckpt + a.steps)) for c0 in range(a.from_ckpt, a.from_ckpt + a.steps, a.chunk)]
     chunks = [c for c in chunks[a.task_rank::a.task_world] if not os.path.isdir(stream_dir(a.out, *c))]
+    # (a .tmp.* directory of a killed job is ignored: every reader skips names with ".tmp")
     if a.check_megatron:
         for c0, _ in chunks:
             sampler.check_against_megatron(c0)
