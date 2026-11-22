@@ -1,0 +1,30 @@
+# @package _global_
+# The v4b main run from checkpoint 52,000 on with sparse attention (user 2026-11-22: "do the switch at 52k"): the live
+# cross-document config (v4b_learned_cds_mn5: plan window 51,000-61,000, group boundaries, same job name / output tree /
+# load / sampler) + page_maxpool page-sparse attention with PER-TOKEN selection on the rowmask head-packed kernel
+# (Megatron cba004cbb..14772f454): page 64, top 32 pages, window 512, 1 sink page, one selection per KV group.
+# Paired branches before the switch (docs/campaign_3b_hybrid_midtraining.md): t24 from 51,500 on this data, 100 steps:
+# +0.0025 mean, +0.0018 over the last 20 (per 16 queries: ~+0.0065); t21 on the masked data from 46,000: +0.0022.
+# Speed at 64k (64 nodes, trained weights): ~-7 % per step vs dense.
+# Switch (docs/cross_doc_seqs/README.md procedure): after the 52,000 save, pool_ctl cancel the running entry (graceful
+# stop save), set that stop save aside, tracker -> 52000, enqueue this config into p264 from a fresh snapshot.
+defaults:
+  - v4b_learned_cds_mn5
+  - _self_
+
+aux:
+  node_check: light
+
+backend:
+  megatron:
+    page_sparse_selector: page_maxpool
+    page_sparse_per_group: true
+    page_sparse_select_block: 1
+    page_sparse_block_candidates: 0
+    page_sparse_backend: rowmask
+    page_sparse_page: 64
+    page_sparse_topk: 32
+    page_sparse_window: 512
+    page_sparse_sink_pages: 1
+    page_sparse_flex_q_block: 64
+    page_sparse_packed_flex: true
