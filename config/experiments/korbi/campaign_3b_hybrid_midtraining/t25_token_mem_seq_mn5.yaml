@@ -1,0 +1,36 @@
+# @package _global_
+# Why the v4b main run on per-token sparse attention (p264.2085) is slower than dense and at the device-memory limit
+# (2026-11-22): one v4b attention layer through the full PageSparseCoreAttention THD path, forward + backward over a
+# sequence of the cross-document plan's real group layouts at step 52000 (40: the first 30 + the 10 longest-span ones,
+# two passes) in ONE process -- time per layout, PyTorch peak, reserved pool and non-PyTorch device memory across the
+# sequence (token_layer_seq_bench.py); per-token, per 16 queries and dense (flash varlen), and per-token on scattered
+# (plain random) inputs.
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t25_token_mem_seq
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t25_token_mem_seq
+  spans: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/cds_spans_52000_4096.json
+  tag: ""
+  tests: ""
+  bench: >-
+    mkdir -p ${aux.out} && cd submodules/Megatron-LM
+    && for v in tok sb16 dense; do python ../../scripts/korbi/campaign_midtraining/token_layer_seq_bench.py
+    --spans ${aux.spans} --variant $v --out ${aux.out}/${aux.tag}$v.json || echo "variant $v failed"; done
+    && python ../../scripts/korbi/campaign_midtraining/token_layer_seq_bench.py --spans ${aux.spans} --variant tok
+    --rough --out ${aux.out}/${aux.tag}tok_rough.json || echo "tok rough failed"
+
+job:
+  name: campaign_mid_${aux.name}${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/campaign_midtraining/${aux.name}${aux.tag}"
+  est_step_time_s: 2400
+  array_group: null
+  metadata:
+    pool_priority: 70
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
