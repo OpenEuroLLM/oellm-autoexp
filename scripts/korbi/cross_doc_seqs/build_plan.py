@@ -271,26 +271,19 @@ def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np
 
 
 # ------------------------------------------------------------------------------------------ order
-def order_pool(emb, tokens: np.ndarray, groups: np.ndarray | None, a, seed: int, dev):
-    """Semantic order of one pool of units. Returns (order, leaf id per unit, deferred mask)."""
+def order_clusters(x, tokens: np.ndarray, groups: np.ndarray | None, clusters, a, seed: int, dev,
+                   leaf_base: int = 0):
+    """Semantic order inside given coarse clusters (lists of unit indices, in chain order): per cluster,
+    near duplicates leave (deferred, with their earlier partner), a fine k-means into leaves of
+    ~--leaf-tokens tokens, leaves chained greedily from next to the previous cluster's last leaf.
+    Returns (order, leaf id per unit, deferred mask, pairs, next leaf id)."""
     torch = _torch()
-    n = emb.shape[0]
+    n = x.shape[0]
     leaf = np.zeros(n, dtype=np.int64)
     deferred = np.zeros(n, dtype=bool)
-    pairs = []  # (unit, earlier near duplicate), pool-local indices
-    if n == 0:
-        return np.zeros(0, np.int64), leaf, deferred, pairs
-    x = emb.to(dev)
-    k1 = max(1, int(round(n / a.coarse)))
-    lab1, c1 = spherical_kmeans(x, k1, a.iters, seed)
-    lab1 = lab1.cpu().numpy()
-    members = np.argsort(lab1, kind="stable")
-    bounds = np.searchsorted(lab1[members], np.arange(k1 + 1))
-    c1n = c1.cpu().numpy()
-    corder = greedy_chain(c1n @ c1n.T) if k1 > 1 else np.zeros(1, np.int64)
-    out, nleaf, prev_c = [], 0, None
-    for ci in corder:
-        idx = members[bounds[ci]:bounds[ci + 1]]
+    pairs = []  # (unit, earlier near duplicate)
+    out, nleaf, prev_c = [], leaf_base, None
+    for ci, idx in enumerate(clusters):
         if len(idx) == 0:
             continue
         xc = x[torch.as_tensor(idx, device=dev)]
@@ -303,7 +296,7 @@ def order_pool(emb, tokens: np.ndarray, groups: np.ndarray | None, a, seed: int,
             if len(idx) == 0:
                 continue
         k2 = max(1, int(np.ceil(tokens[idx].sum() / a.leaf_tokens)))
-        lab2, c2 = spherical_kmeans(xc, k2, a.iters, seed + 1 + int(ci))
+        lab2, c2 = spherical_kmeans(xc, k2, a.iters, seed + 1 + ci)
         lab2 = lab2.cpu().numpy()
         c2n = c2.cpu().numpy()
         # chain the leaves, starting next to the previous coarse cluster's last leaf
@@ -320,6 +313,25 @@ def order_pool(emb, tokens: np.ndarray, groups: np.ndarray | None, a, seed: int,
             nleaf += 1
         prev_c = c2n[lorder[-1]]
     order = np.concatenate(out) if out else np.zeros(0, np.int64)
+    return order, leaf, deferred, pairs, nleaf
+
+
+def order_pool(emb, tokens: np.ndarray, groups: np.ndarray | None, a, seed: int, dev):
+    """Semantic order of one pool of units (coarse spherical k-means, clusters chained greedily, then
+    order_clusters). Returns (order, leaf id per unit, deferred mask, pairs)."""
+    n = emb.shape[0]
+    if n == 0:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0, bool), []
+    x = emb.to(dev)
+    k1 = max(1, int(round(n / a.coarse)))
+    lab1, c1 = spherical_kmeans(x, k1, a.iters, seed)
+    lab1 = lab1.cpu().numpy()
+    members = np.argsort(lab1, kind="stable")
+    bounds = np.searchsorted(lab1[members], np.arange(k1 + 1))
+    c1n = c1.cpu().numpy()
+    corder = greedy_chain(c1n @ c1n.T) if k1 > 1 else np.zeros(1, np.int64)
+    clusters = [members[bounds[ci]:bounds[ci + 1]] for ci in corder]
+    order, leaf, deferred, pairs, _ = order_clusters(x, tokens, groups, clusters, a, seed, dev)
     return order, leaf, deferred, pairs
 
 
@@ -380,19 +392,14 @@ def load_embeddings(emb_root: str, keys_needed: np.ndarray, w0: int | None = Non
     return k[keep], v[first[keep]]
 
 
-def build_units(win: dict):
-    """Pieces of the non-solo slots -> units (one occurrence of a document, pieces in offset order).
-    Returns piece arrays (sorted by unit, offset), unit start pointers, unit keys."""
-    S = win["seq_length"]
-    solo_slot = (win["nseg"] == 1)
-    seg_slot = np.repeat(np.arange(len(win["nseg"])), win["nseg"])
-    keep = ~solo_slot[seg_slot]
-    ds, doc = win["seg_ds"][keep], win["seg_doc"][keep]
-    off, ln = win["seg_off"][keep].astype(np.int64), win["seg_len"][keep].astype(np.int64)
-    key = doc_key(ds, doc)
+def units_from_pieces(ds, doc, off, ln) -> dict:
+    """Document pieces -> units (one occurrence of a document, its pieces in offset order): a document read
+    twice (another epoch) is two units (occurrence layer = number of earlier overlapping pieces).
+    Returns piece arrays sorted by (key, layer, offset), unit start pointers and the layers."""
+    off, ln = np.asarray(off).astype(np.int64), np.asarray(ln).astype(np.int64)
+    key = doc_key(np.asarray(ds), np.asarray(doc))
     o = np.lexsort((off, key))
-    ds, doc, off, ln, key = ds[o], doc[o], off[o], ln[o], key[o]
-    # occurrence layer: number of earlier pieces of the same document whose range overlaps this one
+    ds, doc, off, ln, key = np.asarray(ds)[o], np.asarray(doc)[o], off[o], ln[o], key[o]
     layer = np.zeros(len(key), dtype=np.int64)
     newkey = np.r_[True, key[1:] != key[:-1]]
     multi = np.nonzero(~newkey)[0]
@@ -414,9 +421,46 @@ def build_units(win: dict):
     o = np.lexsort((off, layer, key))
     ds, doc, off, ln, key, layer = ds[o], doc[o], off[o], ln[o], key[o], layer[o]
     unit_start = np.nonzero(np.r_[True, (key[1:] != key[:-1]) | (layer[1:] != layer[:-1])])[0]
-    assert ln.sum() == (~solo_slot).sum() * S
-    return dict(ds=ds, doc=doc, off=off, len=ln, key=key, layer=layer, unit_start=unit_start,
-                n_slots=int((~solo_slot).sum()))
+    return dict(ds=ds, doc=doc, off=off, len=ln, key=key, layer=layer, unit_start=unit_start)
+
+
+def build_units(win: dict):
+    """Pieces of the window's non-solo slots -> units (units_from_pieces)."""
+    S = win["seq_length"]
+    solo_slot = (win["nseg"] == 1)
+    seg_slot = np.repeat(np.arange(len(win["nseg"])), win["nseg"])
+    keep = ~solo_slot[seg_slot]
+    u = units_from_pieces(win["seg_ds"][keep], win["seg_doc"][keep], win["seg_off"][keep], win["seg_len"][keep])
+    assert u["len"].sum() == (~solo_slot).sum() * S
+    u["n_slots"] = int((~solo_slot).sum())
+    return u
+
+
+def write_plan(dst: str, slot_bidx, slot_seq, seq_ptr, seg: dict, meta: dict, stats: dict) -> None:
+    """One plan directory (the format Megatron's packing_plan.py reads), written atomically."""
+    tmp = dst + ".tmp"
+    os.makedirs(tmp, exist_ok=True)
+    np.save(os.path.join(tmp, "slot_bidx.npy"), np.asarray(slot_bidx, np.int64))
+    np.save(os.path.join(tmp, "slot_seq.npy"), np.asarray(slot_seq, np.int64))
+    np.save(os.path.join(tmp, "seq_ptr.npy"), np.asarray(seq_ptr, np.int64))
+    np.save(os.path.join(tmp, "seg_ds.npy"), seg["ds"].astype(np.int16))
+    np.save(os.path.join(tmp, "seg_doc.npy"), seg["doc"].astype(np.int64))
+    np.save(os.path.join(tmp, "seg_off.npy"), seg["off"].astype(np.int64))
+    np.save(os.path.join(tmp, "seg_len.npy"), seg["len"].astype(np.int32))
+    np.save(os.path.join(tmp, "seg_group.npy"), seg["grp"].astype(np.int64))
+    json.dump(meta, open(os.path.join(tmp, "meta.json"), "w"), indent=1)
+    json.dump(stats, open(os.path.join(tmp, "stats.json"), "w"), indent=1)
+    os.replace(tmp, dst)
+
+
+def plan_meta(out: str, blend_md5: str, S: int, w0: int, w1: int, emb: str, params: dict) -> dict:
+    """meta.json of a plan: the blend, the window and the sampler geometry the replaced indices belong to
+    (Megatron refuses a plan for another geometry)."""
+    geometry = json.load(open(os.path.join(out, "blend.json")))["geometry"]
+    return {"format": 1, "blend_md5": blend_md5, "seq_length": S, "from_ckpt": w0, "to_ckpt": w1,
+            "geometry": {k: geometry.get(k) for k in ("global_batch_size", "ref_dp", "ref_mbs", "ref_gbs",
+                                                      "phase_start", "train_iters", "total_samples")},
+            "embedding": emb, "params": params}
 
 
 def cut_sequences(p_ds, p_doc, p_off, p_len, p_grp, S: int):
@@ -569,26 +613,9 @@ def build_window(a, w0: int, w1: int, dev) -> None:
         stats["cos_within_seq_after"] = seq_similarity(seq_ptr, seg["ds"], seg["doc"], keys, vecs, a.stat_seqs, rng)
     stats["seconds"] = round(time.time() - t0, 1)
 
-    tmp = dst + ".tmp"
-    os.makedirs(tmp, exist_ok=True)
-    np.save(os.path.join(tmp, "slot_bidx.npy"), slot_bidx.astype(np.int64))
-    np.save(os.path.join(tmp, "slot_seq.npy"), slot_seq.astype(np.int64))
-    np.save(os.path.join(tmp, "seq_ptr.npy"), seq_ptr)
-    np.save(os.path.join(tmp, "seg_ds.npy"), seg["ds"].astype(np.int16))
-    np.save(os.path.join(tmp, "seg_doc.npy"), seg["doc"].astype(np.int64))
-    np.save(os.path.join(tmp, "seg_off.npy"), seg["off"].astype(np.int64))
-    np.save(os.path.join(tmp, "seg_len.npy"), seg["len"].astype(np.int32))
-    np.save(os.path.join(tmp, "seg_group.npy"), seg["grp"].astype(np.int64))
-    # the sampler geometry the replaced indices belong to (Megatron refuses a plan for another one)
-    geometry = json.load(open(os.path.join(a.out, "blend.json")))["geometry"]
-    meta = {"format": 1, "blend_md5": win["blend_md5"], "seq_length": S, "from_ckpt": w0, "to_ckpt": w1,
-            "geometry": {k: geometry.get(k) for k in ("global_batch_size", "ref_dp", "ref_mbs", "ref_gbs",
-                                                      "phase_start", "train_iters", "total_samples")},
-            "embedding": a.emb, "params": {k: getattr(a, k) for k in ("coarse", "leaf_tokens", "iters", "dup_cos",
-                                                                       "seed", "group_keys")}}
-    json.dump(meta, open(os.path.join(tmp, "meta.json"), "w"), indent=1)
-    json.dump(stats, open(os.path.join(tmp, "stats.json"), "w"), indent=1)
-    os.replace(tmp, dst)
+    meta = plan_meta(a.out, win["blend_md5"], S, w0, w1, a.emb,
+                     {k: getattr(a, k) for k in ("coarse", "leaf_tokens", "iters", "dup_cos", "seed", "group_keys")})
+    write_plan(dst, slot_bidx, slot_seq, seq_ptr, seg, meta, stats)
     print(f"{dst}: {json.dumps(stats)}", flush=True)
 
 
