@@ -1,0 +1,86 @@
+# @package _global_
+# Sparse attention on the v4b main run AFTER the cross-document switch (user 2026-11-22: branch at 51.5k on 128 nodes
+# of c136 host005, so the main run can switch at 52k): a branch from v4b's rolling save 51500 (pinned into ckpt_eval
+# by eval_marks, full state) on the main run's live config (cross_doc_seqs/v4b_learned_cds_mn5: packing plan window
+# 51,000-61,000, group boundaries, same sampler / schedule / validation), 100 steps to 51600, paired with the main run's
+# logged losses at 51501..51600 -- the switching cost on the unmasked, clustered data (t21 on the masked data: per 16
+# +0.0056, per 8 +0.0043, block +0.0087, per token +0.0022).
+#   pmp_sb16_rm / pmp_sb8_rm -- page_maxpool, one selection per 16 / 8 queries on the rowmask head-packed kernel
+#   (page 64, top 32, window 512, 1 sink, per KV group; Megatron 14772f454)
+# 128 nodes (gbs 1024 = 2 micro-batches per GPU, ~30 s / step), one arm at a time; nothing written next to the main run.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t24_v4b_cds_sparse_branch_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../cross_doc_seqs/v4b_learned_cds_mn5
+  - _self_
+
+aux:
+  suite: t24_v4b_cds_sparse_branch
+  variant: pmp_sb16_rm
+  arm: ${aux.variant}
+  only: []
+  nodes: 128
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t24_v4b_cds_sparse_branch
+
+backend:
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+    ckpt_step: 51500
+    exit_on_missing_checkpoint: true
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 1000
+    non_persistent_save_interval: null
+    save_extra_steps: []
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: 51600
+    page_sparse_page: 64
+    page_sparse_topk: 32
+    page_sparse_window: 512
+    page_sparse_sink_pages: 1
+    page_sparse_flex_q_block: 64
+    page_sparse_packed_flex: true
+
+job:
+  name: t24_v4b_cds_branch_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  start_condition: null
+  est_steps: 100
+  est_step_time_s: 35.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 95  # ahead of the 1-node cds embedding runs (the result decides the 52k transition)
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "branch: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (branch: no retry)"}
+
+slurm:
+  sbatch:
+    nodes: 128
+    time: "03:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: pmp_sb16_rm
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 16
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
+        - aux.variant: pmp_sb8_rm
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 8
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
