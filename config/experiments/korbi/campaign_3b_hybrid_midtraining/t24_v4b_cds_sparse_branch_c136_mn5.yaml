@@ -5,6 +5,7 @@
 # 51,000-61,000, group boundaries, same sampler / schedule / validation), 100 steps to 51600, paired with the main run's
 # logged losses at 51501..51600 -- the switching cost on the unmasked, clustered data (t21 on the masked data: per 16
 # +0.0056, per 8 +0.0043, block +0.0087, per token +0.0022).
+#   pmp_tok -- page_maxpool, pure per-token selection: the first target (user 2026-11-22), first in the queue
 #   pmp_sb16_rm / pmp_sb8_rm -- page_maxpool, one selection per 16 / 8 queries on the rowmask head-packed kernel
 #   (page 64, top 32, window 512, 1 sink, per KV group; Megatron 14772f454)
 # 128 nodes (gbs 1024 = 2 micro-batches per GPU, ~30 s / step), one arm at a time; nothing written next to the main run.
@@ -78,6 +79,14 @@ sweep:
           backend.megatron.page_sparse_select_block: 16
           backend.megatron.page_sparse_block_candidates: 0
           backend.megatron.page_sparse_backend: rowmask
+        # pure per-token selection: the first target (user 2026-11-22), runs first (pool priority 96)
+        - aux.variant: pmp_tok
+          backend.megatron.page_sparse_selector: page_maxpool
+          backend.megatron.page_sparse_per_group: true
+          backend.megatron.page_sparse_select_block: 1
+          backend.megatron.page_sparse_block_candidates: 0
+          backend.megatron.page_sparse_backend: rowmask
+          job.metadata.pool_priority: 96
         - aux.variant: pmp_sb8_rm
           backend.megatron.page_sparse_selector: page_maxpool
           backend.megatron.page_sparse_per_group: true
