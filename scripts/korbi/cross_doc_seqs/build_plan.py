@@ -75,11 +75,12 @@ def _device(prefer: str = "auto"):
     return torch.device("cuda" if prefer == "auto" else prefer)
 
 
-def spherical_kmeans(x, k: int, iters: int, seed: int, train_max: int = 1_000_000, block: int = 65536):
+def spherical_kmeans(x, k: int, iters: int, seed: int, train_max: int = 1_000_000, block: int | None = None):
     """(labels [n] long, centroids [k, d]) of unit-norm rows ``x`` (torch, any device)."""
     torch = _torch()
     n = x.shape[0]
     k = max(1, min(k, n))
+    block = block or max(1024, min(65536, int(2.5e8 // k)))  # rows x k scores stay ~1 GB
     g = torch.Generator(device="cpu").manual_seed(seed)
     if k == 1:
         c = torch.nn.functional.normalize(x.float().mean(0, keepdim=True), dim=1)
@@ -121,11 +122,13 @@ def greedy_chain(sim: np.ndarray, start: int = 0) -> np.ndarray:
     return order
 
 
-def near_duplicates(x, thr: float, block: int = 8192) -> np.ndarray:
+def near_duplicates(x, thr: float, block: int | None = None) -> np.ndarray:
     """For every row of ``x`` (unit norm, torch): the first EARLIER row at cosine >= thr, else -1
-    (rows with a partner are deferred)."""
+    (rows with a partner are deferred). Blocks of rows sized so a block x n similarity tile stays ~1 GB (a
+    coarse cluster of boilerplate pages can hold ~1M documents)."""
     torch = _torch()
     n = x.shape[0]
+    block = block or max(64, min(8192, int(2.5e8 // max(n, 1))))
     partner = torch.full((n,), -1, dtype=torch.long, device=x.device)
     xf = x.float()
     for i in range(0, n, block):
