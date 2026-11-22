@@ -367,20 +367,34 @@ def coherence(a, bdirs, U_of, ukey, seq_ptr, seg, n_sample: int = 2000) -> dict:
     U_of = np.asarray(U_of)
 
     def vecs(keys):
+        """Vectors of many keys: one sorted fancy-index read per bucket file (single-row reads from GPFS memory
+        maps cost a page fault each)."""
         r = np.searchsorted(skey, keys)
         ok = (r < len(skey)) & (skey[np.minimum(r, len(skey) - 1)] == keys)
         unit = order[r[ok]]
+        out = np.zeros((len(keys), uvecs[0].shape[1]), np.float32)
         b = np.searchsorted(U_of, unit, side="right") - 1
-        return np.stack([uvecs[bi][u - U_of[bi]] for bi, u in zip(b, unit)]).astype(np.float32) if len(unit) else None
+        idx = np.nonzero(ok)[0]
+        for bi in np.unique(b):
+            m = b == bi
+            rows = unit[m] - U_of[bi]
+            o = np.argsort(rows)
+            out[idx[m][o]] = np.asarray(uvecs[bi][rows[o]], np.float32)
+        return out, ok
 
     def mean_cos(ptr, ds_, doc_, rng):
-        vals = []
         n = len(ptr) - 1
-        for s in rng.choice(n, size=min(n_sample, n), replace=False):
-            k = np.unique(bp.doc_key(ds_[ptr[s]:ptr[s + 1]], doc_[ptr[s]:ptr[s + 1]]))
-            v = vecs(k)
-            if v is None or len(v) < 2:
+        seqs = rng.choice(n, size=min(n_sample, n), replace=False)
+        keys = [np.unique(bp.doc_key(ds_[ptr[s]:ptr[s + 1]], doc_[ptr[s]:ptr[s + 1]])) for s in seqs]
+        allk = np.unique(np.concatenate(keys)) if keys else np.zeros(0, np.int64)
+        V, ok = vecs(allk)
+        vals = []
+        for k in keys:
+            i = np.searchsorted(allk, k)
+            i = i[ok[i]]
+            if len(i) < 2:
                 continue
+            v = V[i]
             g = v @ v.T
             vals.append((g.sum() - np.trace(g)) / (len(v) * (len(v) - 1)))
         return float(np.mean(vals)) if vals else float("nan")
