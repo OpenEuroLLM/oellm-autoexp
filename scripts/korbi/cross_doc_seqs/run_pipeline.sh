@@ -169,7 +169,8 @@ for stage in ${STAGES//,/ }; do
 import os, sys
 d, a, n, w = sys.argv[1], *(int(x) for x in sys.argv[2:])
 need = [f"ck{w0:07d}_{min(w0 + w, a + n):07d}" for w0 in range(a, a + n, w)]
-sys.exit(0 if all(os.path.isdir(os.path.join(d, x)) for x in need) else 1)
+single = os.path.isdir(os.path.join(d, f"ck{a:07d}_{a + n:07d}"))  # a single-window plan (stage global)
+sys.exit(0 if single or all(os.path.isdir(os.path.join(d, x)) for x in need) else 1)
 EOF2
         }
         wait_for "plans" plans_done
