@@ -2461,22 +2461,24 @@ class PoolManager:
         if self._sprio_map is not None:
             return self._sprio_map(ids)
         out: dict[str, tuple[float, int]] = {}
-        try:
-            proc = subprocess.run(
-                ["sprio", "-h", "-o", "%i %Y %N", "-j", ",".join(str(i) for i in ids)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            LOGGER.warning("[pool] sprio failed: %s", exc)
-            return out
-        for line in proc.stdout.splitlines():
-            parts = line.split()
+        for jid in ids:
+            # one call per job: this sprio rejects a comma-separated -j list
+            # ("Invalid job id"), which silently emptied the map before
+            try:
+                proc = subprocess.run(
+                    ["sprio", "-h", "-o", "%i %Y %N", "-j", str(jid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                LOGGER.warning("[pool] sprio failed for job %s: %s", jid, exc)
+                continue
+            parts = (proc.stdout or "").split()
             if len(parts) < 2:
                 continue
             try:
-                out[parts[0]] = (float(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+                out[str(jid)] = (float(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
             except ValueError:
                 continue
         return out
