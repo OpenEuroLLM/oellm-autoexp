@@ -1,0 +1,54 @@
+# @package _global_
+# Find the cudaErrorIllegalAddress of the v4b main run (user 2026-11-23: "stop the restart and branch out ... use
+# CUDA_LAUNCH_BLOCKING"): four crashes since step ~54400 on four different nodes, in both the sparse (p264.2097 / .2106)
+# and the DENSE (p264.2108 / .2110) runs, reported only asynchronously by the NCCL watchdog -- no kernel name. This branch
+# is the dense main run exactly (cross_doc_seqs/v4b_learned_cds_mn5: packing plan 51,000-61,000, group boundaries, MoonEP
+# flex dispatch, 256 nodes = the same 1024 ranks; the crash rate grows with ranks) from the persistent save 55000 (read
+# only, full state) with CUDA_LAUNCH_BLOCKING=1, so the faulting launch raises synchronously with its Python stack, and
+# TORCH_SHOW_CPP_STACKTRACES=1. Writes only into its own tree; no persistent saves. A crash ends it (no retry: the
+# traceback is the result); the allocation end (host009 16:25) restarts it on the next host.
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t29_v4b_cds_illegal_address_debug_mn5 --yes
+defaults:
+  - ../cross_doc_seqs/v4b_learned_cds_mn5
+  - _self_
+
+aux:
+  suite: t29_v4b_cds_illegal_address_debug
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t29_v4b_cds_illegal_address_debug
+
+backend:
+  env:
+    CUDA_LAUNCH_BLOCKING: "1"
+    TORCH_SHOW_CPP_STACKTRACES: "1"
+  megatron:
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt
+    ckpt_step: 55000
+    exit_on_missing_checkpoint: true
+    save: ${job.base_output_dir}/ckpt
+    save_interval: 1000000
+    non_persistent_save_interval: null
+    save_extra_steps: []
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: 57000
+
+job:
+  name: t29_v4b_ilm_debug
+  base_output_dir: ${aux.test_root}/dense
+  start_condition: null
+  metadata:
+    pool_singleton: null
+    pool_priority: 140
+  log_events: []
+  state_events:
+    - name: retry_timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 3}
+      action: {class_name: RestartAction, reason: "allocation end -- continue on the next host"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "crashed: the traceback is the result (no retry)"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: FinishAction, reason: "node failure"}
