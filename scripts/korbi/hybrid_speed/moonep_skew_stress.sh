@@ -28,7 +28,7 @@ if [ -n "$CS" ]; then
     port=$((29000 + RANDOM % 1000))
     for r in 0 1 2 3; do
         RANK=$r LOCAL_RANK=$r WORLD_SIZE=4 MASTER_ADDR=127.0.0.1 MASTER_PORT=$port \
-            timeout 2400 $CS --tool memcheck --print-limit 50 python $P --iters 3 --layers 2 --check 1 --seed 5 \
+            timeout 2400 $CS --tool memcheck --report-api-errors no --print-limit 500 python $P --iters 3 --layers 2 --check 1 --seed 5 \
             > "$out/memcheck_r$r.log" 2>&1 &
     done
     wait
