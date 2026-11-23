@@ -1,0 +1,84 @@
+# @package _global_
+# Restart-time flags of the v4b main run (2026-11-23, user: "optimize the startup"), checked end to end on the 4-node
+# s3 testbed: the same model family and code paths (Megatron-FSDP fsdp_dtensor, MoonEP flex EP4, Engram, CKDA, LDM,
+# per-token page_maxpool rowmask), resumed READ-ONLY from t18_s3_sparse_adapt pmp_tok's step-7000 save, 4 steps, no
+# save. Both arms load the same checkpoint and train the same batches:
+#   base   the main run's environment
+#   fast   + FSDP_DCP_BCAST_METADATA (rank 0 reads .metadata, NCCL broadcast), FSDP_DCP_SEQUENTIAL_READ (a rank's
+#          requests per file in offset order, a mostly-requested file in one read), MEGATRON_LAZY_GROUPS (no eager
+#          world-wide ncclCommSplit per group), MEGATRON_DATASET_NODE_STAGGER (local rank 0 builds the datasets first),
+#          TRITON_CACHE_AUTOTUNING (autotune results from the Triton cache)
+# Pass: the steps run, losses / grad norms of fast == base within the run-to-run noise, and the [init-timing] /
+# [load-timing] lines show the phases.
+#   ... scripts/run_autoexp.py --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t30_startup_flags_test_mn5 \
+#       "aux.only=[base]" --yes   (acc_debug runs one job at a time: base, then fast)
+defaults:
+  - t18_s3_sparse_adapt_mn5
+  - _self_
+
+aux:
+  suite: t30_startup_flags
+  arm: base
+  node_check: "off"
+
+backend:
+  env:
+    MEGATRON_DEBUG_INIT_TIMING: "1"
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
+  megatron:
+    page_sparse_selector: page_maxpool
+    page_sparse_per_group: true
+    page_sparse_select_block: 1
+    page_sparse_block_candidates: 0
+    page_sparse_backend: rowmask
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t18_s3_sparse_adapt/pmp_tok/ckpt
+    ckpt_step: 7000
+    diag_consumed_train_samples: 112000  # = 7000 x 16, the checkpoint's own
+    train_iters: 7010
+    exit_interval: 7004
+    eval_interval: 100000
+    save: null
+    save_interval: null
+    non_persistent_save_interval: null
+    async_save: false
+    log_interval: 1
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  base_output_dir: /gpfs/scratch/ehpc533/users/korbip/tmp/t30_startup_flags/${aux.arm}
+  metadata:
+    pool_singleton: null
+  est_step_time_s: 6.0
+  state_events:
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (test: no retry)"}
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "lost its node (test: no retry)"}
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+  log_events: []
+
+slurm:
+  sbatch:
+    account: ehpc533
+    qos: acc_debug
+    time: "00:50:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: base
+        - aux.arm: fast
+          backend.env.FSDP_DCP_BCAST_METADATA: "1"
+          backend.env.FSDP_DCP_SEQUENTIAL_READ: "1"
+          backend.env.MEGATRON_LAZY_GROUPS: "1"
+          backend.env.MEGATRON_DATASET_NODE_STAGGER: "1"
+          backend.env.TRITON_CACHE_AUTOTUNING: "1"
+        - aux.arm: base2
