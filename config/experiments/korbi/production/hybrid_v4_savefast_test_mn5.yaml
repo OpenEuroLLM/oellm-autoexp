@@ -1,0 +1,84 @@
+# @package _global_
+# Cheaper rolling saves (2026-11-23; v4b main run: 17.5 s preprocess + ~100 s planning on the first two saves after
+# every start, then +8 / +12 s on the two steps after each save). Megatron f1da74565 (chunk-metadata gather as an
+# int64 size gather) and 7e515f118 (the DCP flattening map from one rank per distinct map) change the save path;
+# --async-ckpt-use-cpu-shm moves the D2H copy into the trainer (shared memory) so the writer process no longer works
+# on the GPU. This test runs the main run's save settings (fsdp_dtensor, async nvrx, persistent worker, constant
+# structure, rolling global saves) on the 2-node v4 hd256 stack (hybrid_v4_diaggrad_test_mn5: 8 experts, Engram
+# 1/16, gbs 64, fresh init), one arm after another on the debug lane:
+#   ref         40 steps, no save                                  (the reference losses)
+#   save        32 steps, rolling save every 5 (+ the exit save)   losses == ref; [save-timing] per save
+#   shm         the same with --async-ckpt-use-cpu-shm             losses == ref
+#   resume      from save's rolling 30 to 40                       losses 31..40 == ref (bitwise)
+#   resume_shm  from shm's rolling 30 to 40                        losses 31..40 == ref
+# The resume arms start after their save arm (start condition on its rolling tracker).
+#   cd $R/autoexp_savefast && scripts/korbi/mn5_autoexp_bg.sh savefast scripts/run_autoexp.py \
+#       --config-name experiments/korbi/production/hybrid_v4_savefast_test_mn5 --yes
+defaults:
+  - hybrid_v4_diaggrad_test_mn5
+  - _self_
+
+aux:
+  suite: v4_savefast_test
+  arm: ref
+  test_root: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast
+  save_src: save
+
+backend:
+  env:
+    MEGATRON_DEBUG_SAVE_TIMING: "1"
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
+  megatron:
+    exit_interval: 40
+    ckpt_format: fsdp_dtensor
+    async_strategy: nvrx
+    use_persistent_ckpt_worker: true
+    ckpt_assume_constant_structure: true
+    dist_ckpt_workers: 1
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: ${aux.test_root}/${aux.arm}/ckpt_rolling
+    non_persistent_save_interval: null
+    async_save: false
+    save: null
+    save_interval: null
+
+job:
+  name: v4_savefast_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - aux.arm: ref
+        - aux.arm: save
+          backend.megatron.exit_interval: 32
+          backend.megatron.async_save: true
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/save/ckpt
+          backend.megatron.save_interval: 1000000
+          backend.megatron.non_persistent_save_interval: 5
+        - aux.arm: shm
+          backend.megatron.exit_interval: 32
+          backend.megatron.async_save: true
+          backend.megatron.async_ckpt_use_cpu_shm: true
+          backend.megatron.save: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/shm/ckpt
+          backend.megatron.save_interval: 1000000
+          backend.megatron.non_persistent_save_interval: 5
+        - aux.arm: resume
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/empty
+          backend.megatron.exit_on_missing_checkpoint: false
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/save/ckpt_rolling
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/save/ckpt_rolling/latest_checkpointed_iteration.txt
+            pattern: '^\s*30\s*$'
+            mode: regex
+        - aux.arm: resume_shm
+          backend.megatron.load: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/empty
+          backend.megatron.exit_on_missing_checkpoint: false
+          backend.megatron.non_persistent_global_ckpt_dir: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/shm/ckpt_rolling
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/users/korbip/tmp/v4savefast/shm/ckpt_rolling/latest_checkpointed_iteration.txt
+            pattern: '^\s*30\s*$'
+            mode: regex
