@@ -29,6 +29,7 @@ groups:
       # ---- gbsz 32 ----
       # stable6BT -- versions v1; LUMI stable dir, latest_checkpointed_iteration=None.
       # done: 6BT
+      # split: the checkpoints in this dir are Leonardo checkpoints (100,0,0); nothing pending.
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 32
         backend.megatron.micro_batch_size: 2
@@ -39,7 +40,7 @@ groups:
         backend.megatron.aux.stable_launch_tier:  cross
         backend.megatron.aux.done_tokens_set:     "{6_000_000_000}"
         backend.megatron.aux.skip_stable_launch:  true
-        backend.megatron.split:                   "99,1,0"
+        backend.megatron.split:                   "100,0,0"
 
       # ---- gbsz 64 ----
       # stable50BT -- versions v1,v2; LUMI stable dir, latest_checkpointed_iteration=None.

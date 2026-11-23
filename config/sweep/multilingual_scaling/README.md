@@ -59,6 +59,9 @@ cross-cluster loss records in `dense_multilingual_models_scaling_results`:
   LUMI, so `finish_condition` alone would resubmit them. The seven 0.1B
   decays trained from hybrid checkpoints (losses removed 2026-11-03) are *not*
   in this set, so they get rerun.
+  Neither are the ten 0.1B split-mismatch decays (2026-11-23): retrained on
+  2026-07-31/08-05 with `100,0,0` from `99,1,0` branch checkpoints, moved to
+  `multilingual_scaling/split_mismatch_decays/` (README there).
 - **Dropped budgets** — planned in v1/v2, never trained, and not re-selected
   by v3's HP selection — are not in any tier set; the per-entry comment lists
   them. Stables with no decay left are kept as a comment block at the end of
@@ -66,8 +69,12 @@ cross-cluster loss records in `dense_multilingual_models_scaling_results`:
 - **`aux.skip_stable_launch: true`** whenever no pending decay needs the stable
   to train further (all its pending branch checkpoints already exist, or
   nothing is pending).
-- **`split`** = what the still-to-run jobs of that entry need. Finished jobs are
-  never resubmitted, so their historical split only lives in the comments.
+- **`split`** = what the still-to-run jobs of that entry need: the split of the
+  checkpoints they load (stable: its latest checkpoint; decay: its branch
+  checkpoint), as recorded in that checkpoint's `common.pt`, not the split of the
+  stable's latest job. A decay branching before its stable's split switch needs
+  the old split. Finished jobs are never resubmitted, so their historical split
+  only lives in the comments.
   Seven 0.1B LUMI stables switched from `99,1,0` to `100,0,0` around iter
   22–25k (v2 config change, 2026-07-28); their comments record the switch iter.
 - **`micro_batch_size`** = the latest version's value (it only changes nodes /
