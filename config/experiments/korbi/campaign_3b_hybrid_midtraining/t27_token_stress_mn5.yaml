@@ -1,0 +1,24 @@
+# @package _global_
+# t27 (2026-11-23): the per-token path's illegal-address hunt on one H100 node (scripts/korbi/campaign_midtraining/
+# t27_stress.sh: long checkpointed stress runs over real cross-document layouts at v4b shapes, compute-sanitizer memcheck
+# and racecheck). MareNostrum's dev queue (acc_debug, 2 h).
+defaults:
+  - ../hybrid_speed/kernel_tests_mn5
+  - _self_
+
+aux:
+  name: t27_token_stress
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/t27_token_stress
+  spans: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/cds_spans_52000_4096.json
+  steps: 1500
+  dev_queue: true
+  tests: ""
+  bench: "cd submodules/Megatron-LM && bash ../../scripts/korbi/campaign_midtraining/t27_stress.sh ${aux.spans} ${aux.out} ${aux.steps}"
+
+job:
+  est_step_time_s: 6600
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
