@@ -30,7 +30,23 @@ WATCHDOG_PID=$!
 # requeues it and it is placed on other nodes -- at most NODE_CHECK_MAX_ROUNDS (default 2) times
 # per NODE_CHECK_DIR, then the training starts anyway. Outside a pool, or a broken check (other
 # exit codes): reported, never blocks the training. NODE_CHECK_ARGS: more bench.py flags.
-if [ -n "$NODE_CHECK" ] && [ "$NODE_CHECK" != "off" ]; then
+# NODE_CHECK_REUSE_S (seconds, default 0 = off): skip the check when the last one in NODE_CHECK_DIR
+# passed less than that long ago on exactly this step's node list (a restart on the same nodes).
+NC_SKIP=
+NC_REUSE=$NODE_CHECK_REUSE_S
+[ -n "$NC_REUSE" ] || NC_REUSE=0
+NC_LIST=$AUTOEXP_STEP_NODELIST
+[ -n "$NC_LIST" ] || NC_LIST=$SLURM_JOB_NODELIST
+if [ -n "$NODE_CHECK" ] && [ "$NODE_CHECK" != "off" ] && [ "$NC_REUSE" -gt 0 ]; then
+    NC_DIR=$NODE_CHECK_DIR
+    [ -n "$NC_DIR" ] || NC_DIR=$HOME/node_check
+    if [ -s "$NC_DIR/last_pass" ] && read -r NC_T NC_LAST < "$NC_DIR/last_pass" \
+        && [ "$NC_LAST" = "$NC_LIST" ] && [ $(( $(date +%s) - NC_T )) -lt "$NC_REUSE" ]; then
+        echo "[node_check] skipped: passed on these nodes $(( $(date +%s) - NC_T )) s ago (NODE_CHECK_REUSE_S=$NC_REUSE)"
+        NC_SKIP=1
+    fi
+fi
+if [ -n "$NODE_CHECK" ] && [ "$NODE_CHECK" != "off" ] && [ -z "$NC_SKIP" ]; then
     NC_DIR=$NODE_CHECK_DIR
     [ -n "$NC_DIR" ] || NC_DIR=$HOME/node_check
     mkdir -p "$NC_DIR"
@@ -51,6 +67,7 @@ if [ -n "$NODE_CHECK" ] && [ "$NODE_CHECK" != "off" ]; then
     if [ "$NC_STATUS" = pass ]; then
         echo "[node_check] passed"
         rm -f "$NC_DIR/exclusion_rounds"
+        echo "$(date +%s) $NC_LIST" > "$NC_DIR/last_pass"
     elif [ "$NC_STATUS" = exclude ]; then
         NC_BAD=$(python3 -c "import json, sys; print(' '.join(json.load(open(sys.argv[1]))['exclude']))" "$NC_OUT" 2>/dev/null)
         if [ -n "$NC_BAD" ] && [ -n "$AUTOEXP_POOL_DIR" ] && [ -n "$AUTOEXP_POOL_HOST" ] && [ "$NC_ROUNDS" -lt "$NC_MAX" ]; then
