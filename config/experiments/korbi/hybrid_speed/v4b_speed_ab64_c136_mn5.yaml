@@ -1,0 +1,108 @@
+# @package _global_
+# v4b main-run step speed A/B at 64 nodes (2026-11-23): the live sparse main config
+# (cross_doc_seqs/v4b_learned_cds_sparse_mn5: 104 layers, page_maxpool per token, EP4 MoonEP, Megatron-FSDP
+# with fp8 expert gather, full recompute + RECOMPUTE_OFFLOAD) from the main run's trained weights
+# (protected eval copy ckpt_eval/iter_0055000, read only: model only, iteration 0, nothing saved), one 64k
+# sequence per GPU (gbs 256 on 64 nodes: one micro-batch per GPU, as in the main run). Data: the main
+# run's stage-2 blend without the cross-document packing plan (document masking; the plan only runs from
+# its own checkpoint steps), with t19j's batch / iteration settings so the shared index cache is hit.
+# Arms run concurrently, 64 nodes each, on c136 (cns143); profiled on four ranks at steps 30-31.
+#
+#   base   the main run's settings
+#   agg    + --create-all-gather-group: separate all-gather communicators, so a parameter all-gather no
+#          longer queues behind the previous layer's fp32 gradient reduce-scatter on the same
+#          communicator (t19j trace: the straggler rank's compute idle 5.9 of 21.1 s, mostly that;
+#          exact -- the DTensor meshes stay on the data-parallel groups, so checkpoints are unchanged)
+#
+#   (snapshot autoexp_cdsbundle = the main run's code; this file is used from outside it:
+#    -C <dir with this file + hydra.searchpath to autoexp_cdsbundle/config>)
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/hybrid_speed/v4b_speed_ab64_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../cross_doc_seqs/v4b_learned_cds_sparse_mn5
+  - _self_
+
+aux:
+  suite: v4b_speed_ab64
+  variant: base
+  arm: ${aux.variant}
+  only: []
+  nodes: 64
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_speed_ab64
+
+backend:
+  megatron:
+    # ---- trained weights, read only ----
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+    ckpt_step: 55000
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+    exit_on_missing_checkpoint: true
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: 42
+    # ---- one 64k phase, the stage-2 blend with document masking (t19j's data settings) ----
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    global_batch_size: 256
+    train_iters: 236733
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    packing_plan_path: null
+    packing_plan_boundaries: doc
+    packing_plan_at_end: exit
+    dataloader_index_bundle: null
+    eval_interval: 1000000
+    eval_iters: 1
+    wandb_project: null
+    wandb_exp_name: null
+    tensorboard_dir: ${job.base_output_dir}/tb
+    # ---- profile: steps 30-31, four ranks (two nodes apart, rank 255 = last) ----
+    profile: true
+    use_pytorch_profiler: true
+    profile_step_start: 30
+    profile_step_end: 31
+    profile_ranks: [0, 5, 130, 255]
+    pytorch_profiler_collect_shapes: false
+
+job:
+  name: v4b_speed_ab64_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  start_condition: null
+  est_steps: 42
+  est_step_time_s: 20.0
+  est_startup_min: 25.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 120
+  log_events: []
+  state_events:
+    - name: give_up_node_fail
+      transition: [null, NODE_FAIL]
+      action: {class_name: CancelAction, reason: "speed test: lost a node"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: CancelAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "01:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: base
+        - aux.variant: agg
+          backend.megatron.create_all_gather_group: true
