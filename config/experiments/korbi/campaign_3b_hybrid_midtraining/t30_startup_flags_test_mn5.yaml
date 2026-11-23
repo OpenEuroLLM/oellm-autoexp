@@ -1,6 +1,7 @@
 # @package _global_
-# Restart-time flags of the v4b main run (2026-11-23, user: "optimize the startup"), checked end to end on the 4-node
-# s3 testbed: the same model family and code paths (Megatron-FSDP fsdp_dtensor, MoonEP flex EP4, Engram, CKDA, LDM,
+# Restart-time flags of the v4b main run (2026-11-23, user: "optimize the startup"), checked end to end on the s3
+# testbed at 2 nodes (the 4-node pmp_tok checkpoint resharded to expert DP 2; p264 buffer nodes, below the main
+# run): the same model family and code paths (Megatron-FSDP fsdp_dtensor, MoonEP flex EP4, Engram, CKDA, LDM,
 # per-token page_maxpool rowmask), resumed READ-ONLY from t18_s3_sparse_adapt pmp_tok's step-7000 save, 4 steps, no
 # save. Both arms load the same checkpoint and train the same batches:
 #   base   the main run's environment
@@ -10,8 +11,8 @@
 #          TRITON_CACHE_AUTOTUNING (autotune results from the Triton cache)
 # Pass: the steps run, losses / grad norms of fast == base within the run-to-run noise, and the [init-timing] /
 # [load-timing] lines show the phases.
-#   ... scripts/run_autoexp.py --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t30_startup_flags_test_mn5 \
-#       "aux.only=[base]" --yes   (acc_debug runs one job at a time: base, then fast)
+#   ... scripts/run_autoexp.py --no-monitor --monitor-state-dir $R/pool_state --pool .../mn5_pool_p264 \
+#       --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t30_startup_flags_test_mn5 "aux.only=[base,fast]" --yes
 defaults:
   - t18_s3_sparse_adapt_mn5
   - _self_
@@ -19,6 +20,7 @@ defaults:
 aux:
   suite: t30_startup_flags
   arm: base
+  nodes: 2
   node_check: "off"
 
 backend:
@@ -48,7 +50,9 @@ job:
   base_output_dir: /gpfs/scratch/ehpc533/users/korbip/tmp/t30_startup_flags/${aux.arm}
   metadata:
     pool_singleton: null
-  est_step_time_s: 6.0
+    pool_priority: 30  # below the main run (150): the host's two buffer nodes, preempted if the main run needs them
+  est_step_time_s: 20.0
+  est_startup_min: 12.0
   state_events:
     - name: give_up_failed
       transition: [null, FAILED]
@@ -63,9 +67,9 @@ job:
 
 slurm:
   sbatch:
-    account: ehpc533
-    qos: acc_debug
-    time: "00:50:00"
+    account: cns144
+    qos: acc_xehpc
+    time: "00:30:00"
 
 sweep:
   type: product
