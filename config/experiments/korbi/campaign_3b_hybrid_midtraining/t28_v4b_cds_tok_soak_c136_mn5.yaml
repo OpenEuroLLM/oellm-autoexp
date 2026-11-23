@@ -1,0 +1,39 @@
+# @package _global_
+# Soak validation of the per-token path before the main run uses it again (2026-11-23: the main run on Megatron
+# 4720b9057 hit cudaErrorIllegalAddress twice): t26's setup (the v4b main run's cross-document config from the pinned
+# rolling save 51500, per-token page_maxpool on the rowmask kernel, 128 nodes, gbs 1024) with the reverted kernels
+# (Megatron after 4720b9057: ab06e114e's head-packed kernels + the constant-size layout), 1500 steps to 53000 --
+# ~14 h at 33 s / step, so it crosses the pool's 8 h run limit with saves every 250 steps and restarts that resume the
+# arm's own save (branch_resume_from_save). Pass: no illegal address / NaN, no allocator mapping failures, mem flat,
+# step time ~33 s, gap to the main run's dense losses ~+0.003.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/campaign_3b_hybrid_midtraining/t28_v4b_cds_tok_soak_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - t26_v4b_cds_tok_fixed_c136_mn5
+  - _self_
+
+aux:
+  suite: t28_v4b_cds_tok_soak
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t28_v4b_cds_tok_soak
+
+backend:
+  megatron:
+    exit_interval: 53000
+    save_interval: 250
+    branch_resume_from_save: true
+
+job:
+  name: t28_v4b_cds_tok_soak_${aux.arm}
+  est_steps: 1500
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      condition: {class_name: MaxActionFiresCondition, max_fires: 4}
+      action: {class_name: RestartAction, reason: "pool run limit -- resume from the arm's save"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (soak test: report, no retry)"}
+
+slurm:
+  sbatch:
+    time: "08:00:00"
