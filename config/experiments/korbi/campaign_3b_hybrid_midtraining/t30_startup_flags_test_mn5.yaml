@@ -1,9 +1,8 @@
 # @package _global_
 # Restart-time flags of the v4b main run (2026-11-23, user: "optimize the startup"), checked end to end on the s3
-# testbed at 2 nodes (the 4-node pmp_tok checkpoint resharded to expert DP 2; p264 buffer nodes, below the main
-# run): the same model family and code paths (Megatron-FSDP fsdp_dtensor, MoonEP flex EP4, Engram, CKDA, LDM,
-# per-token page_maxpool rowmask), resumed READ-ONLY from t18_s3_sparse_adapt pmp_tok's step-7000 save, 4 steps, no
-# save. Both arms load the same checkpoint and train the same batches:
+# testbed at 4 nodes (p264 buffer nodes, below the main run): the same model family and code paths (Megatron-FSDP fsdp_dtensor, MoonEP flex EP4, Engram, CKDA, LDM,
+# per-token page_maxpool rowmask), resumed READ-ONLY from t16_s3_sparse_fixed page_maxpool_pg's step-3000 save (its
+# own 4-node layout; the t18 saves lost their .distcp files on 2026-11-23), 4 steps, no save. Both arms load the same checkpoint and train the same batches:
 #   base   the main run's environment
 #   fast   + FSDP_DCP_BCAST_METADATA (rank 0 reads .metadata, NCCL broadcast), FSDP_DCP_SEQUENTIAL_READ (a rank's
 #          requests per file in offset order, a mostly-requested file in one read), MEGATRON_LAZY_GROUPS (no eager
@@ -20,7 +19,7 @@ defaults:
 aux:
   suite: t30_startup_flags
   arm: base
-  nodes: 2
+  nodes: 4
   node_check: "off"
 
 backend:
@@ -33,11 +32,11 @@ backend:
     page_sparse_select_block: 1
     page_sparse_block_candidates: 0
     page_sparse_backend: rowmask
-    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t18_s3_sparse_adapt/pmp_tok/ckpt
-    ckpt_step: 7000
-    diag_consumed_train_samples: 112000  # = 7000 x 16, the checkpoint's own
-    train_iters: 7010
-    exit_interval: 7004
+    load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/t16_s3_sparse_fixed/page_maxpool_pg/ckpt
+    ckpt_step: 3000
+    diag_consumed_train_samples: 48000  # = 3000 x 16, the checkpoint's own
+    train_iters: 3010
+    exit_interval: 3004
     eval_interval: 100000
     save: null
     save_interval: null
