@@ -39,7 +39,7 @@ def main() -> None:
     from torch.utils.checkpoint import checkpoint
 
     os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-    os.environ.setdefault("MASTER_PORT", str(29600 + a.seed))
+    os.environ["MASTER_PORT"] = str(29600 + a.seed)  # one per process (the job env sets one for all)
     dist.init_process_group("nccl", rank=0, world_size=1)
     torch.cuda.set_device(0)
     from megatron.core import parallel_state
