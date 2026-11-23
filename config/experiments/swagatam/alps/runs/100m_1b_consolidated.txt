@@ -1,0 +1,25 @@
+# Run from oellm-autoexp. One leading Engram layer, no tokenizer compression, table
+# size raised so the 16 tables match both banks of 100m_1b. Same 2,526,543,872-token
+# budget. Rho 100 is omitted.
+
+export PROJECT_DIR=$PWD
+
+CFG=experiments/swagatam/alps/engram_scaling/100m_1b_consolidated # (done)
+CFG=experiments/swagatam/alps/engram_scaling/100m_1b_consolidated_tokenmap
+PATTERN='LENLELE*ELELELE*ELELELE*ELELELE*E'
+
+for spec in \
+  "rho90 88 76778" \
+  "rho80 76 192098" \
+  "rho70 68 268994" \
+  "rho55 56 384290" \
+  "rho40 40 538074"
+do
+  set -- $spec
+  stage=$1 experts=$2 table=$3
+  uv run python scripts/run_autoexp.py --config-name "$CFG" --submit-and-exit -y \
+    stage=$stage \
+    backend.megatron.num_experts=$experts \
+    backend.megatron.engram_table_size=$table \
+    "backend.megatron.hybrid_layer_pattern=${PATTERN}"
+done
