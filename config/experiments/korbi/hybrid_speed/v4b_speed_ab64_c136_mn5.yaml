@@ -13,6 +13,7 @@
 #          longer queues behind the previous layer's fp32 gradient reduce-scatter on the same
 #          communicator (t19j trace: the straggler rank's compute idle 5.9 of 21.1 s, mostly that;
 #          exact -- the DTensor meshes stay on the data-parallel groups, so checkpoints are unchanged)
+#   agg_r2 / agg_nolog   round 2: agg again, and agg with the per-step MoE health logging off
 #
 #   (snapshot autoexp_cdsbundle = the main run's code; this file is used from outside it:
 #    -C <dir with this file + hydra.searchpath to autoexp_cdsbundle/config>)
@@ -26,7 +27,7 @@ aux:
   suite: v4b_speed_ab64
   variant: base
   arm: ${aux.variant}
-  only: []
+  only: [base, agg]
   nodes: 64
   node_check: "off"
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_speed_ab64
@@ -106,3 +107,14 @@ sweep:
         - aux.variant: base
         - aux.variant: agg
           backend.megatron.create_all_gather_group: true
+        # round 2 (aux.only=[agg_r2,agg_nolog]: its own reference, launch-time drift between rounds
+        # is larger than the effects): the per-step MoE health logging off -- its cost at scale
+        # (Megatron 5c84e20fc removes most of it in the forward; this measures what was there)
+        - aux.variant: agg_r2
+          backend.megatron.create_all_gather_group: true
+        - aux.variant: agg_nolog
+          backend.megatron.create_all_gather_group: true
+          backend.megatron.moe_per_layer_logging: false
+          backend.megatron.moe_expert_viability_metrics: false
+          backend.megatron.moe_log_seq_aux_loss: false
+          backend.megatron.log_timers_to_tensorboard: false
