@@ -227,15 +227,20 @@ def train_iter(name, it):
         grads += [*e.main_grads()[0][:2], *e.main_grads()[1][:2]]
     finite = bool(torch.stack([g.float().isfinite().all() for g in grads if g is not None]).all())
     finite &= bool(loss.isfinite())
-    return float(loss), finite, routes
+    return float(loss.detach()), finite, routes
 
 
 def check_roundtrip(name, it):
     """Raw API: combine(dispatch(x)) == K * x and the routing weights come back unchanged."""
+    # zero copy, as Megatron: the experts' autograd output IS the shard tensor, which an
+    # out-of-graph copy_ into the shard (zero_copy=False) would modify in place
     topk, tpe, w = routing(name, it)
     x = torch.randn(S, H, device=dev, dtype=torch.bfloat16)
-    xn, wn, cu, plan = state.buffer.dispatch(x, w, topk, tpe)
-    out, wsk, _ = state.buffer.combine(plan=plan, hidden_nvsh=xn, route_weights_nvs=wn)
+    with torch.no_grad():
+        xn, wn, cu, plan = state.buffer.dispatch(x, w, topk, tpe, zero_copy=True)
+        out, wsk, _ = state.buffer.combine(
+            plan=plan, hidden_nvsh=xn, route_weights_nvs=wn, zero_copy=True
+        )
     err = (out.float() - K * x.float()).abs().max().item()
     werr = (wsk.float() - w).abs().max().item() if wsk is not None else 0.0
     used = int(cu[-1].item())
