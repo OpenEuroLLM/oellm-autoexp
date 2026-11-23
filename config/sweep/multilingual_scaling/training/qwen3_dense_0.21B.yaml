@@ -151,7 +151,10 @@ groups:
 
       # ---- gbsz 128 ----
       # stable12BT -- versions v1,v2; LUMI stable dir, latest_checkpointed_iteration=22889.
-      # done: 6, 12BT
+      # done: - | rerun: 6, 12BT (split mismatch, see below)
+      # split: the stable trained with 99,1,0 throughout (job 19850816); the 2026-07-31/08-05 relaunches only
+      #   re-saved iter 22889. decay6/12BT were retrained on 2026-07-31 with 100,0,0 from the 99,1,0 branch
+      #   checkpoints (split mismatch, quarantined in multilingual_scaling/split_mismatch_decays/).
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
@@ -160,9 +163,9 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
-        backend.megatron.aux.done_tokens_set:     "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.done_tokens_set:     "set()"
         backend.megatron.aux.skip_stable_launch:  true
-        backend.megatron.split:                   "100,0,0"
+        backend.megatron.split:                   "99,1,0"
 
       # stable300BT -- versions v1,v2; LUMI stable dir (Leonardo checkpoints), latest_checkpointed_iteration=None.
       # done: 6, 20, 30, 50, 80BT | rerun (first run branched off the duplicate stable80BT, quarantined
@@ -230,7 +233,9 @@ groups:
 
       # ---- gbsz 256 ----
       # stable12BT -- versions v2; LUMI stable dir, latest_checkpointed_iteration=11445.
-      # done: 12BT
+      # done: - | rerun: 12BT (split mismatch, see below)
+      # split: the stable trained with 99,1,0; decay12BT was retrained on 2026-08-05 with 100,0,0 from the
+      #   99,1,0 branch checkpoint iter 9156 (split mismatch, quarantined in multilingual_scaling/split_mismatch_decays/).
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
@@ -239,9 +244,9 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
-        backend.megatron.aux.done_tokens_set:     "{12_000_000_000}"
+        backend.megatron.aux.done_tokens_set:     "set()"
         backend.megatron.aux.skip_stable_launch:  true
-        backend.megatron.split:                   "100,0,0"
+        backend.megatron.split:                   "99,1,0"
 
       # stable300BT -- versions v1,v2,v3; LUMI stable dir, latest_checkpointed_iteration=286103.
       # done: 50, 80, 120, 200, 300BT | to train: 6BT | rerun (hybrid-ckpt contaminated, losses removed
@@ -304,8 +309,10 @@ groups:
 
       # ---- gbsz 512 ----
       # stable300BT -- versions v1,v2,v3; LUMI stable dir, latest_checkpointed_iteration=143052.
-      # done: 20, 30, 50, 80, 120, 200, 300BT | to train: 12BT
+      # done: 50, 80, 120, 200, 300BT | to train: 12BT | rerun: 20, 30BT (split mismatch, see below)
       # stable split changed mid-run: 99,1,0 from iter 0, 100,0,0 from iter 23000.
+      # decay20/30BT were retrained on 2026-08-05 with 100,0,0 from 99,1,0 branch checkpoints (split mismatch,
+      #   quarantined in multilingual_scaling/split_mismatch_decays/). All pending decays branch before iter 23000, hence split 99,1,0.
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
@@ -314,16 +321,16 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
-        backend.megatron.aux.done_tokens_set:     "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.done_tokens_set:     "{50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:                   "99,1,0"
 
       # stable300BT -- versions v1,v2,v3; LUMI stable dir, latest_checkpointed_iteration=23000.
       # done: 20, 30, 50, 80, 120, 200, 300BT | to train: 12BT
-      # WARNING: pending decays branch off the LUMI-trained model in this dir, while some done decays
-      #   came from the independent Leonardo/MN5 model of the same name.
-      # split: v1-v3 said 100,0,0 (the Leonardo trajectory's split), but the only pending decay (12BT)
-      #   branches at iter 4578 of the LUMI run in this dir, which trained with 99,1,0.
+      # WARNING: this dir mixes two models: iter_0023000 is the LUMI run (99,1,0, datamix4-lumi.txt), while
+      #   the branch checkpoints 4578..114441 are Leonardo checkpoints copied in on 2026-07-31 (laingsam;
+      #   100,0,0, 1TT-option-4.sh), which replaced the LUMI run's own branch checkpoints.
+      # split: the only pending decay (12BT) branches at iter 4578, a Leonardo checkpoint -> 100,0,0.
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
@@ -334,11 +341,13 @@ groups:
         backend.megatron.aux.stable_launch_tier:  cross
         backend.megatron.aux.done_tokens_set:     "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.skip_stable_launch:  true
-        backend.megatron.split:                   "99,1,0"
+        backend.megatron.split:                   "100,0,0"
 
       # stable300BT -- versions v1,v2,v3; LUMI stable dir, latest_checkpointed_iteration=143052.
-      # done: 20, 30, 50, 80, 120, 200, 300BT | to train: 12BT
+      # done: 80, 120, 200, 300BT | to train: 12BT | rerun: 20, 30, 50BT (split mismatch, see below)
       # stable split changed mid-run: 99,1,0 from iter 0, 100,0,0 from iter 22000.
+      # decay20/30/50BT were retrained on 2026-08-05 with 100,0,0 from 99,1,0 branch checkpoints (split mismatch,
+      #   quarantined in multilingual_scaling/split_mismatch_decays/). All pending decays branch before iter 22000, hence split 99,1,0.
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
@@ -347,7 +356,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
-        backend.megatron.aux.done_tokens_set:     "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.done_tokens_set:     "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:                   "99,1,0"
 
@@ -366,8 +375,10 @@ groups:
 
       # ---- gbsz 1024 ----
       # stable300BT -- versions v2; LUMI stable dir, latest_checkpointed_iteration=71526.
-      # done: 120, 200, 300BT
+      # done: 200, 300BT | rerun: 120BT (split mismatch, see below)
       # stable split changed mid-run: 99,1,0 from iter 0, 100,0,0 from iter 24500.
+      # decay120BT was trained on 2026-08-05 with 100,0,0 from the 99,1,0 branch checkpoint iter 22888 (split
+      #   mismatch, quarantined in multilingual_scaling/split_mismatch_decays/). It branches before iter 24500, hence split 99,1,0.
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 1024
         backend.megatron.micro_batch_size: 4
@@ -376,9 +387,9 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
-        backend.megatron.aux.done_tokens_set:     "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.done_tokens_set:     "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.skip_stable_launch:  true
-        backend.megatron.split:                   "100,0,0"
+        backend.megatron.split:                   "99,1,0"
 
       # stable300BT -- versions v2,v3; LUMI stable dir, latest_checkpointed_iteration=71526.
       # done: 30, 50, 80, 120, 200, 300BT
@@ -396,8 +407,10 @@ groups:
         backend.megatron.split:                   "99,1,0"
 
       # stable300BT -- versions v2,v3; LUMI stable dir, latest_checkpointed_iteration=71526.
-      # done: 30, 50, 80, 120, 200, 300BT
+      # done: 30, 50, 80, 200, 300BT | rerun: 120BT (split mismatch, see below)
       # stable split changed mid-run: 99,1,0 from iter 0, 100,0,0 from iter 24500.
+      # decay120BT was trained on 2026-08-05 with 100,0,0 from the 99,1,0 branch checkpoint iter 22888 (split
+      #   mismatch, quarantined in multilingual_scaling/split_mismatch_decays/). It branches before iter 24500, hence split 99,1,0.
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 1024
         backend.megatron.micro_batch_size: 4
@@ -406,7 +419,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{30_000_000_000, 50_000_000_000, 80_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
-        backend.megatron.aux.done_tokens_set:     "{30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.done_tokens_set:     "{30_000_000_000, 50_000_000_000, 80_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:                   "99,1,0"
 
