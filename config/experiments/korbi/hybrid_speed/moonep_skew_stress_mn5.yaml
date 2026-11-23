@@ -1,0 +1,28 @@
+# @package _global_
+# MoonEP illegal-address hunt (2026-11-23, v4b main run cudaErrorIllegalAddress since ~54400): moonep_skew_stress.sh on
+# one 4-GPU node -- Megatron's MoonEP path at v4b shapes under extreme routing skew, with CUDA_LAUNCH_BLOCKING=1,
+# default, MOONEP_PDL=0 and compute-sanitizer memcheck phases. The main run's MoonEP build (pylibs_moonep_ec3eb8b)
+# first on PYTHONPATH. MareNostrum's dev queue (acc_debug, 2 h).
+defaults:
+  - kernel_tests_mn5
+  - _self_
+
+aux:
+  name: moonep_skew_stress
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/moonep_skew_stress
+  iters: 2000
+  dev_queue: true
+  tests: ""
+  bench: "bash scripts/korbi/hybrid_speed/moonep_skew_stress.sh ${aux.out} ${aux.iters}"
+
+backend:
+  env:
+    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep_ec3eb8b:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+
+job:
+  est_step_time_s: 6600
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+    exclude: ${oc.exclude_nodes:${oc.env:MN5_EXCLUDE_NODES,/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt}}
