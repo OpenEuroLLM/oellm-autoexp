@@ -14,12 +14,14 @@ aux:
   phases: guard,blocking,default,nojitter_norecompute,pdl0,memcheck
   # the MoonEP build under test (first on PYTHONPATH); the main run's is pylibs_moonep_ec3eb8b
   moonep_lib: ${aux.hybrid_env}/pylibs_moonep_ec3eb8b
+  moonep_lib_baseline: ${aux.hybrid_env}/pylibs_moonep_ec3eb8b
   dev_queue: true
   tests: ""
   bench: "bash scripts/korbi/hybrid_speed/moonep_skew_stress.sh ${aux.out} ${aux.iters} ${aux.phases}"
 
 backend:
   env:
+    MOONEP_LIB_BASELINE: ${aux.moonep_lib_baseline}
     PYTHONPATH: "${aux.moonep_lib}:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
 
 job:

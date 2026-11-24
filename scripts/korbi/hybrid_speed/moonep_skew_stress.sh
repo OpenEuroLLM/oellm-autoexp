@@ -3,7 +3,8 @@
 # shapes through Megatron's MoonEP path, in phases: CUDA_LAUNCH_BLOCKING=1, default (PDL on, as the main run),
 # MOONEP_PDL=0, and compute-sanitizer memcheck (each rank under its own sanitizer, few iterations).
 # Usage (repo root, PYTHONPATH with the MoonEP build first): bash scripts/korbi/hybrid_speed/moonep_skew_stress.sh <out> [iters] [phases]
-# phases: comma list of guard,blocking,default,nojitter_norecompute,pdl0,memcheck (default: all)
+# phases: comma list of guard,blocking,default,nojitter_norecompute,pdl0,memcheck,timing (default: all but timing)
+# timing: dispatch/combine + training-step times of this build and of $MOONEP_LIB_BASELINE, alternated twice
 out=$1 iters=${2:-2000} phases=${3:-guard,blocking,default,nojitter_norecompute,pdl0,memcheck}
 mkdir -p "$out"
 P=scripts/korbi/hybrid_speed/moonep_skew_stress.py
@@ -32,6 +33,16 @@ on blocking && run blocking 1500 CUDA_LAUNCH_BLOCKING=1 -- --iters 300 --seed 1
 on default && run default 2400 MOONEP_PDL=1 -- --iters "$iters" --seed 2
 on nojitter_norecompute && run nojitter_norecompute 900 MOONEP_PDL=1 -- --iters 400 --seed 3 --jitter 0 --side 0 --recompute 0
 on pdl0 && run pdl0 900 MOONEP_PDL=0 -- --iters 400 --seed 4
+if on timing && [ -n "${MOONEP_LIB_BASELINE:-}" ]; then
+    for rep in 1 2; do
+        for b in test base; do
+            pp=$PYTHONPATH; [ $b = base ] && pp="$MOONEP_LIB_BASELINE:$PYTHONPATH"
+            run bench_${b}_$rep 600 PYTHONPATH=$pp -- --bench 50 --seed 7
+            grep BENCH "$out/bench_${b}_$rep.log" | head -1
+            run step_${b}_$rep 900 PYTHONPATH=$pp -- --iters 120 --seed 8 --jitter 0 --side 0 --recompute 0 --check 0 --patterns uniform,zipf1p0
+        done
+    done
+fi
 if [ -n "$CS" ] && on memcheck; then
     echo "=== memcheck ($(date +%T))"
     port=$((29000 + RANDOM % 1000))

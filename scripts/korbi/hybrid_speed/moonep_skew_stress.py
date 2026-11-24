@@ -40,6 +40,7 @@ p.add_argument("--jitter", type=int, default=1)
 p.add_argument("--side", type=int, default=1, help="side-stream GEMMs during the MoE layers")
 p.add_argument("--check", type=int, default=10)
 p.add_argument("--seed", type=int, default=0)
+p.add_argument("--bench", type=int, default=0, help="N: only time N planning+dispatch / combine calls")
 args = p.parse_args()
 
 rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
@@ -248,6 +249,34 @@ def check_roundtrip(name, it):
     return ok, err, werr, used
 
 
+# ---------------------------------------------------------------- timing only
+if args.bench:
+    res = {}
+    for name in ("uniform", "zipf1p0", "same5"):
+        topk, tpe, w = routing(name, 0)
+        x = torch.randn(S, H, device=dev, dtype=torch.bfloat16)
+        td, tc = [], []
+        for i in range(args.bench + 10):
+            e0, e1, e2 = (torch.cuda.Event(enable_timing=True) for _ in range(3))
+            dist.barrier()
+            e0.record()
+            xn, wn, cu, plan = state.buffer.dispatch(x, w, topk, tpe, zero_copy=True)
+            e1.record()
+            state.buffer.combine(plan=plan, hidden_nvsh=xn, zero_copy=True)
+            e2.record()
+            torch.cuda.synchronize()
+            if i >= 10:
+                td.append(e0.elapsed_time(e1))
+                tc.append(e1.elapsed_time(e2))
+        td.sort()
+        tc.sort()
+        res[name] = {"dispatch_ms_median": round(td[len(td) // 2], 4), "combine_ms_median": round(tc[len(tc) // 2], 4)}
+    log(f"BENCH {json.dumps(res)}", all_ranks=True)
+    state.buffer.destroy()
+    dist.destroy_process_group()
+    raise SystemExit(0)
+
+
 # ---------------------------------------------------------------- run
 summary = {"pattern_iters": {}, "bad": []}
 t0 = time.time()
@@ -268,8 +297,11 @@ for it in range(args.iters):
     if not finite or not ok:
         summary["bad"].append({"it": it, "pattern": name, "finite": finite, "roundtrip": ok})
         log(f"BAD it {it} {name}: finite={finite} roundtrip={ok}", all_ranks=True)
+    if it == 9:
+        t10 = time.time()
     if rank == 0 and (it % 10 == 0 or it == args.iters - 1):
-        log(f"it {it} {name} loss {loss:.5f} finite {finite} {(time.time() - t0) / (it + 1):.2f} s/it")
+        steady = f" steady {(time.time() - t10) / (it - 9):.4f} s/it" if it > 9 else ""
+        log(f"it {it} {name} loss {loss:.5f} finite {finite} {(time.time() - t0) / (it + 1):.2f} s/it{steady}")
 
 dist.barrier()
 bad = torch.tensor([len(summary["bad"])], device=dev)
