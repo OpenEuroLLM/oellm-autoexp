@@ -1,0 +1,73 @@
+# @package _global_
+# v4b main-run REVERT: the crash-free startup flags WITHOUT the MoonEP guard build.
+#
+# Why (2026-11-24): the MoonEP fix (e9e8238) traps deterministically at ~56472 in this run --
+# "MoonEP planning: tokens_per_expert disagrees with topk, trapping: src_rank=0 expert=1
+# tokens_per_expert=0 topk_count=640". Megatron's routing_map has fewer than moe_router_topk True
+# entries for some tokens (group-limited / thresholded routing), so the dense [S, k] topk tensor
+# built from `probs.masked_fill(~routing_map, -1).topk(k)` names experts that the counts say are
+# empty. That mismatch IS the illegal-access bug (the old code wrote out of bounds there); the guard
+# makes it loud instead of silent. Until MoonEP handles a variable per-token k, the main line must
+# run the old build: rare crashes are better than a deterministic stop at 56472.
+#
+# The startup flags stay: they are independent of MoonEP and measured (group creations 33 s -> 0.2 s).
+#
+# Why this exists (2026-11-24): the live main run (ambitious_v4b_learned_256) restarts from a
+# frozen submission definition that pins pylibs_moonep_ec3eb8b, i.e. the build with the crash
+# path that produced cudaErrorIllegalAddress four times from ~54400. The fixed build
+# (MoonEP e9e8238: per-thread fence.acq_rel.sys at the cross-rank barrier entry, plus guards that
+# trap instead of doing an out-of-bounds store) is validated and prebuilt, but the pool can only
+# pick it up through a new submission -- hence this successor.
+#
+# Start discipline (handover, not a race): the pool never has two of these lines live, because
+#   1. the successor waits for <aux.kv_root>/v4b_fix_switch/armed, which only the handover script
+#      writes AFTER it has cancelled the old line, and
+#   2. it waits for no unfinished run whose name starts with ambitious_v4b_learned_256.
+# Both writes go to the SAME training tree (runs/v4b_learned/main): the successor resumes from the
+# old line's newest persistent/rolling save, so no step is recomputed beyond the crash loss.
+#
+# Restart flags: measured at 1024 ranks in p264.2152 (2026-11-24). Kept: lazy groups, the metadata
+# broadcast (with hit/miss logging), Triton cache autotuning, node-check reuse, debug timings.
+# Dropped: FSDP_DCP_SEQUENTIAL_READ and MEGATRON_DATASET_NODE_STAGGER (both slower at 1024 ranks:
+# datasets 288-438 s with the stagger against 172 s before, the read 175-179 s against 155-158 s).
+# Added: use_gloo_process_groups=false -- 11,279 group creations took 33.2-34.3 s there and
+# DATA_PARALLEL_GROUP_GLOO alone 15.26 s; only the legacy distributed optimizer needs them.
+defaults:
+  - v4b_learned_mn5
+  - _self_
+
+aux:
+  moonep_lib: pylibs_moonep_ec3eb8b
+
+backend:
+  env:
+    # first entry replaces pylibs_moonep_ec3eb8b; the rest is the main run's own order
+    # ONE line, no spaces: a folded block scalar inserts spaces between the wrapped lines and
+    # singularity then reads the fragments as image paths ("could not open image
+    # .../submodules/Megatron-LM:flash-linear-attention", p264.2168/2169, 2026-11-24).
+    PYTHONPATH: "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_moonep_ec3eb8b:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/retention:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_ep"
+    MEGATRON_LAZY_GROUPS: "1"
+    FSDP_DCP_BCAST_METADATA: "1"
+    TRITON_CACHE_AUTOTUNING: "1"
+    MEGATRON_DEBUG_INIT_TIMING: "1"
+    MEGATRON_DEBUG_LOAD_TIMING: "1"
+    MEGATRON_DEBUG_SAVE_TIMING: "1"
+  megatron:
+    # no gloo process groups: 33 s of the 78 s Megatron init at 1024 ranks
+    use_gloo_process_groups: false
+
+slurm:
+  env:
+    NODE_CHECK_REUSE_S: "21600"
+
+job:
+  name: ambitious_v4b_learned_256
+  # same training tree as the old line: the successor resumes from its newest save
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned/main
+  metadata:
+    # same priority as the main run: it IS the main run from the handover on
+    pool_priority: 150
+  start_condition:
+    class_name: ShellCommandCondition
+    command: |
+      python3 -c "import glob,json,os,sys; p='/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264/runs'; live=[d for d in glob.glob(p+'/mn5-pool-p264.*') if not os.path.exists(d+'/rc')]; n=[json.load(open(d+'/run.json')).get('name','') for d in live if os.path.exists(d+'/run.json')]; sys.exit(1 if any(x.startswith('ambitious_v4b_learned_') for x in n) else 0)"
