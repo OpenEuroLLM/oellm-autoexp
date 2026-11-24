@@ -4,6 +4,13 @@ This note records the node/GPU accounting used by the MN5 pool and the
 troubleshooting path for `Insufficient GRES` and
 `Requested node configuration is not available`.
 
+> **Major improvement plan:** [`docs/pool_allocation_improvement.md`](pool_allocation_improvement.md)
+> proposes the scheduling/monitoring semantics this note's accounting needs: a line as the unit,
+> a cancel that is final across monitor restarts, placement failure kept distinct from run failure,
+> reservation and largest-first launch, a priority-margin preemption rule (margin >= 100), one merged
+> exclusion set, and the `pool_ctl` commands (`cancel --line`, `replace`, `doctor`, `reconcile`).
+> The failure record behind it: [`docs/hiccups/20261124_marenstrum_v4b_ambitious.md`](hiccups/20261124_marenstrum_v4b_ambitious.md).
+
 ## Terms
 
 - **Host allocation**: the Slurm job owned by a pool host, for example
