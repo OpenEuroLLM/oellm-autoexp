@@ -88,6 +88,9 @@ def trim(run_dir: str, keep: int, every: int) -> int:
     )
     removed = 0
     for name in dirs[:-keep] if keep > 0 else []:
+        # Name what goes: a silent count cannot be audited afterwards (2026-11-23: fourteen
+        # "trimmed 1" lines in an hour with no record of which iterations were destroyed).
+        print(f"  trim: removing {name}", flush=True)
         shutil.rmtree(os.path.join(ev, name), ignore_errors=True)
         removed += 1
     return removed
@@ -141,6 +144,11 @@ def main() -> int:
             trimmed = trim(run_dir, args.keep, args.every)
             if trimmed:
                 print(f"[{time.strftime('%H:%M:%S')}] trimmed {trimmed} old mirror(s) (keep {args.keep})", flush=True)
+            elif os.environ.get("KEEP_CKPT_EVAL_DEBUG"):
+                own = [d for d in sorted(os.listdir(os.path.join(run_dir, "ckpt_eval")))
+                       if d.startswith("iter_") and d.split("_")[-1].isdigit()
+                       and int(d.split("_")[-1]) % args.every == 0]
+                print(f"[{time.strftime('%H:%M:%S')}] no trim: {len(own)} own mirror(s) <= keep {args.keep}", flush=True)
         if args.once:
             return 0
         if args.budget and time.time() - t0 >= args.budget:
