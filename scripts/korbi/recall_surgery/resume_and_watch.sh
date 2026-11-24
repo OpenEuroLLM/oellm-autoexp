@@ -17,10 +17,12 @@ WATCH=$SNAP/scripts/korbi/recall_surgery/watch_line.sh
 
 BUDGET=43200
 INTERVAL=30
+WATCH_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --budget) BUDGET=$2; shift 2;;
     --interval) INTERVAL=$2; shift 2;;
+    --auto-exclude) WATCH_ARGS+=(--auto-exclude); shift;;
     *) echo "unknown arg: $1" >&2; exit 9;;
   esac
 done
@@ -69,4 +71,4 @@ else
   echo "[$(date +%H:%M:%S)] leaving the pool alone: live='$(live)' pending=$(pending)"
 fi
 
-exec bash "$WATCH" --interval "$INTERVAL" --budget "$BUDGET"
+exec bash "$WATCH" --interval "$INTERVAL" --budget "$BUDGET" "${WATCH_ARGS[@]}"

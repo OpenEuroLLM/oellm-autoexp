@@ -17,6 +17,8 @@ INTERVAL=30
 BUDGET=43200
 STALL_MIN=40
 MAX_RESTARTS=3
+AUTO_EXCLUDE=0
+EXCLUDE_FILE=/gpfs/projects/ehpc533/users/korbip/hybrid_v019/mn5_exclude_nodes.txt
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -24,12 +26,42 @@ while [ $# -gt 0 ]; do
     --budget) BUDGET=$2; shift 2;;
     --stall-min) STALL_MIN=$2; shift 2;;
     --max-restarts) MAX_RESTARTS=$2; shift 2;;
+    --auto-exclude) AUTO_EXCLUDE=1; shift;;
     -h|--help) sed -n '2,12p' "$0"; exit 0;;
     *) echo "unknown arg: $1" >&2; exit 9;;
   esac
 done
 
 say() { echo "[$(date +%H:%M:%S)] $*"; }
+
+failing_node() {  # $1 = log; prints "node device iteration signature" of the first named fault
+  local log=$1
+  local m
+  m=$(grep -m1 -oE "Rank [0-9]+, node [a-z0-9]+, device [0-9]+, iteration [0-9]+" "$log" 2>/dev/null)
+  if [ -n "$m" ]; then
+    echo "$m" | sed -E "s/Rank [0-9]+, node ([a-z0-9]+), device ([0-9]+), iteration ([0-9]+)/\1 \2 \3 NaN/"
+    return 0
+  fi
+  m=$(grep -A4 "Root Cause" "$log" 2>/dev/null | grep -oE "host +: [a-z0-9]+\.bsc\.mn" | head -1 | grep -oE "as[0-9]{2}r[0-9]b[0-9]{2}")
+  if [ -n "$m" ]; then
+    echo "$m - - root-cause-host"
+    return 0
+  fi
+  return 1
+}
+
+exclude_node() {  # $1 node, $2 device, $3 iteration, $4 signature
+  local node=$1 dev=$2 it=$3 sig=$4
+  [ -n "$node" ] || return 1
+  if grep -qx "$node" "$EXCLUDE_FILE" 2>/dev/null; then
+    say "  $node already excluded"
+    return 1
+  fi
+  printf "# %s %s (device %s, iteration %s): excluded automatically by watch_line.sh after a single-device fault\n%s\n" \
+    "$(date +%Y-%m-%d)" "$sig" "$dev" "$it" "$node" >> "$EXCLUDE_FILE"
+  say "  EXCLUDED $node (device $dev, iteration $it, $sig) -> the next re-render drops it"
+  return 0
+}
 
 probe() {  # newest run of the prefix: "<rid> <name> <rc|-> <started:0|1> <tracker> <last_iter>"
   /usr/bin/env python3 - "$POOL" "$RUN_DIR" "$NAME_PREFIX" <<'PY'
@@ -132,6 +164,18 @@ while :; do
     trap=$(grep -c "disagrees with topk" "$log" 2>/dev/null | head -1)
     hit=${hit:-0}; trap=${trap:-0}
     say "RUN ENDED .$rid rc=$rc illegal=$hit trap=$trap last_iter=$last"
+    if [ "$AUTO_EXCLUDE" = 1 ] && [ "$rc" != "0" ]; then
+      # Fast path: the node named by the failure goes into the exclude list NOW, so the restart
+      # the pool is about to make already carries it (2026-11-24: a NaN on as05r4b24 sat
+      # undiagnosed for ~20 min while the line reloaded on the same node).
+      read -r fnode fdev fit fsig <<<"$(failing_node "$log" || true)"
+      if [ -n "${fnode:-}" ]; then
+        say "  fault names $fnode (device ${fdev:-?}, iteration ${fit:-?}, ${fsig:-?})"
+        exclude_node "$fnode" "$fdev" "$fit" "$fsig"
+      else
+        say "  no single node named by the failure: nothing excluded automatically"
+      fi
+    fi
     if [ "${hit:-0}" -gt 0 ] || [ "${trap:-0}" -gt 0 ]; then exit 4; fi
     if [ "$rc" != "0" ]; then exit 5; fi
     prev_rc=$rc
