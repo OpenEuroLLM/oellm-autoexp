@@ -1,28 +1,45 @@
 # @package _global_
-# v4b main-run step speed round 3 at 64 nodes (2026-11-24): the live sparse main config
-# (cross_doc_seqs/v4b_learned_cds_sparse_mn5: 104 layers, page_maxpool per token, EP4 MoonEP,
-# Megatron-FSDP with fp8 expert gather, full recompute + RECOMPUTE_OFFLOAD) from the main run's
-# trained weights (protected eval copy ckpt_eval/iter_0055000, read only: model only, iteration 0,
-# nothing saved), one 64k sequence per GPU (gbs 256 on 64 nodes: one micro-batch per GPU, as in the
-# main run). Same data / geometry as v4b_speed_ab64, so round 3 base is comparable with it.
+# v4b main-run step speed round 3 at 64 nodes (2026-11-24): bubbles, not math. The live sparse main
+# config (cross_doc_seqs/v4b_learned_cds_sparse_mn5: 104 layers, page_maxpool per token, EP4 MoonEP,
+# Megatron-FSDP, full recompute + RECOMPUTE_OFFLOAD) from the main run's trained weights (protected
+# eval copy ckpt_eval/iter_0055000, read only: model only, iteration 0, nothing saved), one 64k
+# sequence per GPU (gbs 256 on 64 nodes: one micro-batch per GPU, as in the main run). Same data /
+# geometry as v4b_speed_ab64, so round 3 base stays comparable with it.
 #
-# Why these arms (rank-0 torch profile of the ab64 base step, 18.0 s, 64 nodes):
-#   ncclDevKernel_ReduceScatter_f32_RING   6.53 s   fp32 gradient reduce-scatter
-#   ncclDevKernel_AllGather_RING           5.22 s   bf16 parameter all-gather (experts already fp8)
-#   ncclDevKernel_AllReduce_u64_TREE       0.92 s   per-step MoE bookkeeping
-# The two big ones are pure wire traffic, so round 3 attacks the wire format, not the layout:
+# The ab64 base step (18.0 s, 64 nodes), rank-0 torch profile:
+#   compute stream (stream 7): 12.55 s busy, 5.44 s IDLE, 130 gaps > 5 ms = 4.47 s, spread over
+#     every decile of the step (0.20 0.19 0.50 0.79 0.24 0.63 0.73 0.51 0.42 0.75 s) -- the GPU
+#     drains its queue and waits for launches. The six > 100 ms gaps sit at t = 5.8 / 7.0 / 10.1 /
+#     12.4 / 13.5 / 16.6 s and follow elementwise kernels.
+#   aten::item 1,503 calls per two steps (750 / step): each one is a device synchronize, i.e. a
+#     pipeline drain. The MoE health path is what does it: report_moe_health_metrics all-reduces
+#     every tracked value over the PP / reduce / DP groups every step (blocking), and the profiler
+#     shows ncclDevKernel_AllReduce_u64_TREE 0.92 s -- 5 % of the step for bookkeeping.
+#   ReduceScatter_f32_RING 6.53 s and AllGather_RING 5.22 s run on their own streams and are
+#     overlapped; 23.1 B params / 64 ranks is ~0.4 GB per rank per step, so their size is wait.
 #
-#   base        the main run's settings (megatron_fsdp_grad_comm_dtype fp32, fp8 gather experts only)
-#   gcommbf16   --megatron-fsdp-grad-comm-dtype bf16: the gradient reduce-scatter moves bf16 instead
-#               of fp32 (~half the bytes). main_grads_dtype stays fp32, so the optimizer state and
-#               the accumulation buffers do not change; only the reduction wire format does.
-#   fp8all      --fsdp-fp8-param-gather all: every bf16 bucket is all-gathered as FP8 E4M3 with one
-#               fp32 scale per 128 elements (~1.03 instead of 2 bytes per element); the GEMMs stay
-#               bf16 on the dequantized weights. The main run already does this for the expert
-#               buckets (experts); dense layers still move bf16.
-#   comb        gcommbf16 + fp8all together (the two are independent: grads vs params).
-#   nolog       the per-step MoE health logging off (round 2 measured -3.3 %; kept as the control
-#               for whether it still holds with the wire changes on).
+# So round 3 changes no math. It removes waits:
+#   base     the main run's settings
+#   nolog    the per-step MoE health logging off: --moe-per-layer-logging, --moe-expert-viability-
+#            metrics, --moe-log-seq-aux-loss, --log-timers-to-tensorboard. Kills the per-step
+#            blocking all-reduces and their .item() syncs. (Round 2 measured -3.3 % at 64 nodes;
+#            the profiler says the ceiling is the 0.92 s u64 all-reduce plus the syncs.)
+#   rc4      --recompute-num-layers 4: uniform recompute units of 4 layers instead of 2. Full
+#            recompute keeps ONE input per unit and with mHC that input is the 4-stream state
+#            (4 x 64k x 2048 bf16 ~ 1.07 GB), so 52 units put ~56 GB per step each way through
+#            RECOMPUTE_OFFLOAD pinned host memory, on top of compute-side copies. 26 units halve
+#            that traffic. The same layers are recomputed, so the math is unchanged -- only how
+#            many chunk inputs are kept and copied.
+#   sms      --moe-flex-dispatcher-num-sms 64 -> 128: the MoonEP dispatch and combine kernels
+#            (0.33 + 0.32 s per step) get the whole SM array instead of half of it.
+#   comb     nolog + rc4 + sms
+#
+# Not an arm, on purpose: --fsdp-fp8-param-gather all. It is already "experts", and the 48 expert
+# buckets x 424,673,280 elements are 20.4 B of the model's 23.1 B params (88 %) -- those already
+# all-gather as FP8 E4M3. Only the remaining ~2.7 B dense params move bf16, so "all" would touch
+# 12 % of the wire and would quantize dense weights in the forward. Not worth it.
+# Not an arm either: --megatron-fsdp-grad-comm-dtype bf16. The DP reduce-scatter reduces IN the
+# wire dtype, so the 64-rank gradient sum itself would become bf16.
 #
 #   ... --pool .../mn5_pool_c136 -C /gpfs/scratch/ehpc533/hybrid_nucleus/speed/configs \
 #       --config-name experiments/korbi/hybrid_speed/v4b_speed_r3_c136_mn5 \
@@ -35,7 +52,7 @@ aux:
   suite: v4b_speed_r3
   variant: base
   arm: ${aux.variant}
-  only: [base, gcommbf16, fp8all, comb, nolog]
+  only: [base, nolog, rc4, sms, comb]
   nodes: 64
   node_check: "off"
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_speed_r3
@@ -114,14 +131,18 @@ sweep:
     - type: list
       configs:
         - aux.variant: base
-        - aux.variant: gcommbf16
-          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
-        - aux.variant: fp8all
-          backend.megatron.fsdp_fp8_param_gather: all
-        - aux.variant: comb
-          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
-          backend.megatron.fsdp_fp8_param_gather: all
         - aux.variant: nolog
+          backend.megatron.moe_per_layer_logging: false
+          backend.megatron.moe_expert_viability_metrics: false
+          backend.megatron.moe_log_seq_aux_loss: false
+          backend.megatron.log_timers_to_tensorboard: false
+        - aux.variant: rc4
+          backend.megatron.recompute_num_layers: 4
+        - aux.variant: sms
+          backend.megatron.moe_flex_dispatcher_num_sms: 128
+        - aux.variant: comb
+          backend.megatron.recompute_num_layers: 4
+          backend.megatron.moe_flex_dispatcher_num_sms: 128
           backend.megatron.moe_per_layer_logging: false
           backend.megatron.moe_expert_viability_metrics: false
           backend.megatron.moe_log_seq_aux_loss: false
