@@ -19,6 +19,11 @@ defaults:
   - _self_
 
 backend:
+  env:
+    # Release host RAM right before a persistent save (gc.collect + malloc_trim, env-gated in
+    # megatron/training/checkpointing.py). Harmless when the code has no hook; it is the cheap
+    # half of the OOM defence and costs a few seconds once per 1000 steps.
+    MEGATRON_GC_BEFORE_SAVE: "1"
   megatron:
     num_workers: 4
     dataloader_prefetch_factor: 2
