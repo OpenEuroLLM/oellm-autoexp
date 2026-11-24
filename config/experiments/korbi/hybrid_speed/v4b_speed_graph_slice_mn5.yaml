@@ -1,0 +1,126 @@
+# @package _global_
+# v4b step speed: document-masking variants and CUDA graphs, run as POOL RUNS on the c136 host
+# (user 2026-11-24: "re-use host002 for all these tests instead of submitting new jobs" -- no
+# SLURM job is submitted here, each arm is a step inside the host allocation that already runs).
+#
+# Same slice harness as v4b_speed_r3_slice_mn5 (18 layers, mock data, random init, gbs 32, EP4
+# MoonEP, Megatron-FSDP, full recompute + RECOMPUTE_OFFLOAD) at 8 nodes, i.e. the arms fit the
+# host's buffer nodes and cost ~7 GPU-h each instead of ~166.
+#
+#   base          the live data path: inter-document masking on, cu_seqlens stripped to the real
+#                 document count (variable length), no graphs
+#   nomask        --no-dataloader-inter-document-masking: "none", one segment for the whole packed
+#                 sequence. Attention crosses document boundaries and RoPE does not restart per
+#                 document: a computation change, measured for what the masking itself costs.
+#   nomask_graph  nomask + --cuda-graph-impl local (empty cuda_graph_modules = whole-layer capture)
+#   static        PACKED_DOC_STATIC_SEGMENTS=256 (Megatron 9560da4e8): masking STAYS ON and every
+#                 cu_seqlens row keeps 257 entries, so the merged tensor is mbs*256+1 for every
+#                 iteration. The tail is zero-length segments, so the segment lengths attention
+#                 sees are unchanged -- the computation is identical, only the shapes are static.
+#   static_graph  static + whole-layer CUDA graphs: the case that is worth having, because it keeps
+#                 document masking AND removes the ~17.5k launches per step.
+#
+#   ... --pool .../mn5_pool_c136 -C <snapshot>/config \
+#       --config-name experiments/korbi/hybrid_speed/v4b_speed_graph_slice_mn5 --yes
+defaults:
+  - ../cross_doc_seqs/v4b_learned_cds_sparse_mn5
+  - _self_
+
+aux:
+  suite: v4b_speed_graph_slice
+  variant: base
+  arm: ${aux.variant}
+  only: [base, nomask, nomask_graph, static, static_graph]
+  nodes: 8
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_speed_graph_slice
+  profile: true
+
+backend:
+  megatron:
+    num_layers: 18
+    hybrid_layer_pattern: "*ENLELELELVELELELE"
+    kv_share_layers: [10]
+    kv_share_source_layers: [0]
+    ckda_branch_kv_source_layers: [0]
+    engram_table_size: 811687
+    load: null
+    ckpt_step: null
+    exit_on_missing_checkpoint: false
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: null
+    train_iters: 60
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    global_batch_size: 32
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    packing_plan_path: null
+    packing_plan_boundaries: doc
+    packing_plan_at_end: exit
+    dataloader_index_bundle: null
+    data_args_path: null
+    per_split_data_args_path: null
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    mock_data: true
+    eval_interval: 1000000
+    eval_iters: 0
+    wandb_project: null
+    wandb_exp_name: null
+    profile: ${aux.profile}
+    use_pytorch_profiler: ${aux.profile}
+    profile_step_start: 40
+    profile_step_end: 41
+    profile_ranks: [0, 5, 18, 31]
+    pytorch_profiler_collect_shapes: false
+
+job:
+  name: v4b_speed_graph_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  start_condition: null
+  est_steps: 60
+  est_step_time_s: 6.0
+  est_startup_min: 8.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 140
+  log_events: []
+  state_events:
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "00:40:00"
+    # a pool run: the account / QOS are the host allocation's, these are only what the renderer
+    # writes into the step's header
+    account: cns143
+    qos: acc_xlarge
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: base
+        - aux.variant: nomask
+          backend.megatron.dataloader_inter_document_masking: false
+        - aux.variant: nomask_graph
+          backend.megatron.dataloader_inter_document_masking: false
+          backend.megatron.cuda_graph_impl: local
+        - aux.variant: static
+          backend.env.PACKED_DOC_STATIC_SEGMENTS: '256'
+        - aux.variant: static_graph
+          backend.env.PACKED_DOC_STATIC_SEGMENTS: '256'
+          backend.megatron.cuda_graph_impl: local
