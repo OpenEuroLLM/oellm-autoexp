@@ -23,6 +23,72 @@ Companion tools called internally:
 
 ---
 
+## Shared all-cluster report (2026-11-23)
+
+**Goal:** a single `progress.csv` and `progress.md` in
+`dense_multilingual_models_scaling_results/training/progress/`, covering all model sizes and
+all clusters. Each cluster runs the tracker once and merges its rows into these files; git
+carries the files between clusters. Previously there was one CSV/MD pair per (size, cluster).
+
+**Changes**
+
+- New `tools/progress_report.py`:
+  - `CSV_FIELDS`, a fixed schema;
+  - `merge_rows`, which replaces only the running machine's rows for the size it tracked;
+  - `render_md`, which renders Markdown from CSV rows alone;
+  - a CLI to regenerate the MD from the CSV.
+- The tracker's Markdown writer now delegates to `render_md`. The old ~260-line writer that
+  rendered from in-memory rows is removed, so both modes share one renderer.
+- New flags: `--accumulate`, `--size`, `--foreign-machine`. `--machine` is now required and
+  must be one of `LUMI`, `LEO` or `MN5`. The old default `LEO` is gone: the MN5 wrapper never
+  passed `--machine`, so its jobs were tagged `LEO`.
+- New columns: `Size`, `Source` (local/inferred), `OutputPath`, `DataPath`, `DataMixPath`,
+  `Config`, `UpdatedAt`, and `Ckpt-GB` / `Ckpt-GB-remaining`. `GPU-h(<local>)` and
+  `GPU-h(<foreign>)` are replaced by fixed `GPU-h(LUMI)`, `GPU-h(LEO)` and `GPU-h(MN5)`
+  columns. `RunClusters` is dropped; the cluster set per run is computed at render time.
+- The foreign cluster used to be hard-coded (`MN5` unless running on MN5). It is now a map
+  (LEO↔MN5, LUMI→LEO) and can be overridden with `--foreign-machine`.
+- A job with a log but no local sacct entry (logs synced from another cluster) is now
+  tagged as the foreign cluster with `Source=inferred`. Previously it got an empty cluster
+  and was missing from the per-cluster split.
+- With `--compute-storage` off, `--accumulate` carries forward the previous `Ckpt-GB` values of
+  the same machine and run instead of blanking them.
+- `load_external_gpu_h` only reads rows of the running machine. The shared CSV mixes
+  Slurm ID spaces.
+- `--accumulate` exits early if sacct returns nothing for the machine's jobs.
+
+**Bug fixes found along the way**
+
+- `RE_ARG` only matched torchrun's `[default0]:` prefix. LUMI logs use `srun --label`
+  (` 0:   lr ....`), so LR, GBS, MBS, workers and `train_iters` were blank for every LUMI job.
+  The blank `train_iters` also made Remaining-GPU-h fall back to full-budget estimates for
+  partly trained LUMI runs. The regex now accepts both prefixes.
+- `parse_config` crashed with `KeyError: 'tokens'` on the merged-grid configs (commit
+  73b0e475). `entry.get(key, aux["tokens"])` evaluates its default eagerly, and the new
+  configs carry `aux.tokens` only per entry.
+- Merged grids mark finished stables `skip_stable_launch: true`. The tracker treated that as
+  "no run dir expected" and dropped those runs: 28 stables, about 30k GPU-h on LUMI 0.1B
+  alone. A `skip_stable_launch` stable is now tracked whenever its run dir exists, and its
+  Remaining-GPU-h is 0 because no further training is planned. Without that, stopped stables
+  and dirs that only hold transferred checkpoints added about 13k phantom GPU-h on 0.1B.
+  Run specs are also de-duplicated by name.
+- Requeued jobs lost GPU-h. Without `--duplicates`, sacct returns only the last instance of a
+  requeued job ID (NODE_FAIL and similar). LUMI job 20096720 ran 15.5 min on 16 nodes, was
+  requeued, and its pending copy was cancelled, so sacct showed 0 GPUs and 0 s. The collision
+  heuristic then attributed it to LEO with 399.6 log-inferred GPU-h; the real cost is 16.6.
+  Both `query_sacct` implementations (tracker and `gpu_hours.py`) now pass `--duplicates` and
+  merge the instances with `gpu_hours.merge_requeued`: elapsed is summed, the GPU count is the
+  maximum, start comes from the first instance and end/state from the last.
+- A run dir without job IDs was always labelled `QUEUED`. On LUMI none of the 74 such dirs had
+  been submitted: 34 stables hold only checkpoints transferred from LEO/MN5, and 40 decays
+  have an empty `checkpoints/`. Labels are now `QUEUED` only when `job.sbatch` exists,
+  `CKPT_ONLY` 📦 when `iter_*` checkpoints exist, and `NOT_LAUNCHED` otherwise.
+- A run whose jobs were all cancelled before writing a log vanished entirely, because every
+  one of its rows was dropped as noise. The old Markdown still listed it through `run_specs`,
+  but the CSV-driven report would not. Such a run now keeps a single CANCELLED placeholder row.
+
+---
+
 ## Bug fixes (2026-06-15)
 
 ### Bug 7 — TTFI-GPU-h missing when `job.sbatch` encodes GPU count as env var

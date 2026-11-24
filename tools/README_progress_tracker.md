@@ -7,38 +7,100 @@ Given a sweep config YAML, the script discovers every expected training run, que
 ## Usage
 
 ```bash
-# Basic: print table to terminal
-python tools/progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml
+# Basic: print table to terminal (--machine is required: LUMI, LEO or MN5)
+python tools/progress_tracker.py config/experiments/multilingual_scaling/training/lumi/qwen3_dense_0.21B.yaml \
+    --machine LUMI --results-dir /scratch/project_465002530/multilingual_scaling/0.1B_ne/training
 
-# Override results path (when cluster path differs from local mount)
-python tools/progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \
-    --results-dir /home/diana/mn5/multilingual_scaling/0.1B_ne/training
+# Write a standalone CSV and Markdown for this cluster + size only
+python tools/progress_tracker.py <config.yaml> --machine LUMI --results-dir <dir> \
+    --csv status.csv --md status.md
 
-# Also write CSV and Markdown
-python tools/progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \
-    --csv status.csv \
-    --md status.md
+# Merge into the shared all-cluster report (see "Shared all-cluster report" below)
+python tools/progress_tracker.py <config.yaml> --machine LUMI --results-dir <dir> --accumulate \
+    --csv <results_repo>/training/progress/progress.csv \
+    --md  <results_repo>/training/progress/progress.md
 
 # Point to specific monitor-state session directories
-python tools/progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \
+python tools/progress_tracker.py <config.yaml> --machine MN5 --results-dir <dir> \
     --monitor-dirs monitor_state/1778164338 monitor_state/1778489512
 ```
 
-The helper script `update_progress.sh` wraps the four model-size configs (0.1B, 0.2B, 0.4B, 0.9B) with their cluster paths and monitor-state directories.
+To update the shared report, run one wrapper per cluster. Each wrapper covers all four model sizes:
+
+| Cluster | Script | Notes |
+|---------|--------|-------|
+| LUMI | `tools/update_progress_lumi.sh` | Defaults for repo, cache and venv paths are built in |
+| Leonardo | `tools/update_progress_leo.sh` | Set `RESULTS_REPO` to your clone of the results repo |
+| MareNostrum 5 | `tools/update_progress_mn5.sh` | Set `RESULTS_REPO` to your clone of the results repo |
+
+Each wrapper runs `git pull --ff-only` on the results repo, then runs the tracker for every size with `--accumulate`. It does not commit: review `git diff`, then commit and push.
 
 ## CLI options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `config` | *(required)* | Path to the sweep YAML config |
+| `--machine` | *(required)* | Cluster the tracker runs on: `LUMI`, `LEO` or `MN5`. Jobs known to local sacct are tagged with it |
+| `--foreign-machine` | LEO→MN5, MN5→LEO, LUMI→LEO | Cluster for jobs whose logs are in the local run dirs but that local sacct does not know (or reports a colliding job for) |
+| `--accumulate` | off | Merge into the shared CSV given by `--csv` instead of overwriting it, then render `--md` from the merged CSV |
+| `--size` | from run names | Value of the `Size` column, e.g. `0.1B_ne` |
 | `--results-dir` | auto from config | Directory containing run subdirectories |
-| `--prefix-remap` | `/gpfs/…:/home/diana/mn5` | `old:new` path prefix substitution for the config path |
+| `--prefix-remap` | `/gpfs/…:/home/diana/mn5` | `old:new` path prefix substitution for the config path (only used without `--results-dir`) |
 | `--max-elapsed-ms` | `6000` | Drop throughput iterations slower than this (stragglers / checkpoint sync) |
 | `--skip-first-iters` | `50` | Warmup iterations excluded from the throughput average |
 | `--max-iters` | `500` | Maximum post-warmup iterations to include in the throughput average |
-| `--csv` | *(none)* | Optional CSV output path |
-| `--md` | *(none)* | Optional Markdown table output path |
+| `--csv` | *(none)* | CSV output path; with `--accumulate`, the shared CSV |
+| `--md` | *(none)* | Markdown output path, rendered from the CSV rows |
 | `--monitor-dirs` | auto-discovered | Monitor-state session directories containing `*.job.json` files |
+| `--compute-storage` | off | Measure `checkpoints/` sizes (`du`). With `--accumulate`, values from a previous run are kept when this flag is off |
+| `--cache-dir` | *(none)* | Write the throughput cache and `gpu_hours.csv` under this directory instead of into the results tree |
+| `--lightweight` | off | Quick status only: no sacct, no log parsing, no files written |
+
+## Shared all-cluster report
+
+`dense_multilingual_models_scaling_results/training/progress/` holds a single `progress.csv` and a single `progress.md` covering every model size and every cluster. No machine can see the others' sacct or run directories, so the report is built up across clusters:
+
+```
+LUMI:  git pull → update_progress_lumi.sh → git commit + push
+LEO:   git pull → update_progress_leo.sh  → git commit + push
+MN5:   git pull → update_progress_mn5.sh  → git commit + push
+```
+
+**Merge rules** (`progress_report.merge_rows`). A run on machine M for size S:
+
+1. Removes M's `local` rows for S, plus rows that other clusters had `inferred` for M on the runs M tracked in this run. M is authoritative for its own jobs.
+2. Adds M's new `local` rows. A job that another machine already lists as `local` under the same (Run, JobID) is skipped and a warning is printed, because a matching Slurm ID on two clusters means an ID collision.
+3. Adds M's `inferred` rows, which are jobs from synced logs that ran on another cluster, only where no row with that (Run, JobID) exists yet. The real cluster's next run replaces them.
+4. Leaves rows of other machines and other sizes unchanged.
+
+Rows are kept in a deterministic order (size, tier, lr, gbsz, stage, tokens, machine, start time), so re-running with the same input changes only `UpdatedAt`. If two clusters push at once and the CSV conflicts, take either side, re-run the tracker on the cluster whose rows were lost, and regenerate the Markdown from the CSV alone:
+
+```bash
+python tools/progress_report.py progress.csv --md progress.md
+```
+
+`--accumulate` exits early if sacct returns nothing for this machine's jobs. Without sacct, synced foreign jobs would be tagged as local and would shadow the real rows.
+
+**Markdown layout** (`progress_report.render_md`):
+
+- the last tracker run per cluster;
+- an overview per size;
+- one section per size with:
+  - Sources: config and results root per cluster;
+  - the training-progress summary, with GPU-h split into `GPU-h(LUMI)`, `GPU-h(LEO)` and `GPU-h(MN5)`;
+  - Run locations: OutputPath, DataMixPath and DataPath per run and cluster;
+  - the status breakdown, counted per run.
+
+Runs that span clusters are merged into one line:
+
+| Field | How it is merged |
+|-------|------------------|
+| Clusters | All clusters the run used, e.g. `LEO+LUMI` |
+| GPU-h, overheads | Summed per cluster and in total |
+| Progress | The furthest point reached on any cluster |
+| Status | DONE if any job finished, otherwise the latest job's status |
+| Remaining-GPU-h | Taken from the cluster that ran the latest job |
+| Ckpt-GB | Summed over clusters, since every cluster keeps its own checkpoints |
 
 ## How it works
 
@@ -84,8 +146,9 @@ Status words and their meaning:
 
 | Status | Meaning |
 |--------|---------|
-| `NOT_LAUNCHED` | Run directory does not exist |
-| `QUEUED` | Directory exists but no iterations have logged |
+| `NOT_LAUNCHED` | Never submitted on this cluster: no run directory, or a directory with no `job.sbatch`, no `config-*.yaml`, no logs and no checkpoints |
+| `CKPT_ONLY` | Never submitted on this cluster, but `checkpoints/` holds `iter_*` checkpoints copied from another cluster. In the merged report, that cluster's job rows take precedence |
+| `QUEUED` | Submitted (`job.sbatch` or `config-*.yaml` present) but no iterations logged yet |
 | `TRAINING` | Latest job is still running |
 | `DONE` | Training reached `train_iters`, wandb synced, or a `finished_training` monitor event fired |
 | `FAILED` | Hard error: segfault, OOM, fatal error, exit-code 1, or time-limit on a non-final job |
@@ -125,24 +188,32 @@ With `--csv`, one row per job is written with all metrics. With `--md`, a compac
 
 ## Output columns
 
+The CSV schema is the same on every cluster. It is defined as `CSV_FIELDS` in `tools/progress_report.py`, and there is one row per Slurm job. A run with no job yet gets one placeholder row with an empty `JobID`.
+
 | Column | Description |
 |--------|-------------|
-| `Run` | Run name (only shown on first job per run) |
-| `JobID` | Slurm job ID |
+| `Size` | Model size label, e.g. `0.1B_ne` |
+| `Run` | Logical run name, rendered from the sweep config. The run directory may carry a prefix; see `OutputPath` |
+| `Machine` | Cluster the job ran on: `LUMI`, `LEO` or `MN5` |
+| `Source` | `local` if tracked on `Machine` itself (from sacct); `inferred` if seen in logs synced to another cluster (GPU-h estimated from the logs) |
+| `JobID` | Slurm job ID; unique only within one cluster |
+| `Owner` | Slurm user, or the user inferred from paths in the log |
+| `StartTime` | sacct start time, or the first log timestamp for inferred jobs. Local time of that cluster |
+| `Elapsed` | sacct elapsed time |
 | `N_ne(B)` | Transformer-block parameter count (billions) |
 | `N(B)` | Total parameter count including embeddings (billions) |
 | `D(B)` | Token budget (billions) |
 | `C(10^18)` | Compute estimate: 6 × N_ne × D (FLOPs × 10⁻¹⁸) |
-| `Tier` | center / cross / diagonal / stable |
+| `Tier` | center / cross / diagonal |
 | `Stage` | stable or decay |
 | `TotIter` | Total planned training iterations |
 | `CurIter` | Last logged iteration |
 | `LastCkpt` | Last checkpoint saved |
 | `Prog%` | Training progress within this phase |
-| `TrnLoss` | Most recent training loss |
+| `TrainLoss` | Most recent training loss |
 | `ValLoss` | Most recent validation loss |
 | `LR` | Learning rate |
-| `GBS` | Global batch size (tokens × sequences) |
+| `GBS` | Global batch size, in sequences |
 | `MBS` | Micro batch size |
 | `Nodes` | Node count from job.sbatch |
 | `Workers` | Data loader workers |
@@ -154,11 +225,19 @@ With `--csv`, one row per job is written with all metrics. With `--md`, a compac
 | `LowTP-GPU-h` | GPU-hours lost in low-throughput iterations |
 | `Overhead-time(h)` | TTFI + LowTP time (hours) |
 | `Overhead-GPU-h` | TTFI + LowTP (GPU-hours) |
-| `GPU-h` | Total GPU-hours consumed (from sacct) |
+| `GPU-h(LUMI)`, `GPU-h(LEO)`, `GPU-h(MN5)` | The job's GPU-h, in the column of its `Machine` |
+| `GPU-h` | Billed GPU-hours of the job (sacct; LUMI counts 2 GCDs = 1 GPU) |
 | `Overhead%` | Overhead GPU-h / total GPU-h |
-| `Status` | DONE / TRAINING / FAILED / CANCELLED / QUEUED / NOT_LAUNCHED |
+| `Remaining-GPU-h` | Per run, filled on the run's latest job row only. A `~` prefix means estimated from stable-run throughput |
+| `Ckpt-GB`, `Ckpt-GB-remaining` | Per run, filled on the latest job row and only with `--compute-storage` |
+| `Emoji`, `Status` | DONE / TRAINING / FAILED / CANCELLED / QUEUED / NOT_LAUNCHED |
 | `Action` | AUTO_RESTARTED / MANUALLY_RESTARTED / NEW_SESSION / NONE |
 | `Error` | Short error description if FAILED |
+| `OutputPath` | Run directory on `Machine`: Megatron `--save` without `/checkpoints`. Falls back to the submission config, then to the scanned run dir |
+| `DataPath` | Tokenized-data root: the common directory of all `Load the _IndexReader from …idx` lines in the job's log |
+| `DataMixPath` | The data mix file: Megatron `--data-args-path`, or `--per-split-data-args-path` |
+| `Config` | Sweep config the tracker ran with |
+| `UpdatedAt` | Time of the tracker run that wrote the row |
 
 ---
 

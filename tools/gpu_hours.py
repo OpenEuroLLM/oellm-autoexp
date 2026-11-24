@@ -55,6 +55,52 @@ def parse_elapsed(s):
     return int(h) + int(m) / 60 + int(sec) / 3600
 
 
+def format_elapsed(hours):
+    """Inverse of parse_elapsed: hours -> sacct-style "[D-]HH:MM:SS"."""
+    total = int(round(hours * 3600))
+    days, rem = divmod(total, 86400)
+    h, rem = divmod(rem, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{days}-{h:02d}:{m:02d}:{sec:02d}" if days else f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+def merge_requeued(prev, cur):
+    """Combine two sacct records of the same job ID (``sacct --duplicates``).
+
+    A requeued job (NODE_FAIL, preemption, scontrol requeue) keeps its ID; by
+    default sacct shows only the last instance.  When that last instance never
+    started (e.g. cancelled while pending after a node failure) the job looks
+    like 0 GPUs / 0 s, its real GPU-h vanish, and the tracker's cross-cluster
+    collision heuristic (sacct GPUs == 0 but sbatch GPUs > 0) misfires.
+
+    Elapsed time is summed over instances, GPU counts are the max, start fields
+    come from the first instance that started, end fields and state from the
+    last instance.  *cur* is the later instance (sacct lists them in order).
+    """
+    out = dict(cur)
+    try:
+        out["elapsed"] = format_elapsed(
+            parse_elapsed(prev.get("elapsed") or "00:00:00")
+            + parse_elapsed(cur.get("elapsed") or "00:00:00")
+        )
+    except ValueError:
+        out["elapsed"] = cur.get("elapsed") or prev.get("elapsed", "")
+    for k in ("gpus", "gpus_billed"):
+        if k in prev or k in cur:
+            out[k] = max(prev.get(k) or 0, cur.get(k) or 0)
+    if not out.get("gpu_model"):
+        out["gpu_model"] = prev.get("gpu_model", "")
+    if prev.get("start_ts") is not None:
+        out["start_ts"] = prev["start_ts"]
+        out["start_str"] = prev.get("start_str", "")
+    if not out.get("partition"):
+        out["partition"] = prev.get("partition", "")
+    if not out.get("user"):
+        out["user"] = prev.get("user", "")
+    out["n_instances"] = prev.get("n_instances", 1) + 1
+    return out
+
+
 def parse_mem_gb(value, unit):
     """Convert a sacct AllocTRES mem quantity (e.g. "480", "G") to GiB."""
     factor = {"": 1 / 1024, "K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1, "T": 1024, "P": 1024 ** 2}
@@ -125,6 +171,7 @@ def query_sacct(job_ids):
         "-j",
         ids_str,
         "--format=JobID,State,Elapsed,Partition,AllocTRES%80",
+        "--duplicates",  # every instance of requeued jobs; merged below
         "--noheader",
         "--parsable2",
     ]
@@ -153,7 +200,7 @@ def query_sacct(job_ids):
         if m:
             model = (m.group(1) or "").strip().lower()
             gpus = int(m.group(2))
-        info[job_id] = {
+        rec = {
             "state": state.strip(),
             "elapsed": elapsed.strip(),
             "partition": partition.strip(),
@@ -161,6 +208,7 @@ def query_sacct(job_ids):
             "gpus_billed": gpus / gpu_billing_divisor(model),
             "gpu_model": model,
         }
+        info[job_id] = merge_requeued(info[job_id], rec) if job_id in info else rec
     return info
 
 

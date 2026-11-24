@@ -47,6 +47,7 @@ from gpu_hours import (  # noqa: E402
     collect_job_ids as _gpu_collect_job_ids,
     query_sacct as _gpu_query_sacct,
     parse_elapsed as _gpu_parse_elapsed,
+    merge_requeued as _gpu_merge_requeued,
 )
 from low_throughput_analysis import analyze_job as _analyze_low_throughput_job  # noqa: E402
 from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput  # noqa: E402
@@ -61,8 +62,35 @@ from validate_sweep_runs import (  # noqa: E402
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-# Megatron stdout "arguments" section: "[default0]:  param_name ..... value"
-RE_ARG = re.compile(r"\[default\d+\]:\s{2}(\w+)\s+\.+\s+(.+)")
+# Megatron stdout "arguments" section.  Two line prefixes occur:
+#   "[default0]:  param_name ..... value"   (torchrun, MN5 / Leonardo)
+#   " 0:   param_name ..... value"            (srun --label, LUMI)
+# The original pattern only accepted the first, which left LR/GBS/MBS blank on LUMI.
+RE_ARG = re.compile(
+    r"^(?:\[default\d+\]:|\s*\d+:)\s{2,}(\w+)\s+\.{3,}\s+(.+)$", re.MULTILINE
+)
+
+# Megatron dataset loading: one line per mix component, e.g.
+#   "INFO:megatron.core.datasets.indexed_dataset:Load the _IndexReader from /data/.../nno_Latn.idx"
+RE_INDEX_READER = re.compile(r"Load the _IndexReader from (\S+?)\.idx\b")
+
+# data_args_path / save inside a config-{id}.yaml (fallback when no stdout log exists)
+RE_CFG_DATA_ARGS = re.compile(r"^\s*data_args_path:\s*(\S+)\s*$", re.MULTILINE)
+RE_CFG_SAVE = re.compile(r"^\s*save:\s*(\S+)\s*$", re.MULTILINE)
+
+# Clusters the tracker knows about.  --machine must be one of these: in
+# --accumulate mode rows are replaced per machine, so a wrong tag would erase
+# another cluster's rows from the shared CSV.
+MACHINES = ("LUMI", "LEO", "MN5")
+
+# Cluster a job is attributed to when its log sits in this machine's run dir
+# but local sacct does not know it (logs synced from elsewhere) or reports a
+# different job (ID collision).  MN5 and Leonardo share a Slurm ID space and
+# sync runs to each other; the hybrid runs on LUMI were continued from Leonardo.
+DEFAULT_FOREIGN_MACHINE = {"LEO": "MN5", "MN5": "LEO", "LUMI": "LEO"}
+
+# Model-size label in run names, e.g. qwen3_dense_0.1B_ne_lr... -> "0.1B_ne"
+RE_SIZE = re.compile(r"(?:^|_)(\d+(?:\.\d+)?B_ne)(?:_|$)")
 
 # Model parameter count lines
 RE_TOTAL_PARAMS_B = re.compile(r"\[default0\]:Total number of parameters in billions:\s+([\d.]+)")
@@ -114,7 +142,6 @@ RE_BUDGET = re.compile(r"_(stable|decay)(\d+BT)$")
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 
 TIER_SORT_ORDER = {"center": 0, "cross": 1, "diagonal": 2}
-SUMMARY_MD_TIER_SEP = "| — | — | — | — | — | — | — | — | — | — | — | — | — | — |"
 
 # Checkpoint save cadence: save_interval = SAVE_INTERVAL_NUM // global_batch_size
 _SAVE_INTERVAL_NUM = 512_000
@@ -322,7 +349,13 @@ def parse_config(config_path: str) -> dict:
             ):
                 lr = float(entry["backend.megatron.lr"])
                 gbsz = int(entry["backend.megatron.global_batch_size"])
-                stable_tok = int(entry.get("backend.megatron.aux.tokens", aux["tokens"]))
+                # Not entry.get(key, aux["tokens"]): the default is evaluated
+                # eagerly and the merged-grid configs carry tokens only per entry.
+                stable_tok = int(
+                    entry["backend.megatron.aux.tokens"]
+                    if "backend.megatron.aux.tokens" in entry
+                    else aux["tokens"]
+                )
 
                 center = _eval_token_set(
                     entry.get("backend.megatron.aux.center_tokens_set", "set()")
@@ -684,6 +717,54 @@ def parse_sbatch(path: Path) -> tuple[int | None, int | None, int | None]:
 # ── Stdout log parsing ────────────────────────────────────────────────────────
 
 
+def data_root(prefixes) -> str | None:
+    """Common root directory of tokenized-data prefixes (``.../name`` without
+    ``.bin``/``.idx``).  A single prefix yields its own directory."""
+    dirs = {os.path.dirname(p) for p in prefixes if p and p.startswith("/")}
+    if not dirs:
+        return None
+    try:
+        return os.path.commonpath(sorted(dirs))
+    except ValueError:
+        return None
+
+
+def size_label(run_name: str, results_dir: str | Path | None = None) -> str:
+    """Model-size label (``0.1B_ne``) from the run name, else from a
+    ``.../<size>/training`` results path; "" when neither carries it."""
+    m = RE_SIZE.search(run_name or "")
+    if m:
+        return m.group(1)
+    if results_dir:
+        for part in reversed(Path(str(results_dir)).parts):
+            m = RE_SIZE.search(part)
+            if m:
+                return m.group(1)
+    return ""
+
+
+def config_locations(run_dir: Path, job_id: str) -> dict[str, str | None]:
+    """data_args_path / save read from ``config-{job_id}.yaml`` (run dir or
+    logs/).  Used for jobs without a stdout log (config-only rows) and when the
+    log lacks the Megatron arguments block."""
+    out: dict[str, str | None] = {"data_mix_path": None, "output_path": None}
+    for p in (run_dir / f"config-{job_id}.yaml", run_dir / "logs" / f"config-{job_id}.yaml"):
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(errors="replace")
+        except OSError:
+            continue
+        m = RE_CFG_DATA_ARGS.search(text)
+        if m and m.group(1) not in ("null", "None"):
+            out["data_mix_path"] = m.group(1)
+        m = RE_CFG_SAVE.search(text)
+        if m and m.group(1) not in ("null", "None"):
+            out["output_path"] = re.sub(r"/checkpoints$", "", m.group(1).rstrip("/"))
+        break
+    return out
+
+
 def parse_stdout(log_path: Path) -> dict:
     """Parse a Megatron stdout log for training params, model size, and
     iteration tracking.
@@ -708,6 +789,9 @@ def parse_stdout(log_path: Path) -> dict:
         "first_iter_ts": None,
         "last_train_loss": None,
         "last_val_loss": None,
+        "data_mix_path": None,
+        "data_path": None,
+        "output_path": None,
     }
     if not log_path.is_file():
         return result
@@ -738,6 +822,22 @@ def parse_stdout(log_path: Path) -> dict:
     result["micro_batch_size"] = _int("micro_batch_size")
     result["num_workers"] = _int("num_workers")
     result["train_iters"] = _int("train_iters")
+
+    # --- Data / output locations ---
+    def _path_arg(key: str) -> str | None:
+        v = arg_map.get(key)
+        return v if v and v != "None" else None
+
+    result["data_mix_path"] = _path_arg("data_args_path") or _path_arg("per_split_data_args_path")
+    result["data_path"] = data_root(m.group(1) for m in RE_INDEX_READER.finditer(text))
+    if result["data_path"] is None:
+        # Blend given inline via --data-path "w1 prefix1 w2 prefix2 ..."
+        result["data_path"] = data_root(
+            re.findall(r"(/[^\s,'\"\]\[]+)", arg_map.get("data_path", ""))
+        )
+    save = _path_arg("save")
+    if save:
+        result["output_path"] = re.sub(r"/checkpoints$", "", save.rstrip("/"))
 
     # --- Model parameter counts ---
     m = RE_TOTAL_PARAMS_B.search(text)
@@ -878,6 +978,9 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
                 "-j",
                 ",".join(job_ids),
                 "--format=JobID,State,Elapsed,AllocTRES%80,Start,End,User",
+                # Every instance of requeued jobs, merged per ID below
+                # (gpu_hours.merge_requeued explains why).
+                "--duplicates",
                 "--noheader",
                 "--parsable2",
             ],
@@ -905,18 +1008,22 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         if m:
             _model = (m.group(1) or "").strip().lower()
             gpus = int(m.group(2))
-        info[jid_field.strip()] = {
+        _start_ts = _parse_sacct_ts(start)
+        rec = {
             "state": state.strip(),
             "elapsed": elapsed.strip(),
             # Billed GPUs: LUMI reports GCDs but bills per 2-GCD MI250x module.
             "gpus_billed": gpus / _gpu_billing_divisor(_model),
             "gpu_model": _model,
             "gpus": gpus,
-            "start_ts": _parse_sacct_ts(start),
+            "start_ts": _start_ts,
             "end_ts": _parse_sacct_ts(end),
-            "start_str": start.strip(),
+            # "None"/"Unknown" for instances that never started
+            "start_str": start.strip() if _start_ts is not None else "",
             "user": user,
         }
+        jid = jid_field.strip()
+        info[jid] = _gpu_merge_requeued(info[jid], rec) if jid in info else rec
     return info
 
 
@@ -938,12 +1045,16 @@ def gpu_hours_from_timestamps(
     return elapsed_h * total_gpus / _MACHINE_BILLING_DIVISOR
 
 
-def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
+def load_external_gpu_h(
+    csv_path: str, machine: str | None = None
+) -> dict[tuple[str, str], float]:
     """Load per-job GPU-h from a CSV previously produced by this script (--csv
     output).
 
     Expects at minimum columns: Run, JobID, GPU-h.
     Returns {(run_name, job_id): gpu_hours}.  Rows with blank JobID are skipped.
+    With *machine*, only rows tagged with that Machine are read: the shared
+    all-cluster CSV holds job IDs from several Slurm ID spaces.
     """
     result: dict[tuple[str, str], float] = {}
     with open(csv_path, newline="") as f:
@@ -953,6 +1064,8 @@ def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
             job_id = row.get("JobID", "").strip()
             gpu_h_s = row.get("GPU-h", "").strip()
             if not run_name or not job_id or not gpu_h_s:
+                continue
+            if machine and row.get("Machine", "").strip() not in ("", machine):
                 continue
             try:
                 result[(run_name, job_id)] = float(gpu_h_s)
@@ -1457,11 +1570,9 @@ def _lightweight_main(args: argparse.Namespace) -> None:
         stable_name = _render(
             stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
         )
-        # skip_stable_launch combos reuse an existing checkpoint, so the sweep
-        # filter never submits their stable job and no such run directory is
-        # expected.  The name is still computed above: decays branching off it
-        # resolve their checkpoint through decay_to_stable regardless.
-        if not combo.get("skip_stable_launch"):
+        # skip_stable_launch stables are tracked when their run dir exists
+        # (finished stable in the merged grids); see main().
+        if not combo.get("skip_stable_launch") or (Path(local_template) / stable_name).is_dir():
             run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
             run_to_gbsz[stable_name] = gbsz
         for decay_tok in sorted(combo["valid_decay_tokens"]):
@@ -1684,10 +1795,37 @@ def main() -> None:
     )
     ap.add_argument(
         "--machine",
-        default="LEO",
-        help="Local cluster name tag (e.g. LEO, MN5). Jobs on this cluster are tagged "
-        "using this value; foreign-cluster jobs detected via sacct collision are "
-        "tagged with the opposite name. Default: %(default)s",
+        type=str.upper,
+        choices=MACHINES,
+        default=None,
+        help="Cluster this tracker runs on (required unless --lightweight). Jobs "
+        "found in local sacct are tagged with it; jobs whose logs are present but "
+        "that ran elsewhere are tagged with --foreign-machine.",
+    )
+    ap.add_argument(
+        "--foreign-machine",
+        type=str.upper,
+        choices=MACHINES,
+        default=None,
+        help="Cluster to attribute jobs to whose logs sit in the local run dirs "
+        "but that local sacct does not know (or reports a different job for). "
+        f"Default per --machine: {DEFAULT_FOREIGN_MACHINE}.",
+    )
+    ap.add_argument(
+        "--accumulate",
+        action="store_true",
+        help=(
+            "Treat --csv as the shared all-cluster file: keep rows of other "
+            "machines and other model sizes, replace only this machine's rows "
+            "for this size, then re-render --md from the merged CSV. Run once "
+            "per cluster (git pull first, commit + push after)."
+        ),
+    )
+    ap.add_argument(
+        "--size",
+        default=None,
+        help="Model-size label stored in the Size column (e.g. 0.1B_ne). Default: "
+        "parsed from the run names, else from the results dir.",
     )
     ap.add_argument(
         "--lightweight",
@@ -1716,11 +1854,19 @@ def main() -> None:
     if args.cache_dir:
         set_cache_root(args.cache_dir)
 
-    _set_machine_billing_divisor(args.machine)
-
     if args.lightweight:
+        _set_machine_billing_divisor(args.machine or "")
         _lightweight_main(args)
         return
+
+    if args.machine is None:
+        ap.error("--machine {LUMI,LEO,MN5} is required")
+    if args.accumulate and not args.csv:
+        ap.error("--accumulate needs --csv (the shared progress.csv)")
+    _foreign_cluster = args.foreign_machine or DEFAULT_FOREIGN_MACHINE[args.machine]
+    if _foreign_cluster == args.machine:
+        ap.error("--foreign-machine must differ from --machine")
+    _set_machine_billing_divisor(args.machine)
 
     project_root = Path(__file__).resolve().parent.parent
     os.chdir(project_root)
@@ -1767,6 +1913,7 @@ def main() -> None:
     run_specs: list[tuple[str, str, int, str]] = []
     decay_to_stable: dict[str, str] = {}  # decay run_name → its paired stable run_name
     run_to_gbsz: dict[str, int] = {}
+    no_more_training: set[str] = set()  # skip_stable_launch stables that are tracked
     for combo in combos:
         lr, gbsz = combo["lr"], combo["gbsz"]
         stable_tok = combo["stable_tokens"]
@@ -1777,13 +1924,20 @@ def main() -> None:
         stable_name = _render(
             stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
         )
-        # skip_stable_launch combos reuse an existing checkpoint, so the sweep
-        # filter never submits their stable job and no such run directory is
-        # expected.  The name is still computed above: decays branching off it
-        # resolve their checkpoint through decay_to_stable regardless.
-        if not combo.get("skip_stable_launch"):
+        # skip_stable_launch: the sweep never submits this stable again.  Either
+        # it reuses another run's checkpoint (no run dir of its own), or, in the
+        # merged grids, it already finished — then its dir and GPU-h are real
+        # and must be tracked.  Decide by whether the run dir exists.  The name
+        # is computed either way: decays resolve their checkpoint through
+        # decay_to_stable.
+        if not combo.get("skip_stable_launch") or (Path(local_template) / stable_name).is_dir():
             run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
             run_to_gbsz[stable_name] = gbsz
+            if combo.get("skip_stable_launch"):
+                # Deliberately not trained further: no remaining GPU-h, whatever
+                # its iteration count says (stopped early, or a dir that only
+                # holds checkpoints transferred from another cluster).
+                no_more_training.add(stable_name)
 
         # Decay runs: only the token budgets permitted by the filter
         for decay_tok in sorted(valid_decay_toks):
@@ -1806,6 +1960,13 @@ def main() -> None:
         _single_name = cfg["job_name"]
         run_specs = [(_single_name, "stable", 0, "")]
         run_to_gbsz[_single_name] = 0
+
+    # Merged grids can list sibling entries of one (lr, gbsz) that render the
+    # same run name; track each run once (first entry wins).
+    _seen_specs: set[str] = set()
+    run_specs = [
+        s for s in run_specs if not (s[0] in _seen_specs or _seen_specs.add(s[0]))
+    ]
 
     run_tier_map: dict[str, str] = {name: tier for name, _stage, _tok, tier in run_specs}
     run_stage_map: dict[str, str] = {name: stage for name, stage, _tok, _tier in run_specs}
@@ -1834,12 +1995,20 @@ def main() -> None:
         all_job_ids.extend(jids)
 
     sacct_info = query_sacct(all_job_ids)
+    if args.accumulate and all_job_ids and not sacct_info:
+        # Without sacct every job would be tagged --machine, including jobs
+        # synced from other clusters, and those rows would then shadow the
+        # authoritative rows in the shared CSV.
+        sys.exit(
+            "sacct returned nothing for this machine's jobs; --accumulate must run "
+            f"on {args.machine} itself (login node), not off-cluster."
+        )
 
     # If sacct is unavailable and --csv points to an existing file, read back the
     # GPU-h column from that file so the values are preserved when it is rewritten.
     external_job_gpu_h: dict[tuple[str, str], float] = {}
     if not sacct_info and args.csv and Path(args.csv).is_file():
-        external_job_gpu_h = load_external_gpu_h(args.csv)
+        external_job_gpu_h = load_external_gpu_h(args.csv, machine=args.machine)
         print(
             f"sacct unavailable – loaded {len(external_job_gpu_h)} per-job GPU-h entries from {args.csv}"
         )
@@ -1899,11 +2068,26 @@ def main() -> None:
                 _all_cancelled = bool(_sessions) and all(
                     s.get("final_state") == "cancelled" for s in _sessions
                 )
+                # No job IDs means no config-{id}.yaml and no logs.  A bare
+                # directory is not evidence of a submission: transfers create
+                # run dirs holding only checkpoints from another cluster, and
+                # some decay dirs hold an empty checkpoints/.
+                _submitted = (run_dir / "job.sbatch").is_file() or (
+                    run_dir / "script" / "job.sbatch"
+                ).is_file()
+                _has_ckpts = (run_dir / "checkpoints").is_dir() and any(
+                    p.name.startswith("iter_") for p in (run_dir / "checkpoints").iterdir()
+                )
                 if _all_cancelled:
                     s_emoji, s_word = "🚫", "CANCELLED"
-                else:
-                    # Directory exists but no log files → submitted to Slurm, not started yet
+                elif _submitted:
+                    # Submitted by hand (job.sbatch, no config), not started yet
                     s_emoji, s_word = "🕒", "QUEUED"
+                elif _has_ckpts:
+                    # Checkpoints copied here; trained on another cluster
+                    s_emoji, s_word = "📦", "CKPT_ONLY"
+                else:
+                    s_emoji, s_word = "⚪", "NOT_LAUNCHED"
             else:
                 # Run directory doesn't exist → this tier has not been launched at all
                 s_emoji, s_word = "⚪", "NOT_LAUNCHED"
@@ -1944,7 +2128,13 @@ def main() -> None:
                     "sacct_elapsed": "",
                     "sacct_start_str": "",
                     "owner": "",
-                    "cluster": "",
+                    # Placeholder rows describe what this machine's sweep plans,
+                    # so they belong to the local machine.
+                    "cluster": args.machine,
+                    "source": "local",
+                    "output_path": str(run_dir) if run_dir.is_dir() else "",
+                    "data_mix_path": "",
+                    "data_path": "",
                     "status_emoji": s_emoji,
                     "status_word": s_word,
                     "action_word": "",
@@ -2028,9 +2218,10 @@ def main() -> None:
                 or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
             )
             cluster = ""
+            source = "local"
             if _is_collision:
-                foreign = "MN5" if args.machine != "MN5" else "LEO"
-                cluster = foreign
+                cluster = _foreign_cluster
+                source = "inferred"
                 sacct_entry = {}
                 sacct_state = ""
                 sacct_elapsed = ""
@@ -2038,6 +2229,15 @@ def main() -> None:
                 gpus = total_gpus
             elif sacct_entry:
                 cluster = args.machine
+            elif not sacct_info:
+                # sacct unavailable altogether: every job is assumed local
+                # (GPU-h, if any, came from the previous CSV of this machine).
+                cluster = args.machine
+            elif has_log:
+                # sacct works but has never seen this job: its log was synced
+                # here from the cluster it actually ran on.
+                cluster = _foreign_cluster
+                source = "inferred"
 
             # Low-throughput analysis (reuses the throughput cache written above).
             # Billed GPU count so gpu_h_lost lands in the same units as gpu_hours.
@@ -2137,6 +2337,14 @@ def main() -> None:
             if _progress is not None and _progress >= 100.0 and status_word != "DONE":
                 emoji, status_word, error_desc, action_word = "✅", "DONE", "", ""
 
+            # Data / output locations: prefer the Megatron args in the log, fall
+            # back to the submission config (jobs that never wrote a log).
+            _cfg_loc = (
+                config_locations(run_dir, job_id)
+                if not (stdout_data.get("data_mix_path") and stdout_data.get("output_path"))
+                else {"data_mix_path": None, "output_path": None}
+            )
+
             rows.append(
                 {
                     "run_name": run_name,
@@ -2176,7 +2384,23 @@ def main() -> None:
                     # sacct user for local jobs; fall back to path-based inference
                     # from log for foreign-cluster jobs (sacct entry is discarded).
                     "owner": sacct_entry.get("user", "") or stdout_data.get("log_user", "") or "",
+                    # Foreign jobs have no sacct start: fall back to the first log
+                    # timestamp so jobs can still be ordered across clusters.
+                    "start_str": sacct_entry.get("start_str", "")
+                    or (
+                        stdout_data["first_ts"].strftime("%Y-%m-%dT%H:%M:%S")
+                        if stdout_data.get("first_ts") is not None
+                        else ""
+                    ),
                     "cluster": cluster,
+                    "source": source,
+                    "output_path": stdout_data.get("output_path")
+                    or _cfg_loc["output_path"]
+                    or str(run_dir),
+                    "data_mix_path": stdout_data.get("data_mix_path")
+                    or _cfg_loc["data_mix_path"]
+                    or "",
+                    "data_path": stdout_data.get("data_path") or "",
                     "status_emoji": emoji,
                     "status_word": status_word,
                     "action_word": action_word,
@@ -2202,6 +2426,16 @@ def main() -> None:
         "last_train_loss",
     ]
     _run_last_known: dict[str, dict[str, Any]] = {}
+    # Data root comes from dataset-loading lines; a restart that resumed without
+    # them (or an eval-only job) inherits it from the previous job of the run on
+    # the same cluster.
+    _data_known: dict[tuple[str, str], str] = {}
+    for r in rows:
+        key = (r["run_name"], r.get("cluster", ""))
+        if r.get("data_path"):
+            _data_known[key] = r["data_path"]
+        elif r.get("has_log") and key in _data_known:
+            r["data_path"] = _data_known[key]
     for r in rows:
         rn = r["run_name"]
         known = _run_last_known.setdefault(rn, {})
@@ -2248,11 +2482,40 @@ def main() -> None:
     # - CANCELLED stubs with no log are always noise.
     # - Collision-detected rows with no log have an unreliable status (the sacct
     #   data belongs to a different job on the local cluster); drop them too.
-    rows = [
+    _kept_rows = [
         r
         for r in rows
         if r.get("has_log") or (r["status_word"] != "CANCELLED" and not r.get("is_collision"))
     ]
+    # A run whose every job was dropped above must not vanish: the CSV (and the
+    # Markdown rendered from it) only knows runs that have a row.  Keep one
+    # job-less CANCELLED placeholder for it instead.
+    _kept_runs = {r["run_name"] for r in _kept_rows}
+    _placeholders: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r["run_name"] not in _kept_runs and r["run_name"] not in _placeholders:
+            _placeholders[r["run_name"]] = {
+                **r,
+                "job_id": "",
+                "gpu_hours": None,
+                "ttfi_min": None,
+                "ttfi_gpu_h": None,
+                "overhead_time_h": None,
+                "overhead_gpu_h": None,
+                "overhead_pct": None,
+                "sacct_state": "",
+                "sacct_elapsed": "",
+                "sacct_start_str": "",
+                "start_str": "",
+                "cluster": args.machine,
+                "source": "local",
+                "data_path": "",
+                "status_emoji": "🚫",
+                "status_word": "CANCELLED",
+                "action_word": "",
+                "error_desc": "",
+            }
+    rows = _kept_rows + list(_placeholders.values())
 
     # ── Print table ─────────────────────────────────────────────────────────
 
@@ -2324,6 +2587,7 @@ def main() -> None:
         "CANCELLED+MANUALLY_RESTARTED": "\033[35m",
         "CANCELLED+NEW_SESSION": "\033[36m",
         "QUEUED": "\033[93m",
+        "CKPT_ONLY": "\033[90m",
         "NOT_LAUNCHED": "\033[90m",
     }
     RESET = "\033[0m"
@@ -2467,7 +2731,7 @@ def main() -> None:
     # returns 0 for jobs that ran on the other cluster).
     # GPU-h = efficient training GPU-h (from throughput) + LowTP GPU-h (from logs).
     # LowTP is log-based and valid; efficient GPU-h covers the remaining training time.
-    _foreign_cluster = "MN5" if args.machine != "MN5" else "LEO"
+    # (_foreign_cluster is resolved from --foreign-machine / --machine at startup.)
     _run_prev_last_iter: dict[str, int] = {}
     for r in rows:
         rn = r["run_name"]
@@ -2633,7 +2897,7 @@ def main() -> None:
         _cur_it = _latest_r.get("last_iter")
         _tot_it = _latest_r.get("train_iters")
         _gbsz_tokens = (_gbsz_rn or 0) * _seq_len
-        if _status_r == "DONE":
+        if _status_r == "DONE" or _rn in no_more_training:
             run_remaining[_rn] = (0.0, False)
         elif (
             _ref_tok
@@ -2659,7 +2923,6 @@ def main() -> None:
             )
         else:
             run_remaining[_rn] = (None, False)
-    grand_remaining_total = sum(v for v, _ in run_remaining.values() if v is not None)
 
     if summary_gpu_h:
         run_latest_row: dict[str, dict] = {}
@@ -2684,8 +2947,8 @@ def main() -> None:
             print(
                 "  (Ckpt-GB: measured checkpoints/ size; Ckpt-GB-remaining: estimated storage still needed)"
             )
-        _local = args.machine or "LEO"
-        _foreign = "MN5" if _local != "MN5" else "LEO"
+        _local = args.machine
+        _foreign = _foreign_cluster
         _gpu_h_hdr = (
             f"  {'GPU-h(' + _local + ')':>10}  {'GPU-h(' + _foreign + ')':>10}  {'GPU-h':>8}"
             if _any_cluster_split
@@ -2898,171 +3161,121 @@ def main() -> None:
     for status, cnt in sorted(counts.items()):
         print(f"  {status:<14} {cnt}")
 
-    # ── CSV output ──────────────────────────────────────────────────────────
+    # ── CSV rows: fixed, machine-independent schema (progress_report.CSV_FIELDS) ──
+    import progress_report as _pr
+
+    _size = (
+        args.size
+        or next((s for s in (size_label(r["run_name"]) for r in rows) if s), "")
+        or size_label("", resolved_base)
+    )
+    _updated_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    # Run-level estimates (remaining GPU-h, checkpoint storage) go on the run's
+    # latest job row only.
+    _csv_latest_job: dict[str, str] = {rn: jids[-1] for rn, jids in run_job_map.items() if jids}
+
+    def _fmt_or_blank(v: Any, fmt: str) -> str:
+        return format(v, fmt) if v is not None else ""
+
+    csv_rows: list[dict[str, str]] = []
+    for r in rows:
+        mb = RE_BUDGET.search(r["run_name"])
+        sd = mb.group(1) if mb else ("stable" if r["stage"] == "stable" else "decay")
+        c_val = (
+            f"{6.0 * r['transformer_params_b'] * r['tokens_b']:.2f}"
+            if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
+            else ""
+        )
+        _is_latest = r["job_id"] == "" or r["job_id"] == _csv_latest_job.get(r["run_name"])
+        _rem_v, _rem_est = (
+            run_remaining.get(r["run_name"], (None, False)) if _is_latest else (None, False)
+        )
+        _ckpt_v, _ckpt_rem_v = (
+            run_checkpoint_storage.get(r["run_name"], (None, None))
+            if _is_latest and args.compute_storage
+            else (None, None)
+        )
+        _gpu_h_s = _fmt_or_blank(r.get("gpu_hours"), ".1f")
+        _row_cluster = r.get("cluster", "") or args.machine
+        csv_rows.append(
+            {
+                "Size": _size,
+                "Run": r["run_name"],
+                "Machine": _row_cluster,
+                "Source": r.get("source", "local"),
+                "JobID": r["job_id"],
+                "Owner": r.get("owner", ""),
+                "StartTime": r.get("start_str", "") or r.get("sacct_start_str", ""),
+                "Elapsed": r.get("sacct_elapsed", ""),
+                "N_ne(B)": _fmt_or_blank(r["transformer_params_b"], ".2f"),
+                "N(B)": _fmt_or_blank(r["total_params_b"], ".2f"),
+                "D(B)": str(int(r["tokens_b"])) if r.get("tokens_b") is not None else "",
+                "C(10^18)": c_val,
+                "Tier": r.get("tier", ""),
+                "Stage": sd,
+                "TotIter": _fmt_or_blank(r["train_iters"], "d"),
+                "CurIter": _fmt_or_blank(r.get("last_iter"), "d"),
+                "LastCkpt": _fmt_or_blank(r["last_ckpt"], "d"),
+                "Prog%": _fmt_or_blank(r.get("progress"), ".1f"),
+                "TrainLoss": _fmt_or_blank(r.get("last_train_loss"), ".4f"),
+                "ValLoss": _fmt_or_blank(r.get("last_val_loss"), ".4f"),
+                "LR": _fmt_or_blank(r["lr"], ".4f"),
+                "GBS": _fmt_or_blank(r["global_batch_size"], "d"),
+                "MBS": _fmt_or_blank(r["micro_batch_size"], "d"),
+                "Nodes": _fmt_or_blank(r.get("nodes"), "d"),
+                "Workers": _fmt_or_blank(r["num_workers"], "d"),
+                "TFLOP/s/GPU": _fmt_or_blank(r["avg_tflop_per_gpu"], ".1f"),
+                "Tok/s/GPU": _fmt_or_blank(r["avg_tok_per_gpu"], ".0f"),
+                "TTFI(min)": _fmt_or_blank(r.get("ttfi_min"), ".1f"),
+                "TTFI-GPU-h": _fmt_or_blank(r.get("ttfi_gpu_h"), ".2f"),
+                "LowTP-time(h)": _fmt_or_blank(r.get("time_lost_h"), ".4f"),
+                "LowTP-GPU-h": _fmt_or_blank(r.get("gpu_h_lost"), ".4f"),
+                "Overhead-time(h)": _fmt_or_blank(r.get("overhead_time_h"), ".4f"),
+                "Overhead-GPU-h": _fmt_or_blank(r.get("overhead_gpu_h"), ".4f"),
+                **{
+                    f"GPU-h({m})": (_gpu_h_s if _row_cluster == m else "")
+                    for m in MACHINES
+                },
+                "GPU-h": _gpu_h_s,
+                "Overhead%": _fmt_or_blank(r.get("overhead_pct"), ".2f"),
+                "Remaining-GPU-h": (
+                    (f"~{_rem_v:.1f}" if _rem_est else f"{_rem_v:.1f}") if _rem_v is not None else ""
+                ),
+                "Ckpt-GB": _fmt_or_blank(_ckpt_v, ".1f"),
+                "Ckpt-GB-remaining": _fmt_or_blank(_ckpt_rem_v, ".1f"),
+                "Emoji": r["status_emoji"],
+                "Status": r["status_word"],
+                "Action": r["action_word"],
+                "Error": r["error_desc"],
+                "OutputPath": r.get("output_path", "") or "",
+                "DataPath": r.get("data_path", "") or "",
+                "DataMixPath": r.get("data_mix_path", "") or "",
+                "Config": str(Path(args.config).resolve()),
+                "UpdatedAt": _updated_at,
+            }
+        )
+
+    md_rows = csv_rows
     if args.csv:
-        # Pre-compute run-level cluster tag (LEO / MN5 / MIX) for CSV
-        _csv_run_cluster_tag: dict[str, str] = {}
-        for _rn in {r["run_name"] for r in rows}:
-            _cls = {r.get("cluster", "") for r in rows if r["run_name"] == _rn and r.get("cluster")}
-            _csv_run_cluster_tag[_rn] = (
-                "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
-            )
-
-        # Per-cluster GPU-h column labels.  These were hardcoded to LEO/MN5
-        # while the values were selected by comparing against --machine, so on
-        # any third cluster the local hours landed in a column named "LEO".
-        _csv_local_gpu_h = f"GPU-h({args.machine})"
-        _csv_foreign_gpu_h = f"GPU-h({_foreign_cluster})"
-
-        csv_fields = [
-            "Run",
-            "JobID",
-            "Machine",
-            "RunClusters",
-            "Owner",
-            "StartTime",
-            "Elapsed",
-            "N_ne(B)",
-            "N(B)",
-            "D(B)",
-            "C(10^18)",
-            "Tier",
-            "Stage",
-            "TotIter",
-            "CurIter",
-            "LastCkpt",
-            "Prog%",
-            "TrainLoss",
-            "ValLoss",
-            "LR",
-            "GBS",
-            "MBS",
-            "Nodes",
-            "Workers",
-            "TFLOP/s/GPU",
-            "Tok/s/GPU",
-            "TTFI(min)",
-            "TTFI-GPU-h",
-            "LowTP-time(h)",
-            "LowTP-GPU-h",
-            "Overhead-time(h)",
-            "Overhead-GPU-h",
-            _csv_local_gpu_h,
-            _csv_foreign_gpu_h,
-            "GPU-h",
-            "Overhead%",
-            "Remaining-GPU-h",
-            "Emoji",
-            "Status",
-            "Action",
-            "Error",
-        ]
         csv_path = Path(args.csv)
-        guard_write(csv_path)
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        # Pre-compute which job_id is the latest for each run (remaining GPU-h
-        # is a per-run estimate, so we only populate it on the latest-job row).
-        _csv_latest_job: dict[str, str] = {rn: jids[-1] for rn, jids in run_job_map.items() if jids}
-        with csv_path.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=csv_fields)
-            writer.writeheader()
-            for r in rows:
-                mb = RE_BUDGET.search(r["run_name"])
-                sd = mb.group(1) if mb else ("stable" if r["stage"] == "stable" else "decay")
-                c_val = (
-                    f"{6.0 * r['transformer_params_b'] * r['tokens_b']:.2f}"
-                    if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
-                    else ""
-                )
-                _is_latest_csv = r["job_id"] == "" or r["job_id"] == _csv_latest_job.get(
-                    r["run_name"]
-                )
-                _rem_v_csv, _rem_est_csv = (
-                    run_remaining.get(r["run_name"], (None, False))
-                    if _is_latest_csv
-                    else (None, False)
-                )
-                rem_gpu_h_csv = (
-                    (f"~{_rem_v_csv:.1f}" if _rem_est_csv else f"{_rem_v_csv:.1f}")
-                    if _rem_v_csv is not None
-                    else ""
-                )
-                writer.writerow(
-                    {
-                        "Run": r["run_name"],
-                        "JobID": r["job_id"],
-                        "Machine": r.get("cluster", ""),
-                        "RunClusters": _csv_run_cluster_tag.get(r["run_name"], ""),
-                        "Owner": r.get("owner", ""),
-                        "StartTime": r.get("sacct_start_str", ""),
-                        "Elapsed": r.get("sacct_elapsed", ""),
-                        "N_ne(B)": f"{r['transformer_params_b']:.2f}"
-                        if r["transformer_params_b"] is not None
-                        else "",
-                        "N(B)": f"{r['total_params_b']:.2f}"
-                        if r["total_params_b"] is not None
-                        else "",
-                        "D(B)": int(r["tokens_b"]) if r.get("tokens_b") is not None else "",
-                        "C(10^18)": c_val,
-                        "Tier": r.get("tier", ""),
-                        "Stage": sd,
-                        "TotIter": r["train_iters"] if r["train_iters"] is not None else "",
-                        "CurIter": r.get("last_iter") if r.get("last_iter") is not None else "",
-                        "LastCkpt": r["last_ckpt"] if r["last_ckpt"] is not None else "",
-                        "Prog%": f"{r['progress']:.1f}" if r.get("progress") is not None else "",
-                        "TrainLoss": f"{r['last_train_loss']:.4f}"
-                        if r.get("last_train_loss") is not None
-                        else "",
-                        "ValLoss": f"{r['last_val_loss']:.4f}"
-                        if r.get("last_val_loss") is not None
-                        else "",
-                        "LR": f"{r['lr']:.4f}" if r["lr"] is not None else "",
-                        "GBS": r["global_batch_size"] if r["global_batch_size"] is not None else "",
-                        "MBS": r["micro_batch_size"] if r["micro_batch_size"] is not None else "",
-                        "Nodes": r["nodes"] if r.get("nodes") is not None else "",
-                        "Workers": r["num_workers"] if r["num_workers"] is not None else "",
-                        "TFLOP/s/GPU": f"{r['avg_tflop_per_gpu']:.1f}"
-                        if r["avg_tflop_per_gpu"] is not None
-                        else "",
-                        "Tok/s/GPU": f"{r['avg_tok_per_gpu']:.0f}"
-                        if r["avg_tok_per_gpu"] is not None
-                        else "",
-                        "TTFI(min)": f"{r['ttfi_min']:.1f}"
-                        if r.get("ttfi_min") is not None
-                        else "",
-                        "TTFI-GPU-h": f"{r['ttfi_gpu_h']:.2f}"
-                        if r.get("ttfi_gpu_h") is not None
-                        else "",
-                        "LowTP-time(h)": f"{r['time_lost_h']:.4f}"
-                        if r.get("time_lost_h") is not None
-                        else "",
-                        "LowTP-GPU-h": f"{r['gpu_h_lost']:.4f}"
-                        if r.get("gpu_h_lost") is not None
-                        else "",
-                        "Overhead-time(h)": f"{r['overhead_time_h']:.4f}"
-                        if r.get("overhead_time_h") is not None
-                        else "",
-                        "Overhead-GPU-h": f"{r['overhead_gpu_h']:.4f}"
-                        if r.get("overhead_gpu_h") is not None
-                        else "",
-                        _csv_local_gpu_h: f"{r['gpu_hours']:.1f}"
-                        if r.get("gpu_hours") is not None and r.get("cluster") == args.machine
-                        else "",
-                        _csv_foreign_gpu_h: f"{r['gpu_hours']:.1f}"
-                        if r.get("gpu_hours") is not None and r.get("cluster") == _foreign_cluster
-                        else "",
-                        "GPU-h": f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "",
-                        "Overhead%": f"{r['overhead_pct']:.2f}"
-                        if r.get("overhead_pct") is not None
-                        else "",
-                        "Remaining-GPU-h": rem_gpu_h_csv,
-                        "Emoji": r["status_emoji"],
-                        "Status": r["status_word"],
-                        "Action": r["action_word"],
-                        "Error": r["error_desc"],
-                    }
-                )
-        print(f"\nWrote {len(rows)} rows to {csv_path}")
+        if args.accumulate:
+            existing = _pr.read_csv(csv_path) if csv_path.is_file() else []
+            md_rows, _merge_stats = _pr.merge_rows(
+                existing,
+                csv_rows,
+                machine=args.machine,
+                size=_size,
+                tracked_runs={rn for rn, _s, _t, _ti in run_specs},
+                carry_ckpt=not args.compute_storage,
+            )
+            _pr.write_csv(csv_path, md_rows)
+            print(
+                f"\nMerged {args.machine}/{_size} into {csv_path}: {_merge_stats} "
+                f"-> {len(md_rows)} rows total"
+            )
+        else:
+            _pr.write_csv(csv_path, csv_rows)
+            print(f"\nWrote {len(csv_rows)} rows to {csv_path}")
 
     if gpu_csv_rows:
         gpu_csv_rows.append(
@@ -3092,270 +3305,10 @@ def main() -> None:
             writer.writerows(gpu_csv_rows)
         print(f"\nWrote {len(gpu_csv_rows) - 1} job rows (+1 total) to {gpu_csv_path}")
 
-    # ── Markdown output ─────────────────────────────────────────────────────
+    # ── Markdown output (rendered from the CSV rows; merged rows with --accumulate) ──
     if args.md:
         md_path = Path(args.md)
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Compute spending timestamp: gpu_csv_rows is populated only when
-        # _gpu_query_sacct returned real accounting data.  If sacct was
-        # unavailable we preserve the previous timestamp from the file
-        # (or write "N/A" on the very first run).
-        if gpu_csv_rows:
-            spending_ts: str | None = now_str
-        else:
-            spending_ts = None
-            if md_path.is_file():
-                _existing = md_path.read_text()
-                _m = re.search(
-                    r"_Updated compute spending: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})_",
-                    _existing,
-                )
-                if _m:
-                    spending_ts = _m.group(1)
-
-        spending_str = spending_ts if spending_ts is not None else "N/A"
-        guard_write(md_path)
-        md_path.parent.mkdir(parents=True, exist_ok=True)
-        with md_path.open("w") as f:
-            f.write(f"_Updated training progress: {now_str}_  \n")
-            f.write(f"_Updated compute spending: {spending_str}_\n\n")
-            f.write("# Sweep run status\n\n")
-            f.write(f"**Config:** `{args.config}`  \n")
-            f.write(f"**Results:** `{resolved_base}`\n\n")
-
-            # Experiment summary GPU consumption + progress table
-            f.write("## Training progress summary\n\n")
-            if _ref_avg_tok_per_gpu is not None:
-                f.write(
-                    f"_~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU_\n\n"
-                )
-            if args.compute_storage:
-                f.write(
-                    "_Ckpt-GB: measured `checkpoints/` size; Ckpt-GB-remaining: estimated storage still needed_\n\n"
-                )
-            _md_gpu_h_hdr = (
-                f"GPU-h({args.machine}) | GPU-h({_foreign_cluster}) | GPU-h"
-                if _any_cluster_split
-                else "GPU-h"
-            )
-            _md_gpu_h_sep = " --- | --- | ---" if _any_cluster_split else " ---"
-            f.write(
-                f"| T# | # | Experiment | Tier | Progress | Status | Clusters | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | {_md_gpu_h_hdr} | Overhead% | Remaining-GPU-h | Ckpt-GB | Ckpt-GB-remaining |\n"
-            )
-            f.write(
-                f"| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |{_md_gpu_h_sep} | --- | --- | --- | --- |\n"
-            )
-            grand_lt_time_md = 0.0
-            grand_lt_gpu_h_md = 0.0
-            grand_ttfi_gpu_h_md = 0.0
-            grand_oh_gpu_h_md = 0.0
-            grand_ckpt_gb_md = 0.0
-            grand_ckpt_rem_gb_md = 0.0
-            sorted_exps_md = sorted(
-                summary_gpu_h.items(),
-                key=lambda item: _summary_table_sort_key(item[0], run_tier_map, run_stage_map),
-            )
-            prev_tier_md: str | None = None
-            tier_idx_md = 0
-            _tier_ttfi_gpu_h_md = 0.0
-            _tier_lt_gpu_h_md = 0.0
-            _tier_oh_gpu_h_md = 0.0
-            _tier_gpu_h_md = 0.0
-            _tier_gpu_h_leo_md = 0.0
-            _tier_gpu_h_mn5_md = 0.0
-            _tier_rem_gpu_h_md = 0.0
-            _tier_ckpt_gb_md = 0.0
-            _tier_ckpt_rem_gb_md = 0.0
-            grand_gpu_h_leo_md = 0.0
-            grand_gpu_h_mn5_md = 0.0
-            _tier_name_md = ""
-            for idx, (exp_name, h) in enumerate(sorted_exps_md, start=1):
-                tier_str = run_tier_map.get(exp_name, "")
-                if tier_str != prev_tier_md:
-                    tier_idx_md = 1
-                    prev_tier_md = tier_str
-                    _tier_name_md = tier_str
-                else:
-                    tier_idx_md += 1
-                run_rows = [r for r in rows if r["run_name"] == exp_name]
-                latest = run_rows[-1] if run_rows else {}
-                prog = latest.get("progress")
-                prog_str = f"{prog:.1f}%" if prog is not None else "N/A"
-                emoji = latest.get("status_emoji", "")
-                status = latest.get("status_word", "")
-                _md_run_cls = {r.get("cluster", "") for r in run_rows if r.get("cluster")}
-                _md_cluster_tag = (
-                    "MIX"
-                    if len(_md_run_cls) > 1
-                    else (next(iter(_md_run_cls)) if _md_run_cls else "")
-                )
-                ttfi_gpu_h_vals_md = [
-                    r["ttfi_gpu_h"] for r in run_rows if r.get("ttfi_gpu_h") is not None
-                ]
-                ttfi_gpu_h_md_sum = sum(ttfi_gpu_h_vals_md) if ttfi_gpu_h_vals_md else None
-                ttfi_gpu_h_md_str = (
-                    f"{ttfi_gpu_h_md_sum:.2f}" if ttfi_gpu_h_md_sum is not None else "N/A"
-                )
-                if ttfi_gpu_h_md_sum is not None:
-                    grand_ttfi_gpu_h_md += ttfi_gpu_h_md_sum
-                    _tier_ttfi_gpu_h_md += ttfi_gpu_h_md_sum
-                lt_time_vals_md = [
-                    r["time_lost_h"] for r in run_rows if r.get("time_lost_h") is not None
-                ]
-                lt_gpu_h_vals_md = [
-                    r["gpu_h_lost"] for r in run_rows if r.get("gpu_h_lost") is not None
-                ]
-                lt_time = sum(lt_time_vals_md) if lt_time_vals_md else None
-                lt_gpu_h = sum(lt_gpu_h_vals_md) if lt_gpu_h_vals_md else None
-                lt_gpu_h_md = f"{lt_gpu_h:.2f}" if lt_gpu_h is not None else "N/A"
-                if lt_time is not None:
-                    grand_lt_time_md += lt_time
-                if lt_gpu_h is not None:
-                    grand_lt_gpu_h_md += lt_gpu_h
-                    _tier_lt_gpu_h_md += lt_gpu_h
-                oh_gpu_h_vals_md = [
-                    r["overhead_gpu_h"]
-                    for r in run_rows
-                    if r.get("overhead_gpu_h") is not None and r.get("gpu_hours") is not None
-                ]
-                oh_gpu_h_md_sum = sum(oh_gpu_h_vals_md) if oh_gpu_h_vals_md else None
-                oh_gpu_h_md_str = f"{oh_gpu_h_md_sum:.2f}" if oh_gpu_h_md_sum is not None else "N/A"
-                oh_pct_md = (
-                    oh_gpu_h_md_sum / h * 100.0
-                    if oh_gpu_h_md_sum is not None and h is not None and h > 0
-                    else None
-                )
-                oh_pct_md_str = f"{oh_pct_md:.1f}%" if oh_pct_md is not None else "N/A"
-                gpu_h_md_str = f"{h:.1f}" if h is not None else "N/A"
-                _h_leo_md = _run_gpu_h_leo.get(exp_name)
-                _h_mn5_md = _run_gpu_h_mn5.get(exp_name)
-                _h_leo_md_str = f"{_h_leo_md:.1f}" if _h_leo_md is not None else "N/A"
-                _h_mn5_md_str = f"{_h_mn5_md:.1f}" if _h_mn5_md is not None else "N/A"
-                if oh_gpu_h_md_sum is not None:
-                    grand_oh_gpu_h_md += oh_gpu_h_md_sum
-                    _tier_oh_gpu_h_md += oh_gpu_h_md_sum
-                if h is not None:
-                    _tier_gpu_h_md += h
-                if _h_leo_md is not None:
-                    _tier_gpu_h_leo_md += _h_leo_md
-                    grand_gpu_h_leo_md += _h_leo_md
-                if _h_mn5_md is not None:
-                    _tier_gpu_h_mn5_md += _h_mn5_md
-                    grand_gpu_h_mn5_md += _h_mn5_md
-                rem_val_md, rem_est_md = run_remaining.get(exp_name, (None, False))
-                rem_md_str = (
-                    (f"~{rem_val_md:.1f}" if rem_est_md else f"{rem_val_md:.1f}")
-                    if rem_val_md is not None
-                    else "N/A"
-                )
-                if rem_val_md is not None:
-                    _tier_rem_gpu_h_md += rem_val_md
-                ckpt_md_str = _format_ckpt_measured_cell(
-                    run_checkpoint_storage, exp_name, compute=args.compute_storage, md=True
-                )
-                ckpt_rem_md_str = _format_ckpt_remaining_cell(
-                    run_checkpoint_storage, exp_name, compute=args.compute_storage, md=True
-                )
-                if args.compute_storage:
-                    ckpt_val_md, ckpt_rem_val_md = run_checkpoint_storage.get(
-                        exp_name, (None, None)
-                    )
-                    if ckpt_val_md is not None:
-                        grand_ckpt_gb_md += ckpt_val_md
-                        _tier_ckpt_gb_md += ckpt_val_md
-                    if ckpt_rem_val_md is not None:
-                        grand_ckpt_rem_gb_md += ckpt_rem_val_md
-                        _tier_ckpt_rem_gb_md += ckpt_rem_val_md
-                _md_run_gpu_h_cols = (
-                    f" {_h_leo_md_str} | {_h_mn5_md_str} | {gpu_h_md_str}"
-                    if _any_cluster_split
-                    else f" {gpu_h_md_str}"
-                )
-                f.write(
-                    f"| {tier_idx_md} | {idx} | {exp_name} | {tier_str} | {prog_str} | {emoji} {status}"
-                    f" | {_md_cluster_tag} | {ttfi_gpu_h_md_str} | {lt_gpu_h_md} | {oh_gpu_h_md_str}"
-                    f" |{_md_run_gpu_h_cols} | {oh_pct_md_str} | {rem_md_str}"
-                    f" | {ckpt_md_str or '—'} | {ckpt_rem_md_str or '—'} |\n"
-                )
-                is_last_md = idx >= len(sorted_exps_md)
-                next_tier_md_str = (
-                    "" if is_last_md else run_tier_map.get(sorted_exps_md[idx][0], "")
-                )
-                if is_last_md or next_tier_md_str != tier_str:
-                    _t_oh_pct_md = (
-                        _tier_oh_gpu_h_md / _tier_gpu_h_md * 100.0 if _tier_gpu_h_md > 0 else None
-                    )
-                    _t_oh_pct_md_s = f"{_t_oh_pct_md:.1f}%" if _t_oh_pct_md is not None else "N/A"
-                    _t_ttfi_md_s = f"{_tier_ttfi_gpu_h_md:.2f}" if _tier_ttfi_gpu_h_md else "N/A"
-                    _t_oh_md_s = f"{_tier_oh_gpu_h_md:.2f}" if _tier_oh_gpu_h_md else "N/A"
-                    _t_gpu_h_md_s = f"{_tier_gpu_h_md:.1f}" if _tier_gpu_h_md else "N/A"
-                    _t_leo_md_s = f"{_tier_gpu_h_leo_md:.1f}" if _tier_gpu_h_leo_md else "N/A"
-                    _t_mn5_md_s = f"{_tier_gpu_h_mn5_md:.1f}" if _tier_gpu_h_mn5_md else "N/A"
-                    _t_rem_md_s = f"{_tier_rem_gpu_h_md:.1f}" if _tier_rem_gpu_h_md else "N/A"
-                    _t_ckpt_md_s = _format_ckpt_gb_total(
-                        _tier_ckpt_gb_md, compute=args.compute_storage, md=True
-                    )
-                    _t_ckpt_rem_md_s = _format_ckpt_gb_total(
-                        _tier_ckpt_rem_gb_md, compute=args.compute_storage, md=True
-                    )
-                    _md_tier_gpu_h_cols = (
-                        f" **{_t_leo_md_s}** | **{_t_mn5_md_s}** | **{_t_gpu_h_md_s}**"
-                        if _any_cluster_split
-                        else f" **{_t_gpu_h_md_s}**"
-                    )
-                    f.write(
-                        f"| | | **[{_tier_name_md} total]** | **{_tier_name_md}** | | | |"
-                        f" **{_t_ttfi_md_s}** | **{_tier_lt_gpu_h_md:.2f}**"
-                        f" | **{_t_oh_md_s}** |{_md_tier_gpu_h_cols} | **{_t_oh_pct_md_s}** | **{_t_rem_md_s}**"
-                        f" | {_t_ckpt_md_s or '**—**'} | {_t_ckpt_rem_md_s or '**—**'} |\n"
-                    )
-                    f.write(f"{SUMMARY_MD_TIER_SEP}\n")
-                    _tier_ttfi_gpu_h_md = 0.0
-                    _tier_lt_gpu_h_md = 0.0
-                    _tier_oh_gpu_h_md = 0.0
-                    _tier_gpu_h_md = 0.0
-                    _tier_gpu_h_leo_md = 0.0
-                    _tier_gpu_h_mn5_md = 0.0
-                    _tier_rem_gpu_h_md = 0.0
-                    _tier_ckpt_gb_md = 0.0
-                    _tier_ckpt_rem_gb_md = 0.0
-            grand_oh_pct_md = (
-                grand_oh_gpu_h_md / summary_grand_total * 100.0
-                if grand_oh_gpu_h_md and summary_grand_total > 0
-                else None
-            )
-            grand_oh_pct_md_str = (
-                f"{grand_oh_pct_md:.1f}%" if grand_oh_pct_md is not None else "N/A"
-            )
-            grand_rem_md_str = f"{grand_remaining_total:.1f}" if grand_remaining_total else "N/A"
-            grand_ckpt_md_str = _format_ckpt_gb_total(
-                grand_ckpt_gb_md, compute=args.compute_storage, md=True
-            )
-            grand_ckpt_rem_md_str = _format_ckpt_gb_total(
-                grand_ckpt_rem_gb_md, compute=args.compute_storage, md=True
-            )
-            _grand_leo_md_s = f"{grand_gpu_h_leo_md:.1f}" if grand_gpu_h_leo_md else "N/A"
-            _grand_mn5_md_s = f"{grand_gpu_h_mn5_md:.1f}" if grand_gpu_h_mn5_md else "N/A"
-            _md_grand_gpu_h_cols = (
-                f" **{_grand_leo_md_s}** | **{_grand_mn5_md_s}** | **{summary_grand_total:.1f}**"
-                if _any_cluster_split
-                else f" **{summary_grand_total:.1f}**"
-            )
-            f.write(
-                f"| | | **TOTAL** | | | | | **{grand_ttfi_gpu_h_md:.2f}** | **{grand_lt_gpu_h_md:.2f}**"
-                f" | **{grand_oh_gpu_h_md:.2f}** |{_md_grand_gpu_h_cols} | **{grand_oh_pct_md_str}**"
-                f" | **{grand_rem_md_str}** | {grand_ckpt_md_str or '**—**'} | {grand_ckpt_rem_md_str or '**—**'} |\n"
-            )
-            f.write("\n")
-
-            # Status summary
-            f.write("## Status breakdown\n\n")
-            from collections import Counter
-
-            counts = Counter(r["status_word"] for r in rows)
-            for status, cnt in sorted(counts.items()):
-                f.write(f"- **{status}**: {cnt}\n")
+        _pr.write_text(md_path, _pr.render_md(md_rows))
         print(f"\nWrote markdown to {md_path}")
 
 
