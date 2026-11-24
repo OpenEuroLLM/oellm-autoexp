@@ -22,7 +22,11 @@ set -uo pipefail
 R=/gpfs/projects/ehpc533/users/korbip/hybrid_v019
 POOL=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
 STATE=$R/v4b_fix_switch
-ARMED=$STATE/armed
+# The successor's FileExistsCondition uses ${aux.kv_root}, which resolves to the production scratch
+# root, NOT to $R (2026-11-24: the marker was written to $R, the condition looked here, and the
+# successor never started).
+KV_ROOT=/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116
+ARMED=$KV_ROOT/v4b_fix_switch/armed
 OLD_NAME=ambitious_v4b_learned_256
 NEW_NAME=ambitious_v4b_learned_fix_256
 OLD_RUN_DIR=/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main
@@ -47,7 +51,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-mkdir -p "$STATE" || exit 5
+mkdir -p "$STATE" "$(dirname "$ARMED")" || exit 5
 say() { echo "[$(date +%H:%M:%S)] $*"; }
 
 pool_ctl() {
@@ -155,7 +159,13 @@ if [ ! -f "$ARMED" ]; then
     fi
     say "cancel $OLD_NAME (attempt $n)"
     pool_ctl cancel "$OLD_NAME" 2>&1 | sed 's/^/    /'
-    sleep 15
+    # A cancel is a request the pool's monitor executes on its next poll, so the run stays live
+    # for a while: give it up to 180 s before calling the attempt failed (2026-11-24 the script
+    # counted eight cancels as failures while they were still landing).
+    for _ in $(seq 1 18); do
+      sleep 10
+      [ -z "$(live_runs $OLD_NAME)" ] && break
+    done
     if [ -z "$(live_runs $OLD_NAME)" ]; then
       say "old line stopped"
       break

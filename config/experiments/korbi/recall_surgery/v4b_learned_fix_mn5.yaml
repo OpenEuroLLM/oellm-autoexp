@@ -31,11 +31,10 @@ aux:
 backend:
   env:
     # first entry replaces pylibs_moonep_ec3eb8b; the rest is the main run's own order
-    PYTHONPATH: >-
-      /gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_moonep_e9e8238:.:
-      submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:
-      /gpfs/projects/ehpc533/users/korbip/hybrid_v019/retention:
-      /gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_ep
+    # ONE line, no spaces: a folded block scalar inserts spaces between the wrapped lines and
+    # singularity then reads the fragments as image paths ("could not open image
+    # .../submodules/Megatron-LM:flash-linear-attention", p264.2168/2169, 2026-11-24).
+    PYTHONPATH: "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_moonep_e9e8238:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/retention:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_ep"
     MEGATRON_LAZY_GROUPS: "1"
     FSDP_DCP_BCAST_METADATA: "1"
     TRITON_CACHE_AUTOTUNING: "1"
