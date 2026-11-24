@@ -13,6 +13,8 @@ streams' gradients differ. ``engram_branch_query=stream`` changes the gates' que
 
   --query-mix    gate_terms.query_mix = 0 (+ zero Adam state), for engram_branch_query=learned
   --gate-scale   gate_terms.scale = 1 (+ zero Adam state), for engram_gate_scale
+  --logit-scale  gate_terms.logit_scale = the per-layer value (+ zero Adam state), for
+                 engram_gate_logit_scale; init at the checkpoint's mean query RMS (e.g. 2:0.016,52:0.47)
 
 The source's .distcp files are hard-linked (dcp_surgery.write_surgery); only the new tensors are written.
 
@@ -64,19 +66,22 @@ def source_keys(smd, layer: int) -> dict[tuple[str, str], str]:
     return out
 
 
-def derive(smd, src: dict[str, torch.Tensor], streams: int, query_mix: bool, gate_scale: bool):
+def derive(smd, src: dict[str, torch.Tensor], streams: int, query_mix: bool, gate_scale: bool,
+           logit_scale: dict[int, float] | None = None, branch: bool = True,
+           logit_scale_default: float | None = None):
     """The new tensors: ``src`` holds the tensors of :func:`source_keys` (by key)."""
     replace = {}
     for layer in engram_layers(smd):
         keys = source_keys(smd, layer)
-        for m in range(streams - 1):
-            for (n, s), key in keys.items():
-                stem, leaf = n.rsplit(".", 1)
-                new_n = f"{stem}_extra.{m}.{leaf}"
-                new = MODEL.format(l=layer, n=new_n) if not s else OPT.format(l=layer, n=new_n, s=s)
-                if new in smd:
-                    raise SystemExit(f"{new} already exists: the source has per-stream gates already")
-                replace[new] = src[key].clone()
+        if branch:
+            for m in range(streams - 1):
+                for (n, s), key in keys.items():
+                    stem, leaf = n.rsplit(".", 1)
+                    new_n = f"{stem}_extra.{m}.{leaf}"
+                    new = MODEL.format(l=layer, n=new_n) if not s else OPT.format(l=layer, n=new_n, s=s)
+                    if new in smd:
+                        raise SystemExit(f"{new} already exists: the source has per-stream gates already")
+                    replace[new] = src[key].clone()
         gain = smd[MODEL.format(l=layer, n="hidden_norm.weight")].properties.dtype
         adam = smd[OPT.format(l=layer, n="hidden_norm.weight", s="exp_avg")].properties.dtype
         for flag, name, value in ((query_mix, "query_mix", 0.0), (gate_scale, "scale", 1.0)):
@@ -86,7 +91,29 @@ def derive(smd, src: dict[str, torch.Tensor], streams: int, query_mix: bool, gat
             replace[MODEL.format(l=layer, n=n)] = torch.full((streams,), value, dtype=gain)
             for s in ("exp_avg", "exp_avg_sq"):
                 replace[OPT.format(l=layer, n=n, s=s)] = torch.zeros(streams, dtype=adam)
+        if logit_scale is not None:
+            if layer in logit_scale:
+                value = logit_scale[layer]
+            elif logit_scale_default is not None:
+                value = logit_scale_default
+            else:
+                raise SystemExit(f"no --logit-scale init for layer {layer} (have {sorted(logit_scale)})")
+            n = "gate_terms.logit_scale"
+            replace[MODEL.format(l=layer, n=n)] = torch.full((streams,), float(value), dtype=gain)
+            for s in ("exp_avg", "exp_avg_sq"):
+                replace[OPT.format(l=layer, n=n, s=s)] = torch.zeros(streams, dtype=adam)
     return replace
+
+
+def parse_logit_scale(text: str) -> dict[int, float]:
+    """``"2:0.016,52:0.47"`` -> ``{2: 0.016, 52: 0.47}`` (per-layer init of ``gate_terms.logit_scale``)."""
+    out: dict[int, float] = {}
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        layer, value = part.split(":")
+        out[int(layer)] = float(value)
+    return out
 
 
 def read(reader, smd, keys) -> dict[str, torch.Tensor]:
@@ -111,7 +138,9 @@ def apply(a) -> int:
         raise SystemExit("no Engram layers (decoder.layers.<i>.key_proj.weight) in the checkpoint")
     keys = [k for layer in layers for k in source_keys(smd, layer).values()]
     log(f"Engram layers {layers}; {len(keys)} source tensors")
-    replace = derive(smd, read(reader, smd, keys), a.streams, a.query_mix, a.gate_scale)
+    replace = derive(smd, read(reader, smd, keys), a.streams, a.query_mix, a.gate_scale,
+                     parse_logit_scale(a.logit_scale) if (a.logit_scale or a.logit_scale_default is not None) else None,
+                     branch=a.branch, logit_scale_default=a.logit_scale_default)
     for k in sorted(replace):
         log(f"  {k.split('decoder.layers.')[-1]} {tuple(replace[k].shape)} {replace[k].dtype}")
     if a.dry_run:
@@ -155,12 +184,14 @@ def selftest() -> int:
     with tempfile.TemporaryDirectory() as root:
         src, dst = os.path.join(root, "src", "iter_0000010"), os.path.join(root, "dst", "iter_0000010")
         dcp.save(state, storage_writer=dcp.FileSystemWriter(src), no_dist=True)
-        rc = apply(argparse.Namespace(src=src, dst=dst, streams=n, query_mix=True, gate_scale=True, dry_run=False))
+        rc = apply(argparse.Namespace(src=src, dst=dst, streams=n, query_mix=True, gate_scale=True,
+                                      logit_scale="2:0.02,5:0.4", logit_scale_default=None, branch=True,
+                                      dry_run=False))
         smd = _meta(dst)
         assert set(state) <= set(smd)
         new = [k for k in smd if k not in state]
-        # per layer: 3 tensors x (n - 1) streams with 5 / 2 / 2 states, + 2 scalars x 3
-        assert len(new) == 2 * ((n - 1) * (3 + 5 + 2 + 2) + 6), len(new)
+        # per layer: 3 tensors x (n - 1) streams with 5 / 2 / 2 states, + 3 scalars x 3
+        assert len(new) == 2 * ((n - 1) * (3 + 5 + 2 + 2) + 9), len(new)
         back = read(dcp.FileSystemReader(dst), smd, list(smd))
         for layer in (2, 5):
             for m in range(n - 1):
@@ -170,6 +201,8 @@ def selftest() -> int:
                 assert torch.equal(back[OPT.format(l=layer, n=f"key_proj_extra.{m}.weight", s="m_u")],
                                    state[OPT.format(l=layer, n="key_proj.weight", s="m_u")])
             assert torch.equal(back[MODEL.format(l=layer, n="gate_terms.scale")], torch.ones(n, dtype=torch.bfloat16))
+            assert torch.equal(back[MODEL.format(l=layer, n="gate_terms.logit_scale")],
+                               torch.full((n,), 0.02 if layer == 2 else 0.4, dtype=torch.bfloat16))
             assert torch.equal(back[MODEL.format(l=layer, n="key_proj.weight")], state[MODEL.format(l=layer, n="key_proj.weight")])
         assert open(os.path.join(root, "dst", "latest_checkpointed_iteration.txt")).read() == "10\n"
     print("selftest passed")
@@ -185,6 +218,12 @@ def main(argv=None) -> int:
     ap.add_argument("--streams", type=int, default=4, help="mhc_expansion_rate")
     ap.add_argument("--query-mix", action="store_true", help="for engram_branch_query=learned")
     ap.add_argument("--gate-scale", action="store_true", help="for engram_gate_scale")
+    ap.add_argument("--logit-scale", default="",
+                    help="per-layer init of gate_terms.logit_scale, e.g. 2:0.016,52:0.47 (for engram_gate_logit_scale)")
+    ap.add_argument("--logit-scale-default", type=float, default=None,
+                    help="init of gate_terms.logit_scale for layers not in --logit-scale (e.g. 1.0 on a random init)")
+    ap.add_argument("--no-branch", dest="branch", action="store_false",
+                    help="only the gate scalars, no per-stream key/norm copies (the fix-only arm)")
     ap.add_argument("--dry-run", action="store_true")
     return apply(ap.parse_args(argv))
 

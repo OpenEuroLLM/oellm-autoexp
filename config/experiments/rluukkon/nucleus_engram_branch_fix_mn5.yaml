@@ -1,0 +1,105 @@
+# @package _global_
+# Engram gate fix + per-stream gates: a short warm start on 4 nodes (c136 host002's spare nodes), from
+# v4b's 53000 checkpoint. The main run is not touched; only its base config is inherited read-only.
+#
+# Arms (same batches: reference sampler dp 512 x mbs 1):
+#   fix         single gate + scale-invariant query + logit_scale (surgery/fix)
+#   fix_read    per-stream gates, query read, same fix (surgery/bg_read)
+#   fix_stream  per-stream gates, query stream, same fix (surgery/bg_stream)
+# At init fix_read is exactly fix (the new stream params are copies); fix_stream is the abrupt variant.
+# Readout: lm loss / grad norm per step (paired across arms), arch/engram/{gate,gate_s<m>,query_rms,
+# gate_stream_spread} every 10 steps (TensorBoard).
+defaults:
+  - /experiments/korbi/recall_surgery/v4b_learned_mn5
+  - _self_
+
+aux:
+  suite: engram_branch_fix
+  arm: fix
+  only: []
+  nodes: 4
+  steps: 200
+  start: 53000
+  end: 53200
+  start_iter: iter_0053000
+  kv_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116
+  fix_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix
+  surgery: ${aux.fix_root}/surgery
+
+backend:
+  megatron:
+    load: ${aux.surgery}/fix/ckpt
+    ckpt_step: ${aux.start}
+    # 4 nodes x 4 GPUs x 8 micro-batches = gbs 128 (the reference sampler keeps v4b's data order)
+    global_batch_size: 128
+    micro_batch_size: 1
+    train_iters: 236733
+    exit_interval: ${aux.end}
+    save: ${job.base_output_dir}/ckpt
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    save_interval: 1000000
+    save_extra_steps: ["${aux.end}"]
+    non_persistent_save_interval: null
+    save_retain_interval: null
+    # the short test reads loss / grad / gate metrics; no validation pass
+    eval_interval: 1000000
+    eval_iters: 1
+    arch_metrics_interval: 10
+    engram_gate_logit_scale: true
+    engram_gate_query_eps: 1e-12
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: engram_branch_fix_${aux.arm}
+  base_output_dir: ${aux.fix_root}/runs/${aux.arm}
+  est_steps: ${aux.steps}
+  est_step_time_s: 25.0
+  est_startup_min: 30.0
+  metadata:
+    pool_priority: 100
+    pool_use_excluded_nodes: false
+    pool_singleton: null
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "02:00:00"
+    # c136's hosts: account cns143, qos acc_xlarge
+    account: cns143
+    qos: acc_xlarge
+
+# literals in the entries: interpolations inside a sweep entry resolve against the base config
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: fix
+          job.base_output_dir: ${aux.fix_root}/runs/fix
+          backend.megatron.load: ${aux.surgery}/fix/ckpt
+          backend.megatron.engram_branch_gates: false
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.surgery}/fix/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+        - aux.arm: fix_read
+          job.base_output_dir: ${aux.fix_root}/runs/fix_read
+          backend.megatron.load: ${aux.surgery}/bg_read/ckpt
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: read
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.surgery}/bg_read/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+        - aux.arm: fix_stream
+          job.base_output_dir: ${aux.fix_root}/runs/fix_stream
+          backend.megatron.load: ${aux.surgery}/bg_stream/ckpt
+          backend.megatron.engram_branch_gates: true
+          backend.megatron.engram_branch_query: stream
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.surgery}/bg_stream/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true

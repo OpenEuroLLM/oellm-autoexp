@@ -551,6 +551,19 @@ class MegatronConfig(ConfigInterface):
     # logit, from 1: lets the gate become selective. 1 = the gate as it is.
     engram_gate_scale: bool = False
 
+    # A learnable scalar per gate (per stream with ``engram_branch_gates``) on the gate's
+    # logit, applied BEFORE the signed square root, from 1: the fix for a collapsed query.
+    # With ``engram_gate_query_eps`` the query norm is scale-invariant, so this scalar sets
+    # the logit size instead of the hidden magnitude. Initialise it at the checkpoint's mean
+    # query RMS (scripts/korbi/production/add_engram_branch_gates.py --logit-scale) to stay
+    # function-preserving.
+    engram_gate_logit_scale: bool = False
+
+    # The eps of the Engram gate's query RMSNorm. ``layernorm_epsilon`` (1e-5) floors a
+    # collapsed query (mean h^2 << eps) and crushes the logit; a scale-invariant query uses
+    # ~1e-12 (with ``engram_gate_logit_scale``). The key side keeps ``layernorm_epsilon``.
+    engram_gate_query_eps: float = 1e-05
+
     # Hash multipliers of their own for every Engram layer (the reference code seeds them per
     # layer), so two Engram layers do not share their n-gram collisions. False: one set of
     # multipliers for all Engram layers.
