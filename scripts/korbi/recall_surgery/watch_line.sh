@@ -62,7 +62,7 @@ if os.path.exists(log):
     it = None
     with open(log, errors="ignore") as fh:
         for line in fh:
-            m = re.search(r"iteration +(\d+)/", line)
+            m = re.search(r"iteration +(\d+)/.*elapsed time per iteration", line)
             if m:
                 it = m.group(1)
     last = it or "-"
@@ -113,10 +113,13 @@ while :; do
 
   if [ "$rc" != "-" ] && [ "$rc" != "$prev_rc" ]; then
     log=$RUN_DIR/slurm-mn5-pool-p264.$rid.log
-    hit=$(grep -cE "cudaErrorIllegalAddress|illegal memory access" "$log" 2>/dev/null || echo 0)
-    trap=$(grep -c "disagrees with topk" "$log" 2>/dev/null || echo 0)
+    # grep -c prints 0 AND exits 1 on no match: "|| echo 0" would append a second 0 and break the
+    # integer test (2026-11-24, first run of this script). Take the count only.
+    hit=$(grep -cE "cudaErrorIllegalAddress|illegal memory access" "$log" 2>/dev/null | head -1)
+    trap=$(grep -c "disagrees with topk" "$log" 2>/dev/null | head -1)
+    hit=${hit:-0}; trap=${trap:-0}
     say "RUN ENDED .$rid rc=$rc illegal=$hit trap=$trap last_iter=$last"
-    if [ "$hit" -gt 0 ] || [ "$trap" -gt 0 ]; then exit 4; fi
+    if [ "${hit:-0}" -gt 0 ] || [ "${trap:-0}" -gt 0 ]; then exit 4; fi
     if [ "$rc" != "0" ]; then exit 5; fi
     prev_rc=$rc
   fi
