@@ -8,7 +8,7 @@
 #   stream ~0.033 (the streams are nearly identical)
 # so step 0 is function-preserving. Output: <OUT_ROOT>/<v>/ckpt/iter_<IT>.
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 SRC=${SRC:?set SRC to the v4b ckpt directory}
 IT=${IT:-53000}
 OUT_ROOT=${OUT_ROOT:?set OUT_ROOT}
