@@ -1,0 +1,24 @@
+# @package _global_
+# v4b main run, same job name, lower host-RAM footprint at the persistent save.
+#
+# Why (2026-11-24): pjob .2407 was killed by a HOST-RAM OOM at iteration 57000, not by CUDA and not
+# by MoonEP -- Slurm logged 13 oom_kill events in step 48867560.587, 9 ranks died with exitcode -9
+# (SIGKILL), and the survivors then lost the TCPStore and the rendezvous. The largest host-RAM
+# consumer in this run is the dataloader: num_workers 8 x dataloader_prefetch_factor 4 = up to 32
+# prefetched batches held live by the worker processes, which no gc.collect() can free. At the
+# persistent save the checkpoint copy is added on top, and 13 nodes crossed the limit.
+#
+# This config only lowers that footprint: workers 8 -> 4, prefetch 4 -> 2 (32 -> 8 batches in
+# flight). Everything else is inherited verbatim, so the recipe, the packing plans and the tree
+# (runs/v4b_learned/main) are unchanged and the run resumes from the same rolling save.
+#
+# Tradeoff: fewer in-flight batches can starve the GPUs and cost step time. Measure it after the
+# restart with scripts/korbi/recall_surgery/report_step_time.sh; the pre-OOM rate was ~18.9 s/step.
+defaults:
+  - v4b_learned_fix_mn5
+  - _self_
+
+backend:
+  megatron:
+    num_workers: 4
+    dataloader_prefetch_factor: 2
