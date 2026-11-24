@@ -55,10 +55,11 @@ if [ -z "$rid" ]; then echo "ALERT no new run started within ${TIMEOUT_MIN} min"
 
 d=$POOL/runs/mn5-pool-p264.$rid
 echo "[$(date +%H:%M:%S)] new run .$rid started $(stat -c %y "$d/started" | cut -d. -f1)"
+# Being IN the EXCLUDE list is the desired state: it is the list of nodes the run must avoid.
 if grep -q "$NODE" "$d/meta.env" 2>/dev/null; then
-  echo "  $NODE: STILL IN THE RUN's EXCLUDE LIST -> check the render"
+  echo "  $NODE: excluded from this run (present in its EXCLUDE list) -- as intended"
 else
-  echo "  $NODE: not in the run's EXCLUDE (dropped as intended)"
+  echo "  $NODE: NOT in the run's EXCLUDE list -> the re-render did not pick up the exclusion"
 fi
 echo "  build: $(grep -oE "pylibs_moonep_[a-z0-9]+" "$d/step.sh" 2>/dev/null | head -1)  recipe: sparse=$(grep -c "page-sparse-backend" "$d/step.sh") packing=$(grep -c "packing-plan-path" "$d/step.sh") bundle=$(grep -c "dataloader-index-bundle" "$d/step.sh")"
 
