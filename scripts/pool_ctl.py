@@ -72,13 +72,25 @@ def _fmt_ts(value: str | float | None) -> str:
         return "-"
 
 
+def _loads_or_none(path: Path) -> dict | None:
+    """Parse a job record, tolerating an empty or corrupt file.
+
+    pool_state/pool_mn5-pool-p134c held 11 records of 100 % NUL bytes (2026-11-24), and an
+    unguarded json.loads in `status` turned that into a JSONDecodeError for the whole pool.
+    """
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _job_records(session_dir: Path) -> dict[str, dict]:
     """Run id -> record summary, from the monitor session's job files."""
     out: dict[str, dict] = {}
     for path in sorted(session_dir.glob("*.job.json")):
-        try:
-            payload = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
+        payload = _loads_or_none(path)
+        if payload is None:
             continue
         runtime = payload.get("runtime") or {}
         rid = runtime.get("runtime_job_id")
@@ -118,7 +130,11 @@ def cmd_status(layout: PoolLayout, _args) -> int:
             next(
                 (
                     r
-                    for r in (json.loads(p.read_text()) for p in session_dir.glob("*.job.json"))
+                    for r in (
+                        rec
+                        for rec in (_loads_or_none(p) for p in session_dir.glob("*.job.json"))
+                        if rec is not None
+                    )
                     if (r.get("definition") or {}).get("metadata", {}).get("pool_host_id")
                     == hdir.name
                 ),
