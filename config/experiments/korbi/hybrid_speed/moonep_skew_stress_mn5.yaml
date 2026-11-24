@@ -11,13 +11,16 @@ aux:
   name: moonep_skew_stress
   out: /gpfs/scratch/ehpc533/hybrid_nucleus/campaign_midtraining/moonep_skew_stress
   iters: 2000
+  phases: guard,blocking,default,nojitter_norecompute,pdl0,memcheck
+  # the MoonEP build under test (first on PYTHONPATH); the main run's is pylibs_moonep_ec3eb8b
+  moonep_lib: ${aux.hybrid_env}/pylibs_moonep_ec3eb8b
   dev_queue: true
   tests: ""
-  bench: "bash scripts/korbi/hybrid_speed/moonep_skew_stress.sh ${aux.out} ${aux.iters}"
+  bench: "bash scripts/korbi/hybrid_speed/moonep_skew_stress.sh ${aux.out} ${aux.iters} ${aux.phases}"
 
 backend:
   env:
-    PYTHONPATH: "${aux.hybrid_env}/pylibs_moonep_ec3eb8b:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
+    PYTHONPATH: "${aux.moonep_lib}:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
 
 job:
   est_step_time_s: 6600
