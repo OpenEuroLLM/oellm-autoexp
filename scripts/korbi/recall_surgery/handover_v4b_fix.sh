@@ -73,6 +73,23 @@ print(" ".join(sorted(out)))
 PY
 }
 
+recent_rids() {  # newest 3 ids of $1, finished or not: a crash is written to the run that died,
+                # and the pool can restart the line faster than one poll interval
+  "$PY" - "$POOL" "$1" <<'PY'
+import glob, json, os, sys
+pool, name = sys.argv[1], sys.argv[2]
+out = []
+for d in glob.glob(pool + "/runs/mn5-pool-p264.*"):
+    try:
+        m = json.load(open(os.path.join(d, "run.json")))
+    except Exception:
+        continue
+    if m.get("name") == name:
+        out.append(int(d.rsplit(".", 1)[-1]))
+print(" ".join(str(i) for i in sorted(out)[-3:]))
+PY
+}
+
 crashed() {  # 0 if the run's log carries the illegal-access signature
   local rid=$1
   local log=$OLD_RUN_DIR/slurm-mn5-pool-p264.$rid.log
@@ -83,6 +100,7 @@ crashed() {  # 0 if the run's log carries the illegal-access signature
 if [ "$DRY" = 1 ]; then
   say "DRY RUN"
   say "  old live runs : $(live_runs $OLD_NAME)"
+  say "  recent old    : $(recent_rids $OLD_NAME)"
   say "  armed marker  : $([ -f $ARMED ] && echo present || echo absent)"
   say "  would run     : pool_ctl cancel $OLD_NAME ; touch $ARMED ; wait for $NEW_NAME"
   exit 0
@@ -106,7 +124,9 @@ while [ -z "$trigger" ]; do
     trigger="forced"
     break
   fi
-  for rid in $(live_runs $OLD_NAME); do
+  # Check the newest runs whether or not they are still live: the pool restarts the line within a
+  # minute of a crash, so a live-only scan would miss the very event we hand over on.
+  for rid in $(recent_rids $OLD_NAME); do
     if crashed "$rid"; then
       trigger="illegal access in .$rid"
       say "TRIGGER $trigger"
