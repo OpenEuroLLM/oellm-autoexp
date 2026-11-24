@@ -85,3 +85,10 @@ sweep:
           backend.env.MEGATRON_DATASET_NODE_STAGGER: "1"
           backend.env.TRITON_CACHE_AUTOTUNING: "1"
         - aux.arm: base2
+        # after the first 1024-rank restart (p264.2152, 2026-11-24): no gloo groups (only the legacy distributed
+        # optimizer uses them; 11,279 group creations took 33 s there, DATA_PARALLEL_GROUP_GLOO alone 15 s), no
+        # sequential read and no node stagger (both slower at 1024 ranks), metadata broadcast with hit / miss logging
+        - aux.arm: fix
+          backend.env.MEGATRON_LAZY_GROUPS: "1"
+          backend.env.FSDP_DCP_BCAST_METADATA: "1"
+          backend.megatron.use_gloo_process_groups: false
