@@ -336,8 +336,10 @@ def _lighteval() -> GroupedSpec:
 
 
 def _evalchemy() -> GroupedSpec:
-    # LiveCodeBench: datasets.map PicklingError in evalchemy (2026-11-06)
-    return GroupedSpec(groups=1, exclude_tasks=["LiveCodeBench"])
+    # LiveCodeBench is included: scripts/korbi/flag_eval/patch_mn5_stage.py patches the stage's LCB
+    # question loading to map in-process (num_proc=1 unless EVALCHEMY_LCB_NUM_PROC>0), which removes
+    # the dill/numpy PicklingError seen on 2026-11-06.
+    return GroupedSpec(groups=1)
 
 
 # ---------------------------------------------------------------- the launch

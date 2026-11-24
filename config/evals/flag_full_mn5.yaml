@@ -29,7 +29,9 @@ lighteval:
 
 evalchemy:
   groups: 1
-  exclude_tasks: [LiveCodeBench]   # datasets.map PicklingError (2026-11-06)
+  # LiveCodeBench is enabled: scripts/korbi/flag_eval/patch_mn5_stage.py already patches the
+  # stage's LCB question loading to map in-process (num_proc=1 unless EVALCHEMY_LCB_NUM_PROC>0),
+  # which removes the dill/numpy PicklingError of 2026-11-06. Verified with --check.
   engine: {tp: 4, max_num_seqs: 64}
   job: {priority: 55}
 
