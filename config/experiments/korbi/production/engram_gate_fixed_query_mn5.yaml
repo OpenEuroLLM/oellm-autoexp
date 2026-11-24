@@ -1,0 +1,85 @@
+# @package _global_
+# Fixed-query Engram gate diagnosis on one HF export as a 1-node job on p264 host010 (or any pool host).
+# The export's own model code with the instrumented Engram forward: the current gate plus the
+# scale-invariant query x * logit_scale / |h~| at each --logit-scales value (scripts/rluukkon/engram_gate_diag.py).
+# Output <aux.out>/<set>.npz + runs.json; read it with scripts/rluukkon/engram_gate_rescore.py.
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/engram_gate_fixed_query_mn5 --yes
+defaults:
+  - /experiments/base
+  - /backend: bash
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  export: ambitious_v4b_learned_fp8_53000
+  hf_exports: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  diag_root: /gpfs/scratch/ehpc533/hybrid_nucleus/engram_gate_diag
+  out: ${aux.diag_root}/${aux.export}_fixed_query
+  hybrid_env: /gpfs/projects/ehpc533/users/korbip/hybrid_v019
+  sif: ${aux.hybrid_env}/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+  # absolute logit_scale of the early Engram layer; the other layers keep mean(|h~|)
+  logit_scales: "0.025,0.1,0.3,1.0"
+  sweep_layer: 2
+  docs: 16
+  flores: 16
+  gsm8k: 64
+
+backend:
+  # shell variables, not OmegaConf: the bash backend runs this under bash -c '<command>'
+  command: python3 scripts/rluukkon/engram_gate_diag.py --model-dir "$HF_EXPORTS/$EXPORT" --out "$OUT" --docs "$DOCS" --flores "$FLORES" --gsm8k "$GSM8K" --fixed-query --logit-scales "$LOGIT_SCALES" --sweep-layer "$SWEEP_LAYER"
+  env:
+    HF_EXPORTS: ${aux.hf_exports}
+    EXPORT: ${aux.export}
+    OUT: ${aux.out}
+    DOCS: ${aux.docs}
+    FLORES: ${aux.flores}
+    GSM8K: ${aux.gsm8k}
+    LOGIT_SCALES: ${aux.logit_scales}
+    SWEEP_LAYER: ${aux.sweep_layer}
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_ep:${aux.hybrid_env}/pylibs_hfx"
+    OELLM_HF_IMPL: fast
+    OELLM_HF_MOE: fused
+    OELLM_HF_ENGRAM_UVA: "1"
+    OELLM_HF_GRAD: "0"
+    HF_HOME: /gpfs/projects/ehpc533/users/rluukkon/flag_evals_engram/hf_home
+    HF_DATASETS_OFFLINE: "1"
+    HF_HUB_OFFLINE: "1"
+    HOME: /tmp
+    TRITON_CACHE_DIR: /tmp/triton
+    TORCHINDUCTOR_CACHE_DIR: /tmp/inductor
+
+container:
+  image: ${aux.sif}
+
+job:
+  name: engram_gate_fixed_query_${aux.export}
+  base_output_dir: ${aux.out}/logs
+  est_steps: 1
+  est_step_time_s: 4200
+  metadata:
+    # above the eval agent's 1-node jobs (60), below the main run (150)
+    pool_priority: 95
+    pool_use_excluded_nodes: false
+    pool_singleton: null
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: timeout
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "02:00:00"
+    # p264's hosts: account cns144, qos acc_xehpc
+    account: cns144
+    qos: acc_xehpc
+
+stage: test
