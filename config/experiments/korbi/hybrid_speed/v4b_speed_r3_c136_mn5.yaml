@@ -20,19 +20,33 @@
 #
 # So round 3 changes no math. It removes waits:
 #   base     the main run's settings
-#   nolog    the per-step MoE health logging off: --moe-per-layer-logging, --moe-expert-viability-
-#            metrics, --moe-log-seq-aux-loss, --log-timers-to-tensorboard. Kills the per-step
-#            blocking all-reduces and their .item() syncs. (Round 2 measured -3.3 % at 64 nodes;
-#            the profiler says the ceiling is the 0.92 s u64 all-reduce plus the syncs.)
-#   rc4      --recompute-num-layers 4: uniform recompute units of 4 layers instead of 2. Full
-#            recompute keeps ONE input per unit and with mHC that input is the 4-stream state
-#            (4 x 64k x 2048 bf16 ~ 1.07 GB), so 52 units put ~56 GB per step each way through
-#            RECOMPUTE_OFFLOAD pinned host memory, on top of compute-side copies. 26 units halve
-#            that traffic. The same layers are recomputed, so the math is unchanged -- only how
-#            many chunk inputs are kept and copied.
 #   sms      --moe-flex-dispatcher-num-sms 64 -> 128: the MoonEP dispatch and combine kernels
 #            (0.33 + 0.32 s per step) get the whole SM array instead of half of it.
-#   comb     nolog + rc4 + sms
+#
+# Dropped since the first draft (user 2026-11-24: "we want to keep logging"):
+#   nolog    the per-step MoE health logging off. It measured -3.4 % at slice scale (18 layers, 8
+#            nodes: 2960.7 -> 2860.6 ms) and -3.3 % at 64 nodes in round 2, i.e. it was the one
+#            measured win. Keeping the logging gives it up on purpose.
+#   rc4      --recompute-num-layers 4: at slice scale it was a REGRESSION (2993.6 vs 2960.7 ms,
+#            +1.1 %): coarser recompute units lengthen the recompute window per chunk and the
+#            saved RECOMPUTE_OFFLOAD copies do not pay for it.
+#   graph    --cuda-graph-impl local fails on this data path (slice job 49379951):
+#            "--dataloader-inter-document-masking builds a cu_seqlens tensor whose length changes
+#            with the document count of every microbatch, which would force CUDA graph recapture
+#            each step". Only --cuda-graph-modules moe_router moe_preprocess is allowed while that
+#            flag is on. Graphs come back only if inter-document masking goes off (boundaries none
+#            gives one segment, so cu_seqlens stops varying) -- and then the assertion itself has
+#            to be revisited, because it keys on the flag, not on the boundaries mode.
+#
+# GEOMETRY CAVEAT (user 2026-11-24): the live run packs with packing_plan_boundaries: group and
+# four plan windows (q3e256_g51000 ... q3e128_g81000), gbs 1024, ref 512 x 1. These arms cannot:
+# the plan wrapper asserts the plan's build geometry (global_batch_size 1024, ref_dp 512, ref_mbs
+# 1, train_iters, phase_start) and refuses steps outside [from_ckpt, to_ckpt), and these arms run
+# at gbs 256 from iteration 0 (--finetune). gbs 1024 at 64 nodes means 4 x 64k per GPU, which does
+# not fit. So the arms run document masking with the default doc boundaries, at DP 64 instead of
+# DP 256, and their absolute step times are NOT the live run's: group merges document pieces of a
+# cluster into longer segments, so the live attention cost is the higher one. Arm-vs-base ratios
+# stay valid; the transfer of a ratio to the live run has to be confirmed on it.
 #
 # Not an arm, on purpose: --fsdp-fp8-param-gather all. It is already "experts", and the 48 expert
 # buckets x 424,673,280 elements are 20.4 B of the model's 23.1 B params (88 %) -- those already
@@ -52,7 +66,7 @@ aux:
   suite: v4b_speed_r3
   variant: base
   arm: ${aux.variant}
-  only: [base, nolog, rc4, sms, comb]
+  only: [base, sms]
   nodes: 64
   node_check: "off"
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_speed_r3
@@ -131,19 +145,5 @@ sweep:
     - type: list
       configs:
         - aux.variant: base
-        - aux.variant: nolog
-          backend.megatron.moe_per_layer_logging: false
-          backend.megatron.moe_expert_viability_metrics: false
-          backend.megatron.moe_log_seq_aux_loss: false
-          backend.megatron.log_timers_to_tensorboard: false
-        - aux.variant: rc4
-          backend.megatron.recompute_num_layers: 4
         - aux.variant: sms
           backend.megatron.moe_flex_dispatcher_num_sms: 128
-        - aux.variant: comb
-          backend.megatron.recompute_num_layers: 4
-          backend.megatron.moe_flex_dispatcher_num_sms: 128
-          backend.megatron.moe_per_layer_logging: false
-          backend.megatron.moe_expert_viability_metrics: false
-          backend.megatron.moe_log_seq_aux_loss: false
-          backend.megatron.log_timers_to_tensorboard: false
