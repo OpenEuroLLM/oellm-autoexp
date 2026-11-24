@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import re
 import glob
 import os
 import subprocess
@@ -27,9 +29,9 @@ import sys
 from collections import defaultdict
 
 EVAL_ROOT = "/gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm"
-HOST = "marenostrum_new"
-JUPITER = "jupiter"
-JUPITER_DIR = "/e/scratch/e-sta-openeurollm/poeppel1/flag-evals/results"
+# The JUPITER reference CSVs are copied to MN5 once (the MN5 login nodes cannot reach JUPITER):
+#   ssh jupiter 'cat <csv>' > /tmp/x.csv && ssh marenostrum_new 'cat > $R/refs_jupiter/<csv>' < /tmp/x.csv
+JUPITER_DIR = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/refs_jupiter"
 JUPITER_REFS = {
     "32B@90k": "b1cons_90k.flag-evals-438.tasks.csv",
     "32B@300k": "b1consTW_300k.flag-evals-438.tasks.csv",
@@ -53,6 +55,11 @@ METRIC_PREFERENCE = [
 ]
 
 
+def to_pct(value: float) -> float:
+    """The JUPITER CSVs mix units (coqa f1 is a fraction, squadv2 f1 is already percent)."""
+    return value * 100.0 if value <= 1.5 else value
+
+
 def base_metric(name: str) -> str:
     return name.split(",")[0].strip()
 
@@ -67,6 +74,42 @@ def pick(metrics: dict[str, float]) -> tuple[str, float] | None:
         if "stderr" not in key:
             return key, value
     return None
+
+
+def read_results(directory: str) -> dict[str, tuple[str, float]]:
+    """task -> (metric, value) from results/*/samples_*.jsonl (works mid-run, before summaries).
+
+    lm-eval writes the per-sample metric names in ``metrics`` and the values as top-level keys.
+    """
+    per_task: dict[str, dict[str, float]] = defaultdict(dict)
+    for task_dir in sorted(glob.glob(os.path.join(directory, "results", "*"))):
+        task = re.sub(r"_\d+$", "", os.path.basename(task_dir))
+        files = glob.glob(os.path.join(task_dir, "**", "samples_*.jsonl"), recursive=True)
+        if not files:
+            continue
+        totals: dict[str, float] = defaultdict(float)
+        n = 0
+        for path in files:
+            with open(path) as handle:
+                for line in handle:
+                    row = json.loads(line)
+                    n += 1
+                    for key in (row.get("metrics") or []):
+                        value = row.get(key)
+                        # squad-style tasks store a list of metric dicts, not a scalar; skip them here
+                        # (their summary TSV has the aggregate once the session finishes)
+                        if not isinstance(value, (int, float)):
+                            continue
+                        totals[key] += float(value)
+        if n:
+            for key, value in totals.items():
+                per_task[task][base_metric(key)] = value / n
+    out = {}
+    for task, metrics in per_task.items():
+        chosen = pick(metrics)
+        if chosen:
+            out[task] = chosen
+    return out
 
 
 def read_summaries(directory: str) -> dict[str, tuple[str, float]]:
@@ -92,38 +135,28 @@ def read_summaries(directory: str) -> dict[str, tuple[str, float]]:
 
 
 def read_jupiter() -> dict[str, dict[str, float]]:
-    """ref -> task -> value, one ssh round trip."""
-    script = ["import csv, sys"]
-    script.append("refs = %r" % (JUPITER_REFS,))
-    script.append("base = %r" % JUPITER_DIR)
-    script.append("keep = set(%r)" % (METRIC_PREFERENCE,))
-    script.append("for label, fname in refs.items():")
-    script.append("    rows = list(csv.DictReader(open(base + '/' + fname)))")
-    script.append("    best = {}")
-    script.append("    for r in rows:")
-    script.append("        metric = (r['metric'] or '').split(',')[0].strip()")
-    script.append("        if metric not in keep:")
-    script.append("            continue")
-    script.append("        try:")
-    script.append("            value = float(r['value'])")
-    script.append("        except (TypeError, ValueError):")
-    script.append("            continue")
-    script.append("        task = r['task']")
-    script.append("        rank = %r.index(metric)" % (METRIC_PREFERENCE,))
-    script.append("        if task not in best or rank < best[task][0]:")
-    script.append("            best[task] = (rank, value)")
-    script.append("    for task, (rank, value) in best.items():")
-    script.append("        print('%%s\\t%%s\\t%%s' %% (label, task, value))")
-    program = "\n".join(script)
-    out = subprocess.run(["ssh", JUPITER, "python3 -"], input=program, capture_output=True,
-                         text=True, timeout=900, check=False)
-    if out.returncode != 0:
-        print(f"warning: jupiter exited {out.returncode}: {out.stderr[-200:]}", file=sys.stderr)
+    """ref -> task -> value from the local copies of the JUPITER 438-task CSVs."""
     refs: dict[str, dict[str, float]] = defaultdict(dict)
-    for line in out.stdout.splitlines():
-        parts = line.split("\t")
-        if len(parts) == 3:
-            refs[parts[0]][parts[1]] = float(parts[2])
+    for label, fname in JUPITER_REFS.items():
+        path = os.path.join(JUPITER_DIR, fname)
+        if not os.path.exists(path):
+            print(f"warning: missing {path}", file=sys.stderr)
+            continue
+        best: dict[str, tuple[int, float]] = {}
+        with open(path) as handle:
+            for row in csv.DictReader(handle):
+                metric = base_metric(row.get("metric") or "")
+                if metric not in METRIC_PREFERENCE:
+                    continue
+                try:
+                    value = float(row["value"])
+                except (TypeError, ValueError):
+                    continue
+                task = row["task"]
+                rank = METRIC_PREFERENCE.index(metric)
+                if task not in best or rank < best[task][0]:
+                    best[task] = (rank, value)
+        refs[label] = {t: v for t, (_r, v) in best.items()}
     return refs
 
 
@@ -133,12 +166,14 @@ def main() -> int:
     ap.add_argument("--label", default="ours")
     ap.add_argument("--min-common", type=int, default=1, help="only tasks with at least this many references")
     ap.add_argument("--csv", default="", help="also write the table as CSV")
+    ap.add_argument("--worst", type=int, default=0, help="also list the N largest negative deltas")
+    ap.add_argument("--ref", default="32B@300k", help="reference for --worst")
     args = ap.parse_args()
 
     ours_dir = args.ours if os.path.isdir(args.ours) else os.path.join(EVAL_ROOT, args.ours)
-    ours = read_summaries(ours_dir)
+    ours = read_summaries(ours_dir) or read_results(ours_dir)
     if not ours:
-        print(f"no summary rows in {ours_dir}", file=sys.stderr)
+        print(f"no results in {ours_dir}", file=sys.stderr)
         return 1
 
     refs: dict[str, dict[str, float]] = defaultdict(dict)
@@ -165,8 +200,8 @@ def main() -> int:
     print(header)
     print("-" * len(header))
     for task, metric, value, cells in rows:
-        line = f"{task:{width}} {metric:<12} {value*100:7.2f} "
-        line += " ".join("            –" if c is None else f"{c*100:14.2f}" for c in cells)
+        line = f"{task:{width}} {metric:<12} {to_pct(value):7.2f} "
+        line += " ".join("            –" if c is None else f"{to_pct(c):14.2f}" for c in cells)
         print(line)
 
     print("\nsummary over %d tasks" % len(rows))
@@ -176,9 +211,20 @@ def main() -> int:
             continue
         wins = sum(1 for a, b in pairs if a > b)
         losses = sum(1 for a, b in pairs if a < b)
-        delta = sum(a - b for a, b in pairs) / len(pairs) * 100
+        delta = sum(to_pct(a) - to_pct(b) for a, b in pairs) / len(pairs)
         print(f"  vs {col:16s} n={len(pairs):3d}  wins {wins:3d}  losses {losses:3d}  "
               f"mean delta {delta:+6.2f} pp")
+
+    if args.worst and args.ref in columns:
+        idx = columns.index(args.ref)
+        gaps = sorted(
+            ((to_pct(value) - to_pct(cells[idx]), task, metric, value, cells[idx])
+             for task, metric, value, cells in rows if cells[idx] is not None),
+            key=lambda g: g[0],
+        )[: args.worst]
+        print(f"\nworst {len(gaps)} vs {args.ref}")
+        for delta, task, metric, value, ref_value in gaps:
+            print(f"  {delta:+7.2f} pp  {task:44s} {metric:<12} ours {to_pct(value):6.2f}  ref {to_pct(ref_value):6.2f}")
 
     if args.csv:
         with open(args.csv, "w", newline="") as handle:
