@@ -1,5 +1,11 @@
 # 2026-11-24 — MareNostrum v4b "ambitious" main run: what blocked us
 
+> **Vocabulary (2026-11-24, later):** a **job** is the thing submitted by name
+> (`ambitious_v4b_learned_fix_256`) together with its restarts; a **pjob** is one pool job = one
+> attempt (`mn5-pool-p264.2406`); an **sjob** is one Slurm job = one host allocation (`48867560`).
+> Earlier text in this file says "line" for what is now called a **job**; see
+> [`docs/pool_allocation_improvement.md`](../pool_allocation_improvement.md) §0.
+
 Session record of the failures between 05:24 and 21:16 UTC+1 on 2026-11-24, in the order they bit us,
 with the fix for each. Everything here is on `mn5_pool_p264` / `host010` (job 48867560, 264 nodes,
 `gres/gpu=1056`, later 261 nodes / `gres/gpu=1044`).
@@ -10,7 +16,7 @@ Read this before touching the pool again: most of the day was spent re-learning 
 
 ## 1. The MoonEP fix was not in the live run
 
-**Symptom.** The main line restarted from a frozen submission definition that pinned
+**Symptom.** The main job restarted from a frozen submission definition that pinned
 `pylibs_moonep_ec3eb8b`, i.e. the build with the illegal-access path.
 
 **Fix.** `e9e8238` (fence + guards) prebuilt as `pylibs_moonep_e9e8238`, plus the Megatron patch
@@ -107,7 +113,7 @@ hardware for a code-level failure.
 minutes in `.2186`. The pool's fabric rule restarted `.2178` at 10:38.
 
 **Note.** `port active(9)` is the port coming **back**; the fault is `port error(10)`. Do not read the
-recovery line as the failure.
+recovery event as the failure.
 
 **Fix.** Excluded `as02r1b08`.
 
@@ -310,7 +316,7 @@ This is the sequence that had the main run training within seconds, and it is th
 worked all day:
 
 ```
-1. cancel the LINE, not the runs        # cancel_line.sh <pool> <name>
+1. cancel the JOB, not the pjobs        # cancel_line.sh <pool> <job-name>  (proto of `pool_ctl cancel --job`)
    — every live record is cancelled, so the monitor has nothing to restart
 2. max_runs_per_host = 1                # nothing else can take the host while it comes up
 3. submit exactly ONE job               # one record, one run, fresh render
@@ -327,16 +333,17 @@ Every failure today came from violating one of those six lines.
 
 ## Semantics
 
-**A *line* is the unit.** `(pool, definition-name)` owns its records, its runs and its restart policy.
-No command should ever act on a single record or a single run of a line without saying so.
+**A *job* is the unit.** `(pool, definition-name)` owns its records, its pjobs and its restart policy.
+No command should ever act on a single record or a single pjob of a job without saying so.
+Terminology: **job** (submitted name) -> **pjob** (pool run) -> **sjob** (Slurm host allocation).
 
 | command | semantics |
 |---|---|
-| `cancel <line>` | **finally stop**: every live record of the line becomes `final_state=cancelled`, its runs get a `cancel` marker, the monitor never restarts it. Cascading and atomic (one monitor poll). |
-| `replace <line> <spec>` | submit the new record and **auto-cancel every older live record of the line in the same transaction** — at most one record per line is ever live. This is what `_q2`, `_q3` should have been. |
-| `restart <line>` | allowed only per the record's policy; a **placement failure is not a run failure** (see below). |
-| `preempt <line>` | explicit user action only; refused for a `protected` line once it holds its nodes. |
-| `status <line>` | one line: live record, live run, nodes, capacity, exclusions, last iteration, ETA. |
+| `cancel --job <name>` | **finally stop**: every live record of the job becomes `final_state=cancelled`, its pjobs get a `cancel` marker, the monitor never restarts it. Cascading and atomic (one monitor poll). |
+| `replace --job <name> <spec>` | submit the new record and **auto-cancel every older live record of the job in the same transaction** — at most one record per job is ever live. This is what `_q2`, `_q3` should have been. |
+| `restart --job <name>` | allowed only per the job's policy; a **placement failure is not a pjob failure** (see below). |
+| `preempt --job <name>` | explicit user action only; refused for a `protected` job once it holds its nodes. |
+| `status --job <name>` | one screen: live record, live pjob, nodes, capacity, exclusions, last iteration, ETA. |
 
 ## Rules that must be enforced by the tool, not by the operator
 
@@ -344,7 +351,7 @@ No command should ever act on a single record or a single run of a line without 
    record must not be re-submitted. Today a cancelled *run* was restarted on the next poll because
    its record stayed live.
 
-2. **One live record per line.** Any submit replaces the predecessor. The pool's dedupe renaming
+2. **One live record per job.** Any submit replaces the predecessor. The pool's dedupe renaming
    (`_q2`, `_q3`) is a bug, not a feature: it turns one logical job into N competing jobs.
 
 3. **Placement failure ≠ run failure.** `insufficient_nodes` and `configuration is not available` mean

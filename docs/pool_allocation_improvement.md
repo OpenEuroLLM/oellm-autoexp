@@ -13,13 +13,38 @@ Companion documents:
 
 ---
 
+## 0. Vocabulary
+
+Three levels, one word each. Everything else in this document uses them.
+
+| term | what it is | identifier today | example |
+|---|---|---|---|
+| **job** | the thing you submit by name: a definition plus a policy. One live instance at a time, with its restarts. This is what `cancel`, `replace`, `preempt`, `hold` and `protect` act on. | definition name + its job records | `ambitious_v4b_learned_fix_256` |
+| **pjob** | one pool job = one attempt to run the job inside a pool. Created by the pool monitor, has `rc`, `started`, `assigned`, `meta.env`, `step.sh`. | `<pool>.NNNN` | `mn5-pool-p264.2406` |
+| **sjob** | one Slurm job = one host allocation owned by a pool. Holds nodes and GPUs; hosts pjobs. | Slurm job id / `<pool>_hostNNN` | `48867560` / `mn5_pool_p264_host010` |
+
+So: a **job** runs as **pjobs**, and those run on **sjobs**.
+
+```
+job  ambitious_v4b_learned_fix_256
+ ├── pjob  .2403   rc=-1 insufficient_nodes   (placement failure, not an attempt)
+ ├── pjob  .2406   started 21:54  iter 57110  (the live one)
+ └── sjob  48867560  host010  261 nodes  gres/gpu=1044
+```
+
+Earlier drafts of this plan called the top level a *line*; that word is retired because it reads as a
+text line next to `meta.env` and log output. Commands therefore read `cancel --job <name>`,
+`status --job <name>`, `preempt --job <name>`.
+
+---
+
 ## 1. What actually went wrong (compressed)
 
 Every failure of that day belongs to one of five families. The plan is organised around them.
 
 | family | today's symptom | root cause |
 |---|---|---|
-| **A. Cancel is not final** | 3 competing `ambitious` records; cancelled runs restarted on the next poll | `pool_ctl cancel` cancels one *record*; a live record re-submits on the next poll; the monitor has no durable "this line is cancelled" state |
+| **A. Cancel is not final** | 3 competing `ambitious` records; cancelled runs restarted on the next poll | `pool_ctl cancel` cancels one *record*; a live record re-submits on the next poll; the monitor has no durable "this job is cancelled" state |
 | **B. Placement failure is treated as run failure** | `rc=-1 insufficient_nodes` every 34 s, each creating a new run dir | the monitor's `retry_failed` action counts a *capacity* rejection as a run failure |
 | **C. Capacity is computed from stale state** | `needs 256 node(s), only 2 usable`; `srun: Requested node configuration is not available` | duplicated `EXCLUDE=` lines in `meta.env` (35 then 292); `ALL_NODES` from `info.env` (264) while Slurm had 261 |
 | **D. Priority alone does not schedule** | 1-node evals took the host a 256-node run needed | assignments launched in rid order; no reservation; no eviction policy |
@@ -27,20 +52,20 @@ Every failure of that day belongs to one of five families. The plan is organised
 
 ---
 
-## 2. The model: a *line* is the unit
+## 2. The model: a *job* is the unit
 
-A **line** is `(pool, definition-name)`. It owns its records, its runs and its restart policy. Today
-every command acts on a record or a run, which is why a line could not be stopped.
+A **job** is `(pool, definition-name)`. It owns its records, its runs and its restart policy. Today
+every command acts on a record or a run, which is why a job could not be stopped.
 
 ```
-line
+job
  ├── control/                  cancel | hold | protect | replace-request   (durable markers)
  ├── policy                    restart, preempt, exclusion, reservation
  ├── records  (must be 1 live)  <job_id>.job.json
  └── runs                      <pool>.NNNN  (rc, started, assigned, meta.env, step.sh)
 ```
 
-### 2.1 Line state machine
+### 2.1 Job state machine
 
 | state | meaning | allowed transitions |
 |---|---|---|
@@ -52,8 +77,8 @@ line
 | `STOPPED` | graceful stop (preempt, wall clock, rotation) | → `QUEUED` (resume from checkpoint) |
 | `CANCELLED` | **terminal** | none |
 
-`CANCELLED` is terminal for the *line*, not for one record. Any monitor, after any restart, must
-refuse to submit a line in `CANCELLED` unless an explicit `replace` clears the tombstone.
+`CANCELLED` is terminal for the *job*, not for one record. Any monitor, after any restart, must
+refuse to submit a job in `CANCELLED` unless an explicit `replace` clears the tombstone.
 
 ---
 
@@ -87,7 +112,7 @@ flock -n "$POOL/control/supervise.lock"  scripts/korbi/recall_surgery/supervise_
 `pool_ctl doctor` (new) prints a single screen, no side effects:
 
 ```
-line ambitious_v4b_learned_fix_256   RUNNING
+job ambitious_v4b_learned_fix_256   RUNNING
   record   a5e85a  submitted 21:53   attempts 0/4
   run      .2406   started 21:54:09  iter 57110  step 18.9 s  tracker 56950
   capacity alloc 261  exclusions 4  available 257  need 256  slack +1
@@ -103,7 +128,7 @@ Every field above maps to a failure we had today; if a field cannot be filled, t
 
 ## 4. Autorestart
 
-### 4.1 Policy object (per line)
+### 4.1 Policy object (per job)
 
 ```yaml
 restart:
@@ -127,7 +152,7 @@ restart:
 
 Today `placement` was treated as `run_fault`, so every poll created a run dir and bumped attempts.
 
-### 4.3 Restart must reuse the line's capacity check
+### 4.3 Restart must reuse the job's capacity check
 
 Before creating a run, evaluate `feasible()` (§6). If not feasible: state `PLACEMENT_FAILED`, log once
 per change, and wait for a capacity event (host resize, exclusion change, eval completion). Never spin.
@@ -157,7 +182,7 @@ per change, and wait for a capacity event (host resize, exclusion change, eval c
 | `FileNotFoundError`, `insufficient_nodes`, `configuration not available` | **no** | configuration, not hardware |
 | generic `rc=1` with no named node | **no** | unknown until a probe says otherwise |
 
-Today `port active(9)` (the recovery line) was read as a fault, and a `FileNotFoundError` was read as
+Today `port active(9)` (the recovery job) was read as a fault, and a `FileNotFoundError` was read as
 a node failure. Both are attribution bugs.
 
 ### 5.2 Exclusion hygiene
@@ -198,8 +223,8 @@ otherwise every node looks broken.
 
 | tier | value | examples |
 |---|---|---|
-| `protected` | 1000 | the main training line; never auto-preempted once `RUNNING` |
-| `main` | 150 | other training lines |
+| `protected` | 1000 | the main training job; never auto-preempted once `RUNNING` |
+| `main` | 150 | other training jobs |
 | `control` | 90–120 | handover/continuation segments |
 | `eval` | 55–60 | 1-node evaluations |
 | `batch` | 30–50 | exports, archiving, smoke tests |
@@ -213,12 +238,12 @@ enough to preempt control, and nothing preempts `protected`.
 ```python
 def may_preempt(R, V, state):
     return (
-        state.line(R).priority - state.line(V).priority >= PREEMPT_MARGIN
-        and not state.line(V).protected
+        state.job(R).priority - state.job(V).priority >= PREEMPT_MARGIN
+        and not state.job(V).protected
         and state.capacity_short(R)                       # R cannot be placed otherwise
-        and state.line(R).feasible_after_evict(V)          # eviction actually helps
+        and state.job(R).feasible_after_evict(V)          # eviction actually helps
         and state.lost_work(V) <= PREEMPT_LOST_WORK_S      # e.g. 300 s since last save
-        and state.line(V).evictable                        # not already held/evicted
+        and state.job(V).evictable                        # not already held/evicted
     )
 ```
 
@@ -228,9 +253,9 @@ def may_preempt(R, V, state):
 ### 6.3 Eviction order and anti-thrash
 
 1. Lowest priority first, then **least progress**, then newest run.
-2. On eviction write `V/control/hold` — the line may not be re-placed until `R` has its `started`
+2. On eviction write `V/control/hold` — the job may not be re-placed until `R` has its `started`
    marker (or `hold_timeout`). This is what prevents the 2-second refill we observed.
-3. Cooldown per line (`preempt_cooldown_s`, default 600): a line evicted twice in a window is held,
+3. Cooldown per job (`preempt_cooldown_s`, default 600): a job evicted twice in a window is held,
    not evicted a third time.
 4. Graceful: `preempt` (save + requeue) for tier ≥ `control`; `cancel` only for tier `batch`, and only
    with `--force`.
@@ -247,13 +272,13 @@ not rid order. Today evals launched first because their rids were lower.
 
 | command | today | proposed |
 |---|---|---|
-| `cancel <x>` | cancels one record; runs restart | **`cancel --line <name>`**: writes `control/cancel` (durable), marks every live record `final_state=cancelled`, cancels runs, writes a tombstone. Honoured after monitor restart. |
-| `replace <line> <spec>` | — | submit the new record **and** cancel every older live record of the line in one transaction; at most one live record per line |
-| `status` | hosts/runs dump | **`status --line <name>`**: state machine, record, run, capacity, slack, exclusions, ETA |
+| `cancel <x>` | cancels one record; runs restart | **`cancel --job <name>`**: writes `control/cancel` (durable), marks every live record `final_state=cancelled`, cancels runs, writes a tombstone. Honoured after monitor restart. |
+| `replace <job> <spec>` | — | submit the new record **and** cancel every older live record of the job in one transaction; at most one live record per job |
+| `status` | hosts/runs dump | **`status --job <name>`**: state machine, record, run, capacity, slack, exclusions, ETA |
 | `doctor` | — | read-only consistency check (§3.3): duplicate `meta.env` keys, stale `info.env`, exclusion union vs slack, monitor age |
-| `preempt` | preempt one run | `preempt --line <name> [--force]`, subject to §6.2 |
-| `hold` / `release` | — | hold a line or a run out of placement (used by eviction and by operators) |
-| `protect <line>` | — | mark `protected`; refuses automatic preemption |
+| `preempt` | preempt one run | `preempt --job <name> [--force]`, subject to §6.2 |
+| `hold` / `release` | — | hold a job or a run out of placement (used by eviction and by operators) |
+| `protect <job>` | — | mark `protected`; refuses automatic preemption |
 | `exclude` / `readmit` | `exclude` only | `readmit` requires a passing individual probe (§5.3) |
 | `reconcile` | — | one poll that brings records, runs and markers back into a consistent state (used after a monitor restart) |
 | `signal` | — | `SIGUSR2` to the monitor to force an immediate poll after a state change |
@@ -263,18 +288,18 @@ not rid order. Today evals launched first because their rids were lower.
 A monitor restart must not resurrect work. Concretely:
 
 - **`control/cancel`** is a *file*, so it survives any monitor restart. The monitor's first poll after
-  start calls `reconcile`, which (a) cancels records whose line has `control/cancel`, (b) drops runs
-  with `rc` present, (c) holds runs whose line is held, (d) refuses to submit a line in `CANCELLED`.
+  start calls `reconcile`, which (a) cancels records whose job has `control/cancel`, (b) drops runs
+  with `rc` present, (c) holds runs whose job is held, (d) refuses to submit a job in `CANCELLED`.
 - **`SIGUSR2`** makes the running monitor poll now instead of in 34 s; `pool_ctl` sends it after every
   state change so one command costs one poll, not one poll per step.
-- **`control/protect`** is read by the evictor before it acts, so a protected line cannot be preempted
+- **`control/protect`** is read by the evictor before it acts, so a protected job cannot be preempted
   by a stale in-memory priority.
 
 ---
 
 ## 8. Invariants to assert (fail loudly)
 
-1. `1 live record per line`. A second live record is a bug; `reconcile` cancels the older one.
+1. `1 live record per job`. A second live record is a bug; `reconcile` cancels the older one.
 2. `meta.env` has exactly one line per key; the writer replaces, never appends.
 3. `info.env` matches `squeue -j <job> -o %N`; after a resize it is rewritten.
 4. `available = |live allocation| − |union(exclusions) ∩ live allocation| ≥ need + reserve_floor`.
@@ -282,7 +307,7 @@ A monitor restart must not resurrect work. Concretely:
 6. `CANCELLED` is terminal; only `replace` clears it.
 7. `placement` never increments `attempts`.
 8. One supervisor per pool (lock); an evictor never names the run it is placing.
-9. `protected` lines are never auto-preempted.
+9. `protected` jobs are never auto-preempted.
 10. Every state change is executed in one poll (signal after write).
 
 ---
@@ -291,9 +316,9 @@ A monitor restart must not resurrect work. Concretely:
 
 | phase | scope | acceptance test (regression of a real failure) |
 |---|---|---|
-| **P0** | writer fixes: `meta.env` replace-keys, `info.env` follows the job, `doctor` | `.2403`'s `Requested node configuration is not available` cannot occur; `doctor` reports `EXCLUDE lines 1` and `info.env stale` |
-| **P1** | `cancel --line`, `replace`, `reconcile`, `SIGUSR2` | killing and restarting the monitor does **not** resurrect a cancelled line; a submit leaves exactly one live record (today: `_q2 … _q18`) |
-| **P2** | fault classification; `placement` ≠ attempt; backoff | a 256-node request against a 255-node capacity logs one line and creates **no** run dir (today: one per 34 s) |
+| **P0** | writer fixes: `meta.env` replace-keys, `info.env` follows the job, `doctor` | `.2403`'s `Requested node configuration is not available` cannot occur; `doctor` reports `EXCLUDE jobs 1` and `info.env stale` |
+| **P1** | `cancel --job`, `replace`, `reconcile`, `SIGUSR2` | killing and restarting the monitor does **not** resurrect a cancelled job; a submit leaves exactly one live record (today: `_q2 … _q18`) |
+| **P2** | fault classification; `placement` ≠ attempt; backoff | a 256-node request against a 255-node capacity logs one job and creates **no** run dir (today: one per 34 s) |
 | **P3** | reservation + largest-first launch + `hold` on eviction | an eval cannot take a node the main run needs; no 2-second refill |
 | **P4** | preemption predicate (`margin ≥ 100`, `feasible_after_evict`, lost-work budget), `protect` | main preempts an eval and starts; an evictor never preempts the main run it is placing |
 | **P5** | autoexclude attribution table + `readmit` with probe | `port active(9)` and `FileNotFoundError` exclude nothing; a NaN excludes exactly its node |
@@ -331,7 +356,7 @@ Each phase ships with a test that replays the corresponding log signature from t
 
 ## 12. One-paragraph summary
 
-Treat a training line as a first-class object with a durable `cancel`/`protect`/`hold` marker, one live
+Treat a training job as a first-class object with a durable `cancel`/`protect`/`hold` marker, one live
 record, a state machine, and a policy; compute capacity from the **live** allocation minus a **single
 merged** exclusion set and refuse to act when it does not fit; never count a placement failure as a
 restart; never launch small runs into capacity a higher-priority run has reserved; only preempt when
