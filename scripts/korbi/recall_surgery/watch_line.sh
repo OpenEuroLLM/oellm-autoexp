@@ -73,6 +73,9 @@ PY
 START=$(date +%s)
 prev_rid=""
 prev_rc=""
+baseline_rid=""
+baseline_rc=""
+first_probe=1
 restarts=0
 last_progress=$(date +%s)
 last_tracker=""
@@ -96,6 +99,15 @@ while :; do
     continue
   fi
 
+  if [ "$first_probe" = 1 ]; then
+    # The run that is already there when the watch starts is history, not an event: its rc must not
+    # fire an alert (2026-11-24: the watcher exited 5 on the cancelled run .2185 seconds after start).
+    baseline_rid=$rid
+    baseline_rc=$rc
+    first_probe=0
+    say "baseline .$rid rc=$rc tracker=$tracker last_iter=$last"
+  fi
+
   if [ "$rid" != "$prev_rid" ]; then
     if [ -n "$prev_rid" ]; then
       restarts=$((restarts + 1))
@@ -111,7 +123,8 @@ while :; do
     last_progress=$now
   fi
 
-  if [ "$rc" != "-" ] && [ "$rc" != "$prev_rc" ]; then
+  if [ "$rc" = "-" ]; then :; elif [ "$rid" = "$baseline_rid" ] && [ "$rc" = "$baseline_rc" ]; then :;
+  elif [ "$rc" != "$prev_rc" ]; then
     log=$RUN_DIR/slurm-mn5-pool-p264.$rid.log
     # grep -c prints 0 AND exits 1 on no match: "|| echo 0" would append a second 0 and break the
     # integer test (2026-11-24, first run of this script). Take the count only.
