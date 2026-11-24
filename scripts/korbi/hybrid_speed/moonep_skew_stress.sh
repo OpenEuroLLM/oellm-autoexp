@@ -3,7 +3,7 @@
 # shapes through Megatron's MoonEP path, in phases: CUDA_LAUNCH_BLOCKING=1, default (PDL on, as the main run),
 # MOONEP_PDL=0, and compute-sanitizer memcheck (each rank under its own sanitizer, few iterations).
 # Usage (repo root, PYTHONPATH with the MoonEP build first): bash scripts/korbi/hybrid_speed/moonep_skew_stress.sh <out> [iters] [phases]
-# phases: comma list of guard,blocking,default,nojitter_norecompute,pdl0,memcheck,timing (default: all but timing)
+# phases: comma list of guard,blocking,default,nojitter_norecompute,pdl0,memcheck,memcheck_plain,timing (default: all but timing, memcheck_plain)
 # timing: dispatch/combine + training-step times of this build and of $MOONEP_LIB_BASELINE, alternated twice
 out=$1 iters=${2:-2000} phases=${3:-guard,blocking,default,nojitter_norecompute,pdl0,memcheck}
 mkdir -p "$out"
@@ -43,15 +43,20 @@ if on timing && [ -n "${MOONEP_LIB_BASELINE:-}" ]; then
         done
     done
 fi
-if [ -n "$CS" ] && on memcheck; then
-    echo "=== memcheck ($(date +%T))"
+memcheck() {  # memcheck <tag> <env...>: every rank under its own sanitizer, few iterations
+    tag=$1; shift
+    echo "=== $tag ($(date +%T))"
     port=$((29000 + RANDOM % 1000))
     for r in 0 1 2 3; do
-        RANK=$r LOCAL_RANK=$r WORLD_SIZE=4 MASTER_ADDR=127.0.0.1 MASTER_PORT=$port \
+        env "$@" RANK=$r LOCAL_RANK=$r WORLD_SIZE=4 MASTER_ADDR=127.0.0.1 MASTER_PORT=$port \
             timeout 2400 $CS --tool memcheck --report-api-errors no --print-limit 500 python $P --iters 3 --layers 2 --check 1 --seed 5 \
-            > "$out/memcheck_r$r.log" 2>&1 &
+            > "$out/${tag}_r$r.log" 2>&1 &
     done
     wait
-    echo "memcheck done ($(date +%T))"
-    for r in 0 1 2 3; do grep -E "STRESS DONE|ERROR SUMMARY|Invalid|illegal|Error" "$out/memcheck_r$r.log" | head -12; done
-fi
+    echo "$tag done ($(date +%T))"
+    for r in 0 1 2 3; do grep -E "STRESS DONE|ERROR SUMMARY|Invalid|illegal|Error" "$out/${tag}_r$r.log" | head -12; done
+}
+[ -n "$CS" ] && on memcheck && memcheck memcheck PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# expandable segments map the caching allocator's pool in separate 20 MiB chunks: memcheck reports a bulk store
+# that crosses a chunk boundary as out of bounds although the next chunk is mapped right behind it
+[ -n "$CS" ] && on memcheck_plain && memcheck memcheck_plain PYTORCH_CUDA_ALLOC_CONF=
