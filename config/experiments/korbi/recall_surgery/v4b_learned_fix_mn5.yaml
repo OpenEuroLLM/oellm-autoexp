@@ -44,6 +44,25 @@ backend:
   megatron:
     # no gloo process groups: 33 s of the 78 s Megatron init at 1024 ranks
     use_gloo_process_groups: false
+    # --- the v4b model/data recipe, which the live submission carried as enqueue overrides and the
+    # config file never had (2026-11-24: the successor ran DENSE attention, 20.7 s/step instead of
+    # 18.3 s, because page-sparse and the packing plans were missing). Copied verbatim from the
+    # frozen definition of p264.2152 (job record ambitious_v4b_learned_256_27a866).
+    #
+    # Page-sparse attention: rowmask backend, one mask row per group, selector page_maxpool.
+    page_sparse_backend: rowmask
+    page_sparse_per_group: true
+    page_sparse_selector: page_maxpool
+    # Cross-document packing plans, group boundaries: four plans over the v4b_p2 sequences
+    # (q3e256 from step 51000, q3e128 from 61000/71000/81000).
+    packing_plan_boundaries: group
+    packing_plan_path:
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e256_g51000
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g61000
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g71000
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g81000
+    dataloader_inter_document_masking: true
+    dataloader_index_bundle: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_bundles/v4b_p2_09a2a1c4
 
 slurm:
   env:
