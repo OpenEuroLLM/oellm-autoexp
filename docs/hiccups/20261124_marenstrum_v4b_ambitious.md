@@ -257,3 +257,138 @@ One clean main submission `ambitious_v4b_learned_fix_256_a001a9_q8` with:
 6. **Probe nodes one at a time** when GRES is suspect; a chunked step hides the node that matters.
 7. **Do not preempt the main run** once it is placed — only if nodes are genuinely insufficient or
    failing.
+
+---
+
+# Addendum — the root causes found last, and the happy path
+
+## 13. Two of my own scripts were fighting each other
+
+`supervise_main.sh` (started 19:53) evicts "runs holding a usable node" — and once the main run was
+placed it held 256 usable nodes, so the evictor preempted **the main run itself**. At the same time
+two copies of `reset_pool_and_start.sh` ran concurrently, each cancelling everything and submitting
+one main run, which is where the duplicate `ambitious` records came from.
+
+**Rule.** One supervisor at a time, and an evictor must never name the run it is trying to place.
+Every long-running script needs a single-instance lock (`flock` on a lock file in the pool dir).
+
+## 14. `meta.env` carried TWO `EXCLUDE=` lines — the supervisor read the wrong one
+
+This was the real cause of `needs 256 node(s), only 2 usable`:
+
+```
+EXCLUDE=<35 entries>    <- the run's own list (correct)
+EXCLUDE=<292 entries>   <- appended by the restart hook's exclusion refresh
+```
+
+The pool writes `meta.env` more than once (submit, then the exclusion refresh) and the writer
+**appends** instead of replacing. The supervisor sources the file with `. meta.env`, so the **last**
+assignment wins: 292 entries, ~259 of them inside the allocation → `usable_nodes` = 2.
+
+**Fix applied.** `scripts/korbi/recall_surgery/dedupe_meta.sh` keeps the first occurrence of every key
+(run as a background task while the pool is live). **Proper fix:** `write_env_file` must replace keys,
+never append.
+
+## 15. `srun: Requested node configuration is not available` — a stale `ALL_NODES`
+
+The supervisor's `ALL_NODES` came from `info.env` (264 nodes). Slurm has since dropped three
+(`as01r4b22`, `as01r4b31`, `as05r1b31`), leaving 261. When the supervisor picks 256 nodes from a
+264-node list it can include a dropped node, and `srun` refuses the whole step:
+
+```
+srun: error: Unable to create step for job 48867560: Requested node configuration is not available
+```
+
+**Fix.** `info.env` must be rewritten from the job's live node list (`squeue -j <job> -o %N`) after any
+resize, and `refresh_alloc` must actually shrink `ALL_NODES` (it keeps the live subset only).
+
+---
+
+# The happy path (what worked, and it took one command)
+
+This is the sequence that had the main run training within seconds, and it is the only sequence that
+worked all day:
+
+```
+1. cancel the LINE, not the runs        # cancel_line.sh <pool> <name>
+   — every live record is cancelled, so the monitor has nothing to restart
+2. max_runs_per_host = 1                # nothing else can take the host while it comes up
+3. submit exactly ONE job               # one record, one run, fresh render
+4. host idle + 261 usable − 5 excluded = 256  → assigned → started in seconds
+5. first iteration ~16 min later        # 15.8–16.3 min, 18.84 s/step
+6. max_runs_per_host = 6                # main + 5 evals on the excluded nodes
+```
+
+Every failure today came from violating one of those six lines.
+
+---
+
+# Proposed system
+
+## Semantics
+
+**A *line* is the unit.** `(pool, definition-name)` owns its records, its runs and its restart policy.
+No command should ever act on a single record or a single run of a line without saying so.
+
+| command | semantics |
+|---|---|
+| `cancel <line>` | **finally stop**: every live record of the line becomes `final_state=cancelled`, its runs get a `cancel` marker, the monitor never restarts it. Cascading and atomic (one monitor poll). |
+| `replace <line> <spec>` | submit the new record and **auto-cancel every older live record of the line in the same transaction** — at most one record per line is ever live. This is what `_q2`, `_q3` should have been. |
+| `restart <line>` | allowed only per the record's policy; a **placement failure is not a run failure** (see below). |
+| `preempt <line>` | explicit user action only; refused for a `protected` line once it holds its nodes. |
+| `status <line>` | one line: live record, live run, nodes, capacity, exclusions, last iteration, ETA. |
+
+## Rules that must be enforced by the tool, not by the operator
+
+1. **Cancel means cancel, at both levels.** A cancelled run must not be restartable; a cancelled
+   record must not be re-submitted. Today a cancelled *run* was restarted on the next poll because
+   its record stayed live.
+
+2. **One live record per line.** Any submit replaces the predecessor. The pool's dedupe renaming
+   (`_q2`, `_q3`) is a bug, not a feature: it turns one logical job into N competing jobs.
+
+3. **Placement failure ≠ run failure.** `insufficient_nodes` and `configuration is not available` mean
+   *the scheduler could not place the run*. They must not consume a restart attempt, must not create a
+   new run dir on every poll, and must not trigger the `retry_failed` action. The record stays queued
+   and the scheduler waits for capacity, logging one line per change.
+
+4. **Reserve before filling.** When a run of priority P needs N nodes, the scheduler reserves N nodes
+   before placing lower-priority runs, and launches **largest-first**. Today the supervisor launched
+   assignments in rid order, so 1-node evals took the slack a 256-node run needed.
+
+5. **Capacity is a precondition, checked before any action.**
+   `feasible = |allocation| − |union(exclusions) ∩ allocation| ≥ nodes`. If false, refuse the submit
+   and say which side is short. No preempting, no churn.
+
+6. **One exclusion set per host.** Merge pool + host + run exclusions once, intersect with the live
+   allocation, write one file, and have every consumer read that file. Never store an inline
+   exclusion blob in a record, and never append a second `EXCLUDE=` line.
+
+7. **`meta.env` is written once and replaced, never appended.** One line per key. A reader that
+   sources the file must never be able to see a stale duplicate.
+
+8. **`info.env` follows the job.** After any resize, rewrite `NUM_NODES`/`NODELIST` from
+   `squeue -j <job> -o %N`; `ALL_NODES` shrinks with it.
+
+9. **One supervisor, one lock.** Every long-running control script takes a `flock`; an evictor never
+   names the run it is placing. Killing the monitor or a supervisor is a first-class command with a
+   pid/host file, not a `pkill` guess.
+
+10. **Protected lines.** The main training line is `protected: true`: no automatic preemption once it
+    has its `started` marker. Only an explicit user action or a named node fault may stop it.
+
+11. **Every state change is one poll.** `freeze + evict + place` must be a single monitor action, not
+    a chain of requests that each cost 34 s. Today a manual restart cost minutes of pure poll latency.
+
+## What this would have changed today
+
+| today | with the system |
+|---|---|
+| 3 competing ambitious records | 1 (replace semantics) |
+| cancel left a restartable record | cancel is final |
+| `insufficient_nodes` restarted every 34 s | one log line, no new run |
+| evals stole the host | nodes reserved, largest-first |
+| supervisor preempted the main run | protected line, evictor skips itself |
+| `meta.env` read a 292-entry EXCLUDE | one line per key |
+| `srun: configuration not available` | `info.env` follows the job |
+| manual freeze/clear/unfreeze dance | one `replace` call |
