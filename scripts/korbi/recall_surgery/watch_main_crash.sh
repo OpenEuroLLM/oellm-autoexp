@@ -14,7 +14,9 @@ set -uo pipefail
 
 RUN_DIR=/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main
 POOL=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
-NAME=ambitious_v4b_learned_256
+# Both the old line and its fixed successor write this tree; after the handover the live run is
+# ambitious_v4b_learned_fix_256, so match the common prefix rather than one exact name.
+NAME_PREFIX=ambitious_v4b_learned_
 INTERVAL=60
 BUDGET=86400
 STALL_S=1800
@@ -32,7 +34,7 @@ while [ $# -gt 0 ]; do
 done
 
 mkdir -p "$OUT" || { echo "cannot create $OUT" >&2; exit 3; }
-echo "[$(date +%H:%M:%S)] watching $NAME for illegal-access crashes; evidence -> $OUT"
+echo "[$(date +%H:%M:%S)] watching ${NAME_PREFIX}* for illegal-access crashes; evidence -> $OUT"
 
 START=$(date +%s)
 last_rid=""
@@ -42,7 +44,7 @@ declare -A seen=()
 
 resolve_rid() {
   # The run id changes on every restart: resolve the live one by name, skipping dirs with rc.
-  /usr/bin/env python3 - "$POOL" "$NAME" <<'PY'
+  /usr/bin/env python3 - "$POOL" "$NAME_PREFIX" <<'PY'
 import glob, json, os, sys
 pool, name = sys.argv[1], sys.argv[2]
 best = None
@@ -53,7 +55,7 @@ for d in glob.glob(pool + "/runs/mn5-pool-p264.*"):
         m = json.load(open(os.path.join(d, "run.json")))
     except Exception:
         continue
-    if m.get("name") != name:
+    if not str(m.get("name") or "").startswith(name):
         continue
     rid = int(d.rsplit(".", 1)[-1])
     best = rid if best is None or rid > best else best
@@ -71,7 +73,7 @@ while :; do
   rid=$(resolve_rid)
   if [ -z "$rid" ]; then
     if [ $((now - last_progress)) -ge "$STALL_S" ]; then
-      echo "[$(date +%H:%M:%S)] ALERT no live $NAME run for $(( (now-last_progress)/60 )) min"
+      echo "[$(date +%H:%M:%S)] ALERT no live ${NAME_PREFIX}* run for $(( (now-last_progress)/60 )) min"
       exit 2
     fi
     sleep "$INTERVAL"
