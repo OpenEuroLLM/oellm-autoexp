@@ -31,21 +31,23 @@ results_dir () {  # job.base_output_dir of a config, without the /${job.name} ta
   sed -n 's/^[[:space:]]*base_output_dir:[[:space:]]*"\{0,1\}\(.*\)\/\${job\.name}.*/\1/p' "$1" | head -1
 }
 
-track () {  # <size> <config> [monitor dirs...]  (no monitor dirs = auto-discover)
-  local size=$1 cfg=$2; shift 2
+track () {  # <size> <config> <results dir|""> [monitor dirs...]
+  # "" results dir = the config's base_output_dir; no monitor dirs = auto-discover
+  local size=$1 cfg=$2 res=$3; shift 3
+  [ -n "$res" ] || res=$(results_dir "$CFG/$cfg")
   local mon=(); [ $# -gt 0 ] && mon=(--monitor-dirs "$@")
   local cache=(); [ -n "${CACHE:-}" ] && cache=(--cache-dir "$CACHE")
-  echo "=== LEO $size ==="
+  echo "=== LEO $size ($res) ==="
   # shellcheck disable=SC2086
   "$PY" tools/progress_tracker.py "$CFG/$cfg" --machine LEO --accumulate \
-    --results-dir "$(results_dir "$CFG/$cfg")" ${cache[@]+"${cache[@]}"} ${EXTRA_ARGS:-} \
+    --results-dir "$res" ${cache[@]+"${cache[@]}"} ${EXTRA_ARGS:-} \
     --csv "$OUT/progress.csv" --md "$OUT/progress.md" ${mon[@]+"${mon[@]}"}
 }
 
-track 0.1B_ne qwen3_dense_0.21B.yaml
-track 0.2B_ne qwen3_dense_0.39B.yaml
-track 0.4B_ne qwen3_dense_0.71B.yaml "$MON/1779225991" "$MON/1779664774" "$MON/1779668268"
-track 0.9B_ne qwen3_dense_1.26B.yaml
+track 0.1B_ne qwen3_dense_0.21B.yaml ""
+track 0.2B_ne qwen3_dense_0.39B.yaml ""
+track 0.4B_ne qwen3_dense_0.71B.yaml "" "$MON/1779225991" "$MON/1779664774" "$MON/1779668268"
+track 0.9B_ne qwen3_dense_1.26B.yaml ""
 
 echo "=== Syncing runs 0.4B_ne ==="
 "$PY" tools/sync_runs.py -f "$(results_dir "$CFG/qwen3_dense_0.71B.yaml")"

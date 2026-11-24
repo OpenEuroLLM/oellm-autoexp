@@ -11,7 +11,7 @@ defaults:
   - _self_
 
 job:
-  base_output_dir: "/leonardo_work/OELLM_prod2026/slaing00/multilingual_scaling/0.9B_ne/training/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.9B_ne/training/${job.name}"
 
 backend:
   megatron:
