@@ -41,6 +41,11 @@ backend:
     MEGATRON_DEBUG_INIT_TIMING: "1"
     MEGATRON_DEBUG_LOAD_TIMING: "1"
     MEGATRON_DEBUG_SAVE_TIMING: "1"
+    # The crash artifacts the live run carried and the successor lost: without these the next
+    # cudaErrorIllegalAddress leaves no core dump (p264.2152 had all three).
+    CUDA_ENABLE_COREDUMP_ON_EXCEPTION: "1"
+    CUDA_ENABLE_LIGHTWEIGHT_COREDUMP: "1"
+    CUDA_COREDUMP_FILE: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/coredumps/core_%h_%p.nvcu
   megatron:
     # no gloo process groups: 33 s of the 78 s Megatron init at 1024 ranks
     use_gloo_process_groups: false
@@ -63,6 +68,9 @@ backend:
       - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g81000
     dataloader_inter_document_masking: true
     dataloader_index_bundle: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_bundles/v4b_p2_09a2a1c4
+    # The live run saved rolling checkpoints every 50 steps, not the base config's 100: a crash then
+    # costs at most 50 steps, not 100 (p264.2152 had 50).
+    non_persistent_save_interval: 50
 
 slurm:
   env:
