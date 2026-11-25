@@ -24,9 +24,10 @@ backend:
     # megatron/training/checkpointing.py). Harmless when the code has no hook; it is the cheap
     # half of the OOM defence and costs a few seconds once per 1000 steps.
     MEGATRON_GC_BEFORE_SAVE: "1"
-    # Name the layer that first goes non-finite when a NaN loss fires (reverse layer walk + reverse
-    # parameter scan, printed by the failing rank only). Counting hooks only, no retained references.
-    MEGATRON_NAN_TRACE: "1"
   megatron:
+    # Name the layer that first goes non-finite when a NaN loss fires: bad module outputs in reverse
+    # (loss -> input), the origin module in forward order, and a reverse parameter scan, printed by
+    # the failing rank only (megatron/training/nan_trace.py, --nan-trace). Counting hooks only.
+    nan_trace: true
     num_workers: 4
     dataloader_prefetch_factor: 2
