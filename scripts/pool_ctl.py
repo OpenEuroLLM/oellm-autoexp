@@ -20,6 +20,7 @@ the pool's files directly and are picked up by the supervisors.
   pool_ctl.py <pool_dir> park [<host> ...]       plan parking pending hosts (Nice: priority 1); --apply
   pool_ctl.py <pool_dir> promote [<host> ...]    plan Nice=0 again (full priority back); --apply
   pool_ctl.py <pool_dir> queue                   all my pending jobs per account / QOS, in SLURM's order
+  pool_ctl.py <pool_dir> doctor [--no-slurm]     read-only consistency check (exit 1 on a problem)
 
 Resizing a host (2026-11-10): `freeze` it, wait until no run is active on it (or preempt them), then
 `shrink --keep N --apply`, then `unfreeze`. A step running during `scontrol update NodeList=` stays
@@ -769,6 +770,156 @@ def cmd_nice(layout: PoolLayout, args, slurm=_slurm) -> int:
     return rc
 
 
+# ---------------------------------------------------------------- doctor (2026-11-25)
+# A request older than this was not executed by a monitor.
+REQUEST_STALE_S = 300.0
+# A run whose own EXCLUDE covers more than this share of its host's allocation is suspicious
+# (11-24: 262 of 264 nodes, "needs 256 node(s), only 2 usable").
+EXCLUDE_SHARE_WARN = 0.5
+
+
+def _node_set(tokens: list[str], slurm) -> set[str]:
+    """Node names from exclusion tokens; hostlist ranges expanded (through scontrol) when slurm
+    is given, else kept as written."""
+    out: set[str] = set()
+    for tok in tokens:
+        if slurm is not None and "[" in tok:
+            out.update(_hostnames(tok, slurm) or [tok])
+        elif tok:
+            out.add(tok)
+    return out
+
+
+def _tokens(text: str | None) -> list[str]:
+    return [t for t in (text or "").replace(",", "\n").split() if t and not t.startswith("#")]
+
+
+def doctor_report(layout: PoolLayout, slurm=_slurm, now: float | None = None) -> list[tuple[str, str]]:
+    """(level, line) pairs of a read-only consistency check; level is "ok", "info" or "PROBLEM".
+
+    Every check maps to a failure of 2026-11-24 (docs/pool_allocation_improvement.md §3.3):
+    stale monitor, unreadable or duplicate live records, info.env vs the live allocation,
+    exclusions vs slack, a run's EXCLUDE written twice or covering its host, unexecuted requests.
+    """
+    from oellm_autoexp.monitor.pool import env_key_lines
+
+    now = time.time() if now is None else now
+    out: list[tuple[str, str]] = []
+    try:
+        tick = now - layout.monitor_alive.stat().st_mtime
+    except OSError:
+        tick = None
+    if tick is None or tick > MONITOR_STALE_S:
+        out.append(("PROBLEM", f"monitor: last tick {'never' if tick is None else f'{tick:.0f}s ago'}"))
+    else:
+        out.append(("ok", f"monitor: last tick {tick:.0f}s ago"))
+
+    session_dir = Path(layout.load_meta().get("session_dir", ""))
+    corrupt, live_by_job = [], {}
+    for path in sorted(session_dir.glob("*.job.json")) if session_dir.is_dir() else []:
+        record = _loads_or_none(path)
+        if record is None:
+            corrupt.append(path.name)
+            continue
+        definition = record.get("definition") or {}
+        if (definition.get("metadata") or {}).get("pool_role") == "host":
+            continue
+        if (record.get("runtime") or {}).get("final_state"):
+            continue
+        pool_dir = definition.get("pool_dir")
+        if not pool_dir or Path(pool_dir).absolute() != layout.root:
+            continue
+        key = (definition.get("metadata") or {}).get("pool_singleton") or definition.get("name")
+        live_by_job.setdefault(str(key), []).append(record.get("job_id"))
+    if corrupt:
+        out.append(("PROBLEM", f"records: {len(corrupt)} unreadable: {', '.join(corrupt[:5])}"))
+    for key, ids in sorted(live_by_job.items()):
+        if len(ids) > 1:
+            out.append(("PROBLEM", f"job {key}: {len(ids)} live records {sorted(ids)} (1 expected)"))
+    out.append(("info", f"records: {sum(len(v) for v in live_by_job.values())} live run record(s)"))
+
+    pool_excl = _tokens(_read_text(layout.exclude_nodes))
+    hosts: dict[str, dict] = {}
+    for hdir in sorted(layout.hosts_dir.glob("host*")):
+        info = read_env_file(hdir / "info.env")
+        if not info or (hdir / "exited").exists():
+            continue
+        listed = [n for n in (info.get("NODELIST") or "").split(",") if n]
+        jid = (info.get("SLURM_JOB_ID") or "").strip()
+        live = None
+        if slurm is not None and jid:
+            text = slurm(["squeue", "-h", "-j", jid, "-o", "%N"]).strip().splitlines()
+            live = _hostnames(text[0], slurm) if text and text[0] != "(null)" else None
+        alloc = set(live if live else listed)
+        excl = _node_set(pool_excl + _tokens(_read_text(hdir / "exclude_nodes")), slurm) & alloc
+        hosts[hdir.name] = {"alloc": alloc, "excl": excl, "available": len(alloc) - len(excl)}
+        line = f"host {hdir.name} job {jid or '-'}: info.env {len(listed)} node(s)"
+        if live is None:
+            level = "info"
+            line += ", live allocation unknown"
+        elif set(listed) - set(live):
+            level = "PROBLEM"
+            gone = sorted(set(listed) - set(live))
+            line += f", live {len(live)}: STALE, gone {','.join(gone[:5])}"
+        else:
+            level = "ok"
+            line += f", live {len(live)}"
+        out.append((level, line + f"; excluded {len(excl)}, available {len(alloc) - len(excl)}"))
+
+    for rdir in sorted(layout.runs_dir.iterdir() if layout.runs_dir.exists() else []):
+        if (rdir / "rc").exists() or not (rdir / "run.json").exists():
+            continue
+        text = _read_text(rdir / "meta.env") or ""
+        meta = read_env_file(rdir / "meta.env")
+        try:
+            need = int(meta.get("NODES") or 1)
+        except ValueError:
+            need = 1
+        n_lines = env_key_lines(text, "EXCLUDE")
+        if n_lines > 1:
+            out.append(("PROBLEM", f"run {rdir.name}: meta.env has {n_lines} EXCLUDE= lines (1 expected)"))
+        host = (_read_text(rdir / "assigned") or "").strip()
+        if host in hosts:
+            h = hosts[host]
+            own = _node_set(_tokens(meta.get("EXCLUDE")), slurm) & h["alloc"]
+            available = len(h["alloc"]) - len(h["excl"] | own)
+            share = len(own) / max(1, len(h["alloc"]))
+            level = "PROBLEM" if available < need or share > EXCLUDE_SHARE_WARN else "ok"
+            out.append((level, f"run {rdir.name} on {host}: need {need}, own EXCLUDE {len(own)} in the "
+                        f"allocation, available {available}, slack {available - need:+d}"))
+        elif not host:
+            best = max((h["available"] for h in hosts.values()), default=None)
+            if best is not None and best < need:
+                out.append(("PROBLEM", f"run {rdir.name} (queued): need {need}, the largest host has "
+                            f"{best} available"))
+
+    stale = [
+        p.name
+        for p in (layout.requests_dir.glob("*.json") if layout.requests_dir.exists() else [])
+        if now - p.stat().st_mtime > REQUEST_STALE_S
+    ]
+    if stale:
+        out.append(("PROBLEM", f"requests: {len(stale)} not executed for >{REQUEST_STALE_S:.0f}s: {stale[:3]}"))
+    return out
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text()
+    except OSError:
+        return None
+
+
+def cmd_doctor(layout: PoolLayout, args, slurm=_slurm) -> int:
+    """Read-only consistency check; exit 1 when a PROBLEM line is printed."""
+    report = doctor_report(layout, None if args.no_slurm else slurm)
+    for level, line in report:
+        print(f"{level:<8} {line}")
+    problems = sum(1 for level, _ in report if level == "PROBLEM")
+    print(f"\n{problems} problem(s)")
+    return 1 if problems else 0
+
+
 def cmd_queue(layout: PoolLayout, _args, slurm=_slurm) -> int:
     """All of the user's pending jobs, per account / QOS, in SLURM's order (priority, then job id),
     with the running count; '*' = this pool's hosts, 'P' = parked (nice > 0). Read-only."""
@@ -932,6 +1083,9 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--nice", type=int, default=PARK_NICE)
         p.add_argument("--apply", action="store_true", help="scontrol update Nice (user's go)")
         p.set_defaults(func=cmd_nice)
+    p = sub.add_parser("doctor", help="read-only consistency check (exit 1 on a problem)")
+    p.add_argument("--no-slurm", action="store_true", help="no squeue / scontrol calls")
+    p.set_defaults(func=cmd_doctor)
     sub.add_parser("queue", help="the user's pending jobs per account / QOS in SLURM's order"
                    ).set_defaults(func=cmd_queue)
     args = parser.parse_args(argv)

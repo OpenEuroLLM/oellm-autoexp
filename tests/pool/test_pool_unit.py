@@ -21,16 +21,17 @@ from oellm_autoexp.monitor.pool import (
     PoolHostConfig,
     PoolLayout,
     PoolManager,
-    add_run_exclude,
     check_fits_host,
     create_or_update_pool,
     dead_nodes,
+    env_key_lines,
     parse_slurm_time,
     pool_tag,
     read_env_file,
     read_run_state,
     removed_nodes,
     render_step_script,
+    set_run_exclude,
     submit_request,
     write_rc,
 )
@@ -882,19 +883,25 @@ def test_the_allocation_check_is_throttled_and_can_be_off(tmp_path, monkeypatch)
     assert calls2 == [] and dead_nodes(env2.layout, hid2) == []
 
 
-def test_add_run_exclude_appends_once_and_keeps_the_other_values(tmp_path):
+def test_set_run_exclude_recomputes_one_line_and_keeps_the_other_values(tmp_path):
     layout = PoolLayout(tmp_path / "pool")
     rd = layout.run_dir("p.0001")
     rd.mkdir(parents=True)
     meta = rd / "meta.env"
-    meta.write_text("NODES=1\nLOG='/a b/run.log'\nEXCLUDE=x1\nUSE_EXCLUDED_NODES=1\n")
-    assert add_run_exclude(layout, "p.0001", ["x2", "x1", "x3"]) == ["x2", "x3"]
-    assert add_run_exclude(layout, "p.0001", ["x3"]) == [], "idempotent"
+    meta.write_text(
+        "NODES=1\nLOG='/a b/run.log'\nEXCLUDE=x1\nJOB_EXCLUDE=x1\nUSE_EXCLUDED_NODES=1\n"
+    )
+    assert set_run_exclude(layout, "p.0001", ["x2", "x1", "x3"]) == ["x2", "x3"]
+    assert set_run_exclude(layout, "p.0001", ["x2", "x3"]) == ["x2", "x3"], "idempotent"
     env = read_env_file(meta)
     assert env["EXCLUDE"] == "x1,x2,x3"
     assert env["NODES"] == "1" and env["USE_EXCLUDED_NODES"] == "1"
     assert "LOG='/a b/run.log'" in meta.read_text(), "the other lines are not rewritten"
-    # what the supervisor sees: it sources the file, the last EXCLUDE wins
+    assert env_key_lines(meta.read_text(), "EXCLUDE") == 1
+    # the host's list shrank (dead_nodes reset by hand): the run follows, the job's own list stays
+    assert set_run_exclude(layout, "p.0001", ["x3"]) == ["x3"]
+    assert read_env_file(meta)["EXCLUDE"] == "x1,x3"
+    # what the supervisor sees: it sources the file
     import subprocess
 
     out = subprocess.run(
@@ -903,4 +910,18 @@ def test_add_run_exclude_appends_once_and_keeps_the_other_values(tmp_path):
         text=True,
         check=True,
     ).stdout
-    assert out == "x1,x2,x3|/a b/run.log"
+    assert out == "x1,x3|/a b/run.log"
+
+
+def test_set_run_exclude_repairs_a_doubled_exclude_line_of_older_code(tmp_path):
+    """11-24: EXCLUDE=<35> then EXCLUDE=<292> appended; the job's list is the first line."""
+    layout = PoolLayout(tmp_path / "pool")
+    rd = layout.run_dir("p.0001")
+    rd.mkdir(parents=True)
+    meta = rd / "meta.env"
+    meta.write_text("NODES=1\nEXCLUDE=x1,x2\nWORKDIR=/w\nEXCLUDE=x1,x2,h1,h2,h3\n")
+    assert set_run_exclude(layout, "p.0001", ["h3"]) == ["h3"]
+    text = meta.read_text()
+    assert env_key_lines(text, "EXCLUDE") == 1, text
+    env = read_env_file(meta)
+    assert (env["EXCLUDE"], env["JOB_EXCLUDE"], env["WORKDIR"]) == ("x1,x2,h3", "x1,x2", "/w")

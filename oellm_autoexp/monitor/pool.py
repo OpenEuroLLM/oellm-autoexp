@@ -437,18 +437,58 @@ def step_refused(layout: PoolLayout, rid: str) -> tuple[list[str], str] | None:
     return nodes, m.group("why").strip()
 
 
-def add_run_exclude(layout: PoolLayout, rid: str, nodes: list[str]) -> list[str]:
-    """Add ``nodes`` to a run's own EXCLUDE in its meta.env (the supervisor never gives the run a
-    node of it, the pool-excluded ones included); the nodes actually added. Appended as a later
-    ``EXCLUDE=`` line (sourcing and read_env_file both take the last), so no other value of the
-    file is rewritten."""
+def replace_env_key(path: Path, key: str, value: str) -> None:
+    """Set ``key`` in a ``KEY=value`` file to ``value``: exactly one line, where the key stood
+    first (appended if absent); every other line is kept as written."""
+    lines = (_read(path) or "").splitlines()
+    out, done = [], False
+    for line in lines:
+        if "=" in line and line.split("=", 1)[0].strip() == key:
+            if not done:
+                out.append(f"{key}={shlex.quote(value)}")
+                done = True
+            continue  # a duplicate (an older writer appended): dropped
+        out.append(line)
+    if not done:
+        out.append(f"{key}={shlex.quote(value)}")
+    _atomic_write(path, "\n".join(out) + "\n")
+
+
+def set_run_exclude(layout: PoolLayout, rid: str, host_nodes: list[str]) -> list[str]:
+    """A run's EXCLUDE = its job's own list (JOB_EXCLUDE, written at submit) + ``host_nodes`` (the
+    host's dead / removed nodes NOW); the host nodes not in the job's list.
+
+    Recomputed, never accumulated, and written as one ``EXCLUDE=`` line: on 2026-11-24 a host's
+    dead_nodes grew to 262 nodes (a bad launch check), were copied into the run as a second
+    ``EXCLUDE=`` line, and stayed there after the host list was reset by hand ("needs 256
+    node(s), only 2 usable"). A meta.env without JOB_EXCLUDE (written by older code) takes its
+    first EXCLUDE line as the job's list."""
     path = layout.run_dir(rid) / "meta.env"
-    current = [n for n in read_env_file(path).get("EXCLUDE", "").split(",") if n]
-    new = [n for n in nodes if n not in current]
-    if new:
-        text = (_read(path) or "").rstrip("\n")
-        _atomic_write(path, f"{text}\nEXCLUDE={shlex.quote(','.join(current + new))}\n")
-    return new
+    text = _read(path) or ""
+    env = read_env_file(path)
+    if "JOB_EXCLUDE" in env:
+        base_text = env["JOB_EXCLUDE"]
+    else:
+        first = next(
+            (ln.split("=", 1)[1] for ln in text.splitlines() if ln.strip().startswith("EXCLUDE=")),
+            "",
+        )
+        try:
+            base_text = (shlex.split(first) or [""])[0]
+        except ValueError:
+            base_text = first
+        replace_env_key(path, "JOB_EXCLUDE", base_text)
+    base = [n for n in base_text.split(",") if n]
+    extra = [n for n in dict.fromkeys(host_nodes) if n and n not in base]
+    want = ",".join(base + extra)
+    if env.get("EXCLUDE", "") != want or env_key_lines(text, "EXCLUDE") > 1:
+        replace_env_key(path, "EXCLUDE", want)
+    return extra
+
+
+def env_key_lines(text: str, key: str) -> int:
+    """How many ``key=`` lines a ``KEY=value`` file has (more than one = an appending writer)."""
+    return sum(1 for ln in text.splitlines() if "=" in ln and ln.split("=", 1)[0].strip() == key)
 
 
 def parse_slurm_time(value: str | None) -> float | None:
@@ -1074,6 +1114,7 @@ class PoolManager:
         workdir = metadata.get("pool_workdir") or ""
         step_text = render_step_script(job.slurm, rid, log_path=log_path, workdir=workdir or None)
         (rd / "step.sh").write_text(step_text, encoding="utf-8")
+        job_exclude = _exclude_list(job.slurm)
         write_env_file(
             rd / "meta.env",
             {
@@ -1084,7 +1125,9 @@ class PoolManager:
                 "MAX_RUNTIME_S": int(max_runtime),
                 "LOG": log_path,
                 "NAME": _sanitize(job.name),
-                "EXCLUDE": _exclude_list(job.slurm),
+                "EXCLUDE": job_exclude,
+                # the job's own list; EXCLUDE is recomputed from it at assignment (set_run_exclude)
+                "JOB_EXCLUDE": job_exclude,
                 # CPU-only work may also use the pool's excluded (bad GPU / NIC) nodes, those first
                 "USE_EXCLUDED_NODES": "1"
                 if _truthy(metadata.get("pool_use_excluded_nodes"))
@@ -1634,25 +1677,24 @@ class PoolManager:
                         continue
                     if not claim:
                         continue
-                    if use_excl:
-                        # a supervisor that does not refresh its allocation still lists the
-                        # removed nodes (as excluded ones, which this run takes first): keep
-                        # them off the run through its own EXCLUDE
-                        gone = add_run_exclude(layout, rid, removed_nodes(host.info, alloc(host)))
-                        if gone:
-                            LOGGER.info(
-                                "[pool %s] %s: %d node(s) no longer in %s's allocation kept off it",
-                                cfg.name,
-                                rid,
-                                len(gone),
-                                host.hid,
-                            )
-                    # the host's dead nodes, through the run's own EXCLUDE (honoured by every
-                    # supervisor, also for runs that take excluded nodes first)
-                    dead = add_run_exclude(layout, rid, dead_nodes(layout, host.hid))
-                    if dead:
-                        LOGGER.info("[pool %s] %s: dead node(s) %s of %s kept off it",
-                                    cfg.name, rid, ",".join(dead), host.hid)
+                    # a supervisor that does not refresh its allocation still lists the removed
+                    # nodes (as excluded ones, which a use_excl run takes first), and the host's
+                    # dead nodes: both kept off the run through its own EXCLUDE (honoured by every
+                    # supervisor), recomputed from the job's list at every assignment
+                    gone = removed_nodes(host.info, alloc(host)) if use_excl else []
+                    dead = dead_nodes(layout, host.hid)
+                    kept_off = set_run_exclude(layout, rid, gone + dead)
+                    if kept_off:
+                        LOGGER.info(
+                            "[pool %s] %s: %d node(s) of %s kept off it (%d removed, %d dead): %s",
+                            cfg.name,
+                            rid,
+                            len(kept_off),
+                            host.hid,
+                            len(gone),
+                            len(dead),
+                            ",".join(kept_off[:10]),
+                        )
                     self._assign(layout, rid, host.hid)
                     busy.add(host.hid)
                     active.append(rid)

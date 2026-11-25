@@ -782,7 +782,7 @@ def test_excluded_node_runs_skip_removed_nodes_with_an_old_supervisor(pool):
     cpu = _excluded_run_after_a_shrink(pool)
     rid = pool.runs_of("dummy_cpu")[0]
     meta = (pool.pool_dir / "runs" / rid / "meta.env").read_text()
-    assert meta.rstrip().splitlines()[-1] == f"EXCLUDE=n{cpu['job']}-2", meta
+    assert f"EXCLUDE=n{cpu['job']}-2\n" in meta and meta.count("\nEXCLUDE=") == 1, meta
     info = pool.layout.host_dir("host001") / "info.env"
     assert "NUM_NODES=3\n" in info.read_text(), "the old supervisor's view stays"
 
