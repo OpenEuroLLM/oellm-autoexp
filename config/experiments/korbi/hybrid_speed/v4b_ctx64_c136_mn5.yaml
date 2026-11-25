@@ -1,0 +1,77 @@
+# @package _global_
+# v4b step speed at 64 nodes from the trained weights (2026-11-25): 64k vs 8k at equal tokens per GPU, and the two
+# levers on the network-bound backward. Same harness as v4b_speed_r3_c136_mn5 (live sparse main config, 104 layers,
+# protected eval copy ckpt_eval/iter_0055000 read only, phase-2 data with document masking, gbs 256 = one 64k
+# micro-batch per GPU) with the main run's MoonEP e9e8238 build. User 2026-11-25: use c136 host003 for these.
+#
+# Why (rank 0/5/130/255 profiles of v4b_speed_ab64 base, 18.0 s): the compute stream idles 5.7-7.2 s per step, of
+# which 5.0-5.8 s is waiting on FSDP collectives (kernels launched, blocked on events), only 0.6-0.75 s is the CPU.
+# The backward is NIC-bound: each MoE layer reduce-scatters 424.7 M fp32 expert gradients = 1.7 GB per GPU (~70 ms
+# at one NDR200 per GPU) next to the parameter all-gathers; compute is 52-72 % busy in the backward, ~90 % in the
+# forward. Attention kernels are 0.34-1.56 s per rank (+0.30 s selection), the MoE token-count all-reduce waits
+# 0.8-1.1 s (rank imbalance + per-step MoE logging).
+#
+#   base         the live settings (rerun on this snapshot, comparable to ab64 / r3 base)
+#   gbf16        --megatron-fsdp-grad-comm-dtype bf16: half the reduce-scatter bytes; the DP sum itself is done in
+#                bf16 (main grads, optimizer state stay fp32). Numerics change -- needs a gradient-error check and
+#                the user's go before the main run.
+#   nolog        per-step MoE health logging off (ab64 agg_nolog: -3.8 %)
+#   gbf16_nolog  both
+#   c8k          8k x mbs 8, gbs 2048: the same 64k tokens per GPU per step, everything else equal. Its data cache
+#                (seq 8192, 60 x 2048 samples) is prebuilt by v4b_ctx_slice_mn5's r8prep arm.
+#
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/hybrid_speed/v4b_ctx64_c136_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - v4b_speed_r3_c136_mn5
+  - _self_
+
+aux:
+  suite: v4b_ctx64
+  variant: base
+  only: [base, gbf16, nolog, gbf16_nolog, c8k]
+  moonep_lib: pylibs_moonep_e9e8238
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_ctx64
+
+backend:
+  env:
+    PYTHONPATH: "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_moonep_e9e8238:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/retention:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_ep"
+    TRITON_CACHE_AUTOTUNING: "1"
+  megatron:
+    use_gloo_process_groups: false
+
+job:
+  name: v4b_ctx64_${aux.arm}
+  metadata:
+    pool_priority: 140
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: base
+        - aux.variant: gbf16
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+        - aux.variant: nolog
+          backend.megatron.moe_per_layer_logging: false
+          backend.megatron.moe_expert_viability_metrics: false
+          backend.megatron.moe_log_seq_aux_loss: false
+          backend.megatron.log_timers_to_tensorboard: false
+        - aux.variant: gbf16_nolog
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.megatron.moe_per_layer_logging: false
+          backend.megatron.moe_expert_viability_metrics: false
+          backend.megatron.moe_log_seq_aux_loss: false
+          backend.megatron.log_timers_to_tensorboard: false
+        # keep train_iters / gbs / seq / eval / valid settings identical to the slice's r8prep arm (cache hit)
+        - aux.variant: c8k
+          backend.megatron.seq_length: 8192
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.train_iters: 60
+          backend.megatron.eval_iters: 1
+          backend.megatron.fixed_valid_data_path: null
+          backend.megatron.fixed_valid_seq_lengths: null

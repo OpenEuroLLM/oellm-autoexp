@@ -1,0 +1,151 @@
+# @package _global_
+# v4b step speed, 8k vs 64k at equal tokens per GPU (2026-11-25). User: "our training was quite fast with 8k ctx
+# (same gbs in tokens) ... attention should be the only operation that makes a difference". This tests that claim on
+# the 18-layer slice of the live main stack (first block "*ENLELELELVELELELE": one attention layer, one V layer, 8 of
+# 18 MoE), 8 nodes as pool runs on c136 host003 (user 2026-11-25), random init, mock data, EP4 MoonEP (the main run's e9e8238 build), Megatron-FSDP
+# with fp8 expert gather, full recompute + RECOMPUTE_OFFLOAD.
+#
+# Mock documents are short (< 4k tokens), so with document masking the attention work per token is the same at 8k
+# and 64k: m64 vs m8 compares every NON-attention op across the two layouts (1 x 64k vs 8 x 8k per micro-batch).
+# If they match, the live 64k cost over 8k is attention on long documents (+ its rank imbalance) only.
+#
+# The 64-node profile of the live config (v4b_speed_ab64 base, 18.0 s) says the step is bound by the network, not
+# by attention: the compute stream waits 5.0-5.8 s per step on FSDP collectives (fp32 expert-gradient
+# reduce-scatter ~70 ms per MoE layer = 1.7 GB per GPU at NIC line rate, plus the parameter all-gathers), the
+# attention kernels are 0.3-1.6 s (+0.3 s selection). Two arms test the levers on that:
+#   m64        the live settings, 64k x mbs 1 (gbs 32 = one micro-batch per GPU, as in the main run)
+#   m8         8k x mbs 8 (gbs 256): the same 64k tokens per GPU per step
+#   m64_gbf16  --megatron-fsdp-grad-comm-dtype bf16: half the reduce-scatter bytes (the DP sum is reduced in bf16;
+#              main grads / optimizer stay fp32). A numerics change -- speed first, then a gradient-error check.
+#   m64_nolog  per-step MoE health logging off (round 2: -3.3 % at 64 nodes); for stacking with gbf16
+#   r8prep     not a speed arm: builds the data cache of v4b_ctx64_c136_mn5's c8k arm (phase-2 blend at seq 8192,
+#              train_iters 60 x gbs 2048, eval_iters 1, no fixed validation set) on 8 nodes and exits after one
+#              step, so the 64-node arm does not wait 15-25 min for a cold index build.
+#
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/hybrid_speed/v4b_ctx_slice_mn5 \
+#       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
+defaults:
+  - ../cross_doc_seqs/v4b_learned_cds_sparse_mn5
+  - _self_
+
+aux:
+  suite: v4b_ctx_slice
+  variant: m64
+  arm: ${aux.variant}
+  only: [m64, m8, m64_gbf16, m64_nolog, r8prep]
+  nodes: 8
+  node_check: "off"
+  moonep_lib: pylibs_moonep_e9e8238
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_ctx_slice
+  profile: true
+
+backend:
+  env:
+    PYTHONPATH: "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_moonep_e9e8238:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/retention:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pylibs_ep"
+    TRITON_CACHE_AUTOTUNING: "1"
+  megatron:
+    # ---- the first block of the main run's stack ----
+    num_layers: 18
+    hybrid_layer_pattern: "*ENLELELELVELELELE"
+    kv_share_layers: [10]
+    kv_share_source_layers: [0]
+    ckda_branch_kv_source_layers: [0]
+    engram_table_size: 811687
+    use_gloo_process_groups: false
+    # ---- random init, nothing loaded or saved ----
+    load: null
+    ckpt_step: null
+    exit_on_missing_checkpoint: false
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: null
+    train_iters: 60
+    # ---- one phase on mock data ----
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    seq_length: 65536
+    micro_batch_size: 1
+    global_batch_size: 32
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
+    packing_plan_path: null
+    packing_plan_boundaries: doc
+    packing_plan_at_end: exit
+    dataloader_index_bundle: null
+    data_args_path: null
+    per_split_data_args_path: null
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    mock_data: true
+    eval_interval: 1000000
+    eval_iters: 0
+    wandb_project: null
+    wandb_exp_name: null
+    # ---- profile: steps 40-41 on four ranks ----
+    profile: ${aux.profile}
+    use_pytorch_profiler: ${aux.profile}
+    profile_step_start: 40
+    profile_step_end: 41
+    profile_ranks: [0, 5, 18, 31]
+    pytorch_profiler_collect_shapes: false
+
+job:
+  name: v4b_ctx_slice_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  start_condition: null
+  est_steps: 60
+  est_step_time_s: 6.0
+  est_startup_min: 8.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 140
+  log_events: []
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "00:40:00"
+    account: cns143
+    qos: acc_xlarge
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: m64
+        - aux.variant: m8
+          backend.megatron.seq_length: 8192
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 256
+        - aux.variant: m64_gbf16
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+        - aux.variant: m64_nolog
+          backend.megatron.moe_per_layer_logging: false
+          backend.megatron.moe_expert_viability_metrics: false
+          backend.megatron.moe_log_seq_aux_loss: false
+          backend.megatron.log_timers_to_tensorboard: false
+        - aux.variant: r8prep
+          aux.profile: false
+          backend.megatron.mock_data: false
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/datamix_v8ml_opt81_8k64k_stage2_mn5.txt
+          backend.megatron.seq_length: 8192
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.train_iters: 60
+          backend.megatron.exit_interval: 1
+          backend.megatron.eval_iters: 1
