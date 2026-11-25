@@ -294,18 +294,41 @@ def test_place_copies_separates_a_giant_class():
     assert giant > n_seq // 2  # the class really is large against the sequences
 
 
-def test_global_single_window_plan(blend, planned):
-    """build_plan_global.py: one window over the whole extracted range, sharded (2 assign / 3 order processes,
-    run in turn here), checked like any plan by check_plan through Megatron's loader."""
-    import build_plan_global
+def test_leaf_groups_merge_chained_leaves_inside_a_cluster():
+    # leaves (tokens): cluster 0: 40, 40, 40, 10 | cluster 1: 30, 30, 100
+    leaf = np.array([0, 0, 1, 2, 3, 4, 5, 6])
+    cluster = np.array([0, 0, 0, 0, 0, 1, 1, 1])
+    tokens = np.array([20, 20, 40, 40, 10, 30, 30, 100])
+    # >= 64 tokens per group: [40 40] [40 10] | [30 30 100]
+    assert build_plan.leaf_groups(leaf, cluster, tokens, 64).tolist() == [0, 0, 0, 1, 1, 2, 2, 2]
+    # >= 40: [40] [40] [40 10] (the last 10 alone is < 40 / 2: joins) | [30 30] [100]
+    assert build_plan.leaf_groups(leaf, cluster, tokens, 40).tolist() == [0, 0, 1, 2, 2, 3, 3, 4]
+    assert build_plan.leaf_groups(leaf, cluster, tokens, 0).tolist() == [0, 0, 1, 2, 3, 4, 5, 6]
 
-    out, _ = planned
+
+def test_separate_copies_keeps_groups_whole():
+    rng = np.random.default_rng(5)
+    S, n_base = 1000, 3000
+    utok = rng.integers(20, 200, n_base + 400).astype(np.int64)
+    ugroup = np.r_[np.arange(n_base) // 12, 10**6 + np.arange(400)]
+    cls = np.r_[np.arange(n_base), rng.integers(0, 50, 400)]  # 400 copies of 50 base units
+    order, moved, left = build_plan.separate_copies(np.arange(n_base), np.arange(n_base, n_base + 400), ugroup, cls,
+                                                    utok, S, rng)
+    assert sorted(order.tolist()) == list(range(n_base + 400)) and left == 0
+    assert build_plan.count_conflicts(order, utok, cls, S) == 0
+    g = ugroup[order]
+    runs = g[np.r_[True, g[1:] != g[:-1]]]
+    assert len(runs) == len(np.unique(runs))  # no group was cut by a copy
+
+
+def _global_plan(out, name, *extra):
+    import build_plan_global
 
     def run(*args):
         old = sys.argv
-        sys.argv = ["x", "--out", str(out), "--emb", "fake", "--name", "gfake", "--from-ckpt", "12", "--steps", "20",
+        sys.argv = ["x", "--out", str(out), "--emb", "fake", "--name", name, "--from-ckpt", "12", "--steps", "20",
                     "--coarse", "40", "--sample", "100000", "--batch", "64", "--epochs", "3", "--leaf-tokens", "48",
-                    "--iters", "4", "--device", "cpu", *args]
+                    "--iters", "4", "--device", "cpu", *extra, *args]
         try:
             build_plan_global.main()
         finally:
@@ -317,12 +340,43 @@ def test_global_single_window_plan(blend, planned):
     for r in range(3):
         run("--stage", "order", "--task-rank", str(r), "--task-world", "3")
     run("--stage", "assemble")
-    plans = sorted((out / "plan" / "gfake").iterdir())
+    plans = sorted((out / "plan" / name).iterdir())
     assert [p.name for p in plans] == ["ck0000012_0000032"]
-    stats = __import__("json").load(open(plans[0] / "stats.json"))
+    return plans[0]
+
+
+@pytest.mark.parametrize("name,extra", [("gfake", ("--group-tokens", "96")),
+                                        ("gfake_spread", ("--copy-pools", "0", "--group-tokens", "0"))])
+def test_global_single_window_plan(blend, planned, name, extra):
+    """build_plan_global.py: one window over the whole extracted range, sharded (2 assign / 3 order processes,
+    run in turn here), checked like any plan by check_plan through Megatron's loader. Copy pools (default): no
+    copy meets its source and no group is cut into pieces inside a sequence."""
+    out, dups = planned
+    plan = _global_plan(out, name, *extra)
+    stats = __import__("json").load(open(plan / "stats.json"))
     assert stats["units_sharing_a_sequence_with_a_copy"] == 0 and stats["copies_forced"] == 0
+    z = {n: np.load(plan / f"{n}.npy") for n in ("seq_ptr", "seg_ds", "seg_doc", "seg_off", "seg_len", "seg_group")}
+    split = 0
+    for s in range(len(z["seq_ptr"]) - 1):
+        a, b = z["seq_ptr"][s], z["seq_ptr"][s + 1]
+        segs = list(zip(z["seg_ds"][a:b], z["seg_doc"][a:b], z["seg_off"][a:b], z["seg_len"][a:b]))
+        ds_, doc_, off_, n_ = segs[-1]
+        segs[-1] = (ds_, doc_, off_, n_ - 1)
+        assert max(_owned(segs).values()) == 1
+        keys = {(int(d) << KEY_SHIFT) | int(c) for d, c, _, _ in segs}
+        for x, y in dups:
+            assert not (x in keys and y in keys), f"near duplicates {x}, {y} in one sequence"
+        g = z["seg_group"][a:b - 1]  # without the label token
+        runs = g[np.r_[True, g[1:] != g[:-1]]]
+        split += len(runs) - len(np.unique(runs))
+    if name == "gfake":
+        assert stats["copies_in_pools"] > 0 and stats["copy_pools"] >= 2
+        assert split == 0
+    else:
+        assert stats["copies_in_pools"] == 0
+    assert stats["group_runs_per_seq"] >= 1
     old = sys.argv
-    sys.argv = ["x", "--out", str(out), "--plan-name", "gfake", "--data-cache-path", blend["cache"],
+    sys.argv = ["x", "--out", str(out), "--plan-name", name, "--data-cache-path", blend["cache"],
                 "--data-args-path", blend["mix"], "--bos-id", str(BOS), "--eod-id", str(EOD),
                 "--vocab-size", str(VOCAB), "--samples", "16"]
     try:

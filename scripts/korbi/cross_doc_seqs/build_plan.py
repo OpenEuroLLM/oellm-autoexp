@@ -167,9 +167,14 @@ def conflict_classes(ukey: np.ndarray, pairs: list) -> np.ndarray:
 
 def count_conflicts(uorder: np.ndarray, utok: np.ndarray, cls: np.ndarray, S: int) -> int:
     """Units that share a sequence with another unit of their conflict class (0 = every copy separated)."""
+    return len(conflict_units(uorder, utok, cls, S))
+
+
+def conflict_units(uorder: np.ndarray, utok: np.ndarray, cls: np.ndarray, S: int) -> np.ndarray:
+    """The units that share a sequence with an EARLIER unit (in uorder) of their conflict class."""
     multi = np.bincount(cls, minlength=len(cls))[cls] > 1
     if not multi.any():
-        return 0
+        return np.zeros(0, np.int64)
     start = np.r_[0, np.cumsum(utok[uorder])[:-1]]
     pos = np.empty(len(uorder), np.int64)
     pos[uorder] = np.arange(len(uorder))
@@ -181,7 +186,92 @@ def count_conflicts(uorder: np.ndarray, utok: np.ndarray, cls: np.ndarray, S: in
     o = np.lexsort((pos[unit], chunk, cls[unit]))
     unit, chunk = unit[o], chunk[o]
     clash = np.r_[False, (cls[unit][1:] == cls[unit][:-1]) & (chunk[1:] == chunk[:-1])]
-    return int(len(np.unique(unit[clash])))
+    return np.unique(unit[clash])
+
+
+def copy_ranks(cls: np.ndarray, copies: np.ndarray, rng):
+    """(copies in a random order, rank of each inside its conflict class: 1, 2, ...). A class has exactly one
+    unit in the semantic base order (rank 0), so the copies of rank r are units of r-th copies of distinct
+    classes: one pool per rank never holds two units of a class."""
+    c = copies[rng.permutation(len(copies))]
+    c = c[np.argsort(cls[c], kind="stable")]
+    first = np.r_[True, cls[c][1:] != cls[c][:-1]] if len(c) else np.zeros(0, bool)
+    start = np.nonzero(first)[0]
+    rank = np.arange(len(c)) - start[np.cumsum(first) - 1] + 1
+    return c, rank
+
+
+def insert_between_groups(order: np.ndarray, extra: np.ndarray, ugroup: np.ndarray, rng) -> np.ndarray:
+    """``order`` with the units ``extra`` inserted at random boundaries between its groups (never inside one)."""
+    if len(extra) == 0:
+        return order
+    g = ugroup[order]
+    bounds = np.nonzero(np.r_[True, g[1:] != g[:-1], True])[0]  # insertion points 0 .. len(order)
+    return np.insert(order, np.sort(rng.choice(bounds, len(extra))), rng.permutation(extra))
+
+
+def separate_copies(order: np.ndarray, extra: np.ndarray, ugroup: np.ndarray, cls: np.ndarray, utok: np.ndarray,
+                    S: int, rng, rounds: int = 20):
+    """Insert ``extra`` at random group boundaries, then move every unit that shares a sequence with an earlier
+    unit of its conflict class to another random group boundary, until none does. Returns (order, units moved,
+    units still sharing a sequence with their class after ``rounds``)."""
+    order = insert_between_groups(order, extra, ugroup, rng)
+    moved = 0
+    for _ in range(rounds):
+        bad = conflict_units(order, utok, cls, S)
+        if len(bad) == 0:
+            return order, moved, 0
+        moved += len(bad)
+        keep = np.ones(len(cls), bool)
+        keep[bad] = False
+        order = insert_between_groups(order[keep[order]], bad, ugroup, rng)
+    return order, moved, len(conflict_units(order, utok, cls, S))
+
+
+def leaf_groups(leaf: np.ndarray, cluster: np.ndarray, tokens: np.ndarray, group_tokens: int) -> np.ndarray:
+    """Attention groups (Megatron's --packing-plan-boundaries group) of units in semantic order: consecutive
+    leaves of one coarse cluster (neighbours on the leaf chain) merged until a group holds >= group_tokens
+    tokens; a cluster's short last group joins the one before it. group_tokens 0: one group per leaf.
+    leaf / cluster / tokens per unit, in order; returns a group id per unit (0, 1, ... in order)."""
+    n = len(leaf)
+    if n == 0:
+        return np.zeros(0, np.int64)
+    first = np.r_[True, (leaf[1:] != leaf[:-1]) | (cluster[1:] != cluster[:-1])]
+    if group_tokens <= 0:
+        return np.cumsum(first) - 1
+    starts = np.nonzero(first)[0]
+    ltok = np.add.reduceat(np.asarray(tokens, np.int64), starts).tolist()
+    lcl = np.asarray(cluster)[starts]
+    cl_start = np.r_[np.nonzero(np.r_[True, lcl[1:] != lcl[:-1]])[0], len(starts)].tolist()
+    lgrp = np.empty(len(starts), np.int64)
+    g = 0
+    for i, j in zip(cl_start[:-1], cl_start[1:]):  # one coarse cluster's leaves, in chain order
+        cur, acc, last_start = 0, 0, i
+        for t in range(i, j):
+            if acc >= group_tokens:
+                cur, acc, last_start = cur + 1, 0, t
+            lgrp[t] = g + cur
+            acc += ltok[t]
+        if cur > 0 and acc < group_tokens // 2:  # the cluster's short last group joins the one before
+            lgrp[last_start:j] = g + cur - 1
+            cur -= 1
+        g += cur + 1
+    return np.repeat(lgrp, np.diff(np.r_[starts, n]))
+
+
+def group_run_stats(seq_ptr: np.ndarray, seg_len: np.ndarray, seg_grp: np.ndarray) -> dict:
+    """What Megatron's group boundaries make of a plan: runs of equal group per sequence (= cu_seqlens
+    segments), their token-weighted mean length and the share of tokens in runs of >= 16k / 32k tokens."""
+    n = len(seq_ptr) - 1
+    new_seq = np.zeros(len(seg_len), bool)
+    new_seq[np.asarray(seq_ptr[:-1])] = True
+    first = new_seq | np.r_[True, seg_grp[1:] != seg_grp[:-1]]
+    runs = np.add.reduceat(np.asarray(seg_len, np.int64), np.nonzero(first)[0]).astype(np.float64)
+    tot = runs.sum()
+    return {"group_runs_per_seq": float(len(runs) / max(n, 1)),
+            "group_run_tokens_weighted_mean": float((runs ** 2).sum() / max(tot, 1)),
+            "tokens_in_group_runs_ge_16k": float(runs[runs >= 16384].sum() / max(tot, 1)),
+            "tokens_in_group_runs_ge_32k": float(runs[runs >= 32768].sum() / max(tot, 1))}
 
 
 def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np.ndarray, S: int, rng):
@@ -275,10 +365,11 @@ def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np
 
 # ------------------------------------------------------------------------------------------ order
 def order_clusters(x, tokens: np.ndarray, groups: np.ndarray | None, clusters, a, seed: int, dev,
-                   leaf_base: int = 0):
+                   leaf_base: int = 0, shuffle_rng=None):
     """Semantic order inside given coarse clusters (lists of unit indices, in chain order): per cluster,
     near duplicates leave (deferred, with their earlier partner), a fine k-means into leaves of
     ~--leaf-tokens tokens, leaves chained greedily from next to the previous cluster's last leaf.
+    shuffle_rng: the units of a leaf in a random order (else in index order).
     Returns (order, leaf id per unit, deferred mask, pairs, next leaf id)."""
     torch = _torch()
     n = x.shape[0]
@@ -309,6 +400,8 @@ def order_clusters(x, tokens: np.ndarray, groups: np.ndarray | None, clusters, a
             sel = idx[lab2 == li]
             if len(sel) == 0:
                 continue
+            if shuffle_rng is not None:
+                sel = shuffle_rng.permutation(sel)
             if groups is not None:  # metadata groups (same repo / site) stay contiguous in a leaf
                 sel = sel[np.argsort(groups[sel], kind="stable")]
             out.append(sel)

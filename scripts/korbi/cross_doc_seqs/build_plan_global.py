@@ -10,10 +10,16 @@ one process; this is the same plan (same format, same guarantees) for a window t
       assign     every GPU, its share of the window's stream chunks: each document -> nearest centroid -> bucket;
                  written sorted by bucket (one slice per bucket and file)
       order      every GPU, one bucket: units, then per coarse cluster in chain order near duplicates, fine leaves,
-                 leaf chains (build_plan.order_clusters)
-      assemble   one process: the buckets concatenated in chain order, copies (repeats, near duplicates) placed
-                 over the WHOLE window (build_plan.place_copies: no sequence holds two of a class), cut into
-                 sequences, shuffled over the window's non-solo slots -> <out>/plan/<name>/ck<w0>_<w1>/
+                 leaf chains (build_plan.order_clusters); attention groups = chained leaves of a coarse cluster up
+                 to --group-tokens (build_plan.leaf_groups); copies (repeats, near duplicates) of rank r <=
+                 --copy-pools form pool r, ordered and grouped the same way (no pool holds two units of a class)
+      assemble   one process: the buckets' bases concatenated in chain order, then pool 1 of all buckets, pool 2,
+                 ...; the remaining copies at random group boundaries, moved on until no sequence holds two units
+                 of a class (build_plan.separate_copies); cut into sequences, shuffled over the window's non-solo
+                 slots -> <out>/plan/<name>/ck<w0>_<w1>/
+                 (--copy-pools 0 --group-tokens 0: the plans before 61,000 -- every copy spread over the base as its
+                 own group by build_plan.place_copies, one group per leaf; there the copies cut the groups to a
+                 token-weighted ~18k tokens, see docs/cross_doc_seqs/README.md)
 
 All pieces and repeats of a document share its embedding, so they land in the same coarse cluster and bucket:
 units (occurrence layers, merged pieces) and near-duplicate classes are complete inside a bucket.
@@ -273,23 +279,57 @@ def stage_order(a, dev, bucket: int) -> None:
     cpos = pos_of[ucl[l0s]]
     starts = np.r_[0, np.nonzero(cpos[1:] != cpos[:-1])[0] + 1, len(l0s)]
     clusters = [np.searchsorted(l0, l0s[s:e]) for s, e in zip(starts[:-1], starts[1:])]  # indices into l0
-    x = torch.as_tensor(uvec[l0], device=dev, dtype=torch.float16 if dev.type == "cuda" else torch.float32)
+    dt = torch.float16 if dev.type == "cuda" else torch.float32
+    x = torch.as_tensor(uvec[l0], device=dev, dtype=dt)
     order, leaf, deferred, pairs, _ = bp.order_clusters(x, utok[l0], None, clusters, a, a.seed + bucket, dev)
+    cl_of = np.empty(len(l0), np.int64)
+    for ci, c in enumerate(clusters):
+        cl_of[c] = ci
     base = l0[order]
-    unit_leaf = np.full(len(us), -1, np.int64)
-    unit_leaf[l0] = leaf
+    unit_group = np.full(len(us), -1, np.int64)  # attention group per unit (leaf_groups), -1: placed later
+    unit_group[base] = bp.leaf_groups(leaf[order], cl_of[order], utok[base], a.group_tokens)
+    ngroups = int(unit_group.max()) + 1 if len(base) else 0
     copies = np.r_[l0[deferred], np.nonzero(ulayer > 0)[0]].astype(np.int64)
     pa = np.array([[l0[x_], l0[y_]] for x_, y_ in pairs], np.int64).reshape(-1, 2)
+    # copies of rank r <= --copy-pools (r-th copy of their class) form pool r, ordered like the base on its own
+    # (coarse clusters in chain order, leaves, groups): no pool holds two units of a class, so copies neither
+    # split the base's groups nor share one with unrelated documents. Higher ranks are placed in assemble.
+    pools, pool_ptr = [], [0]
+    if a.copy_pools > 0 and len(copies):
+        cls = bp.conflict_classes(ukey, [tuple(p) for p in pa.tolist()])
+        cr, rank = bp.copy_ranks(cls, copies, np.random.default_rng(a.seed + bucket))
+        a_pool = argparse.Namespace(**{**vars(a), "dup_cos": 1.0})  # classes are distinct inside a pool
+        shuffle = np.random.default_rng(a.seed + 7919 * (bucket + 1))
+        for r in range(1, min(a.copy_pools, int(rank.max())) + 1):
+            pk = cr[rank == r]
+            pk = pk[np.lexsort((pk, pos_of[ucl[pk]]))]
+            cpos = pos_of[ucl[pk]]
+            st = np.r_[0, np.nonzero(cpos[1:] != cpos[:-1])[0] + 1, len(pk)]
+            pclusters = [np.arange(s, e) for s, e in zip(st[:-1], st[1:])]
+            pcl = np.repeat(np.arange(len(pclusters)), np.diff(st))
+            xk = torch.as_tensor(uvec[pk], device=dev, dtype=dt)
+            ok, lk, _, _, _ = bp.order_clusters(xk, utok[pk], None, pclusters, a_pool, a.seed + bucket + 104729 * r,
+                                                dev, shuffle_rng=shuffle)
+            pool = pk[ok]
+            unit_group[pool] = ngroups + bp.leaf_groups(lk[ok], pcl[ok], utok[pool], a.group_tokens)
+            ngroups = int(unit_group[pool].max()) + 1
+            pools.append(pool)
+            pool_ptr.append(pool_ptr[-1] + len(pool))
+        copies = cr[rank > a.copy_pools]
+    pooled = pool_ptr[-1]
     os.makedirs(dst + ".tmp", exist_ok=True)
     for name, arr in (("ds", u["ds"].astype(np.int16)), ("doc", u["doc"]), ("off", u["off"]), ("len", u["len"]),
                       ("unit_start", us), ("ukey", ukey), ("utok", utok), ("base", base), ("copies", copies),
-                      ("pairs", pa), ("leaf", unit_leaf), ("uvec", uvec.astype(np.float16))):
+                      ("pools", np.concatenate(pools) if pools else np.zeros(0, np.int64)),
+                      ("pool_ptr", np.asarray(pool_ptr, np.int64)), ("pairs", pa), ("group", unit_group),
+                      ("uvec", uvec.astype(np.float16))):
         np.save(os.path.join(dst + ".tmp", name + ".npy"), arr)
     open(os.path.join(dst + ".tmp", "done"), "w").write(json.dumps(
-        {"units": int(len(us)), "base": int(len(base)), "copies": int(len(copies)), "clusters": len(clusters)}))
+        {"units": int(len(us)), "base": int(len(base)), "pooled": int(pooled), "pools": len(pools),
+         "copies": int(len(copies)), "clusters": len(clusters), "groups": ngroups}))
     os.replace(dst + ".tmp", dst)
-    print(f"order b{bucket}: {len(us)} units in {len(clusters)} coarse clusters, {len(copies)} copies, "
-          f"{time.time() - t0:.0f} s", flush=True)
+    print(f"order b{bucket}: {len(us)} units in {len(clusters)} coarse clusters, {ngroups} groups, {pooled} copies in "
+          f"{len(pools)} pools, {len(copies)} placed later, {time.time() - t0:.0f} s", flush=True)
 
 
 def stage_assemble(a) -> None:
@@ -302,35 +342,50 @@ def stage_assemble(a) -> None:
     P = int(z["buckets"])
     bdirs = [os.path.join(gdir(a), "order", f"b{p:04d}") for p in range(P)]
     load = (lambda d, n: np.load(os.path.join(d, n + ".npy")))
-    ds, doc, off, ln, ustart, ukey, utok, base, copies, pairs, leaf = ([] for _ in range(11))
-    uoff, poff, loff, U_of = 0, 0, 0, [0]
+    ds, doc, off, ln, ustart, ukey, utok, base, copies, pairs, group = ([] for _ in range(11))
+    pools = {}  # rank -> per bucket units
+    uoff, poff, goff, U_of = 0, 0, 0, [0]
     for d in bdirs:
         us = load(d, "unit_start")
         ds.append(load(d, "ds")); doc.append(load(d, "doc")); off.append(load(d, "off")); ln.append(load(d, "len"))
         ustart.append(us + poff); ukey.append(load(d, "ukey")); utok.append(load(d, "utok"))
         base.append(load(d, "base") + uoff); copies.append(load(d, "copies") + uoff); pairs.append(load(d, "pairs") + uoff)
-        lf = load(d, "leaf")
-        leaf.append(np.where(lf >= 0, lf + loff, -1))
-        loff += int(lf.max()) + 1 if (lf >= 0).any() else 0
+        pl, pp = load(d, "pools") + uoff, load(d, "pool_ptr")
+        for r in range(len(pp) - 1):
+            pools.setdefault(r + 1, []).append(pl[pp[r]:pp[r + 1]])
+        gr = load(d, "group")
+        group.append(np.where(gr >= 0, gr + goff, -1))
+        goff += int(gr.max()) + 1 if (gr >= 0).any() else 0
         uoff += len(us)
         poff += len(load(d, "ds"))
         U_of.append(uoff)
     cat = (lambda xs: np.concatenate(xs) if xs else np.zeros(0, np.int64))
     ds, doc, off, ln = cat(ds), cat(doc), cat(off), cat(ln)
     ustart, ukey, utok = cat(ustart), cat(ukey), cat(utok)
-    base, copies, leaf = cat(base), cat(copies), cat(leaf)
+    base, copies, group = cat(base), cat(copies), cat(group)
     pairs = np.concatenate(pairs) if pairs else np.zeros((0, 2), np.int64)
     n_units = len(ukey)
     S = json.load(open(os.path.join(a.out, "blend.json")))["seq_length"]
     rng = np.random.default_rng(a.seed + a.w0)
     cls = bp.conflict_classes(ukey, [tuple(p) for p in pairs.tolist()])
-    uorder, forced = bp.place_copies(base, copies, cls, utok, S, rng)
+    # the base (buckets in chain order), then pool 1 over all buckets, pool 2, ...; the rest of the copies at
+    # random group boundaries, moved on until no sequence holds two units of a class
+    pooled = sum(len(x) for v in pools.values() for x in v)
+    if a.copy_pools > 0:
+        order = np.concatenate([base] + [cat(pools[r]) for r in sorted(pools)])
+        group[copies] = goff + np.arange(len(copies))  # each copy its own group
+        uorder, moved, unseparated = bp.separate_copies(order, copies, group, cls, utok, S, rng)
+        forced = unseparated
+    else:
+        uorder, forced = bp.place_copies(base, copies, cls, utok, S, rng)
+        moved = 0
+        group[copies] = goff + np.arange(len(copies))  # each copy its own group
+        unseparated = bp.count_conflicts(uorder, utok, cls, S)
     assert len(uorder) == n_units and len(np.unique(uorder)) == n_units
-    unseparated = bp.count_conflicts(uorder, utok, cls, S)
-    leaf[copies] = loff + np.arange(len(copies))  # each copy its own group
+    assert (group >= 0).all(), "a unit without a group"
     ulen = np.diff(np.r_[ustart, len(ds)])
     pidx = bp.ranges(ustart[uorder], ulen[uorder])
-    p_grp = np.repeat(leaf[uorder], ulen[uorder])
+    p_grp = np.repeat(group[uorder], ulen[uorder])
     seq_ptr, seg = bp.cut_sequences(ds[pidx], doc[pidx], off[pidx], ln[pidx], p_grp, S)
     n_seq = len(seq_ptr) - 1
     # the window's non-solo slots (the indices the plan replaces), shuffled over the sequences
@@ -346,14 +401,17 @@ def stage_assemble(a) -> None:
     perm = rng.permutation(n_seq)
     o = np.argsort(bidx)
     stats = {"window": [a.w0, a.w1], "global": True, "coarse_clusters": int(len(z["chain"])), "buckets": P,
-             "units": int(n_units), "copies": int(len(copies)), "near_duplicate_pairs": int(len(pairs)),
+             "units": int(n_units), "copies": int(len(copies) + pooled), "copies_in_pools": int(pooled),
+             "copy_pools": len(pools), "copies_moved": int(moved), "near_duplicate_pairs": int(len(pairs)),
              "copies_forced": int(forced), "units_sharing_a_sequence_with_a_copy": int(unseparated),
              "sequences": int(n_seq), "segments_per_seq_after": float(len(seg["ds"]) / max(n_seq, 1))}
+    stats.update(bp.group_run_stats(seq_ptr, seg["len"], seg["grp"]))
     stats.update(coherence(a, bdirs, U_of, ukey, seq_ptr, seg))
     stats["seconds"] = round(time.time() - t0, 1)
     meta = bp.plan_meta(a.out, blend_md5, S, a.w0, a.w1, a.emb,
-                        {k: getattr(a, k) for k in ("coarse", "leaf_tokens", "iters", "dup_cos", "seed", "sample",
-                                                    "epochs", "batch", "alpha0", "dim")} | {"global": True})
+                        {k: getattr(a, k) for k in ("coarse", "leaf_tokens", "group_tokens", "copy_pools", "iters",
+                                                    "dup_cos", "seed", "sample", "epochs", "batch", "alpha0", "dim")}
+                        | {"global": True})
     bp.write_plan(dst, bidx[o], perm[o], seq_ptr, seg, meta, stats)
     print(f"{dst}: {json.dumps(stats)}", flush=True)
 
@@ -431,6 +489,12 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=1_048_576)
     ap.add_argument("--alpha0", type=float, default=0.3)
     ap.add_argument("--leaf-tokens", type=int, default=32768)
+    ap.add_argument("--group-tokens", type=int, default=131072,
+                    help="attention group (seg_group): chained leaves of a coarse cluster up to this many tokens "
+                         "(0: one group per leaf, the plans before 61,000)")
+    ap.add_argument("--copy-pools", type=int, default=8,
+                    help="copies of rank <= this form their own semantically ordered pools (0: every copy spread "
+                         "over the base as its own group, the plans before 61,000)")
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--dup-cos", type=float, default=0.97)
     ap.add_argument("--seed", type=int, default=1234)
