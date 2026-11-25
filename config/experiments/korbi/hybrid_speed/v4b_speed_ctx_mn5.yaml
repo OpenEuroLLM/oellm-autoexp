@@ -1,0 +1,125 @@
+# @package _global_
+# v4b step speed: container length x attention kind, as POOL RUNS on the c136 host (8 nodes each).
+#
+# The question (user 2026-11-24): "if we have nomask, wouldn't we just have flashattn as kernel?"
+# Right -- and the `nomask` arm did NOT test that: it kept `page_sparse_selector: page_maxpool`, so
+# with masking off it ran the page-sparse selection over ONE 64k span. Its 6.42 s step was 3.44 s of
+# `triton_tem_fused_flex_attention` (block-sparse, per-query index lists), not a contiguous causal
+# FA kernel. This config separates the two axes:
+#
+#   base        sparse page_maxpool + inter-document masking, 64k, gbs 32   (what we run now)
+#   dense64k    no page selection (plain causal attention = FA/TE), 64k, gbs 32
+#   dense8k     no page selection, 8k, gbs 256
+#   sparse8k    page_maxpool, 8k, gbs 256
+#
+# Every arm carries the SAME tokens per step: 64k x 32 = 8k x 256 = 2.1M tokens. So the comparison
+# is tokens/s, not step time -- step time alone would fall 8x for a trivial reason.
+#
+# Attention work per query, from the config: sparse selects topk 32 pages + window 512/64 = 8 + sink
+# 1 = 41 pages = 2,624 keys; dense causal averages seq/2 keys (4,096 at 8k, 32,768 at 64k). So
+# dense-8k does slightly MORE attention FLOPs than sparse-64k but with a contiguous FA kernel, while
+# sparse pays the block-sparse machinery. That trade is what these four arms measure.
+#
+#   ... --pool .../mn5_pool_c136 -C <snapshot>/config \
+#       --config-name experiments/korbi/hybrid_speed/v4b_speed_ctx_mn5 --yes
+defaults:
+  - ../cross_doc_seqs/v4b_learned_cds_sparse_mn5
+  - _self_
+
+aux:
+  suite: v4b_speed_ctx
+  variant: base
+  arm: ${aux.variant}
+  only: [base, dense64k, dense8k, sparse8k]
+  nodes: 8
+  node_check: "off"
+  test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_speed_ctx
+  profile: true
+
+backend:
+  megatron:
+    # ---- the first block of the main run's stack, random init, mock data ----
+    num_layers: 18
+    hybrid_layer_pattern: "*ENLELELELVELELELE"
+    kv_share_layers: [10]
+    kv_share_source_layers: [0]
+    ckda_branch_kv_source_layers: [0]
+    engram_table_size: 811687
+    load: null
+    ckpt_step: null
+    exit_on_missing_checkpoint: false
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+    async_save: false
+    use_persistent_ckpt_worker: false
+    exit_interval: null
+    train_iters: 60
+    phase_transition_iterations: null
+    phase_transition_variable_batch: false
+    packing_plan_path: null
+    packing_plan_boundaries: doc
+    packing_plan_at_end: exit
+    dataloader_index_bundle: null
+    data_args_path: null
+    per_split_data_args_path: null
+    fixed_valid_data_path: null
+    fixed_valid_seq_lengths: null
+    mock_data: true
+    eval_interval: 1000000
+    # 1, not 0: the slice harness died in the final validation with eval_iters[0] on an empty list
+    eval_iters: 1
+    wandb_project: null
+    wandb_exp_name: null
+    profile: ${aux.profile}
+    use_pytorch_profiler: ${aux.profile}
+    profile_step_start: 40
+    profile_step_end: 41
+    profile_ranks: [0, 5, 18, 31]
+    pytorch_profiler_collect_shapes: false
+
+job:
+  name: v4b_speed_ctx_${aux.arm}
+  base_output_dir: ${aux.test_root}/${aux.arm}
+  start_condition: null
+  est_steps: 60
+  est_step_time_s: 6.0
+  est_startup_min: 8.0
+  metadata:
+    pool_singleton: null
+    pool_priority: 140
+  log_events: []
+  state_events:
+    - name: give_up_failed
+      transition: [null, FAILED]
+      action: {class_name: FinishAction, reason: "failed (speed test: no retry)"}
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "00:40:00"
+    account: cns143
+    qos: acc_xlarge
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.variant: base
+        - aux.variant: dense64k
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.dataloader_inter_document_masking: false
+        - aux.variant: dense8k
+          backend.megatron.page_sparse_selector: null
+          backend.megatron.dataloader_inter_document_masking: false
+          backend.megatron.seq_length: 8192
+          backend.megatron.global_batch_size: 256
+        - aux.variant: sparse8k
+          backend.megatron.dataloader_inter_document_masking: false
+          backend.megatron.seq_length: 8192
+          backend.megatron.global_batch_size: 256
