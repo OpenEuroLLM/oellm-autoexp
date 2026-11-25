@@ -17,7 +17,7 @@ aux:
   suite: engram_branch_fix
   arm: fix
   only: []
-  nodes: 4
+  nodes: 8
   steps: 200
   start: 53000
   end: 53200
@@ -30,9 +30,12 @@ backend:
   megatron:
     load: ${aux.surgery}/fix/ckpt
     ckpt_step: ${aux.start}
-    # 4 nodes x 4 GPUs x 8 micro-batches = gbs 128 (the reference sampler keeps v4b's data order)
+    # 8 nodes x 4 GPUs x 4 micro-batches = gbs 128 (the reference sampler keeps v4b's data order)
     global_batch_size: 128
     micro_batch_size: 1
+    # c136 nodes are 64 GB and the 23B / 64k peak is tight: recompute units of 4 layers halve
+    # the recompute window's inputs (same math; the v4b speed r3 rc4 arm measured it)
+    recompute_num_layers: 4
     train_iters: 236733
     exit_interval: ${aux.end}
     save: ${job.base_output_dir}/ckpt
@@ -54,7 +57,7 @@ job:
   name: engram_branch_fix_${aux.arm}
   base_output_dir: ${aux.fix_root}/runs/${aux.arm}
   est_steps: ${aux.steps}
-  est_step_time_s: 25.0
+  est_step_time_s: 12.5
   est_startup_min: 30.0
   metadata:
     pool_priority: 100
