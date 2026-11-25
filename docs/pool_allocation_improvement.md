@@ -5,6 +5,7 @@ restarted for ~9 hours while every individual component behaved "as designed".
 **2026-11-25:** reviewed against the code (§9; still nothing implemented). Added multi-user pools
 (§10: foreign submitters, the hold-foreign-jobs flag, `permit`) and one overall implementation
 plan (§11) that replaces the earlier phase table.
+**2026-11-25 (later): P0–P2 implemented** (§11, "Implemented" below the table); P3–P6 are open.
 
 Companion documents:
 
@@ -557,6 +558,32 @@ because tests cannot change uid.
 | **P4** reservation | reserve N nodes for the highest-priority waiting run; largest-first launch within a host; `hold` on eviction against the 2-second refill | `pool.py` (assignment), `supervisor.sh` (launch order) | an eval cannot take a node the main run needs (11-24, 10-31) |
 | **P5** preemption | §6.2 predicate (`margin ≥ 100`, `feasible_after_evict`, lost-work budget) applied to **all three** paths: `pool_ctl preempt`, singleton supersede, handover; `protect` | `pool.py` (`_claim_singleton`, `_handover_check`), `pool_ctl.py` | the main run preempts an eval and starts; an evictor never preempts the run it is placing; a protected job is never preempted |
 | **P6** autoexclude | §5.1 attribution table; `readmit` with a single-node probe (§5.4, fleet-normal IB) | `pool.py` (`scan_pool_run`), `pool_ctl.py` | `port active(9)` and `FileNotFoundError` exclude nothing; a NaN excludes exactly its node |
+
+**Implemented 2026-11-25 (P0–P2), where it differs from the table:**
+
+- **P0:** the run's `EXCLUDE` is recomputed at every assignment as `JOB_EXCLUDE` (the job's own list,
+  written at submit) ∪ the host's dead nodes ∪ its removed nodes (the latter only for
+  `USE_EXCLUDED_NODES` runs). It is written as one line, and older doubled lines are repaired
+  (`set_run_exclude`). `pool_ctl doctor [--no-slurm]` is read-only and exits 1 on a problem.
+- **P1:** as in §10, except that `secure` is optional, login-node commands are listed rather than
+  gated, and the owner's own enqueues stay direct.
+- **P2:**
+  - **Job key and markers.** The key is `<submitter>:<pool_singleton or name>`. Markers live in
+    `<pools>/_jobs/<key>/control/{cancel,hold}`.
+  - **Tombstones.** The monitor closes the records of a tombstoned job on **every poll**, not only
+    at start. That covers a monitor restart and a cancel given in another pool, so no separate
+    `reconcile` command exists.
+  - **`--replace`.** `run_autoexp --replace` clears the tombstone and closes the job's older live
+    records in this pool (`supersede`). A plain enqueue next to a live record only warns; it does
+    not auto-cancel.
+  - **Commands.** `pool_ctl cancel --job`, `hold --job` / `unhold --job` (`unhold` mirrors the
+    existing host command; no `release`), and `status --job`.
+  - **Not yet.** `protect` waits for P5, which has the evictor that reads it.
+  - **Monitor lock.** A `mkdir` lock in `run_loop` (`<session>/.monitor.lock`): a live holder
+    refuses; a dead or stale holder, or `--force`, is taken over; the lock is released at exit,
+    which includes the CPU-budget restarts.
+  - **Fast pickup.** Instead of `SIGUSR2`, the monitor's sleep ends within ~2 s when a request or
+    inbox file is waiting.
 
 **Rollout notes per phase:**
 
