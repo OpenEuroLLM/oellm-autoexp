@@ -1,0 +1,7 @@
+# Forced-reasoning (CoT prefill) MATH500: the prompt ends in "Answer:  thinking\n", the prefill the
+# 32B anneal study used (docs/anneal-math/README.md: the release greedy evals measure response
+# style, forcing the prefill measures capability). Task lives in the evalchemy stage as
+# eval/chat_benchmarks/MATH500_cot (a copy of MATH500 with the prefill appended to PROMPT).
+count: 1
+tasks:
+- {name: vllm/MATH500_cot/0, half: vllm, row: 231, task: MATH500_cot, n_shot: 0, suite: evalchemy}

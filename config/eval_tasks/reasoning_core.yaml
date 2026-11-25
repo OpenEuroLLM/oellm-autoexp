@@ -1,0 +1,6 @@
+# Reasoning readout for the Engram ablation: GSM8k 4-shot (lm-eval-harness) and MATH500 0-shot
+# (evalchemy). Rows copied from config/eval_tasks/flag_evals.yaml (oellm_eval_rev 5b08e09).
+count: 2
+tasks:
+- {name: vllm/gsm8k/4, half: vllm, row: 99, task: gsm8k, n_shot: 4, suite: lm-eval-harness}
+- {name: vllm/MATH500/0, half: vllm, row: 230, task: MATH500, n_shot: 0, suite: evalchemy}

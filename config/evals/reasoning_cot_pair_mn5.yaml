@@ -1,0 +1,60 @@
+# Forced-reasoning readout: MATH500 with the "  thinking\n" prefill (evalchemy MATH500_cot).
+# Same envelope as reasoning_pair_mn5; only the suite differs.
+# pair (TP1 x DP4/EP4), same pool, two rows (config/eval_tasks/reasoning_core.yaml).
+#
+#   # baseline export (Engram active)
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/reasoning_pair_mn5.yaml \
+#       --set export.step=47000 --set export.name=ambitious_v4b_learned_fp8_47000 \
+#       --set export.run_dir=<run>/main --set export.config=<run>/main/current_...yaml
+#
+#   # ablated export (layer-52 Engram output zeroed): point name/run_dir at the patched copy
+#
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256
+  step: 35900
+  name: ambitious_v4_2ph_fp8_35900
+  config: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/current_ambitious_v4_2ph_hd256_256n_p2.yaml
+
+rows:
+  harnesses: [evalchemy]
+  suite_file: config/eval_tasks/reasoning_cot_core.yaml
+
+lm_eval:
+  workers: 4
+  split_s: 300
+  max_parts: 8
+  engine:
+    tp: 1
+    dp: 4
+    expert_parallel: true
+    max_num_seqs: 256
+    max_num_batched_tokens: 32768
+    gpu_memory_utilization: 0.85
+    request_batch_size: 256
+    response_cache: true
+  model_code:
+    moe_fp8_direct: true
+  # MATH500 runs through evalchemy, which uses its own engine (GroupedSpec, default TP4 / 0.90).
+  # The 2026-11-22 run OOMed at engine init (62.9 of 63.3 GiB in use) because the default sized the
+  # KV cache for the export's 100M window. Cap the model length and leave headroom.
+evalchemy:
+  groups: 1
+  engine:
+    tp: 4
+    dp: 1
+    expert_parallel: true
+    max_num_seqs: 16
+    max_num_batched_tokens: 8192
+    max_model_length: 8192
+    gpu_memory_utilization: 0.80
+  model_code:
+    graph_max_rows: 64
+  job: {priority: 70}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
