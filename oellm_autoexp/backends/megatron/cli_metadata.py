@@ -746,16 +746,6 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
-    "nan_trace": MegatronArgMetadata(
-        arg_type=bool,
-        default=False,
-        help="On a NaN loss, name the first module whose output went non-finite: bad module outputs "
-             "in reverse (loss -> input), the origin module in forward order, and a reverse "
-             "parameter scan, printed by the failing rank only.",
-        choices=None,
-        nargs=0,
-        element_type=None,
-    ),
     "check_for_spiky_loss": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -5017,6 +5007,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "megatron_fsdp_grad_comm_dtype_experts_only": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Apply --megatron-fsdp-grad-comm-dtype to the expert parameter groups only; the dense groups reduce in the main gradient dtype. The reduce-scatter sums in the wire dtype around the ring: bf16 over the expert-DP group (DP / EP ranks) stays at a few percent relative error, bf16 over all DP ranks does not, and the expert buckets carry most of the bytes.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "megatron_fsdp_main_grads_dtype": MegatronArgMetadata(
         arg_type=None,
         default="auto",
@@ -6350,6 +6348,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Width multiplier for MuP scaling, computed as hidden_size / mup_base_hidden_size. This value is automatically computed in __post_init__ when use_mup is enabled.",
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "nan_trace": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="On a NaN loss, name the first module whose output went non-finite: print the bad module outputs in reverse (loss -> input), the origin in forward order, and a reverse scan of the parameters (see megatron/training/nan_trace.py). Counting hooks only, no retained references, so autograd retention and host memory are unchanged. Unlike --diag-nonfinite, which scans weights and gradients at the diagnostics interval, this reports at the moment of failure and includes the activations of the failing rank.",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "nccl_all_reduce_for_prefill": MegatronArgMetadata(
@@ -9993,13 +9999,6 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=False,
         default=True,
     ),
-    "nan_trace": MegatronActionSpec(
-        option_strings=("--nan-trace",),
-        action_type="store_true",
-        nargs=0,
-        const=True,
-        default=False,
-    ),
     "check_for_spiky_loss": MegatronActionSpec(
         option_strings=("--check-for-spiky-loss",),
         action_type="store_true",
@@ -13606,6 +13605,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default="auto",
     ),
+    "megatron_fsdp_grad_comm_dtype_experts_only": MegatronActionSpec(
+        option_strings=("--megatron-fsdp-grad-comm-dtype-experts-only",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "megatron_fsdp_main_grads_dtype": MegatronActionSpec(
         option_strings=("--megatron-fsdp-main-grads-dtype",),
         action_type="store",
@@ -14743,6 +14749,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1.0,
+    ),
+    "nan_trace": MegatronActionSpec(
+        option_strings=("--nan-trace",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "nccl_all_reduce_for_prefill": MegatronActionSpec(
         option_strings=("--nccl-all-reduce-for-prefill",),

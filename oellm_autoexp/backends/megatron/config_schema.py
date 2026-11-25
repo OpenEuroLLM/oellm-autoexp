@@ -2831,9 +2831,6 @@ class MegatronConfig(ConfigInterface):
 
     # Check for NaNs in loss and grad
     check_for_nan_in_loss_and_grad: bool = True
-    # On a NaN loss, name the first module whose output went non-finite
-    # (megatron/training/nan_trace.py). Off by default.
-    nan_trace: bool = False
 
     # Check for unexpectedly large grads
     check_for_large_grads: bool = False
@@ -4479,6 +4476,14 @@ class MegatronConfig(ConfigInterface):
     # aborting on it.
     diag_nonfinite: bool = False
 
+    # On a NaN loss, name the first module whose output went non-finite: print the bad module
+    # outputs in reverse (loss -> input), the origin in forward order, and a reverse scan of
+    # the parameters (see megatron/training/nan_trace.py). Counting hooks only, no retained
+    # references, so autograd retention and host memory are unchanged. Unlike --diag-
+    # nonfinite, which scans weights and gradients at the diagnostics interval, this reports
+    # at the moment of failure and includes the activations of the failing rank.
+    nan_trace: bool = False
+
     # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains get
     # wd_mult=0 by default, so nothing opposes their drift; if they do go extreme the levers
     # are --residual-norm-wd-mult / --qk-layernorm-wd-mult or zero-centred RMSNorm.
@@ -4891,6 +4896,13 @@ class MegatronConfig(ConfigInterface):
     # gradient communication / reduction data-type. When using NCCL v2.27+, reduction is
     # always computed in FP32 if using NCCL Symmetric kernels.
     megatron_fsdp_grad_comm_dtype: Literal["fp32", "fp16", "bf16", "auto"] = "auto"
+
+    # Apply --megatron-fsdp-grad-comm-dtype to the expert parameter groups only; the dense
+    # groups reduce in the main gradient dtype. The reduce-scatter sums in the wire dtype
+    # around the ring: bf16 over the expert-DP group (DP / EP ranks) stays at a few percent
+    # relative error, bf16 over all DP ranks does not, and the expert buckets carry most of
+    # the bytes.
+    megatron_fsdp_grad_comm_dtype_experts_only: bool = False
 
     # If set, enables fine-grained parameter gathering for Megatron-FSDP. This allows greater
     # overlap between parameter all-gather operations and forward computation, at the cost of
