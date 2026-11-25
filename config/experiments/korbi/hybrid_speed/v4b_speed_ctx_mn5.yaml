@@ -72,6 +72,11 @@ backend:
     # The 8k arms raise both to keep the same 2.1M tokens/step: 256 x 8192 = 32 x 65536.
     global_batch_size: 32
     micro_batch_size: 1
+    # The chain carries the main run's sampler reference (512 x 1), which asserts
+    # ref_gbs % (ref_dp * ref_mbs) == 0 -> "reference global batch 32 is not a multiple of the
+    # reference layout 512 x 1" (runs .2230-.2233). The slice samples its own layout.
+    data_sampler_reference_dp_size: null
+    data_sampler_reference_micro_batch_size: null
     eval_interval: 1000000
     # 1, not 0: the slice harness died in the final validation with eval_iters[0] on an empty list
     eval_iters: 1
