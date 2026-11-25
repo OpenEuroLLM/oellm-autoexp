@@ -92,3 +92,5 @@ pool_host:
   # the monitor runs the cheap part of `pool_ctl doctor` every this many seconds (<pool>/health.txt,
   # new problems logged once); 0 = off
   health_check_s: 900
+  # a foreign job held longer than this (awaiting permit) is a health-check PROBLEM; 0 = never
+  held_warn_s: 3600

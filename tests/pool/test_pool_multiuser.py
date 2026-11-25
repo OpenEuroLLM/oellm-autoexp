@@ -442,3 +442,24 @@ def test_a_pool_from_before_multi_user_gets_its_inbox_on_the_next_poll(env):
         mode = d.stat().st_mode
         assert mode & stat.S_IWGRP and mode & stat.S_ISGID, (d, oct(mode))
     assert env.layout.held_dir.is_dir() and env.layout.inbox_done_dir.is_dir()
+
+
+def test_a_job_held_too_long_is_a_health_problem_logged_once(env, caplog):
+    import logging
+
+    env.submit_as(COLLEAGUE, "fx")
+    env.poll()
+    held = env.layout.held_dir / "fx.job.json"
+    payload = json.loads(held.read_text())
+    payload["definition"]["metadata"]["pool_submitted_by"]["ts"] -= 7200  # held for 2 h
+    held.write_text(json.dumps(payload))
+    for _ in range(2):
+        env.loop._pool._health_ts.clear()
+        with caplog.at_level(logging.WARNING):
+            env.poll()
+    hits = [r.message for r in caplog.records if "held >1h: fx by colleague" in r.message]
+    assert len(hits) == 1 and "pool_ctl permit fx | deny" in hits[0], hits
+    env.request_as(OWNER, "permit", all=True)  # released separately, whenever the owner wants
+    env.loop._pool._health_ts.clear()
+    env.poll()
+    assert "held >" not in (env.layout.root / "health.txt").read_text()

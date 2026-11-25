@@ -277,6 +277,9 @@ class PoolHostConfig:
     # HEALTH CHECK: every this many seconds the monitor runs the cheap part of `pool_ctl doctor`
     # (no SLURM calls), writes <pool>/health.txt and logs each new PROBLEM once; 0 = off
     health_check_s: float = 900.0
+    # a foreign job held (awaiting `pool_ctl permit`) longer than this is a PROBLEM of the health
+    # check / doctor, so the owner learns about it; 0 = never
+    held_warn_s: float = 3600.0
 
 
 def _csv(value: str) -> list[str]:

@@ -15,7 +15,13 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from oellm_autoexp.monitor.pool import PoolLayout, _atomic_write, env_key_lines, read_env_file
+from oellm_autoexp.monitor.pool import (
+    PoolLayout,
+    _atomic_write,
+    env_key_lines,
+    held_jobs,
+    read_env_file,
+)
 
 # A monitor tick older than this means nobody executes requests (pool_ctl uses the same value).
 MONITOR_STALE_S = 300.0
@@ -158,6 +164,15 @@ def doctor_report(layout: PoolLayout, slurm=run_slurm, now: float | None = None)
                 out.append(("PROBLEM", f"run {rdir.name} (queued): need {need}, the largest host has "
                             f"{best} available"))
 
+    held_warn_s = layout.load_config().held_warn_s
+    for payload in held_jobs(layout) if held_warn_s > 0 else []:
+        md = ((payload.get("definition") or {}).get("metadata") or {})
+        by = md.get("pool_submitted_by") or {}
+        since = float(by.get("ts") or now)
+        if now - since > held_warn_s:
+            out.append(("PROBLEM", f"held >{held_warn_s / 3600:g}h: {payload.get('job_id')} by "
+                        f"{by.get('user', '?')} since {time.strftime('%m-%d %H:%M', time.localtime(since))} "
+                        f"(pool_ctl permit {payload.get('job_id')} | deny)"))
     stale = [
         p.name
         for p in (layout.requests_dir.glob("*.json") if layout.requests_dir.exists() else [])
