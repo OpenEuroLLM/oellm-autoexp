@@ -3303,7 +3303,8 @@ class PoolManager:
             return "held", job_id, note
         loop._store.upsert(record)
         if replace_old:
-            return "queued", job_id, self._supersede(loop, layout, {"key": key, "keep": job_id})
+            note = self._supersede(loop, layout, {"key": key, "keep": job_id})
+            return "queued", job_id, "" if note.startswith("superseded []") else note
         return "queued", job_id, ""
 
     @staticmethod
