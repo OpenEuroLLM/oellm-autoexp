@@ -746,6 +746,16 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "nan_trace": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="On a NaN loss, name the first module whose output went non-finite: bad module outputs "
+             "in reverse (loss -> input), the origin module in forward order, and a reverse "
+             "parameter scan, printed by the failing rank only.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "check_for_spiky_loss": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9982,6 +9992,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "nan_trace": MegatronActionSpec(
+        option_strings=("--nan-trace",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "check_for_spiky_loss": MegatronActionSpec(
         option_strings=("--check-for-spiky-loss",),

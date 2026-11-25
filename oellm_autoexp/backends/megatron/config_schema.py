@@ -2831,6 +2831,9 @@ class MegatronConfig(ConfigInterface):
 
     # Check for NaNs in loss and grad
     check_for_nan_in_loss_and_grad: bool = True
+    # On a NaN loss, name the first module whose output went non-finite
+    # (megatron/training/nan_trace.py). Off by default.
+    nan_trace: bool = False
 
     # Check for unexpectedly large grads
     check_for_large_grads: bool = False
