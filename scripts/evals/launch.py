@@ -196,8 +196,13 @@ def runtime(spec: EvalSpec, plan: oplan.Plan) -> Runtime:
     front = [p.pylibs_oellm, stage]
     lighteval_front = ([p.pylibs_lighteval] if Path(p.pylibs_lighteval).is_dir() else []) + front
     uva = any(u.env.get("OELLM_ENGRAM_TABLES") == "uva" for u in plan.units)
+    # The node-local install keeps the pinned NLTK data here (punkt / punkt_tab + index.xml, see
+    # scripts/korbi/vllm/sitecustomize.py): without NLTK_DATA in the worker env nltk.data.find()
+    # misses them and every ifeval / RULER unit logs "[nltk_data] Downloading package punkt_tab".
+    local_env = {"NLTK_DATA": f"{p.hybrid_env}/nltk_data"}
+    local_env.update(rs.env)
     return Runtime(
-        kind="local", python="${INFER_PY}", env=dict(rs.env),
+        kind="local", python="${INFER_PY}", env=local_env,
         # the stage and the harness libraries for lighteval / evalchemy only (the lm-eval sessions
         # run on the vLLM install's own lm-eval); lighteval's metric pins first
         harness_env={"lighteval": harness_env, "evalchemy": harness_env},
