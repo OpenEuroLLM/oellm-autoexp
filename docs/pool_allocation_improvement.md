@@ -2,6 +2,9 @@
 
 **Status:** proposal, 2026-11-24. Written after a day in which a 256-node training run could not be
 restarted for ~9 hours while every individual component behaved "as designed".
+**2026-11-25:** reviewed against the code (§9; still nothing implemented). Added multi-user pools
+(§10: foreign submitters, the hold-foreign-jobs flag, `permit`) and one overall implementation
+plan (§11) that replaces the earlier phase table.
 
 Companion documents:
 
@@ -76,6 +79,9 @@ job
 | `FAILED` | run ended non-zero with a fault | → `QUEUED` (policy), → `CANCELLED` (policy exhausted) |
 | `STOPPED` | graceful stop (preempt, wall clock, rotation) | → `QUEUED` (resume from checkpoint) |
 | `CANCELLED` | **terminal** | none |
+
+A foreign job (§10) starts one step earlier: `HELD(foreign)` → `QUEUED` via `permit`, → `CANCELLED`
+via `deny` / `cancel`. While held it is not in the monitor's session at all (`inbox/held/`).
 
 `CANCELLED` is terminal for the *job*, not for one record. Any monitor, after any restart, must
 refuse to submit a job in `CANCELLED` unless an explicit `replace` clears the tombstone.
@@ -312,34 +318,256 @@ A monitor restart must not resurrect work. Concretely:
 
 ---
 
-## 9. Phased implementation
+## 9. Review of §0–§8 against the code (2026-11-25)
 
-| phase | scope | acceptance test (regression of a real failure) |
-|---|---|---|
-| **P0** | writer fixes: `meta.env` replace-keys, `info.env` follows the job, `doctor` | `.2403`'s `Requested node configuration is not available` cannot occur; `doctor` reports `EXCLUDE jobs 1` and `info.env stale` |
-| **P1** | `cancel --job`, `replace`, `reconcile`, `SIGUSR2` | killing and restarting the monitor does **not** resurrect a cancelled job; a submit leaves exactly one live record (today: `_q2 … _q18`) |
-| **P2** | fault classification; `placement` ≠ attempt; backoff | a 256-node request against a 255-node capacity logs one job and creates **no** run dir (today: one per 34 s) |
-| **P3** | reservation + largest-first launch + `hold` on eviction | an eval cannot take a node the main run needs; no 2-second refill |
-| **P4** | preemption predicate (`margin ≥ 100`, `feasible_after_evict`, lost-work budget), `protect` | main preempts an eval and starts; an evictor never preempts the main run it is placing |
-| **P5** | autoexclude attribution table + `readmit` with probe | `port active(9)` and `FileNotFoundError` exclude nothing; a NaN excludes exactly its node |
+Nothing in §0–§8 is implemented. Some of it overlaps with code that already exists, and a few points
+are wrong about the code. Corrections:
 
-Each phase ships with a test that replays the corresponding log signature from today.
+| § | proposal | what the code does today | correction |
+|---|---|---|---|
+| 0, 2 | job = `(pool, definition-name)` | Records are keyed by `job_id`. `enqueue_into_pool` (`oellm_autoexp/orchestrator.py:1071`) makes `<name>`, `<name>_q2`, … for each enqueue. The only identity shared across records is `metadata.pool_singleton` (`PoolManager._claim_singleton`, `<pools>/_singletons/<key>`), and it **spans pools**. | Job key = `pool_singleton` when set, else `definition.name`, **qualified by the submitter** (§10): `(submitter, key)`. The job's `control/` lives next to the singletons (`<pools>/_jobs/<key>/`), so a cancel also applies to a copy of the job in another pool, as the singleton guard does. |
+| 3.1 | `flock` around `scripts/korbi/recall_surgery/supervise_main.sh` | That script is an agent helper, not the pool monitor. The monitor already refuses a second instance through its heartbeat (`ensure_no_live_monitor`: pid, host, age). | The lock belongs in the monitor (`run_autoexp.py` / `monitor_autoexp.py`). Use a `mkdir` lock plus the heartbeat, like `_claim_singleton`; do not rely on `flock` across GPFS login nodes. Helper scripts get their own lock. |
+| 3.2, 3.3 | "disk floor (§7.3)" | §7.3 does not exist. | Turn it into a `doctor` warning; no automatic action. |
+| 4.4.1 | `meta.env` writer must replace keys | `write_env_file` already rewrites the whole file. `add_run_exclude` (`pool.py:440`) appends a second `EXCLUDE=` **on purpose** (the last line wins). The 292-entry line came from re-reading the fleet `exclude_file` (`_exclude_list`) at render / refresh time. | The run's `EXCLUDE` holds only its own nodes, intersected with the host's allocation. Fleet, pool and host lists are merged by the supervisor at launch (it already reads all three). `add_run_exclude` rewrites the key. |
+| 4.4.2 | `info.env` must follow `squeue` | `supervisor.sh refresh_alloc` (since 11-05) rewrites `info.env` from `squeue -o %N` every `POOL_ALLOC_REFRESH_S`. The monitor has `live_job_nodes` / `removed_nodes`. Only supervisors started before that code keep their start-time list. | No new writer is needed. `doctor` reports stale `info.env` (old supervisors), and P0 is narrowed accordingly. |
+| 4.2 | placement ≠ attempt | The supervisor writes `rc -1 insufficient_nodes` → `PREEMPTED`. `loop.py:440` counts it as *unhealthy* against `max_attempts`. Every requeue goes through `PoolManager.submit` → `allocate_run_id` → a **new run dir**. | Correct as written. The fix spans **both** halves: the supervisor leaves an unplaceable run PENDING with a `placement` note (no `rc`, so no new rid), and the monitor stops counting it. |
+| 6 | one preemption predicate | Three paths preempt today: `pool_ctl preempt`, the cross-pool singleton supersede (`_claim_singleton`), and handover. | The predicate has to gate all three, otherwise invariants 8 and 9 do not hold. |
+| 6.4 | reservation | The same starvation has happened at least three times (memory: p132 10-31, p264 11-24). | Highest value in the list: do it before preemption (§11 P4 before P5). |
+| 7 | `hold` / `release` for jobs | `pool_ctl hold <host>` already exists (the host is never released). | Job-level commands always take `--job <key>` (`hold --job`, `release --job`). The positional `hold <host>` keeps its meaning. |
+| 7.1, 8.10 | `SIGUSR2` to the monitor | The monitor runs on one login node and `pool_ctl` often on another, so a signal cannot reach it. | `pool_ctl` writes `requests/*.json` (as today), and the monitor checks `requests/`'s mtime every ~2 s while it sleeps. The effect is the same and it works across login nodes. |
 
 ---
 
-## 10. Migration without breaking running jobs
+## 10. Multi-user pools
 
-- Everything above is **pool state**, not Slurm. No job is edited, requeued or resized.
+**Goal (user, 2026-11-25):** a colleague in the same group can submit jobs into "my" pool. Runtimes
+(containers, environments) are group-accessible, and output dirs are group-writable, so results
+written by the pool owner's user are fine. Pools get a **hold-foreign-jobs flag** plus a **`permit`
+command**, and the flag can be switched off later.
+
+### 10.1 What happens today when user B enqueues into A's pool
+
+Traced on `mn5_pool_p264` (permissions read on MN5, 2026-11-25):
+
+```
+/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264        drwxrws---+  group ehpc533 rwx (default ACL)
+  runs/ hosts/ requests/                                        drwxrws---+  group rwx
+/gpfs/projects/ehpc533/users/korbip/hybrid_v019/pool_state/pool_mn5-pool-p264   drwxr-sr-x   group r-x  (= session dir)
+```
+
+1. `run_autoexp.py --pool <A's pool>` → `enqueue_into_pool` reads `pool.json` and
+   `host_definition.json` and runs `check_fits_host`. **This works**: the pool dir is group-readable.
+2. It writes `<session>/<job_id>.job.json` with `JobFileStore.upsert`. The session dir is `r-x` for
+   the group, so B gets **PermissionError. This is the only hard blocker.**
+3. If the session dir were writable, A's monitor would pick the record up on its next poll
+   (`load_all` globs the session dir). `PoolManager.submit` would render `step.sh` from B's template
+   in B's workdir, and A's supervisor would run it **as A**. It would "work", with no gate at all.
+4. After the enqueue, `run_autoexp` checks `ensure_no_live_monitor`. If A's monitor is down, it
+   would **start a monitor as B**. That monitor would `sbatch` hosts under B, write host records into
+   A's pool, and race A's monitor when A's comes back. This must be refused.
+5. `pool_ctl status` / `cancel` as B: B can read the session (`r-x`) and write `requests/` (`rwx`), so
+   **B can already cancel any job in the pool**. Nothing checks who is asking.
+6. Everything else in the pool dir is group-writable today: `runs/*/step.sh` of queued runs,
+   `pool.env` (sourced by every supervisor), `exclude_nodes`, `hosts/*/control/`. Any group member can
+   already run code as A, or stop the main run. Pool integrity is cooperative today.
+
+### 10.2 Trust boundary
+
+- A foreign run executes **B's code** (B's workdir, template and container) **as A**, on A's
+  allocation, charged to the host's account (e.g. `cns144`, even if B is not a member of it). B can
+  change the code in their workdir after a permit. `permit` therefore means "I accept this job onto my
+  allocation" (resources, priority, slot). It is **not a sandbox**.
+- What the pool can enforce:
+  - who may put jobs in;
+  - who may steer whose jobs;
+  - that B cannot change the pool's own state (other runs' step scripts, settings, hosts);
+  - that B cannot start hosts or monitors for A's pool;
+  - that foreign metadata cannot escalate (priority, singleton, host role, login-node commands).
+- **Authentication = file owner.** The monitor reads `st_uid` of an inbox or request file. B cannot
+  create a file owned by A. A user name written *inside* a file is never trusted.
+
+### 10.3 Layout and permissions
+
+```
+<pool>/pool.json        + "owner": {"user", "uid"} (first creation; a non-owner never rewrites pool.json)
+<pool>/inbox/           group rwx, setgid: every enqueue lands here (owner too, see P1)
+<pool>/inbox/held/      monitor-owned, group r-x: foreign jobs that passed validation and await `permit`
+<pool>/inbox/done/      monitor-owned, group r-x: <file>.result.json = queued <job_id> | held | rejected: <why>
+<pool>/requests/        group rwx (as today); the monitor authorizes each request by its st_uid
+everything else         group r-x: runs/, hosts/, pool.json, pool.env, exclude_nodes, ledger.tsv
+<pools>/_singletons/    group r-x (today group rwx through the hybrid_nucleus default ACL)
+<session>/              group r-x (as today): status and cancel resolution read it, only the monitor writes
+```
+
+`hybrid_nucleus` hands out `group:ehpc533:rwx` as its default ACL, so the tighter ACL has to be set
+explicitly:
+
+- **new pools:** `create_or_update_pool` sets it;
+- **existing pools:** a one-off `pool_ctl secure`. It changes filesystem ACLs only (no Slurm job), so
+  it is compatible with AGENTS.md.
+
+Admins (`pool_admins`) get `u:<admin>:rwx`. Inbox and requests must **not** be sticky: the monitor
+(A) moves B's files out of them.
+
+### 10.4 Ingest (monitor, every poll, before scheduling)
+
+For each `inbox/*.job.json` (dotfiles are in-flight writes and are skipped):
+
+1. **Who:** `uid = st_uid` → user name.
+   - Owner or admin → normal path.
+   - Anyone else must match `foreign_submitters` (`""` = nobody, `@group` = any member of the pool
+     dir's group, or a list of users). Otherwise the job is rejected.
+2. **Fits:** parse the record and run `check_fits_host` again, as A.
+3. **Sanitize** foreign metadata:
+
+   | key | foreign value |
+   |---|---|
+   | `pool_role`, `pool_host_id`, `pool_host_account`, `pool_host_adopted`, `pool_adopt_workdir` | rejected (B could otherwise make A's monitor `sbatch` a host) |
+   | `pool_preflight_template` | rejected (it would replace the pool's node check) |
+   | `pool_job_id`, `pool_enqueued_ts`, `pool_submitted_by` | overwritten by the monitor |
+   | `pool_priority` | clamped to `foreign_max_priority` (default 60 = eval tier, §6.1); `permit --priority N` overrides |
+   | `pool_singleton` | dropped (it would let B supersede A's main run across pools); `permit --singleton` restores it |
+   | `pool_use_excluded_nodes`, `pool_stop_signal`, `pool_workdir` | kept |
+   | monitor events with `CommandCondition` / `ShellCommandCondition` / `RunCommandAction` | stripped, because they run a shell **as A on the login node** (`conditions.py:404/427`, `actions.py:572`); `permit --trust-commands` keeps them |
+
+4. **Writable as A:** the job's log dir, config-path dir and `base_output_dir` must be writable by A.
+   A real probe file is used, because `os.access` does not evaluate ACLs reliably on GPFS. A failure
+   is reported with the dir that failed.
+5. **Name collision:** a foreign job whose name or singleton key matches an active job of another
+   submitter is rejected.
+6. **Stamp and id:** `metadata.pool_submitted_by = {user, uid, ts, inbox_file}`. The job id is
+   assigned here, which moves the `_qN` dedupe into the monitor (serialized, with no enqueue race).
+7. **Place:**
+   - foreign and `hold_foreign_jobs` → `inbox/held/<job_id>.job.json`, result `held`;
+   - otherwise → `store.upsert` into the session, result `queued <job_id>`.
+
+A held job is **not in the session**, so it is inert by construction: no events are evaluated, no
+run dir is created and no `step.sh` is rendered.
+
+### 10.5 `permit`, `deny`, and the flag
+
+| command | who | effect |
+|---|---|---|
+| `pool_ctl <pool> permit <job\|name> [--priority N] [--singleton] [--trust-commands]` | owner, admins | request op `permit`. The monitor checks the request's `st_uid`, moves held → session and writes a ledger line `permit <job> by <user>`. |
+| `pool_ctl <pool> permit --user B` / `--all` | owner, admins | every currently held job of B, or every held job |
+| `pool_ctl <pool> deny <job> [--reason ...]` | owner, admins, submitter | held → `inbox/done` with the reason; B sees it in the enqueue result |
+| `pool_ctl <pool> set hold_foreign_jobs=0` | owner, admins | new foreign jobs go straight to the queue (still sanitized). **Already-held jobs stay held**; `status` lists them with a `permit --all` hint, so switching the flag off never launches a backlog by surprise. |
+| `pool_ctl <pool> set foreign_auto_permit=B,C` | owner, admins | standing permit for named users: the flag stays on for everyone else |
+
+### 10.6 Who may steer what
+
+Request ops are authorized by the monitor (`st_uid`). Commands that write files directly become
+owner-only through the ACL, and `pool_ctl` refuses them up front with a clear message.
+
+| op | owner / admin | submitter (own jobs) | other group member |
+|---|---|---|---|
+| `status`, `queue`, `doctor` | yes | yes | yes |
+| `cancel`, `replace`, `deny` | any job | yes | no |
+| `preempt` (becomes a request op; today a direct `runs/<rid>/preempt` marker) | any job | yes | no |
+| `permit`, `set`, `exclude`, `readmit`, `pin`, `hold`, `protect`, `freeze`, `shrink`, `park`, `promote`, `drain`, `close`, `open`, `adopt`, `attach`, `secure` | yes | no | no |
+
+### 10.7 `run_autoexp.py --pool` as a non-owner
+
+- **Never becomes the pool's monitor** (`pool.json owner.uid != os.getuid()`): it prints "queued in
+  A's pool; scheduled when A's monitor runs". It also never calls `prepare_pool_host` on someone
+  else's pool.
+- **Client-side preflight** before writing to the inbox, so B learns about problems before A's
+  monitor rejects:
+  - workdir, template and container image are group-readable;
+  - log and output dirs are group-writable (or have a group ACL);
+  - warnings for `~`, `$HOME`, `$USER` and `/home/...` paths, and for B's own `users/<B>/` dirs
+    without group write.
+- Writes the inbox file atomically (dot-prefixed tmp, then rename) and waits for
+  `inbox/done/<file>.result.json`, as `_await_result` does for requests (`--no-wait` skips the wait).
+  It then prints `queued <job_id>`, `held (awaiting permit by <owner>)` or `rejected: <why>`.
+
+### 10.8 A foreign run's environment
+
+It runs as A. Things to be aware of:
+
+- `$USER`, `$HOME`, `~/.cache`, HF / Triton caches and W&B credentials are **A's**.
+- `squeue --me` and `scancel -u $USER` inside the job act on **A's** jobs. Watchdog-style helpers
+  that cancel by user must not run inside foreign jobs.
+- The supervisor exports `AUTOEXP_SUBMITTED_BY=<user>` into the step.
+- Files are created as A. With the `hybrid_nucleus` setgid + default ACL they stay group-writable, so
+  B can use and delete them. A user-level quota would count them against A; MN5 scratch quota is
+  per group.
+- Slurm accounting and fair-share see A's user on the host's account.
+- `ledger.tsv` gets a submitter column, so GPU-h per submitter can be summed for the campaign budget.
+
+### 10.9 Config
+
+```yaml
+pool_host:
+  foreign_submitters: ""      # "" = owner only (today's behaviour); "@group"; or "userb,userc"
+  hold_foreign_jobs: true     # foreign jobs wait in inbox/held until `pool_ctl permit`
+  foreign_auto_permit: ""     # users whose jobs skip the hold
+  foreign_max_priority: 60    # clamp for foreign pool_priority; permit --priority overrides
+  pool_admins: ""             # users treated as the owner for steering (plus ACL rwx)
+```
+
+All of these are `PoolHostConfig` fields, live through `pool_ctl set` (as today). `owner` is written
+into `pool.json` at creation, and `create_or_update_pool` refuses an update from a different uid.
+
+---
+
+## 11. Overall implementation plan
+
+Order:
+
+1. read-only diagnostics;
+2. the ingest path, which multi-user and the job model both build on;
+3. job identity and durable control;
+4. the scheduler changes, in order of value (placement, then reservation, then preemption).
+
+Every phase ships with a regression test in `tests/pool/` (fakeslurm harness) that replays the log
+signature of a real failure. Multi-user tests inject the file owner through a `file_uid(path)` seam,
+because tests cannot change uid.
+
+| phase | scope | main files | acceptance test |
+|---|---|---|---|
+| **P0** diagnostics + writer fix | `pool_ctl doctor` (read-only, §3.3); the run-level `EXCLUDE` holds only the run's own nodes ∩ allocation, and `add_run_exclude` rewrites the key (§9 row 4.4.1); `status` shows monitor age and record count | `scripts/pool_ctl.py`, `pool.py` (`add_run_exclude`, `_exclude_list` use in `submit`) | `doctor` on a fixture with two `EXCLUDE=` lines and a stale `info.env` reports both; a re-rendered run never carries fleet-list nodes outside its host |
+| **P1** inbox ingest + multi-user | `inbox/` for **every** enqueue (owner too: job id assignment and the one-live-record check move into the monitor); `owner` in `pool.json`; §10.4 ingest with sanitizer; `hold_foreign_jobs`, `permit`, `deny`, `foreign_*` settings; request authorization by `st_uid`; non-owner `run_autoexp` path (§10.7); `pool_ctl secure`; submitter in `status` and `ledger.tsv`; `AUTOEXP_SUBMITTED_BY` | `orchestrator.py` (`enqueue_into_pool` → inbox), `pool.py` (`PoolHostConfig`, `create_or_update_pool`, new `_ingest`, `_process_requests` authorization), `scripts/run_autoexp.py`, `scripts/pool_ctl.py`, `scripts/pool/supervisor.sh` (export + ledger column) | a foreign job is held with no run dir and no events evaluated; `permit` by the owner queues it; a `permit` request written by a foreign uid is refused; with `hold_foreign_jobs=0` it queues directly; the sanitizer rejects `pool_role` and clamps the priority; a non-owner `run_autoexp` does not start a monitor; an unwritable log dir → `rejected: <dir>`; a foreign `cancel` of the owner's job is refused |
+| **P2** job identity + durable control | job key `(submitter, singleton-or-name)`; `<pools>/_jobs/<key>/control/{cancel,hold,protect}`; `cancel --job` with tombstone, `replace`, `status --job`; `reconcile` on monitor start; `mkdir` monitor lock; fast request poll (§9 row 7.1) | `pool.py`, `loop.py` (submit refuses a tombstoned job), `scripts/pool_ctl.py`, `orchestrator.py` (lock) | killing and restarting the monitor does not resurrect a cancelled job; a submit leaves exactly one live record (11-24: `_q2 … _q18`); a cancel in p264 also stops the job's copy in another pool |
+| **P3** placement ≠ attempt | the supervisor keeps an unplaceable run PENDING with `placement` (no `rc`, no new rid); the monitor stops counting `insufficient_nodes`; fault classification §4.2; backoff | `scripts/pool/supervisor.sh`, `loop.py:425-460`, `pool.py` | a 256-node job against 255 usable nodes logs once and creates **no** run dir (11-24: one every 34 s) |
+| **P4** reservation | reserve N nodes for the highest-priority waiting run; largest-first launch within a host; `hold` on eviction against the 2-second refill | `pool.py` (assignment), `supervisor.sh` (launch order) | an eval cannot take a node the main run needs (11-24, 10-31) |
+| **P5** preemption | §6.2 predicate (`margin ≥ 100`, `feasible_after_evict`, lost-work budget) applied to **all three** paths: `pool_ctl preempt`, singleton supersede, handover; `protect` | `pool.py` (`_claim_singleton`, `_handover_check`), `pool_ctl.py` | the main run preempts an eval and starts; an evictor never preempts the run it is placing; a protected job is never preempted |
+| **P6** autoexclude | §5.1 attribution table; `readmit` with a single-node probe (§5.4, fleet-normal IB) | `pool.py` (`scan_pool_run`), `pool_ctl.py` | `port active(9)` and `FileNotFoundError` exclude nothing; a NaN excludes exactly its node |
+
+**Rollout notes per phase:**
+
+- **P0** is read-only plus one writer change, and is safe on live pools.
+- **P1 and P2** are monitor-side. They take effect at the next **monitor** restart, which is pool
+  state, not Slurm.
+- **P3 and P4 change `supervisor.sh`.** A supervisor runs the code of the snapshot its host started
+  from, so held hosts keep the old behaviour for up to their 3-day wall clock. The monitor has to work
+  with both supervisor versions until every host has rotated.
+- **P1's inbox switch has to be compatible.** For one release the monitor also accepts records
+  written directly into the session (an old snapshot's `run_autoexp`), and treats them as the owner's.
+
+---
+
+## 12. Migration without breaking running jobs
+
+- Everything above is **pool state** (and filesystem ACLs for `pool_ctl secure`), not Slurm. No job
+  is edited, requeued or resized (AGENTS.md).
 - New commands land behind `pool_ctl --experimental` first; `doctor` is read-only and safe from day one.
-- `reconcile` runs on monitor start only, so a rollout needs a monitor restart — which is exactly the
+- `reconcile` runs only at monitor start, so a rollout needs a monitor restart. That is exactly the
   case the `control/cancel` tombstones must survive.
 - Keep the current scripts (`supervise_main.sh`, `reset_pool_and_start.sh`, `dedupe_meta.sh`) as
-  documented workarounds until P2/P3 land; each has a single-instance lock and a "never evict the run
+  documented workarounds until P3/P4 land. Each has a single-instance lock and a "never evict the run
   you are placing" guard.
+- **Multi-user rollout:**
+  1. sync the code (`sync_to_marenostrum.sh`) and restart the pool's monitor;
+  2. run `pool_ctl <pool> secure` (dry-run first; it prints the ACL changes);
+  3. `pool_ctl <pool> set foreign_submitters=<colleague>` with `hold_foreign_jobs=true`;
+  4. the colleague enqueues a 1-node smoke; check `status` → `permit` → it runs, and its outputs are
+     group-writable;
+  5. only then widen `foreign_submitters` or switch the hold off.
 
 ---
 
-## 11. Open questions
+## 13. Open questions
 
 1. **Value, not only priority.** Priority says who *should* win; progress says who *should not* be
    killed. The eval harness has per-item progress; exposing it would make `feasible_after_evict` and
@@ -351,10 +579,19 @@ Each phase ships with a test that replays the corresponding log signature from t
    capacity oracle (`doctor` should run it on demand).
 4. **Monitor placement.** The monitor runs on a login node that can disappear; `control/*` markers make
    that survivable, but the *supervisor* (host side) also needs to honour them.
+5. **Which colleagues, which pools?** `foreign_submitters` is per pool. Should anyone be a
+   `pool_admin` (steer and permit), or only a submitter?
+6. **Budget per submitter.** Should a foreign user get a GPU-h cap (`foreign_gpu_h_limit`, summed from
+   the ledger) on top of the hold, given the campaign budget?
+7. **Account membership.** A foreign run spends the host's account even when B is not a member of it
+   (e.g. `cns144`). Is that acceptable for every account the pools use, or should `foreign_submitters`
+   be checked against the account's members (`sacctmgr show assoc`)?
+8. **ACL tightening.** Today every group member can write pool state. Does any other user (not an
+   agent running as `eit847786`) rely on that before `pool_ctl secure` takes it away?
 
 ---
 
-## 12. One-paragraph summary
+## 14. One-paragraph summary
 
 Treat a training job as a first-class object with a durable `cancel`/`protect`/`hold` marker, one live
 record, a state machine, and a policy; compute capacity from the **live** allocation minus a **single
@@ -362,4 +599,8 @@ merged** exclusion set and refuse to act when it does not fit; never count a pla
 restart; never launch small runs into capacity a higher-priority run has reserved; only preempt when
 the priority margin is at least 100 **and** the eviction actually makes the request feasible **and** the
 victim loses little work; attribute node faults only to faults that name a node; and make every state
-change one poll long.
+change one poll long. Every enqueue goes through a pool **inbox** that the owner's monitor ingests: it
+authenticates the submitter by file owner, sanitizes foreign metadata, holds foreign jobs until
+`permit` (a flag that can be switched off), and never lets a non-owner start a monitor or change pool
+state. A foreign run still runs the colleague's code as the owner, so `permit` gates resources, not
+trust.
