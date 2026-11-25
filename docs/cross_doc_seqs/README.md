@@ -291,9 +291,18 @@ base (no pool holds two units of a class); higher ranks go to random group bound
 sequence holds two units of a class. Groups are chained leaves of one coarse cluster up to `--group-tokens`
 131072 (a cluster's short last group joins the one before). `stats.json` records `group_runs_per_seq`,
 `group_run_tokens_weighted_mean`, `tokens_in_group_runs_ge_32k`. `--copy-pools 0 --group-tokens 0` reproduce
-the old plans (test `test_global_single_window_plan[gfake_spread]`). Built from 61,000 on (user's go 2026-11-25:
-switch the main run at 61k): chains `cds_windows_p0..p5` on c136 host003 (61k / 71k / 81k first), from snapshot
-`autoexp_cdspools`.
+the old plans (test `test_global_single_window_plan[gfake_spread]`). Built from 61,000 on (user's go 2026-11-25: switch the main run at 61k), see below.
+
+**Copy-pool plans built (2026-11-25/26, c136 host003 from 20:47):** first round `q3e128p_g` (superseded): 61k was
+built with `q3e128` embeddings, which start at 63k (20 % of its documents got random vectors; coherence 0.51), and
+the leftover copies (rank > 8: 8.7M per window, mostly giant duplicate classes) were placed at random group
+boundaries: ~700 units per window kept sharing a sequence with their class, assembly 2,000 s. Fixed (89fca42a:
+`place_copies` with several units of a class in the order and group boundaries as the only insertion points; the
+assign stage refuses > 0.1 % documents without an embedding) and rebuilt as **`q3e128p2_g`** with `q3e128mix`.
+Every window: **2.4 group segments per sequence, token-weighted 53.5k tokens, 83.7 % of tokens in segments >= 32k**,
+0 copies sharing a sequence, 0 forced, coherence 0.23 -> **0.63** (q3e128_g: 0.54), `checkplan` 0 failures,
+assembly ~870 s. Configs `v4b_learned_fix_mn5` / `v4b_learned_cds_mn5` point at q3e128p2 from 61,000 (5b9ce1cd);
+the main run switches at a restart from ckpt 61,000.
 
 **Embeddings 63k → end** (`q3e128`, 128-dim, projects quota):
 - **complete 2026-11-22 20:59**: all 1,738 chunks 63,000-236,733 (0 failed); with `q3e256` 48,500-63,000 the whole rest of the run is embedded. One-node chunk jobs on c136 host005 (up to 136 at a time, ~55 min per chunk), paused 15:47-18:20 for the t24 branch.
