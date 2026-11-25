@@ -23,10 +23,15 @@ aux:
   end: 53200
   start_iter: iter_0053000
   kv_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116
-  fix_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix
-  surgery: ${aux.fix_root}/surgery
+  fix_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix95
+  # the 0.80-cap arms' checkpoints; the new arms only read them
+  surgery: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix/surgery
 
 backend:
+  env:
+    # the base caps PyTorch at 0.80 (50.63 GiB); the 8-node peak is 52.1 GiB. 0.95 = 60.1 GiB
+    # leaves ~2.4 GiB non-PyTorch (NCCL/MoonEP) inside the 63.29 GiB node.
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.95"
   megatron:
     load: ${aux.surgery}/fix/ckpt
     ckpt_step: ${aux.start}
