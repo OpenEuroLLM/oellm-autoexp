@@ -61,7 +61,8 @@ def test_a_partial_section_keeps_that_sections_defaults(tmp_path):
     # the grouped harnesses have their own defaults
     assert (s.lighteval.engine.tp, s.lighteval.engine.max_model_length, s.lighteval.max_rows) == (4, 32768, 12)
     assert s.evalchemy.engine.max_model_length is None
-    assert s.evalchemy.exclude_tasks == ["LiveCodeBench"]
+    # LiveCodeBench is enabled: patch_mn5_stage.py maps its question loading in-process
+    assert s.evalchemy.exclude_tasks == []
 
 
 def test_set_overrides_parse_their_values_as_yaml(tmp_path):
@@ -122,7 +123,7 @@ def test_full_plan_covers_every_row_once(tmp_path):
     assert {i.split("@")[0] for i, _ in plan.lm_items} == lm
     grouped = [r.name for u in plan.units for r in u.rows]
     assert sorted(grouped) == sorted(r.name for r in rows if r.harness != "lm-eval-harness")
-    assert not any("LiveCodeBench" in n for n in grouped)
+    assert any("LiveCodeBench" in n for n in grouped)
     le = [u for u in plan.units if u.kind == "lighteval"]
     assert len(le) == 7 and all(len(u.rows) <= 12 for u in le)
     assert sum(u.kind == "lm_eval_session" for u in plan.units) == 10
@@ -275,6 +276,15 @@ def test_apptainer_runtime_for_pools_on_other_clusters(tmp_path):
     jup = _spec(tmp_path, {"runtime": {"kind": "apptainer", "images": images,
                                        "require": {"lm-eval-harness": {"lm_eval": "0.4.12"}}}})
     assert launch.runtime(jup, plan).require == {"lm-eval-harness": {"lm_eval": "0.4.12"}}
+
+
+def test_local_runtime_sets_nltk_data(tmp_path):
+    """The node-local worker needs NLTK_DATA or ifeval/RULER re-download punkt_tab every unit."""
+    spec = _spec(tmp_path)
+    _export_job, plan, _pools = launch.build(spec)
+    rt = launch.runtime(spec, plan)
+    assert rt.kind == "local"
+    assert rt.env["NLTK_DATA"] == f"{spec.paths.hybrid_env}/nltk_data"
     with pytest.raises(SpecError, match="runtime.require: unknown harness"):
         _spec(tmp_path, {"runtime": {"require": {"lm_eval": {"lm_eval": "0.4.13"}}}})
 
