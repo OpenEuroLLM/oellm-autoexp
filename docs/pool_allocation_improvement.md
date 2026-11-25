@@ -576,6 +576,9 @@ because tests cannot change uid.
   written at submit) ∪ the host's dead nodes ∪ its removed nodes (the latter only for
   `USE_EXCLUDED_NODES` runs). It is written as one line, and older doubled lines are repaired
   (`set_run_exclude`). `pool_ctl doctor [--no-slurm]` is read-only and exits 1 on a problem.
+- **P1 follow-ups (user review, 2026-11-25):** a foreign job held longer than `held_warn_s` (1 h)
+  is a PROBLEM in the health check and in `doctor`, logged once. Switching the hold off leaves held
+  jobs held; `permit --all` / `--user` releases them whenever the owner chooses.
 - **P1:** as in §10, except that `secure` is optional, login-node commands are listed rather than
   gated, and the owner's own enqueues stay direct.
 - **P2:**
