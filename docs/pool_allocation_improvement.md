@@ -347,7 +347,8 @@ command**, and the flag can be switched off later.
 
 ### 10.1 What happens today when user B enqueues into A's pool
 
-Traced on `mn5_pool_p264` (permissions read on MN5, 2026-11-25):
+Traced on `mn5_pool_p264`; `mn5_pool_c136` (cns143) has the same layout. Permissions were read
+on MN5 on 2026-11-25:
 
 ```
 /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264        drwxrws---+  group ehpc533 rwx (default ACL)
@@ -374,7 +375,8 @@ Traced on `mn5_pool_p264` (permissions read on MN5, 2026-11-25):
 ### 10.2 Trust boundary
 
 - A foreign run executes **B's code** (B's workdir, template and container) **as A**, on A's
-  allocation, charged to the host's account (e.g. `cns144`, even if B is not a member of it). B can
+  allocation, charged to the host's account. By default B must be a member of that account
+  (`foreign_account_check`, §10.4 step 2b); the owner can switch the check off per pool. B can
   change the code in their workdir after a permit. `permit` therefore means "I accept this job onto my
   allocation" (resources, priority, slot). It is **not a sandbox**.
 - What the pool can enforce:
@@ -418,6 +420,17 @@ For each `inbox/*.job.json` (dotfiles are in-flight writes and are skipped):
    - Anyone else must match `foreign_submitters` (`""` = nobody, `@group` = any member of the pool
      dir's group, or a list of users). Otherwise the job is rejected.
 2. **Fits:** parse the record and run `check_fits_host` again, as A.
+2b. **Account membership** (`foreign_account_check`, default on): B must be a member of every
+   Slurm account the job could run on (the host definition's account plus `host_accounts`).
+   - Methods, tried in order: `sacctmgr show assoc user=B account=X`, when the cluster lets A see it;
+     then the Unix group named after the account (`getent group X`).
+   - MN5 (checked 2026-11-25): `PrivateData=accounts,...,users` hides other users' associations
+     from sacctmgr. The accounts are Unix groups, though (`cns143` lists its 4 members, `cns144`
+     10), so the group method decides there.
+   - If no method can decide, the job is rejected with a message naming
+     `pool_ctl set foreign_account_check=false`.
+   - In a pool with several host accounts, a foreign job is placed only on hosts whose account B
+     belongs to.
 3. **Sanitize** foreign metadata:
 
    | key | foreign value |
@@ -488,12 +501,15 @@ It runs as A. Things to be aware of:
 - `$USER`, `$HOME`, `~/.cache`, HF / Triton caches and W&B credentials are **A's**.
 - `squeue --me` and `scancel -u $USER` inside the job act on **A's** jobs. Watchdog-style helpers
   that cancel by user must not run inside foreign jobs.
-- The supervisor exports `AUTOEXP_SUBMITTED_BY=<user>` into the step.
+- The monitor renders `export AUTOEXP_SUBMITTED_BY=<user>` into the run's `step.sh`. This is not
+  a supervisor change, so it also works on hosts that are already running (§11 P1).
 - Files are created as A. With the `hybrid_nucleus` setgid + default ACL they stay group-writable, so
   B can use and delete them. A user-level quota would count them against A; MN5 scratch quota is
   per group.
 - Slurm accounting and fair-share see A's user on the host's account.
-- `ledger.tsv` gets a submitter column, so GPU-h per submitter can be summed for the campaign budget.
+- The submitter is recorded in `run.json` (`submitted_by`) and in a monitor-written ledger line
+  (`queued <rid> by <user>`), so GPU-h per submitter can be summed from the ledger. There is no
+  GPU-h cap for foreign users (user, 2026-11-25).
 
 ### 10.9 Config
 
@@ -503,6 +519,8 @@ pool_host:
   hold_foreign_jobs: true     # foreign jobs wait in inbox/held until `pool_ctl permit`
   foreign_auto_permit: ""     # users whose jobs skip the hold
   foreign_max_priority: 60    # clamp for foreign pool_priority; permit --priority overrides
+  foreign_account_check: true # submitter must be a member of the host account(s); false = allow spending
+                              # in accounts they are not a member of (explicit owner decision)
   pool_admins: ""             # users treated as the owner for steering (plus ACL rwx)
 ```
 
@@ -527,7 +545,7 @@ because tests cannot change uid.
 | phase | scope | main files | acceptance test |
 |---|---|---|---|
 | **P0** diagnostics + writer fix | `pool_ctl doctor` (read-only, §3.3); the run-level `EXCLUDE` holds only the run's own nodes ∩ allocation, and `add_run_exclude` rewrites the key (§9 row 4.4.1); `status` shows monitor age and record count | `scripts/pool_ctl.py`, `pool.py` (`add_run_exclude`, `_exclude_list` use in `submit`) | `doctor` on a fixture with two `EXCLUDE=` lines and a stale `info.env` reports both; a re-rendered run never carries fleet-list nodes outside its host |
-| **P1** inbox ingest + multi-user | `inbox/` for **every** enqueue (owner too: job id assignment and the one-live-record check move into the monitor); `owner` in `pool.json`; §10.4 ingest with sanitizer; `hold_foreign_jobs`, `permit`, `deny`, `foreign_*` settings; request authorization by `st_uid`; non-owner `run_autoexp` path (§10.7); `pool_ctl secure`; submitter in `status` and `ledger.tsv`; `AUTOEXP_SUBMITTED_BY` | `orchestrator.py` (`enqueue_into_pool` → inbox), `pool.py` (`PoolHostConfig`, `create_or_update_pool`, new `_ingest`, `_process_requests` authorization), `scripts/run_autoexp.py`, `scripts/pool_ctl.py`, `scripts/pool/supervisor.sh` (export + ledger column) | a foreign job is held with no run dir and no events evaluated; `permit` by the owner queues it; a `permit` request written by a foreign uid is refused; with `hold_foreign_jobs=0` it queues directly; the sanitizer rejects `pool_role` and clamps the priority; a non-owner `run_autoexp` does not start a monitor; an unwritable log dir → `rejected: <dir>`; a foreign `cancel` of the owner's job is refused |
+| **P1** inbox ingest + multi-user | `inbox/` for **every** enqueue (owner too: job id assignment and the one-live-record check move into the monitor); `owner` in `pool.json`; §10.4 ingest with sanitizer; `hold_foreign_jobs`, `permit`, `deny`, `foreign_*` settings; `foreign_account_check`; request authorization by `st_uid`; non-owner `run_autoexp` path (§10.7); `pool_ctl secure`; submitter in `run.json`, `status` and a monitor ledger line; `AUTOEXP_SUBMITTED_BY` rendered into `step.sh`. **No `supervisor.sh` change**, so running pools can be repurposed with a monitor restart. | `orchestrator.py` (`enqueue_into_pool` → inbox), `pool.py` (`PoolHostConfig`, `create_or_update_pool`, new `_ingest`, `_process_requests` authorization, `render_step_script`), `scripts/run_autoexp.py`, `scripts/pool_ctl.py` | a foreign job is held with no run dir and no events evaluated; `permit` by the owner queues it; a `permit` request written by a foreign uid is refused; with `hold_foreign_jobs=0` it queues directly; the sanitizer rejects `pool_role` and clamps the priority; a submitter outside the host's account group is rejected, and accepted with `foreign_account_check=false`; a non-owner `run_autoexp` does not start a monitor; an unwritable log dir → `rejected: <dir>`; a foreign `cancel` of the owner's job is refused |
 | **P2** job identity + durable control | job key `(submitter, singleton-or-name)`; `<pools>/_jobs/<key>/control/{cancel,hold,protect}`; `cancel --job` with tombstone, `replace`, `status --job`; `reconcile` on monitor start; `mkdir` monitor lock; fast request poll (§9 row 7.1) | `pool.py`, `loop.py` (submit refuses a tombstoned job), `scripts/pool_ctl.py`, `orchestrator.py` (lock) | killing and restarting the monitor does not resurrect a cancelled job; a submit leaves exactly one live record (11-24: `_q2 … _q18`); a cancel in p264 also stops the job's copy in another pool |
 | **P3** placement ≠ attempt | the supervisor keeps an unplaceable run PENDING with `placement` (no `rc`, no new rid); the monitor stops counting `insufficient_nodes`; fault classification §4.2; backoff | `scripts/pool/supervisor.sh`, `loop.py:425-460`, `pool.py` | a 256-node job against 255 usable nodes logs once and creates **no** run dir (11-24: one every 34 s) |
 | **P4** reservation | reserve N nodes for the highest-priority waiting run; largest-first launch within a host; `hold` on eviction against the 2-second refill | `pool.py` (assignment), `supervisor.sh` (launch order) | an eval cannot take a node the main run needs (11-24, 10-31) |
@@ -557,13 +575,22 @@ because tests cannot change uid.
 - Keep the current scripts (`supervise_main.sh`, `reset_pool_and_start.sh`, `dedupe_meta.sh`) as
   documented workarounds until P3/P4 land. Each has a single-instance lock and a "never evict the run
   you are placing" guard.
-- **Multi-user rollout:**
-  1. sync the code (`sync_to_marenostrum.sh`) and restart the pool's monitor;
-  2. run `pool_ctl <pool> secure` (dry-run first; it prints the ACL changes);
-  3. `pool_ctl <pool> set foreign_submitters=<colleague>` with `hold_foreign_jobs=true`;
-  4. the colleague enqueues a 1-node smoke; check `status` → `permit` → it runs, and its outputs are
-     group-writable;
-  5. only then widen `foreign_submitters` or switch the hold off.
+- **Multi-user rollout:** a general oellm-autoexp feature, repurposing running pools. The first
+  target is the cns143 pool `mn5_pool_c136` (user, 2026-11-25). Its layout is the same as p264's:
+  pool dir group rwx through the ACL, session dir group `r-x`.
+  1. **Code.** `sync_to_marenostrum.sh` to a new snapshot, then restart c136's monitor from it. That
+     is pool state only: the hosts, their Slurm jobs and running runs stay untouched. P1 changes no
+     `supervisor.sh` code, so running hosts need no rotation.
+  2. **ACLs.** `pool_ctl mn5_pool_c136 secure`, dry-run first; it prints the ACL changes.
+     Write access can go: nobody but `eit847786` relies on it in the MN5 pool dirs (user,
+     2026-11-25).
+  3. **Allow the colleague.** `pool_ctl mn5_pool_c136 set foreign_submitters=<colleague>`, with
+     `hold_foreign_jobs=true`. Leave `foreign_account_check` on: the colleague has to be in
+     `getent group cns143`, unless you switch the check off for this pool.
+  4. **Smoke test.** The colleague enqueues a 1-node smoke **from a snapshot with the new
+     `run_autoexp`**. An old one fails harmlessly with PermissionError on the session dir. Then
+     `status` → `permit` → check that it runs and that its outputs are group-writable.
+  5. **Widen.** Only then add more submitters or switch the hold off.
 
 ---
 
@@ -579,15 +606,17 @@ because tests cannot change uid.
    capacity oracle (`doctor` should run it on demand).
 4. **Monitor placement.** The monitor runs on a login node that can disappear; `control/*` markers make
    that survivable, but the *supervisor* (host side) also needs to honour them.
-5. **Which colleagues, which pools?** `foreign_submitters` is per pool. Should anyone be a
+5. **Which colleagues, and admins?** `foreign_submitters` is per pool. Should anyone be a
    `pool_admin` (steer and permit), or only a submitter?
-6. **Budget per submitter.** Should a foreign user get a GPU-h cap (`foreign_gpu_h_limit`, summed from
-   the ledger) on top of the hold, given the campaign budget?
-7. **Account membership.** A foreign run spends the host's account even when B is not a member of it
-   (e.g. `cns144`). Is that acceptable for every account the pools use, or should `foreign_submitters`
-   be checked against the account's members (`sacctmgr show assoc`)?
-8. **ACL tightening.** Today every group member can write pool state. Does any other user (not an
-   agent running as `eit847786`) rely on that before `pool_ctl secure` takes it away?
+
+Decided 2026-11-25 (user):
+
+- **First pools:** the cns143 pools first (`mn5_pool_c136`), but the feature is general to
+  oellm-autoexp, not MN5-specific.
+- **No GPU-h cap** for foreign submitters. Usage is only recorded, per submitter, in the ledger.
+- **Spending in other accounts** is allowed when the owner switches `foreign_account_check` off for
+  the pool. The default checks membership (§10.4 step 2b).
+- **ACL tightening is safe:** no other user relies on write access to the MN5 pool dirs.
 
 ---
 
