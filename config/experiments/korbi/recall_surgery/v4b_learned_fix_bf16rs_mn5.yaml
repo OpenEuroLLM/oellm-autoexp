@@ -1,0 +1,26 @@
+# @package _global_
+# v4b main run, same job name / tree / rolling save, with the expert gradients reduce-scattered in bf16.
+# Prepared 2026-11-25 for the next interrupt of the main run (user: "We'd do this when we see another
+# interrupt on the main run"); swap procedure: cancel the automatic restart of the live entry, enqueue this
+# config from snapshot autoexp_v4bbf16 (scratchpad bf16rs_swap_on_crash.sh). Not enqueued yet.
+#
+# Why: the 64k step is held up by the backward's FSDP traffic, not by attention (v4b_speed_ab64 base, 64 nodes,
+# 18.0 s): the backward takes 13.2-13.4 s with the GPU 58-66 % busy, and the fp32 expert-gradient reduce-scatter
+# alone is 4.9-5.5 s of NIC time per step (424.7 M expert grads = 1.7 GB per GPU per MoE layer at one NDR200 per
+# GPU). Megatron-FSDP keeps two gradient buckets in flight, so the backward waits on that chain.
+# --megatron-fsdp-grad-comm-dtype bf16 --megatron-fsdp-grad-comm-dtype-experts-only (Megatron e7fdda9f1) halves
+# the expert buckets (~88 % of the reduce-scatter bytes) and keeps the dense buckets in fp32. Expected
+# -1.5 to -2.7 s per step at 64 nodes (unmeasured at the time of writing: v4b_ctx64_c136_mn5 gbf16x).
+#
+# Numerics: the ring sums in the wire dtype. Local simulation (heavy-tailed grads): 1.6-2.8 % relative error over
+# the 256 expert-DP ranks (cosine >= 0.9997), but up to 33 % over all 1024 ranks -- hence experts only. Main grads,
+# optimizer state and the checkpoint format stay fp32 / unchanged, so the run resumes from the same rolling save.
+# The snapshot also carries the exact radix-select page-selection threshold (Megatron bcffb0d1d, same lists).
+defaults:
+  - v4b_learned_fix_lowmem_mn5
+  - _self_
+
+backend:
+  megatron:
+    megatron_fsdp_grad_comm_dtype: bf16
+    megatron_fsdp_grad_comm_dtype_experts_only: true
