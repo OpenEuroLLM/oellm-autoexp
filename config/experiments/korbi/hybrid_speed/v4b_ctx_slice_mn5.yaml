@@ -15,9 +15,10 @@
 # attention kernels are 0.3-1.6 s (+0.3 s selection). Two arms test the levers on that:
 #   m64        the live settings, 64k x mbs 1 (gbs 32 = one micro-batch per GPU, as in the main run)
 #   m8         8k x mbs 8 (gbs 256): the same 64k tokens per GPU per step
-#   m64_gbf16x --megatron-fsdp-grad-comm-dtype bf16 on the expert buckets only (FSDP_GRAD_COMM_EXPERTS_ONLY=1,
-#              Megatron 07814e752; main grads / optimizer stay fp32). A numerics change -- speed first.
-#   m64_nolog  per-step MoE health logging off (round 2: -3.3 % at 64 nodes); for stacking with gbf16
+#   m64_gbf16x --megatron-fsdp-grad-comm-dtype bf16 --megatron-fsdp-grad-comm-dtype-experts-only (Megatron
+#              e7fdda9f1; main grads / optimizer stay fp32). A numerics change -- speed first.
+#   m64_nolog  per-step MoE health logging off: only a check of what the logging still costs after Megatron
+#              5c84e20fc (the user keeps the logging)
 #   r8prep     not a speed arm: builds the data cache of v4b_ctx64_c136_mn5's c8k arm (phase-2 blend at seq 8192,
 #              train_iters 60 x gbs 2048, eval_iters 1, no fixed validation set) on 8 nodes and exits after one
 #              step, so the 64-node arm does not wait 15-25 min for a cold index build.
@@ -134,7 +135,7 @@ sweep:
           backend.megatron.global_batch_size: 256
         - aux.variant: m64_gbf16x
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
-          backend.env.FSDP_GRAD_COMM_EXPERTS_ONLY: "1"
+          backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
         - aux.variant: m64_nolog
           backend.megatron.moe_per_layer_logging: false
           backend.megatron.moe_expert_viability_metrics: false
