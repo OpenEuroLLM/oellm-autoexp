@@ -171,7 +171,9 @@ def main() -> int:
     args = ap.parse_args()
 
     ours_dir = args.ours if os.path.isdir(args.ours) else os.path.join(EVAL_ROOT, args.ours)
-    ours = read_summaries(ours_dir) or read_results(ours_dir)
+    # summaries only cover the rows of the session that wrote them: merge instead of preferring
+    ours = read_results(ours_dir)
+    ours.update(read_summaries(ours_dir))
     if not ours:
         print(f"no results in {ours_dir}", file=sys.stderr)
         return 1
