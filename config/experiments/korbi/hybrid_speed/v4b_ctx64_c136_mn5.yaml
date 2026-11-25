@@ -12,11 +12,13 @@
 # 0.8-1.1 s (rank imbalance + per-step MoE logging).
 #
 #   base         the live settings (rerun on this snapshot, comparable to ab64 / r3 base)
-#   gbf16        --megatron-fsdp-grad-comm-dtype bf16: half the reduce-scatter bytes; the DP sum itself is done in
-#                bf16 (main grads, optimizer state stay fp32). Numerics change -- needs a gradient-error check and
-#                the user's go before the main run.
+#   gbf16x       --megatron-fsdp-grad-comm-dtype bf16 on the EXPERT buckets only (FSDP_GRAD_COMM_EXPERTS_ONLY=1,
+#                Megatron 07814e752): ~88 % of the reduce-scatter bytes halved. The ring sums in the wire dtype; a
+#                local simulation (heavy-tailed grads) gives 1.6-2.8 % relative error over 256 expert-DP ranks but up
+#                to 33 % over all 1024 ranks, so the dense buckets stay fp32. Main grads / optimizer stay fp32.
+#                Numerics change -- needs a gradient-error check and the user's go before the main run.
 #   nolog        per-step MoE health logging off (ab64 agg_nolog: -3.8 %)
-#   gbf16_nolog  both
+#   gbf16x_nolog both
 #   c8k          8k x mbs 8, gbs 2048: the same 64k tokens per GPU per step, everything else equal. Its data cache
 #                (seq 8192, 60 x 2048 samples) is prebuilt by v4b_ctx_slice_mn5's r8prep arm.
 #
@@ -29,7 +31,7 @@ defaults:
 aux:
   suite: v4b_ctx64
   variant: base
-  only: [base, gbf16, nolog, gbf16_nolog, c8k]
+  only: [base, gbf16x, nolog, gbf16x_nolog, c8k]
   moonep_lib: pylibs_moonep_e9e8238
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_ctx64
 
@@ -53,15 +55,17 @@ sweep:
     - type: list
       configs:
         - aux.variant: base
-        - aux.variant: gbf16
+        - aux.variant: gbf16x
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.env.FSDP_GRAD_COMM_EXPERTS_ONLY: "1"
         - aux.variant: nolog
           backend.megatron.moe_per_layer_logging: false
           backend.megatron.moe_expert_viability_metrics: false
           backend.megatron.moe_log_seq_aux_loss: false
           backend.megatron.log_timers_to_tensorboard: false
-        - aux.variant: gbf16_nolog
+        - aux.variant: gbf16x_nolog
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.env.FSDP_GRAD_COMM_EXPERTS_ONLY: "1"
           backend.megatron.moe_per_layer_logging: false
           backend.megatron.moe_expert_viability_metrics: false
           backend.megatron.moe_log_seq_aux_loss: false

@@ -15,8 +15,8 @@
 # attention kernels are 0.3-1.6 s (+0.3 s selection). Two arms test the levers on that:
 #   m64        the live settings, 64k x mbs 1 (gbs 32 = one micro-batch per GPU, as in the main run)
 #   m8         8k x mbs 8 (gbs 256): the same 64k tokens per GPU per step
-#   m64_gbf16  --megatron-fsdp-grad-comm-dtype bf16: half the reduce-scatter bytes (the DP sum is reduced in bf16;
-#              main grads / optimizer stay fp32). A numerics change -- speed first, then a gradient-error check.
+#   m64_gbf16x --megatron-fsdp-grad-comm-dtype bf16 on the expert buckets only (FSDP_GRAD_COMM_EXPERTS_ONLY=1,
+#              Megatron 07814e752; main grads / optimizer stay fp32). A numerics change -- speed first.
 #   m64_nolog  per-step MoE health logging off (round 2: -3.3 % at 64 nodes); for stacking with gbf16
 #   r8prep     not a speed arm: builds the data cache of v4b_ctx64_c136_mn5's c8k arm (phase-2 blend at seq 8192,
 #              train_iters 60 x gbs 2048, eval_iters 1, no fixed validation set) on 8 nodes and exits after one
@@ -32,7 +32,7 @@ aux:
   suite: v4b_ctx_slice
   variant: m64
   arm: ${aux.variant}
-  only: [m64, m8, m64_gbf16, m64_nolog, r8prep]
+  only: [m64, m8, m64_gbf16x, m64_nolog, r8prep]
   nodes: 8
   node_check: "off"
   moonep_lib: pylibs_moonep_e9e8238
@@ -132,8 +132,9 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.micro_batch_size: 8
           backend.megatron.global_batch_size: 256
-        - aux.variant: m64_gbf16
+        - aux.variant: m64_gbf16x
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.env.FSDP_GRAD_COMM_EXPERTS_ONLY: "1"
         - aux.variant: m64_nolog
           backend.megatron.moe_per_layer_logging: false
           backend.megatron.moe_expert_viability_metrics: false
