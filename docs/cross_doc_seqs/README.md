@@ -147,7 +147,7 @@ loading fails.
 | mode | cu_seqlens | use |
 | --- | --- | --- |
 | `doc` | one segment per document piece | semantic packing with document masking (control) |
-| `group` | one segment per run of pieces of the same leaf | related documents see each other, unrelated ones don't (transition) |
+| `group` | one segment per run of pieces of the same group (a leaf before 61k; chained leaves up to 128k tokens and copy pools from 61k) | related documents see each other, unrelated ones don't (transition) |
 | `none` | the whole sequence | full cross-document attention (target) |
 
 All three keep `--dataloader-inter-document-masking` on, so the model takes the same THD code path.
@@ -272,6 +272,28 @@ Switched on 2026-11-22 at checkpoint 51,000 (see the end of [Runs](#runs)). The 
 - 09:46: restarted on the last user-approved configuration, dense + plans 51k-71k + group + bundle (v4b_learned_cds_mn5 from autoexp_cdsbundle, p264.2108) from rolling 54,400: datasets from the bundle, `packing plans: 2 plans ... planned from 54400 to 71000`, 19.4 s/step. The pool's own retry of the sparse job (p264.2107, never assigned) was closed by hand (stop + rc), and a precautionary exclusion of as03r2b17 was undone: it left host009 with 255 usable nodes for the 256-node run.
 
 **All windows to the end of the run (2026-11-23):** 71,000 -> 236,733 in 17 more single windows (`cds_plan_windows_mn5`: chains of windows on 2 spare nodes of host009, `run_windows.sh`, work dirs on scratch removed after each passed checkplan; c136 chains cancelled when host005 was released). Plans are contiguous 51,000 -> 236,733: 19 windows, every one `checkplan` 0 failures, 0 forced copies, 0 copy conflicts, coherence 0.538-0.557 (from ~0.22), 150.3M planned sequences from 61k. `plan/q3e128_all` links the 18 windows from 61k. `v4b_learned_cds_mn5` loads a horizon (now 51,000 -> 91,000): every rank and dataloader worker copies each plan's sample index into a lookup table (~28 B per planned sample), so all 19 at once would cost ~4.5 GB per process; move the horizon at a restart.
+
+**Group mode was short: copies cut the groups (2026-11-25).** Measured on 20,000 random sequences of the plans
+51k / 61k / 151k (same numbers): in `group` mode a 64k sequence had **15.7 cu_seqlens segments, token-weighted
+17.7k tokens (median 12.4k), 16 % of tokens in segments >= 32k** (doc mode: 62.9 segments, 7.4k). Cause: the copies
+(repeats + near duplicates, 11 % of units, **21 % of tokens**) were spread over the semantic order as one group
+each (`place_copies`), so they cut ~6 leaves per sequence into pieces that cannot see each other; leaves were also
+only ~32k tokens. Simulated on the 61k plan: copies not cutting -> 2.6 segments, 40.8k; plus 4 chained leaves per
+group -> 1.4 segments, 57.4k, 90 % of tokens in >= 32k segments. At the kernel level a group end is a cu_seqlens
+boundary (varlen attention cut, CKDA recurrence + short convs restart, Engram n-grams and MTP shifts stop at it,
+positions restart -- irrelevant with `--position-embedding-type none`); documents inside a group are only separated
+by their BOS token. Speed: ~169 of a step's 1,024 sequences are one document filling 64k, so every attention layer's
+slowest rank already pays full 64k attention; longer groups should cost little (to be checked at the switch).
+
+**Fix: copy pools + 128k-token groups (`build_plan_global.py` defaults since f9777ddf; plans `q3e128p_g<start>`):**
+copies of rank r <= `--copy-pools` 8 (the r-th copy of their class) form pool r, ordered and grouped like the
+base (no pool holds two units of a class); higher ranks go to random group boundaries and are moved on until no
+sequence holds two units of a class. Groups are chained leaves of one coarse cluster up to `--group-tokens`
+131072 (a cluster's short last group joins the one before). `stats.json` records `group_runs_per_seq`,
+`group_run_tokens_weighted_mean`, `tokens_in_group_runs_ge_32k`. `--copy-pools 0 --group-tokens 0` reproduce
+the old plans (test `test_global_single_window_plan[gfake_spread]`). Built from 61,000 on (user's go 2026-11-25:
+switch the main run at 61k): chains `cds_windows_p0..p5` on c136 host003 (61k / 71k / 81k first), from snapshot
+`autoexp_cdspools`.
 
 **Embeddings 63k → end** (`q3e128`, 128-dim, projects quota):
 - **complete 2026-11-22 20:59**: all 1,738 chunks 63,000-236,733 (0 failed); with `q3e256` 48,500-63,000 the whole rest of the run is embedded. One-node chunk jobs on c136 host005 (up to 136 at a time, ~55 min per chunk), paused 15:47-18:20 for the t24 branch.
