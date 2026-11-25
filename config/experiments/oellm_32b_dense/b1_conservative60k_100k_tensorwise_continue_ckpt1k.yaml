@@ -1,0 +1,43 @@
+# @package _global_
+#
+# ============================================================================
+# B1-conservative60k FROM 100k, TENSORWISE FP8: 1k persistent saves
+# ============================================================================
+# Replacement-job variant of b1_conservative60k_100k_tensorwise_continue. It
+# changes ONE thing: persistent checkpoints are written every 1000 steps instead
+# of 2000.
+#
+# NO FORK, NO SEED COPY: the variant is unchanged, so backend.megatron.save /
+# load and the checkpoint tree are the parent's own. The job resumes from
+# whatever latest_checkpointed_iteration.txt says at start time (today: the last
+# save of the running pool job), so a takeover at ~610k needs nothing copied --
+# the inherited seed stage sees the tracker and exits 0.
+#
+# Why 1000: a 12 h block ends wherever it ends, and the newest persistent save
+# can be up to 2000 steps behind (~2.4 h of 512-node time). Halving the interval
+# halves that loss.
+#
+# DISK: one persistent checkpoint is ~442 GiB. Keeping ALL of them from 610k to
+# 894k at 1k would be 284 saves ~ 125 TiB, against ~63 TiB at 2k, and the
+# fileset has ~37 TiB free. So save_retain_interval stays at 2000: every 1k save
+# is written (fine-grained resume), older ones are deleted, keeping the last plus
+# every 2000th -- the same footprint as the parent. Set
+# save_retain_interval: null to keep every 1k save (~125 TiB).
+#
+# The run stage's est_steps stays the parent's 782000 (894000 - 112000), so the
+# printed plan overstates the remaining work of a ~610k takeover; the run itself
+# still exits at exit_interval 894000.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_conservative60k_100k_tensorwise_continue_ckpt1k --dry-run
+defaults:
+  - b1_conservative60k_100k_tensorwise_continue
+  - _self_
+
+backend:
+  megatron:
+    # persistent saves every 1000 steps (parent: 2000)
+    save_interval: 1000
+    # ...but only every 2000th is retained, so the disk footprint matches the
+    # parent. null keeps all of them (~125 TiB over 284k steps).
+    save_retain_interval: 2000
