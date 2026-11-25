@@ -19,12 +19,14 @@ defaults:
   - _self_
 
 backend:
-  env:
-    # Release host RAM right before a persistent save (gc.collect + malloc_trim, env-gated in
-    # megatron/training/checkpointing.py). Harmless when the code has no hook; it is the cheap
-    # half of the OOM defence and costs a few seconds once per 1000 steps.
-    MEGATRON_GC_BEFORE_SAVE: "1"
   megatron:
+    # Release host RAM before every checkpoint save and before validation (gc.collect + malloc_trim,
+    # megatron/training/host_gc.py). CLI flags, not env vars: --cleanenv plus --env worked for the
+    # env var, but a flag cannot be lost in the container's environment at all.
+    # The 57000 and 59000 OOMs both hit at a 1000-step save, the 59000 one during the rolling save of
+    # that same iteration, which is why saves are covered and not only persistent ones.
+    gc_before_save: true
+    gc_before_val: true
     # Name the layer that first goes non-finite when a NaN loss fires: bad module outputs in reverse
     # (loss -> input), the origin module in forward order, and a reverse parameter scan, printed by
     # the failing rank only (megatron/training/nan_trace.py, --nan-trace). Counting hooks only.

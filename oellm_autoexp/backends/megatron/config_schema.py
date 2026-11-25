@@ -4483,6 +4483,9 @@ class MegatronConfig(ConfigInterface):
     # nonfinite, which scans weights and gradients at the diagnostics interval, this reports
     # at the moment of failure and includes the activations of the failing rank.
     nan_trace: bool = False
+    # gc.collect() + malloc_trim(0) before every checkpoint save / before validation
+    gc_before_save: bool = False
+    gc_before_val: bool = False
 
     # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains get
     # wd_mult=0 by default, so nothing opposes their drift; if they do go extreme the levers

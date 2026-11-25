@@ -6350,6 +6350,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "gc_before_save": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Run gc.collect() and malloc_trim(0) immediately before every checkpoint save.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "gc_before_val": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Run gc.collect() and malloc_trim(0) before validation.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "nan_trace": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -14749,6 +14765,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1.0,
+    ),
+    "gc_before_save": MegatronActionSpec(
+        option_strings=("--gc-before-save",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "gc_before_val": MegatronActionSpec(
+        option_strings=("--gc-before-val",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "nan_trace": MegatronActionSpec(
         option_strings=("--nan-trace",),
