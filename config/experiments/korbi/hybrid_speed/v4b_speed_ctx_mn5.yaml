@@ -68,6 +68,10 @@ backend:
     fixed_valid_data_path: null
     fixed_valid_seq_lengths: null
     mock_data: true
+    # 64k arms: 32 sequences over 32 data-parallel ranks -> mbs 1 (2.1M tokens/step).
+    # The 8k arms raise both to keep the same 2.1M tokens/step: 256 x 8192 = 32 x 65536.
+    global_batch_size: 32
+    micro_batch_size: 1
     eval_interval: 1000000
     # 1, not 0: the slice harness died in the final validation with eval_iters[0] on an empty list
     eval_iters: 1
@@ -119,7 +123,9 @@ sweep:
           backend.megatron.dataloader_inter_document_masking: false
           backend.megatron.seq_length: 8192
           backend.megatron.global_batch_size: 256
+          backend.megatron.micro_batch_size: 8
         - aux.variant: sparse8k
           backend.megatron.dataloader_inter_document_masking: false
           backend.megatron.seq_length: 8192
           backend.megatron.global_batch_size: 256
+          backend.megatron.micro_batch_size: 8
