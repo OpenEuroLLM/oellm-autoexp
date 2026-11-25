@@ -561,6 +561,17 @@ because tests cannot change uid.
 
 **Implemented 2026-11-25 (P0–P2), where it differs from the table:**
 
+- **P0 follow-ups (user review, 2026-11-25):**
+  - **Health check.** The monitor runs the cheap part of `doctor` (no SLURM calls) every
+    `health_check_s` (900 s; 0 = off). It writes `<pool>/health.txt`, logs each new PROBLEM
+    once, and `pool_ctl status` shows the result.
+  - **`doctor --probe [--hosts …] [--gpus N]`.** One `srun --overlap --mem=0` step per node (no
+    `--gres`, so busy nodes answer too). It checks the GPU count and the ACTIVE InfiniBand ports
+    against the host's most common count. It writes `<host>/doctor_probe.txt`, excludes nothing,
+    and skips frozen hosts.
+  - **Dead-node copy kept.** Dead and removed nodes stay copied into every run's `EXCLUDE`.
+    Health exclusions (bad GPU/NIC) are not copied, so `USE_EXCLUDED_NODES` runs (evals) keep
+    using those nodes.
 - **P0:** the run's `EXCLUDE` is recomputed at every assignment as `JOB_EXCLUDE` (the job's own list,
   written at submit) ∪ the host's dead nodes ∪ its removed nodes (the latter only for
   `USE_EXCLUDED_NODES` runs). It is written as one line, and older doubled lines are repaired
