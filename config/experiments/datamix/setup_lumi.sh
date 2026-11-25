@@ -130,6 +130,17 @@ info "and already has the tokenizer; a new dir starts empty (the tokenizer is do
 info "the eval datasets before each run)."
 ask "HF cache" "$d"; HF_DIR=$REPLY
 
+echo
+d=${HF_TOKEN_PATH:-$HOME/.cache/huggingface/token}
+info "HF token path (HF_TOKEN_PATH): where your Hugging Face token is. It is kept out of the HF"
+info "cache: a token there that others can't read makes their Hub calls fail. A token is optional"
+info "(the tokenizer and the eval datasets are public); 'hf auth login' saves one at this path."
+if [ -s "$d" ]; then info "Found a token at $d, so just accept it."
+else info "No token at $d: fine, Hub access is then anonymous. Accept it unless your token is elsewhere."; fi
+ask "HF token path" "$d"; TOKEN_PATH=$REPLY
+case $TOKEN_PATH in "$HF_DIR"/*) warn "$TOKEN_PATH is inside the HF cache; if the cache is shared, others' Hub calls fail" ;; esac
+[ "$TOKEN_PATH" = "$d" ] || { [ -s "$TOKEN_PATH" ] && ok "token found at $TOKEN_PATH" || warn "no token at $TOKEN_PATH"; }
+
 if [ -n "${DATAMIX_CONTAINERS:-}" ]; then d=$DATAMIX_CONTAINERS
 elif [ -r /scratch/$PROJECT/containers/$SIF_TRAIN ]; then d=/scratch/$PROJECT/containers
 elif [ -r /scratch/$DEFAULT_PROJECT/containers/$SIF_TRAIN ]; then d=/scratch/$DEFAULT_PROJECT/containers
@@ -150,6 +161,8 @@ export UV_CACHE_DIR=\$WORK/.cache/uv
 export UV_PYTHON_INSTALL_DIR=\$WORK/.local/share/uv/python
 # HF cache: tokenizer + eval datasets, read offline by the jobs
 export HF_HOME=$HF_DIR
+# your HF token (optional), kept out of the possibly shared HF_HOME
+export HF_TOKEN_PATH=$TOKEN_PATH
 # billed project (aux.account) and containers dir (aux.containers_dir), see datamix.yaml
 export DATAMIX_PROJECT=$PROJECT
 export DATAMIX_CONTAINERS=$CONTAINERS

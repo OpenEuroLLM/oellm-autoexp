@@ -58,6 +58,7 @@ Options: `--no-test` stops before the test. `--data PATH` and `--scales LIST` an
 |----------|---------|----------|
 | `WORK` | `/scratch/<project>/users/$USER` | `uv`, its caches, the eval env (`$HOME` has only 20 GB / 100k files) |
 | `HF_HOME` | `/scratch/<project>/cache` (shared) | Tokenizer and eval datasets; the jobs read them offline |
+| `HF_TOKEN_PATH` | `$HOME/.cache/huggingface/token` | Where your personal HF token is (step 3 asks for the path; the token is optional, `hf auth login` saves one there). Kept out of `HF_HOME`: a token in a shared cache that others can't read makes their Hub calls fail with `Permission denied: .../cache/token` |
 | `DATAMIX_PROJECT` | `project_465002530` | Billed project of all jobs (`aux.account` in `datamix.yaml`) |
 | `DATAMIX_CONTAINERS` | `/scratch/project_465002530/containers` | Where the three containers are (`aux.containers_dir`) |
 
@@ -176,6 +177,7 @@ The real runs use `standard-g` (training, 16 nodes) and `small-g` (conversion, e
 | `FATAL: Unable to build from artifacts/MegatronTrainingLumi_x86_64.sif: ... no such file or directory` | The old convert-container recipe; `artifacts/` is not in git. Use `setup_lumi.sh` (step 5) |
 | `could not use fakeroot: no mapping entry found in /etc/subuid` | `singularity build --fakeroot` doesn't work on LUMI; use `build_lumi_bridge_container.sh` |
 | `No such file or directory: '/hub/models--openeurollm--tokenizer-256k/refs/main'` | `HF_HOME` not set: `source ~/datamix_env.sh` |
+| `Permission denied: '/scratch/.../cache/token'`, then `There are multiple '...' configurations in the cache` | Someone's token is in the shared `HF_HOME`. Run the setup again (it adds `HF_TOKEN_PATH` to `~/datamix_env.sh`) and `source ~/datamix_env.sh` |
 | `Missing mandatory value: aux.data_path` / `aux.eval_task_groups` / `aux.name` | Set it in `chain-datamix.yaml` or on the command line ([Your own run](#your-own-run)) |
 | `sbatch: error: MaxSubmitJobsPerAccount` / `Job violates accounting/QOS policy` | Someone in the project had a `dev-g` job (limit: 1 per project). autoexp drops a rejected job; start the test again, it skips finished jobs |
 | An eval job can't find a dataset (`Couldn't reach ...`) | Its datasets weren't downloaded: run `prefetch_eval.sh` with the same config and overrides |
