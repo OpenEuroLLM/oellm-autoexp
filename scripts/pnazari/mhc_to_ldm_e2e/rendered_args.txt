@@ -1,0 +1,172 @@
+--activation-func-clamp-value 10.0
+--adam-beta2 0.95
+--disable-bias-linear
+--arch-metrics-interval 1
+--async-save
+--attention-dropout 0.0
+--attention-output-gate
+--bf16
+--ckda-branch-alpha-end 1.0
+--ckda-branch-alpha-hold 0
+--ckda-branch-alpha-ramp 0
+--ckda-branch-kv-source-layers 0 17 33 50 66 82
+--ckda-branch-m-ramp 0
+--ckda-branch-m-start 1.0
+--ckda-branch-start-iteration 35900
+--ckpt-assume-constant-structure
+--ckpt-format fsdp_dtensor
+--no-create-attention-mask-in-dataloader
+--cross-entropy-loss-fusion
+--data-cache-path /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/data_cache
+--dataloader-add-bos
+--dataloader-inter-document-masking
+--dataloader-prefetch-factor 4
+--dataloader-type cyclic
+--depth-memory-hidden-dim 128
+--depth-memory-impl cute
+--depth-memory-unwind
+--diag-clip-events
+--diag-layer-grad-norms
+--diag-norm-gains
+--diag-weight-stats
+--diagnostics-interval 1
+--distributed-timeout-minutes 45
+--embedding-wd-mult 0.0
+--engram-clip-grad 1.0
+--engram-clip-rownorm 7.0
+--engram-clip-rownorm-ramp-start 25000
+--engram-clip-rownorm-ramp-steps 1000
+--engram-clip-rownorm-start 13.0
+--engram-conv-prenorm
+--engram-gate-signed-sqrt
+--engram-hash-per-layer
+--engram-lr-mult 1.0
+--engram-ngram-orders 2 3 4
+--engram-num-heads 8
+--engram-sign-hash
+--engram-table-momentum-dtype bf16
+--engram-table-parallel dp
+--engram-table-rowwise-v
+--engram-table-size 100003
+--engram-token-map /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy
+--eval-global-batch-size 1024
+--eval-interval 100000
+--eval-iters 0
+--exclusive-self-attention
+--exit-interval 20
+--exit-on-missing-checkpoint
+--exit-signal SIGUSR2
+--exit-signal-handler
+--experimental-attention-variant complex_kda
+--expert-model-parallel-size 4
+--ffn-hidden-size 6144
+--fsdp-double-buffer
+--fsdp-fp8-param-gather experts
+--fused-qk-norm-rope
+--fused-residual-rmsnorm
+--fused-short-conv
+--gdn-fused-out-norm
+--global-batch-size 16
+--group-query-attention
+--hidden-dropout 0.0
+--hidden-size 2048
+--hybrid-layer-pattern "*ENLE*ELEN"
+--is-hybrid-model
+--kv-channels 256
+--kv-share-layers 10 27 44 62 79 96
+--kv-share-source-layers 0 18 35 53 70 87
+--liger-fused-linear-cross-entropy
+--liger-fused-linear-cross-entropy-chunk-size 2048
+--linear-beta-adam
+--linear-beta-max 2.0
+--linear-drop-qkv-silu
+--linear-num-value-heads 16
+--log-interval 1
+--log-throughput
+--log-timers-to-tensorboard
+--lr 0.00085
+--lr-decay-style constant
+--manual-gc
+--manual-gc-interval 100
+--max-position-embeddings 4096
+--megatron-fsdp-grad-comm-dtype fp32
+--megatron-fsdp-main-grads-dtype fp32
+--mhc
+--micro-batch-size 1
+--min-lr 0.00085
+--mlp-post-act-norm
+--no-mmap-bin-files
+--mock-data
+--moe-aux-loss-coeff 0.0001
+--moe-expert-post-act-norm
+--moe-expert-viability-metrics
+--moe-ffn-hidden-size 768
+--moe-flex-dispatcher-backend moonep
+--moe-flex-dispatcher-num-sms 64
+--moe-grouped-gemm
+--moe-log-seq-aux-loss
+--moe-per-layer-logging
+--moe-permute-fusion
+--moe-router-dtype fp32
+--moe-router-enable-expert-bias
+--moe-router-fusion
+--moe-router-load-balancing-type global_aux_loss
+--moe-router-quantile-balancing-ema 0.9
+--moe-router-score-function sigmoid
+--moe-router-topk 5
+--moe-router-wd-mult 0.0
+--moe-shared-expert-intermediate-size 768
+--moe-shared-expert-overlap
+--moe-token-dispatcher-type flex
+--muon-qkv-headwise
+--muown-expert-bound-interval 20
+--muown-expert-spectral-cap 80.0
+--muown-expert-spectral-cap-end 15.0
+--muown-expert-spectral-cap-ramp-start 9200
+--muown-expert-spectral-cap-ramp-steps 1875
+--muown-expert-spectral-cap-source forward
+--non-persistent-ckpt-type global
+--non-persistent-global-ckpt-dir /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ref/ckpt_rolling
+--normalization RMSNorm
+--num-attention-heads 16
+--num-dataset-builder-threads 32
+--num-experts 32
+--num-layers 104
+--num-query-groups 2
+--num-workers 8
+--optimizer muown_classical
+--output-z-loss-coeff 1e-05
+--overlap-grad-reduce
+--no-overlap-p2p-communication
+--overlap-param-gather
+--padded-vocab-size 262144
+--position-embedding-type none
+--post-act-norm-floor 1.0
+--profile-ranks 0
+--profile-step-end 53
+--profile-step-start 50
+--qk-layernorm
+--recompute-granularity full
+--recompute-method uniform
+--recompute-num-layers 2
+--rerun-mode disabled
+--residual-mixer-lr-mult 0.25
+--save /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ref/ckpt
+--save-interval 20
+--seq-length 4096
+--spec megatron.core.models.hybrid.hybrid_layer_specs hybrid_stack_spec
+--split 998,2,0
+--swiglu
+--tensorboard-dir /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ref/tb
+--tokenizer-model /gpfs/projects/ehpc533/users/korbip/data/tokenizers/tokenizer-256k-agent
+--tokenizer-type HuggingFaceTokenizer
+--train-iters 30
+--untie-embeddings-and-output-weights
+--use-distributed-optimizer
+--use-flash-attn
+--use-megatron-fsdp
+--use-persistent-ckpt-worker
+--v-block-learnable-gate
+--wandb-entity openeurollm-project
+--wandb-save-dir /gpfs/scratch/ehpc533/users/rluukkon/engram_bg_e2e/runs/ref/wandb
+--weight-decay 0.1

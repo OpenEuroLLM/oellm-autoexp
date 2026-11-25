@@ -1,0 +1,74 @@
+
+33 mixer tensors reset
+surgery: 4 hard links, 0 cross-device copies, 8 new file(s), 33 keys rewritten, 0 keys extended, 0 keys renamed, 33 tensor chunks
+wrote identity/ckpt/iter_0000020
+[   24.9s] write weights avg 2 sigmoid(b_post) per mixer: {"layers.0.mhc_attn_mixer": 0.9984, "layers.1.mhc_mlp_mixer": 1.0006, "layers.2.residual_scheme.mhc_mixer": 1.002, "layers.3.mhc_attn_mixer": 1.0017, "layers.4.mhc_mlp_mixer": 0.9991, "layers.5.mhc_attn_mixer": 1.0017, "layers.6.mhc_mlp_mixer": 0.9993, "layers.7.mhc_attn_mixer": 1.0014, "layers.8.mhc_mlp_mixer": 0.9995, "layers.9.mhc_attn_m
+[   24.9s] V layers folded (g_v): {5: 0.015485}
+[   24.9s] 5 items new or rewritten
+[   25.5s] surgery: 4 hard links, 0 cross-device copies, 4 new file(s), 5 keys rewritten, 0 keys extended, 0 keys renamed, 4 tensor chunks
+[   25.6s] read-back check passed; wrote surgery/ref_collapse/ckpt/iter_0000020
+[    9.3s] write weights avg 2 sigmoid(b_post) per mixer: {"layers.0.mhc_attn_mixer": 0.9984, "layers.1.mhc_mlp_mixer": 1.0006, "layers.2.residual_scheme.mhc_mixer": 1.002, "layers.3.mhc_attn_mixer": 1.0017, "layers.4.mhc_mlp_mixer": 0.9991, "layers.5.mhc_attn_mixer": 1.0017, "layers.6.mhc_mlp_mixer": 0.9993, "layers.7.mhc_attn_mixer": 1.0014, "layers.8.mhc_mlp_mixer": 0.9995, "layers.9.mhc_attn_m
+[    9.3s] V layers folded (g_v): {5: 0.015485}
+[    9.3s] 797 items new or rewritten, 24 LDM sites
+[   10.4s] surgery: 4 hard links, 0 cross-device copies, 8 new file(s), 797 keys rewritten, 0 keys extended, 0 keys renamed, 796 tensor chunks
+[   10.7s] read-back check passed; wrote surgery/ref/ckpt/iter_0000020
+[    8.4s] write weights avg 2 sigmoid(b_post) per mixer: {"layers.0.mhc_attn_mixer": 1.0, "layers.1.mhc_mlp_mixer": 1.0, "layers.2.residual_scheme.mhc_mixer": 1.0, "layers.3.mhc_attn_mixer": 1.0, "layers.4.mhc_mlp_mixer": 1.0, "layers.5.mhc_attn_mixer": 1.0, "layers.6.mhc_mlp_mixer": 1.0, "layers.7.mhc_attn_mixer": 1.0, "layers.8.mhc_mlp_mixer": 1.0, "layers.9.mhc_attn_mixer": 1.0, "layers.10.mhc
+[    8.4s] V layers folded (g_v): {5: 0.015485}
+[    8.4s] 5 items new or rewritten
+[    9.0s] surgery: 12 hard links, 0 cross-device copies, 4 new file(s), 5 keys rewritten, 0 keys extended, 0 keys renamed, 4 tensor chunks
+[    9.1s] read-back check passed; wrote surgery/identity_collapse/ckpt/iter_0000020
+[    9.0s] write weights avg 2 sigmoid(b_post) per mixer: {"layers.0.mhc_attn_mixer": 1.0, "layers.1.mhc_mlp_mixer": 1.0, "layers.2.residual_scheme.mhc_mixer": 1.0, "layers.3.mhc_attn_mixer": 1.0, "layers.4.mhc_mlp_mixer": 1.0, "layers.5.mhc_attn_mixer": 1.0, "layers.6.mhc_mlp_mixer": 1.0, "layers.7.mhc_attn_mixer": 1.0, "layers.8.mhc_mlp_mixer": 1.0, "layers.9.mhc_attn_mixer": 1.0, "layers.10.mhc
+[    9.0s] V layers folded (g_v): {5: 0.015485}
+[    9.0s] 797 items new or rewritten, 24 LDM sites
+[   10.2s] surgery: 12 hard links, 0 cross-device copies, 8 new file(s), 797 keys rewritten, 0 keys extended, 0 keys renamed, 796 tensor chunks
+[   10.6s] read-back check passed; wrote surgery/identity/ckpt/iter_0000020
+4043 template tensors: 0 missing, 0 shape / dtype differ, 0 unexpected extra
+ctrl_id exit 0
+collapse_id exit 0
+ldm_id exit 0
+ctrl exit 0
+collapse exit 0
+ldm exit 0
+== ctrl_id
+
+iteration       21 lm loss: 5.139083E-02 grad norm: 0.275 
+iteration       22 lm loss: 4.862913E-02 grad norm: 0.246 
+iteration       23 lm loss: 5.198865E-02 grad norm: 0.273 
+iteration       24 lm loss: 3.523092E-02 grad norm: 0.205 
+iteration       25 lm loss: 2.804743E-02 grad norm: 0.204
+== collapse_id
+
+iteration       21 lm loss: 5.143775E-02 grad norm: 0.278 
+iteration       22 lm loss: 4.868719E-02 grad norm: 0.248 
+iteration       23 lm loss: 5.213806E-02 grad norm: 0.275 
+iteration       24 lm loss: 3.534877E-02 grad norm: 0.207 
+iteration       25 lm loss: 2.812022E-02 grad norm: 0.206
+== ldm_id
+
+iteration       21 lm loss: 5.143775E-02 grad norm: 0.278 
+iteration       22 lm loss: 4.871164E-02 grad norm: 0.249 
+iteration       23 lm loss: 5.208454E-02 grad norm: 0.276 
+iteration       24 lm loss: 3.534092E-02 grad norm: 0.207 
+iteration       25 lm loss: 2.810227E-02 grad norm: 0.205
+== ctrl
+
+iteration       21 lm loss: 5.075122E-02 grad norm: 0.272 
+iteration       22 lm loss: 4.813360E-02 grad norm: 0.243 
+iteration       23 lm loss: 5.170149E-02 grad norm: 0.270 
+iteration       24 lm loss: 3.517131E-02 grad norm: 0.203 
+iteration       25 lm loss: 2.796396E-02 grad norm: 0.205
+== collapse
+
+iteration       21 lm loss: 5.143775E-02 grad norm: 0.278 
+iteration       22 lm loss: 4.870369E-02 grad norm: 0.249 
+iteration       23 lm loss: 5.211379E-02 grad norm: 0.276 
+iteration       24 lm loss: 3.533189E-02 grad norm: 0.207 
+iteration       25 lm loss: 2.812314E-02 grad norm: 0.206
+== ldm
+
+iteration       21 lm loss: 5.143775E-02 grad norm: 0.278 
+iteration       22 lm loss: 4.869603E-02 grad norm: 0.248 
+iteration       23 lm loss: 5.213559E-02 grad norm: 0.276 
+iteration       24 lm loss: 3.538366E-02 grad norm: 0.207 
+iteration       25 lm loss: 2.809200E-02 grad norm: 0.205
+
