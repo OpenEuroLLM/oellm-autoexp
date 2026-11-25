@@ -2248,6 +2248,29 @@ class MegatronConfig(ConfigInterface):
     # default can drift indefinite in deep stacks).
     depth_memory_covariance_dtype: str = "float32"
 
+    # LDM "cute": the 16-bit type of M, its gradient and the kernels' tapes ("bfloat16" or
+    # "float16"); None: the training type's (FP16 under ``fp16``, else BF16). "float16" under
+    # BF16 training gives the M the backward unwinds by subtraction three more mantissa bits
+    # (~8x less unwinding error); the workspace then scales its backward's gradients into FP16's
+    # range itself (cute_kernels ``grad_scaling``), since there is no loss scale.
+    depth_memory_storage_dtype: str | None = None
+
+    # LDM "cute" with ``depth_memory_unwind``: every this many edges (a multiple of
+    # ``depth_memory_window``) the forward copies M and the backward restores it, so the
+    # unwinding by subtraction never runs across more than one interval. 0: no checkpoints.
+    # Each holds tokens x hidden_size x depth_memory_key_dim x 2 bytes (2 GiB at 64k tokens per
+    # GPU, hidden 2048, K 8).
+    depth_memory_checkpoint_interval: int = 0
+
+    # Keep the ``depth_memory_checkpoint_interval`` copies of M in pinned host memory (copied on
+    # a side stream) instead of on the GPU.
+    depth_memory_checkpoint_offload: bool = True
+
+    # With offloaded checkpoints: copy the next checkpoint the backward needs into a GPU staging
+    # buffer an interval ahead, so the restore is a device copy instead of a host-to-device copy
+    # the backward waits for.
+    depth_memory_checkpoint_prefetch: bool = False
+
     # Number of unique layers in the looped block. 0 disables looping entirely.
     loop_block_layers: int = 0
 
