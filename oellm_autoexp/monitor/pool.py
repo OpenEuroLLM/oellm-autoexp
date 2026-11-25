@@ -954,15 +954,9 @@ def create_or_update_pool(
                 "(put jobs into it with run_autoexp --pool)"
             )
     layout.root.mkdir(parents=True, exist_ok=True)
-    for sub in (
-        layout.runs_dir,
-        layout.hosts_dir,
-        layout.requests_dir,
-        layout.manifests_dir,
-        layout.held_dir,
-        layout.inbox_done_dir,
-    ):
+    for sub in (layout.runs_dir, layout.hosts_dir, layout.manifests_dir):
         sub.mkdir(parents=True, exist_ok=True)
+    ensure_inbox_dirs(layout)
     meta = layout.load_meta() if layout.exists() else {"created": time.time()}
     meta.setdefault("owner", {"user": user_name(os.getuid()), "uid": os.getuid()})
     cfg = replace(config, name=config.name or host_definition.name)
@@ -1203,6 +1197,25 @@ def foreign_enqueue_warnings(definitions: list, workdir: str | Path, owner: str)
     return list(dict.fromkeys(out))
 
 
+def ensure_inbox_dirs(layout: PoolLayout) -> None:
+    """inbox/ and requests/ writable for the group (setgid: files keep the pool's group), held/
+    and done/ only readable: other users write in, the owner's monitor moves out. Explicit,
+    because without a default ACL the owner's umask (022) would leave them group read-only."""
+    import stat
+
+    for d in (layout.inbox_dir, layout.requests_dir):
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            mode = d.stat().st_mode
+            want = mode | stat.S_IRWXG | stat.S_ISGID
+            if mode != want:
+                os.chmod(d, stat.S_IMODE(want))
+        except OSError:  # not ours (another user created it): leave it
+            pass
+    for d in (layout.held_dir, layout.inbox_done_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+
 def write_inbox(pool_dir: str | Path, job_id: str, payload: dict) -> Path:
     """Put one job record into the pool's inbox (tmp dotfile + rename: the monitor skips
     dotfiles, so it never reads half a file)."""
@@ -1228,6 +1241,69 @@ def held_jobs(layout: PoolLayout) -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
     return out
+
+
+# ---------------------------------------------------------------------------
+# jobs: durable control (docs/pool_allocation_improvement.md §2, §11 P2)
+# ---------------------------------------------------------------------------
+#
+# A JOB is what is submitted by name, with all its records and runs: key "<submitter>:<name>"
+# (the pool_singleton key instead of the name when set). Its control markers live next to the
+# pools (<pools>/_jobs/<key>/control/), like the singleton guard, so they hold across pools and
+# monitor restarts: `cancel` is a tombstone every monitor honours on every poll (only an enqueue
+# with --replace clears it), `hold` keeps the job's queued runs from being placed.
+
+JOB_MARKERS = ("cancel", "hold")
+# requests a submitter may write (the monitor limits them to the submitter's own jobs)
+SUBMITTER_OPS = ("cancel", "deny", "preempt", "cancel_job", "hold_job", "unhold_job")
+
+
+def job_key(definition, owner: str) -> str:
+    md = getattr(definition, "metadata", None) or {}
+    who = (md.get("pool_submitted_by") or {}).get("user") or owner
+    return f"{who}:{md.get('pool_singleton') or definition.name}"
+
+
+def job_control_dir(layout: PoolLayout, key: str) -> Path:
+    return layout.root.parent / "_jobs" / _sanitize(key.replace(":", "+")) / "control"
+
+
+def job_marker(layout: PoolLayout, key: str, name: str) -> dict | None:
+    """The marker's content ({key, by, ts, reason}); None when it is not set."""
+    text = _read(job_control_dir(layout, key) / name)
+    if text is None:
+        return None
+    try:
+        return json.loads(text) or {}
+    except json.JSONDecodeError:
+        return {"reason": text.strip()}
+
+
+def set_job_marker(layout: PoolLayout, key: str, name: str, by: str, reason: str = "") -> None:
+    _atomic_write(
+        job_control_dir(layout, key) / name,
+        json.dumps({"key": key, "by": by, "ts": time.time(), "reason": reason}),
+    )
+
+
+def clear_job_marker(layout: PoolLayout, key: str, name: str) -> bool:
+    path = job_control_dir(layout, key) / name
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
+def pool_inputs_waiting(session_dir: str | Path) -> bool:
+    """Whether a pool of this session has an unprocessed pool_ctl request or inbox file: the
+    monitor's sleep ends early for it (orchestrator.run_loop)."""
+    for pool_dir in (_read(Path(session_dir) / "pools.txt") or "").split():
+        layout = PoolLayout(pool_dir)
+        if any(layout.requests_dir.glob("*.json")):
+            return True
+        if any(not p.name.startswith(".") for p in layout.inbox_dir.glob("*.job.json")):
+            return True
+    return False
 
 
 def pools_have_pending_requests(session_dir: str | Path) -> bool:
@@ -1681,6 +1757,7 @@ class PoolManager:
             and str(PoolLayout(r.definition.pool_dir).root) == str(layout.root)
             and r.runtime.final_state is None
         ]
+        runs, held_job_rids = self._enforce_job_markers(loop, layout, cfg, runs)
         hosts = list(self._hosts.get(str(layout.root), {}).values())
         self._manage_adopted(loop, layout, cfg, hosts, state, now)
 
@@ -1841,6 +1918,8 @@ class PoolManager:
             rid = record.runtime.runtime_job_id
             if not rid or not record.runtime.submitted:
                 continue
+            if rid in held_job_rids:
+                continue  # pool_ctl hold --job: not placed until unhold --job
             rstate = read_run_state(layout, rid)
             if rstate.status == "PENDING" and rstate.host is None:
                 meta = read_env_file(layout.run_dir(rid) / "meta.env")
@@ -2955,6 +3034,92 @@ class PoolManager:
         )
         return hid
 
+    # --- jobs: durable control markers ------------------------------------------
+    def _enforce_job_markers(
+        self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig, runs: list
+    ) -> tuple[list, set[str]]:
+        """Close the records of cancelled jobs (every poll: after a monitor restart, and for a
+        cancel given in another pool); collect the rids of held jobs. Returns (runs, held rids)."""
+        owner = pool_owner(layout)[0]
+        left, held = [], set()
+        for record in runs:
+            key = job_key(record.definition, owner)
+            tomb = job_marker(layout, key, "cancel")
+            if tomb is not None:
+                rid = record.runtime.runtime_job_id
+                if rid:
+                    self.cancel(rid)
+                loop._store.mark_finished(record.job_id, "cancelled")
+                LOGGER.info("[pool %s] %s: job %s is cancelled (by %s), record closed",
+                            cfg.name, record.job_id, key, tomb.get("by", "?"))
+                continue
+            if record.runtime.runtime_job_id and job_marker(layout, key, "hold") is not None:
+                held.add(record.runtime.runtime_job_id)
+            left.append(record)
+        return left, held
+
+    def _resolve_job_keys(
+        self, loop: MonitorLoop, layout: PoolLayout, name: str, user: str | None
+    ) -> list[str]:
+        """The job keys `--job name` means here: the active records' keys whose name (or
+        singleton key) is ``name``, of ``user`` if given; with none active "<user|owner>:name"
+        (a tombstone also holds for a copy of the job in another pool)."""
+        owner = pool_owner(layout)[0]
+        keys = set()
+        for record in loop._store.load_all():
+            if not self.is_run(record):
+                continue
+            if str(PoolLayout(record.definition.pool_dir).root) != str(layout.root):
+                continue
+            key = job_key(record.definition, owner)
+            md = record.definition.metadata or {}
+            if name in (record.definition.name, md.get("pool_singleton")) and (
+                user is None or key.startswith(f"{user}:")
+            ):
+                keys.add(key)
+        return sorted(keys) or [f"{user or owner}:{name}"]
+
+    def _job_op(self, loop: MonitorLoop, layout: PoolLayout, request: dict, admin: bool) -> str:
+        """cancel_job / hold_job / unhold_job: a marker on the job's key (a submitter: theirs)."""
+        op, name, by = request.get("op"), str(request.get("job") or ""), request["_by"]
+        user = request.get("user") or (None if admin else by)
+        if not admin and user != by:
+            return f"error: {by} may only steer their own jobs"
+        keys = self._resolve_job_keys(loop, layout, name, user)
+        if len(keys) > 1:
+            return f"error: {name!r} names jobs of several users {keys}: pass --user"
+        key = keys[0]
+        if op == "cancel_job":
+            set_job_marker(layout, key, "cancel", by, str(request.get("reason") or ""))
+            clear_job_marker(layout, key, "hold")
+            self._pool_ledger(layout, key, f"job cancelled by {by}")
+            return f"job {key} cancelled (tombstone; an enqueue with --replace starts it again)"
+        if op == "hold_job":
+            set_job_marker(layout, key, "hold", by, str(request.get("reason") or ""))
+            return f"job {key} held (its queued runs are not placed)"
+        return f"job {key} " + ("released" if clear_job_marker(layout, key, "hold") else "was not held")
+
+    def _supersede(self, loop: MonitorLoop, layout: PoolLayout, request: dict) -> str:
+        """After a --replace enqueue: every other live record of the job in this pool is closed."""
+        key, keep = str(request.get("key") or ""), str(request.get("keep") or "")
+        owner = pool_owner(layout)[0]
+        closed = []
+        for record in loop._store.load_all():
+            if not self.is_run(record) or record.job_id == keep:
+                continue
+            if str(PoolLayout(record.definition.pool_dir).root) != str(layout.root):
+                continue
+            if job_key(record.definition, owner) != key:
+                continue
+            rid = record.runtime.runtime_job_id
+            if rid:
+                self.cancel(rid)
+            loop._store.mark_finished(record.job_id, "cancelled")
+            closed.append(record.job_id)
+        if closed:
+            self._pool_ledger(layout, key, f"superseded by {keep}: {closed}")
+        return f"superseded {closed} by {keep}"
+
     # --- inbox: enqueues of other users (and the owner's, if routed there) ----
     def ingest(self, loop: MonitorLoop) -> None:
         """Move the pools' inbox files into the session (or inbox/held/): before the poll reads
@@ -2962,9 +3127,11 @@ class PoolManager:
         pools = set((_read(Path(loop._store.root) / "pools.txt") or "").split()) | set(self._hosts)
         for pool_dir in sorted(pools):
             layout = PoolLayout(pool_dir)
-            if not layout.exists() or not layout.inbox_dir.exists():
+            if not layout.exists():
                 continue
             try:
+                if not layout.held_dir.exists():  # a pool created before multi-user support
+                    ensure_inbox_dirs(layout)
                 self._ingest_pool(loop, layout)
             except Exception:
                 if loop.no_error_catching:
@@ -3074,6 +3241,16 @@ class PoolManager:
             foreign["commands"] = login_node_commands(payload.get("definition"))
             metadata["pool_foreign"] = foreign
         metadata["pool_submitted_by"] = {"user": user, "uid": uid, "ts": time.time()}
+        replace_old = _truthy(metadata.pop("pool_replace", False))
+        key = job_key(replace(definition, metadata=metadata), pool_owner(layout)[0])
+        tomb = job_marker(layout, key, "cancel")
+        if tomb is not None and not replace_old:
+            return "rejected", "", (f"job {key} was cancelled by {tomb.get('by', '?')}: enqueue "
+                                    "with --replace to start it again")
+        if replace_old:
+            clear_job_marker(layout, key, "cancel")
+            if not admin:
+                foreign["replace"] = True
         job_id = record.job_id
         n = 1
         while loop._store.path_for(job_id).exists() or (layout.held_dir / f"{job_id}.job.json").exists():
@@ -3094,6 +3271,8 @@ class PoolManager:
                 note += f"; runs on the login node: {foreign['commands']}"
             return "held", job_id, note
         loop._store.upsert(record)
+        if replace_old:
+            return "queued", job_id, self._supersede(loop, layout, {"key": key, "keep": job_id})
         return "queued", job_id, ""
 
     @staticmethod
@@ -3149,6 +3328,9 @@ class PoolManager:
             metadata["pool_foreign"] = foreign
             record = replace(record, definition=replace(record.definition, metadata=metadata))
             loop._store.upsert(record)
+            if foreign.get("replace"):  # enqueued with --replace: the older records go now
+                key = job_key(record.definition, pool_owner(layout)[0])
+                self._supersede(loop, layout, {"key": key, "keep": job_id})
             held = layout.held_dir / f"{job_id}.job.json"
             layout.inbox_done_dir.mkdir(parents=True, exist_ok=True)
             os.replace(held, layout.inbox_done_dir / f"{job_id}.permitted.job.json")
@@ -3215,7 +3397,7 @@ class PoolManager:
             admin = is_pool_admin(layout, cfg, uid)
             request["_by"] = user_name(uid)
             try:
-                if not admin and op not in ("cancel", "deny", "preempt"):
+                if not admin and op not in SUBMITTER_OPS:
                     result = (f"error: {op} is for the pool owner ({pool_owner(layout)[0]}) or a "
                               f"pool admin, not {request['_by']}")
                 elif op == "close":
@@ -3233,6 +3415,10 @@ class PoolManager:
                     result = self._deny(layout, request, uid, admin)
                 elif op == "preempt":
                     result = self._preempt_request(loop, layout, request, uid, admin)
+                elif op in ("cancel_job", "hold_job", "unhold_job"):
+                    result = self._job_op(loop, layout, request, admin)
+                elif op == "supersede":
+                    result = self._supersede(loop, layout, request)
                 elif op == "adopt":
                     result = self._adopt(loop, layout, state, request)
                 elif op == "drain":

@@ -430,3 +430,15 @@ def test_secure_leaves_only_inbox_and_requests_group_writable(env, capsys):
         assert d.stat().st_mode & stat.S_IWGRP, d
     assert read_env_file(env.layout.pool_env), "the pool still reads"
     write_rc(env.layout, env.rec("train").runtime.runtime_job_id, 0, "completed")  # owner still writes
+
+
+def test_a_pool_from_before_multi_user_gets_its_inbox_on_the_next_poll(env):
+    import shutil
+
+    shutil.rmtree(env.layout.inbox_dir)
+    env.layout.requests_dir.chmod(0o755)
+    env.poll()
+    for d in (env.layout.inbox_dir, env.layout.requests_dir):
+        mode = d.stat().st_mode
+        assert mode & stat.S_IWGRP and mode & stat.S_ISGID, (d, oct(mode))
+    assert env.layout.held_dir.is_dir() and env.layout.inbox_done_dir.is_dir()

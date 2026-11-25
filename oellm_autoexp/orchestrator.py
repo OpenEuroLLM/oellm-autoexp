@@ -7,6 +7,7 @@ import logging
 import os
 import shlex
 import signal
+import shutil
 import socket
 import subprocess
 import time
@@ -343,18 +344,100 @@ def _restore_signal_handlers(previous: dict[int, object]) -> None:
             pass
 
 
-def _sleep_interruptibly(seconds: float) -> None:
+def _sleep_interruptibly(seconds: float, wake=None, wake_every_s: float = 2.0) -> None:
     """Sleep in 1 s slices so a signal is acted on promptly.
 
     PEP 475 makes ``time.sleep`` resume after a handler returns, so a plain
-    sleep would swallow a SIGTERM for up to a full poll interval.
+    sleep would swallow a SIGTERM for up to a full poll interval. ``wake``: checked every
+    ``wake_every_s``; True ends the sleep (a pool_ctl request or an inbox file is waiting, so
+    one command costs about one wake interval, not one poll interval).
     """
     deadline = time.monotonic() + seconds
+    next_check = time.monotonic() + wake_every_s
     while _STOP_SIGNAL_RECEIVED is None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return
         time.sleep(min(1.0, remaining))
+        if wake is not None and time.monotonic() >= next_check:
+            next_check = time.monotonic() + wake_every_s
+            try:
+                if wake():
+                    return
+            except Exception:  # a filesystem blip never ends the sleep early or kills the loop
+                pass
+
+
+# Single monitor per session: an atomic mkdir lock next to the heartbeat (2026-11-24 hiccup: two
+# resets ran at once and produced duplicate records). ensure_no_live_monitor reads the heartbeat
+# but two monitors starting together both pass it; the lock makes the second one refuse.
+LOCK_DIRNAME = ".monitor.lock"
+# a lock without a readable owner file younger than this belongs to a monitor that is starting
+LOCK_STARTING_S = 30.0
+
+
+def _lock_holder(session_dir: Path) -> tuple[int, str, float] | None:
+    """(pid, host, age_s) of the lock's holder; age from the heartbeat when it names the holder
+    (refreshed every poll), else from the lock's own owner file. None: unreadable."""
+    owner = session_dir / LOCK_DIRNAME / "owner"
+    try:
+        parts = owner.read_text(encoding="utf-8").split()
+        pid, host = int(parts[0]), parts[1]
+        age = time.time() - owner.stat().st_mtime
+    except (OSError, ValueError, IndexError):
+        return None
+    beat = read_heartbeat(session_dir)
+    if beat is not None and beat[0] == pid and beat[1] == host:
+        age = min(age, beat[3])
+    return pid, host, age
+
+
+def acquire_monitor_lock(
+    session_dir: str | Path, *, stale_after_s: float = DEFAULT_STALE_AFTER_S, force: bool = False
+) -> None:
+    """Take the session's monitor lock or exit: a live holder elsewhere refuses; a dead holder
+    on this host, a stale one (no heartbeat for stale_after_s) or ``force`` is taken over."""
+    session_dir = Path(session_dir)
+    lock = session_dir / LOCK_DIRNAME
+    me = (os.getpid(), socket.gethostname())
+    for _ in range(3):
+        try:
+            lock.mkdir()
+        except FileExistsError:
+            holder = _lock_holder(session_dir)
+            if holder is not None and (holder[0], holder[1]) == me:
+                return
+            if holder is None and not force:
+                try:  # between another monitor's mkdir and its owner file: it is starting
+                    young = time.time() - lock.stat().st_mtime < LOCK_STARTING_S
+                except OSError:
+                    young = False
+                if young:
+                    raise SystemExit(f"another monitor is starting on this session ({lock})")
+            if holder is not None and not force:
+                pid, host, age = holder
+                dead = host == me[1] and not _pid_alive(pid)
+                if not dead and age <= stale_after_s:
+                    raise SystemExit(
+                        f"Another monitor holds this session: pid {pid} on {host} (alive "
+                        f"{age:.0f}s ago, {lock}). Stop it first (touch {stop_path(session_dir)}), "
+                        "or pass --force if you are certain it is gone."
+                    )
+                LOGGER.info("Taking over the monitor lock of pid %s on %s (%s)", pid, host,
+                            "dead" if dead else f"stale {age:.0f}s")
+            shutil.rmtree(lock, ignore_errors=True)
+            continue
+        (lock / "owner").write_text(f"{me[0]} {me[1]} {time.time():.0f}\n", encoding="utf-8")
+        return
+    raise SystemExit(f"could not take the monitor lock {lock} (another monitor is starting?)")
+
+
+def release_monitor_lock(session_dir: str | Path) -> None:
+    """Remove the lock if this process holds it."""
+    session_dir = Path(session_dir)
+    holder = _lock_holder(session_dir)
+    if holder is not None and (holder[0], holder[1]) == (os.getpid(), socket.gethostname()):
+        shutil.rmtree(session_dir / LOCK_DIRNAME, ignore_errors=True)
 
 
 def cpu_seconds_used() -> float:
@@ -377,7 +460,13 @@ def cpu_budget_from_rlimit(fraction: float = 0.9) -> float | None:
     return fraction * float(soft)
 
 
-def run_loop(controller: MonitorLoop, cpu_budget_s: float | None = None) -> str:
+def run_loop(
+    controller: MonitorLoop,
+    cpu_budget_s: float | None = None,
+    *,
+    lock_stale_after_s: float = DEFAULT_STALE_AFTER_S,
+    force_lock: bool = False,
+) -> str:
     """Poll until every job is finished, or until asked to stop.
 
     Returns one of ``"completed"``, ``"stopped"`` (``.monitor.stop`` appeared),
@@ -392,6 +481,7 @@ def run_loop(controller: MonitorLoop, cpu_budget_s: float | None = None) -> str:
 
     loop = controller
     session_dir = Path(loop._store.root)
+    acquire_monitor_lock(session_dir, stale_after_s=lock_stale_after_s, force=force_lock)
     previous_handlers = _install_stop_signal_handlers()
     failures = 0
     outcome = "completed"
@@ -437,12 +527,15 @@ def run_loop(controller: MonitorLoop, cpu_budget_s: float | None = None) -> str:
                 return "cpu_budget"
             # Back off on repeated failures so a wedged controller is not hammered.
             delay = loop.poll_interval_seconds * (2**failures if failures else 1)
-            _sleep_interruptibly(min(delay, 600.0))
+            from oellm_autoexp.monitor.pool import pool_inputs_waiting
+
+            _sleep_interruptibly(min(delay, 600.0), wake=lambda: pool_inputs_waiting(session_dir))
             if _STOP_SIGNAL_RECEIVED is not None:
                 outcome = "signal"
                 break
     finally:
         _restore_signal_handlers(previous_handlers)
+        release_monitor_lock(session_dir)
 
     if outcome == "signal":
         # SIGINT and SIGTERM mean different things and MUST NOT both record a
@@ -1075,6 +1168,7 @@ def enqueue_into_pool(
     *,
     provenance: dict | None = None,
     via_inbox: bool = False,
+    replace_jobs: bool = False,
 ) -> tuple[Path, list[str]]:
     """Write the plan's jobs as pool-run records into the pool's session.
 
@@ -1085,11 +1179,19 @@ def enqueue_into_pool(
     ``via_inbox`` (another user's pool, docs/pool_allocation_improvement.md §10): the records go
     into ``<pool>/inbox/`` instead, for the owner's monitor to ingest; returns (session dir,
     inbox file paths).
+
+    ``replace_jobs`` (run_autoexp --replace): clears a job's cancel tombstone and has the monitor
+    close every older live record of the same job in this pool (one live record per job).
     """
     from oellm_autoexp.monitor.pool import (
         PoolLayout,
         check_fits_host,
+        clear_job_marker,
         host_accounts,
+        job_key,
+        job_marker,
+        pool_owner,
+        submit_request,
         write_inbox,
     )
 
@@ -1110,6 +1212,12 @@ def enqueue_into_pool(
             f"{record.job_id}: {p}"
             for p in check_fits_host(record.definition, host, host_accounts(layout.load_config()))
         ]
+        if not via_inbox:
+            key = job_key(record.definition, pool_owner(layout)[0])
+            tomb = job_marker(layout, key, "cancel")
+            if tomb is not None and not replace_jobs:
+                problems.append(f"{record.job_id}: job {key} was cancelled by "
+                                f"{tomb.get('by', '?')}; enqueue with --replace to start it again")
         records.append(record)
     if problems:
         raise ValueError(f"cannot enqueue into pool {layout.root}:\n  " + "\n  ".join(problems))
@@ -1124,6 +1232,7 @@ def enqueue_into_pool(
                     **dict(record.definition.metadata),
                     "pool_enqueued_ts": now,
                     "pool_workdir": record.definition.metadata.get("pool_workdir") or os.getcwd(),
+                    **({"pool_replace": True} if replace_jobs else {}),
                 },
             )
             path = write_inbox(layout.root, record.job_id, asdict(replace(record, definition=definition)))
@@ -1149,9 +1258,27 @@ def enqueue_into_pool(
                 "pool_workdir": record.definition.metadata.get("pool_workdir") or os.getcwd(),
             },
         )
+        key = job_key(definition, pool_owner(layout)[0])
+        live = [
+            r.job_id
+            for r in store.load_all()
+            if getattr(r.definition, "pool_dir", None)
+            and PoolLayout(r.definition.pool_dir).root == layout.root
+            and job_key(r.definition, pool_owner(layout)[0]) == key
+        ]
         store.upsert(replace(record, job_id=job_id, definition=definition))
         ids.append(job_id)
         LOGGER.info("Enqueued %s into pool %s", job_id, meta.get("name"))
+        if replace_jobs:
+            clear_job_marker(layout, key, "cancel")
+            if live:  # the monitor closes them (it owns the runs' stop files)
+                submit_request(layout.root, "supersede", key=key, keep=job_id)
+                LOGGER.info("%s supersedes %s (job %s)", job_id, live, key)
+        elif live:
+            LOGGER.warning(
+                "job %s now has %d live records (%s + %s); --replace would close the older ones",
+                key, len(live) + 1, live, job_id,
+            )
     return session_dir, ids
 
 

@@ -184,7 +184,12 @@ def main(argv: list[str] | None = None) -> None:
     # Without this the monitor runs forever without ever seeing a job status.
     loop.rehydrate()
 
-    outcome = run_loop(loop, cpu_budget_s=cpu_budget_from_rlimit())
+    outcome = run_loop(
+        loop,
+        cpu_budget_s=cpu_budget_from_rlimit(),
+        lock_stale_after_s=args.stale_after,
+        force_lock=args.force,
+    )
     if outcome == "cpu_budget":
         # a login-node CPU-time limit is near: exit cleanly; the launcher (scripts/korbi/
         # mn5_autoexp.sh) starts a fresh process, which rehydrates this session

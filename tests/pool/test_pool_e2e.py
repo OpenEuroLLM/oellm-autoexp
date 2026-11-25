@@ -1135,3 +1135,26 @@ def test_another_users_job_comes_in_through_the_inbox_and_runs_after_a_permit(po
     assert f"export AUTOEXP_SUBMITTED_BY={me}" in (pool.layout.run_dir(rid) / "step.sh").read_text()
     ledger = pool.layout.ledger.read_text()
     assert f"held by {me}" in ledger and f"permitted by {me}" in ledger
+
+
+def test_a_cancelled_job_stays_cancelled_until_an_enqueue_with_replace(pool):
+    """P2: `pool_ctl cancel --job` is a tombstone. The running job stops, a monitor restart does not
+    resurrect it, a plain enqueue is refused, and `run_autoexp --replace` starts it again."""
+    pool.create_pool(*FAST, "job.pool_host.keep_monitor=true")
+    pool.enqueue("train", "aux.iters=400", "aux.tick=0.1")
+    pool.start_monitor()
+    first = pool.wait_for(lambda: pool.runs_of("dummy_train"), 60, "the run")[0]
+    pool.wait_for(lambda: pool.run_state(first).status == "RUNNING", 60, "it to run")
+    assert "monitor: job" in pool.ctl("cancel", "--job", "dummy_train")
+    pool.wait_for(lambda: pool.record("dummy_train")["runtime"]["final_state"] == "cancelled", 60,
+                  "the record closed")
+    pool.wait_for(lambda: pool.run_state(first).status == "CANCELLED", 60, "the run stopped")
+    pool.stop_monitor()
+    pool.start_monitor()
+    refused = pool.enqueue("train", "aux.iters=5", "aux.tick=0.1", check=False)
+    assert refused.returncode != 0 and "enqueue with --replace" in refused.stdout + refused.stderr
+    pool.enqueue("train", "aux.iters=5", "aux.tick=0.1", "--replace")
+    pool.wait_for(lambda: len(pool.runs_of("dummy_train")) == 2, 60, "the replaced job's run")
+    second = pool.runs_of("dummy_train")[1]
+    pool.wait_for(lambda: pool.run_state(second).status == "COMPLETED", 120, "it to complete")
+    assert "job cancelled by" in pool.layout.ledger.read_text()

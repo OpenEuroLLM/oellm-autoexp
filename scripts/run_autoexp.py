@@ -116,6 +116,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--replace",
+        action="store_true",
+        help=(
+            "With --pool: the enqueued jobs replace their older live records in the pool (closed "
+            "by the monitor) and clear a `pool_ctl cancel --job` tombstone of the job."
+        ),
+    )
+    parser.add_argument(
         "--poll-interval",
         type=float,
         default=None,
@@ -551,7 +559,9 @@ def _enqueue_foreign(args, plan: ExecutionPlan, layout, pool_jobs, owner: str) -
     for warning in foreign_enqueue_warnings(definitions, os.getcwd(), owner):
         print(f"  warning: {warning}")
     try:
-        _, paths = enqueue_into_pool(plan, layout.root, pool_jobs, provenance=code, via_inbox=True)
+        _, paths = enqueue_into_pool(
+            plan, layout.root, pool_jobs, provenance=code, via_inbox=True, replace_jobs=args.replace
+        )
     except (ValueError, OSError) as exc:
         sys.exit(str(exc))
     print(f"Submitted {len(paths)} job(s) to {owner}'s pool {layout.root} (inbox)")
@@ -666,7 +676,9 @@ def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) 
     else:
         manifest_path, code = _plan_provenance(plan)
         try:
-            session_dir, ids = enqueue_into_pool(plan, pool_dir, pool_jobs, provenance=code)
+            session_dir, ids = enqueue_into_pool(
+                plan, pool_dir, pool_jobs, provenance=code, replace_jobs=args.replace
+            )
         except ValueError as exc:
             sys.exit(str(exc))
         manifest = _write_job_provenance(

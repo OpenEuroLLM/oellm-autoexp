@@ -8,6 +8,10 @@ the pool's files directly and are picked up by the supervisors.
 
   pool_ctl.py <pool_dir> status                  hosts, runs, queue
   pool_ctl.py <pool_dir> cancel <job|run|name>   cancel a job (stops its run)
+  pool_ctl.py <pool_dir> cancel --job <name>     cancel the JOB for good (tombstone, every pool;
+                                                 run_autoexp --replace starts it again)
+  pool_ctl.py <pool_dir> hold | unhold --job <name>  keep a job's queued runs from being placed
+  pool_ctl.py <pool_dir> status --job <name>     one job: markers, records, runs
   pool_ctl.py <pool_dir> preempt <run>           graceful stop + requeue (resumes from checkpoint)
   pool_ctl.py <pool_dir> exit-host <host>        preempt the host's run, release the allocation
   pool_ctl.py <pool_dir> drain [<host> ...]      finish current runs, then release (all hosts if none given)
@@ -57,6 +61,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -119,7 +124,53 @@ def _job_records(session_dir: Path) -> dict[str, dict]:
     return out
 
 
-def cmd_status(layout: PoolLayout, _args) -> int:
+def cmd_job_status(layout: PoolLayout, name: str) -> int:
+    """One job (§2): its key(s), cancel / hold markers, its records here and their runs."""
+    from oellm_autoexp.monitor.pool import JOB_MARKERS, job_key, job_marker
+
+    owner = pool_owner(layout)[0]
+    session_dir = Path(layout.load_meta().get("session_dir", ""))
+    found: dict[str, list[dict]] = {}
+    for path in sorted(session_dir.glob("*.job.json")) if session_dir.is_dir() else []:
+        record = _loads_or_none(path)
+        if record is None:
+            continue
+        definition = record.get("definition") or {}
+        md = definition.get("metadata") or {}
+        if md.get("pool_role") == "host" or name not in (definition.get("name"), md.get("pool_singleton")):
+            continue
+        key = job_key(SimpleNamespace(metadata=md, name=definition.get("name")), owner)
+        found.setdefault(key, []).append(record)
+    if not found:
+        found[f"{owner}:{name}"] = []
+    for key, records in found.items():
+        markers = {m: job_marker(layout, key, m) for m in JOB_MARKERS}
+        state = "CANCELLED" if markers["cancel"] else ("HELD" if markers["hold"] else "")
+        print(f"job {key}  {state}")
+        for m, info in markers.items():
+            if info is not None:
+                print(f"  {m}: by {info.get('by', '?')} at {_fmt_ts(info.get('ts'))}"
+                      + (f" ({info['reason']})" if info.get("reason") else ""))
+        for record in records:
+            runtime = record.get("runtime") or {}
+            requeues = (runtime.get("action_state") or {}).get("pool:requeues") or {}
+            print(f"  record {record.get('job_id')}: {runtime.get('final_state') or 'live'}  "
+                  f"run {runtime.get('runtime_job_id') or '-'}  attempts {runtime.get('attempts')}"
+                  + (f"  requeues {requeues}" if requeues else ""))
+            rid = runtime.get("runtime_job_id")
+            if rid and (layout.run_dir(rid) / "run.json").exists():
+                rs = read_run_state(layout, rid)
+                print(f"    {rid}: {rs.status} host {rs.host or '-'} started {_fmt_ts(rs.started.get('ts'))}"
+                      + (f" rc {rs.code} {rs.reason}" if rs.reason else ""))
+        live = [r for r in records if not (r.get("runtime") or {}).get("final_state")]
+        if len(live) > 1:
+            print(f"  WARNING: {len(live)} live records (1 expected; enqueue with --replace)")
+    return 0
+
+
+def cmd_status(layout: PoolLayout, args) -> int:
+    if getattr(args, "job", None):
+        return cmd_job_status(layout, args.job)
     meta = layout.load_meta()
     cfg = layout.load_config()
     state = layout.load_state()
@@ -326,7 +377,15 @@ def _await_result(layout: PoolLayout, request: Path, timeout_s: float) -> int:
 def cmd_request(op: str):
     def run(layout: PoolLayout, args) -> int:
         payload = {}
-        if op == "cancel":
+        request_op = op
+        if op == "cancel" and args.job:
+            request_op = "cancel_job"
+            payload.update(job=args.job, user=args.user, reason=args.reason)
+            print(f"cancelling job {args.job} (tombstone)")
+        elif op == "cancel" and not args.target:
+            print("cancel needs a target or --job", file=sys.stderr)
+            return 1
+        elif op == "cancel":
             active, misses = resolve_target(layout, args.target)
             if not active:
                 for line in misses:
@@ -344,8 +403,8 @@ def cmd_request(op: str):
             print(f"cancelling {', '.join(active)}")
         if op == "drain" and args.hosts:
             payload["hosts"] = args.hosts
-        path = submit_request(layout.root, op, **payload)
-        print(f"request {op} written: {path.name}")
+        path = submit_request(layout.root, request_op, **payload)
+        print(f"request {request_op} written: {path.name}")
         if getattr(args, "no_wait", False):
             return 0
         return _await_result(layout, path, args.wait)
@@ -513,6 +572,14 @@ def cmd_exit_host(layout: PoolLayout, args) -> int:
 def cmd_hold(layout: PoolLayout, args) -> int:
     """hold / unhold a host: a held host is never released by the monitor (not idle, not for
     queued work it cannot run, not after a handover); its wall clock or exit-host still end it."""
+    if args.job:
+        op = "hold_job" if args.cmd == "hold" else "unhold_job"
+        path = submit_request(layout.root, op, job=args.job, user=args.user, reason=args.reason)
+        print(f"request {op} written: {path.name}")
+        return 0 if args.no_wait else _await_result(layout, path, args.wait)
+    if not args.host:
+        print(f"{args.cmd} needs a host or --job", file=sys.stderr)
+        return 1
     hdir = layout.host_dir(args.host)
     if not hdir.exists():
         print(f"no such host: {args.host}", file=sys.stderr)
@@ -1157,7 +1224,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("pool_dir", type=Path)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status").set_defaults(func=cmd_status)
+    p = sub.add_parser("status")
+    p.add_argument("--job", help="one job: its key, control markers, records and runs")
+    p.set_defaults(func=cmd_status)
 
     def waiting(p):
         p.add_argument("--wait", type=float, default=120.0, help="seconds to wait for the monitor")
@@ -1165,8 +1234,12 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     p = waiting(sub.add_parser("cancel"))
-    p.add_argument("target", help="job id, job name, or any run id of the job")
+    p.add_argument("target", nargs="?", help="job id, job name, or any run id of the job")
     p.add_argument("--all", action="store_true", help="cancel every active job the name matches")
+    p.add_argument("--job", help="cancel the JOB (all its records, in every pool) for good: a "
+                   "tombstone only an enqueue with --replace clears")
+    p.add_argument("--user", help="with --job: the submitter (a job name of several users)")
+    p.add_argument("--reason", default="")
     p.set_defaults(func=cmd_request("cancel"))
     p = waiting(sub.add_parser("adopt", help="adopt a queued SLURM job as a host of this pool"))
     p.add_argument("job_id")
@@ -1195,8 +1268,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("host")
     p.set_defaults(func=cmd_exit_host)
     for name in ("hold", "unhold"):
-        p = sub.add_parser(name, help="never release / release again a host (see cmd_hold)")
-        p.add_argument("host")
+        p = waiting(sub.add_parser(
+            name, help="never release / release again a host (see cmd_hold); with --job: keep a "
+            "job's queued runs from being placed / place them again"))
+        p.add_argument("host", nargs="?")
+        p.add_argument("--job")
+        p.add_argument("--user", help="with --job: the submitter")
+        p.add_argument("--reason", default="")
         p.set_defaults(func=cmd_hold)
     for name in ("pin", "unpin"):
         p = sub.add_parser(
@@ -1264,7 +1342,10 @@ def main(argv: list[str] | None = None) -> int:
     if not layout.exists():
         print(f"{layout.root} is not a pool (no pool.json)", file=sys.stderr)
         return 2
-    if args.cmd not in SUBMITTER_COMMANDS and not _admin(layout):
+    submitter_ok = args.cmd in SUBMITTER_COMMANDS or (
+        args.cmd in ("hold", "unhold") and getattr(args, "job", None)
+    )
+    if not submitter_ok and not _admin(layout):
         print(
             f"{args.cmd} is for the pool owner ({pool_owner(layout)[0]}) or a pool admin "
             "(pool_admins); you may: " + ", ".join(sorted(SUBMITTER_COMMANDS)),
