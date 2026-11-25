@@ -2,9 +2,10 @@
 # The remaining single-window plans of the v4b run (71,000 -> 236,733, windows of 10,000 steps, the last one shorter):
 # a chain of windows per job (scripts/korbi/cross_doc_seqs/run_windows.sh: global -> checkplan -> cleanglobal each),
 # a few chains side by side -- bounded GPFS load next to the main run and bounded work dirs (scratch, ~310 GB per
-# window, removed after a passed checkplan). Embeddings q3e128 (63k+, 128 dims). Plans: <out>/plan/<plan_prefix><start>.
-# From 61,000 on: copy pools + 128k-token groups (build_plan_global.py defaults), prefix q3e128p_g; the plans
-# before used --copy-pools 0 --group-tokens 0 (prefix q3e128_g).
+# window, removed after a passed checkplan). Embeddings q3e128mix (128 dims). Plans: <out>/plan/<plan_prefix><start>.
+# From 61,000 on: copy pools + 128k-token groups (build_plan_global.py defaults), prefix q3e128p2_g; the plans
+# before used --copy-pools 0 --group-tokens 0 (prefix q3e128_g). Embeddings q3e128mix (q3e256 truncated for
+# 61k-63k + q3e128): plain q3e128 starts at 63k (q3e128p_g61000 had random vectors for 61k-63k).
 #   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/cross_doc_seqs/cds_plan_windows_mn5 \
 #       aux.window_starts=61000:71000:81000 aux.name=cds_windows_p0 "aux.plan_args='--dim=128'" \
 #       slurm.sbatch.account=cns143 slurm.sbatch.qos=acc_xlarge --yes
@@ -17,9 +18,9 @@ aux:
   window_starts: ???
   window_steps: 10000
   run_end: 236733
-  emb_name: q3e128
+  emb_name: q3e128mix
   plan_args: ""
-  plan_prefix: q3e128p_g
+  plan_prefix: q3e128p2_g
   global_root: /gpfs/scratch/ehpc533/hybrid_nucleus/cds_global_work
 
 backend:
