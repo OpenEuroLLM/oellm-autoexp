@@ -1096,3 +1096,42 @@ def test_a_node_slurm_reports_down_is_skipped_by_the_next_run(pool):
     state = pool.run_state(second)
     assert (state.started["job"], state.started["nodes"]) == (jid, f"n{jid}-1")
     assert pool.layout.exclude_nodes.read_text().strip() == ""  # nobody had to exclude it
+
+
+def test_another_users_job_comes_in_through_the_inbox_and_runs_after_a_permit(pool):
+    """Multi-user pools (docs/pool_allocation_improvement.md §10), with the real run_autoexp,
+    monitor and supervisor: pool.json names another owner, so this process is the colleague."""
+    import os
+    import pwd
+
+    from oellm_autoexp.monitor.pool import held_jobs
+
+    me = pwd.getpwuid(os.getuid()).pw_name
+    pool.create_pool(*FAST, f"job.pool_host.foreign_submitters={me}",
+                     "job.pool_host.foreign_account_check=false", "job.pool_host.keep_monitor=true")
+    meta = pool.layout.load_meta()
+    real_owner = meta["owner"]
+    meta["owner"] = {"user": "poolowner", "uid": os.getuid() + 4242}
+    pool.layout.write_meta(meta)
+    pool.start_monitor()
+    pool.wait_for(lambda: pool.layout.monitor_alive.exists(), 30, "the monitor's first tick")
+    # without --no-monitor: a non-owner never becomes the pool's monitor (this returns)
+    out = pool.autoexp("--pool", str(pool.pool_dir), "--config-name",
+                       "experiments/tests/pool_local_dummy", "aux.tag=guest", "aux.iters=5",
+                       "aux.tick=0.1").stdout
+    assert "Submitted 1 job(s) to poolowner's pool" in out, out
+    assert "held" in out and "awaiting `pool_ctl permit" in out, out
+    assert [j["definition"]["name"] for j in held_jobs(pool.layout)] == ["dummy_guest"]
+    assert pool.runs_of("dummy_guest") == [], "nothing of a held job runs"
+    # the owner (this uid again) permits it
+    meta["owner"] = real_owner
+    pool.layout.write_meta(meta)
+    assert "monitor: permitted" in pool.ctl("permit", "dummy_guest")
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_guest"), 60, "the permitted run")[0]
+    pool.wait_for(lambda: pool.record("dummy_guest")["runtime"]["final_state"] == "finished", 120,
+                  "the guest run to finish")
+    run = json.loads((pool.layout.run_dir(rid) / "run.json").read_text())
+    assert run["submitted_by"] == me
+    assert f"export AUTOEXP_SUBMITTED_BY={me}" in (pool.layout.run_dir(rid) / "step.sh").read_text()
+    ledger = pool.layout.ledger.read_text()
+    assert f"held by {me}" in ledger and f"permitted by {me}" in ledger

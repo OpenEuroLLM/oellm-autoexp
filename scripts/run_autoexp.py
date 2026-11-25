@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -537,12 +538,62 @@ def _print_resume_hint(resume_cmd: str, res, *, reason: str) -> None:
     print(f"{bar}\n", flush=True)
 
 
+def _enqueue_foreign(args, plan: ExecutionPlan, layout, pool_jobs, owner: str) -> None:
+    """Put jobs into ANOTHER user's pool (docs/pool_allocation_improvement.md §10): through its
+    inbox, which the owner's monitor ingests (it checks who may submit, holds the job until a
+    permit if the pool says so). Never starts a monitor: this user's monitor would submit hosts
+    under this user and race the owner's."""
+    from oellm_autoexp.monitor.pool import foreign_enqueue_warnings, inbox_result_path
+    from oellm_autoexp.orchestrator import _build_job_record, enqueue_into_pool
+
+    manifest_path, code = _plan_provenance(plan)
+    definitions = [_build_job_record(plan, job, "foreign").definition for job in pool_jobs]
+    for warning in foreign_enqueue_warnings(definitions, os.getcwd(), owner):
+        print(f"  warning: {warning}")
+    try:
+        _, paths = enqueue_into_pool(plan, layout.root, pool_jobs, provenance=code, via_inbox=True)
+    except (ValueError, OSError) as exc:
+        sys.exit(str(exc))
+    print(f"Submitted {len(paths)} job(s) to {owner}'s pool {layout.root} (inbox)")
+    try:
+        tick_age = time.time() - layout.monitor_alive.stat().st_mtime
+    except OSError:
+        tick_age = float("inf")
+    if tick_age > 300:
+        print(f"  {owner}'s monitor is not running (last tick: "
+              f"{'never' if tick_age == float('inf') else f'{tick_age:.0f}s ago'}): the job(s) wait "
+              "in the inbox until it runs")
+        return
+    deadline = time.time() + 120
+    pending = {p: inbox_result_path(layout, p) for p in paths}
+    while pending and time.time() < deadline:
+        for path, result in list(pending.items()):
+            try:
+                answer = json.loads(result.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            status, job_id, message = answer.get("status"), answer.get("job_id"), answer.get("message")
+            print(f"  {Path(path).name}: {status} {job_id or ''}{(' -- ' + message) if message else ''}")
+            pending.pop(path)
+        if pending:
+            time.sleep(1.0)
+    for path in pending:
+        print(f"  {Path(path).name}: not ingested within 120 s; `pool_ctl {layout.root} status` "
+              "shows it later")
+
+
 def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) -> None:
     """Sub-SLURM-job pools: create/update a pool from a HOST config, or put the
     planned jobs into a pool; then hand over to the pool's monitor."""
     import shutil
 
-    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host, host_accounts, render_step_script
+    from oellm_autoexp.monitor.pool import (
+        PoolLayout,
+        check_fits_host,
+        host_accounts,
+        pool_owner,
+        render_step_script,
+    )
     from oellm_autoexp.orchestrator import (
         _build_job_record,
         ensure_no_live_monitor,
@@ -594,10 +645,19 @@ def _pool_main(args, plan: ExecutionPlan, host_jobs, pool_jobs, subset_indices) 
                     print(f"  CANNOT RUN IN THIS POOL: {problem}")
         exit(0)
 
+    if pool_jobs:
+        owner, owner_uid = pool_owner(layout)
+        if owner_uid != os.getuid():
+            _enqueue_foreign(args, plan, layout, pool_jobs, owner)
+            return
+
     if host_jobs:
         session_dir = None
         for job in host_jobs:
-            pool_dir, session_dir = prepare_pool_host(plan, job)
+            try:
+                pool_dir, session_dir = prepare_pool_host(plan, job)
+            except PermissionError as exc:
+                sys.exit(str(exc))
             print(f"Pool ready: {pool_dir}  (session {session_dir})")
             print(
                 f"  put jobs into it:  python scripts/run_autoexp.py --pool {pool_dir} --config-name ..."

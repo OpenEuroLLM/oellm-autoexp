@@ -1074,14 +1074,24 @@ def enqueue_into_pool(
     jobs: list[JobPlan] | None = None,
     *,
     provenance: dict | None = None,
+    via_inbox: bool = False,
 ) -> tuple[Path, list[str]]:
     """Write the plan's jobs as pool-run records into the pool's session.
 
     Every job is checked against the pool's host first (nodes, account,
     partition, ...): a job that cannot fit is a configuration error here, not a
     run that waits forever. Returns (session dir, record ids).
+
+    ``via_inbox`` (another user's pool, docs/pool_allocation_improvement.md §10): the records go
+    into ``<pool>/inbox/`` instead, for the owner's monitor to ingest; returns (session dir,
+    inbox file paths).
     """
-    from oellm_autoexp.monitor.pool import PoolLayout, check_fits_host, host_accounts
+    from oellm_autoexp.monitor.pool import (
+        PoolLayout,
+        check_fits_host,
+        host_accounts,
+        write_inbox,
+    )
 
     layout = PoolLayout(pool_dir)
     meta = layout.load_meta()
@@ -1106,6 +1116,20 @@ def enqueue_into_pool(
     ids = []
     now = time.time()
     for record in records:
+        if via_inbox:
+            definition = replace(
+                record.definition,
+                pool_dir=str(layout.root),
+                metadata={
+                    **dict(record.definition.metadata),
+                    "pool_enqueued_ts": now,
+                    "pool_workdir": record.definition.metadata.get("pool_workdir") or os.getcwd(),
+                },
+            )
+            path = write_inbox(layout.root, record.job_id, asdict(replace(record, definition=definition)))
+            ids.append(str(path))
+            LOGGER.info("Submitted %s into the inbox of pool %s", record.job_id, meta.get("name"))
+            continue
         job_id = record.job_id
         # the same config enqueued twice is two jobs, not one record overwritten
         n = 1

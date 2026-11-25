@@ -256,6 +256,28 @@ class PoolHostConfig:
     # run continues here; that host stays, held or idle). One way only: no ping-pong. All pools
     # of the singleton should list the same accounts.
     singleton_prefer_accounts: str = ""
+    # MULTI-USER pools (docs/pool_allocation_improvement.md §10). Another user enqueues through
+    # <pool>/inbox/ (run_autoexp --pool as a non-owner); the owner's monitor ingests it, knowing
+    # the submitter from the file's owner. Who may: "" = the owner only, "@group" = any member of
+    # the pool directory's group, or "userb,userc".
+    foreign_submitters: str = ""
+    # a foreign job waits in inbox/held/ until `pool_ctl permit` (nothing of it runs meanwhile)
+    hold_foreign_jobs: bool = True
+    # users whose jobs skip that hold ("userb,userc")
+    foreign_auto_permit: str = ""
+    # a foreign job's pool_priority is clamped to this (eval tier); `permit --priority` overrides
+    foreign_max_priority: int = 60
+    # the submitter must be a member of the SLURM account(s) the job would spend (sacctmgr where
+    # the cluster shows it, else the Unix group of the account's name); a foreign job is placed
+    # only on hosts of accounts it is a member of. false = the owner allows spending in accounts
+    # the submitter is not a member of.
+    foreign_account_check: bool = True
+    # users treated as the owner for steering the pool (permit, set, cancel any job, ...)
+    pool_admins: str = ""
+
+
+def _csv(value: str) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
 def host_accounts(cfg: PoolHostConfig) -> list[str]:
@@ -303,6 +325,14 @@ def _read_pin(layout: PoolLayout, rid: str) -> str:
         return (layout.run_dir(rid) / "pin_host").read_text().strip()
     except OSError:
         return ""
+
+
+def _run_accounts(layout: PoolLayout, rid: str) -> list[str]:
+    """The accounts a run may spend (run.json "accounts"; [] = any host of the pool)."""
+    try:
+        return list(json.loads(_read(layout.run_dir(rid) / "run.json") or "{}").get("accounts") or [])
+    except json.JSONDecodeError:
+        return []
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -548,6 +578,9 @@ class PoolLayout:
     ledger = property(lambda self: self.root / "ledger.tsv")
     requests_dir = property(lambda self: self.root / "requests")
     manifests_dir = property(lambda self: self.root / "manifests")
+    inbox_dir = property(lambda self: self.root / "inbox")
+    held_dir = property(lambda self: self.root / "inbox" / "held")
+    inbox_done_dir = property(lambda self: self.root / "inbox" / "done")
     runs_dir = property(lambda self: self.root / "runs")
     hosts_dir = property(lambda self: self.root / "hosts")
 
@@ -708,7 +741,12 @@ def stop_signal_of(step_text: str) -> str:
 
 
 def render_step_script(
-    slurm: SlurmConfig, run_id: str, *, log_path: str, workdir: str | None = None
+    slurm: SlurmConfig,
+    run_id: str,
+    *,
+    log_path: str,
+    workdir: str | None = None,
+    submitted_by: str = "",
 ) -> str:
     """The job's own sbatch template, turned into a script for one srun step.
 
@@ -763,6 +801,9 @@ def render_step_script(
         "# [pool] the supervisor exports AUTOEXP_RUN_ID, AUTOEXP_STEP_INDEX, AUTOEXP_STEP_NODELIST,\n"
         "# [pool] AUTOEXP_STEP_NUM_NODES, AUTOEXP_STEP_NTASKS(_PER_NODE), AUTOEXP_POOL_DIR, AUTOEXP_POOL_HOST\n"
     )
+    if submitted_by:
+        # the run executes as the pool's owner: tell it who enqueued it (multi-user pools)
+        header += f"export AUTOEXP_SUBMITTED_BY={shlex.quote(submitted_by)}\n"
     if workdir:
         # the job's relative paths (PYTHONPATH=., ./submodules/...) resolve against the
         # directory it was enqueued from, not the host's
@@ -905,10 +946,25 @@ def create_or_update_pool(
     session_dir: str | Path,
 ) -> PoolLayout:
     layout = PoolLayout(pool_dir)
+    if layout.exists():
+        owner, owner_uid = pool_owner(layout)
+        if owner_uid != os.getuid():
+            raise PermissionError(
+                f"pool {layout.root} belongs to {owner}: only its owner creates or updates it "
+                "(put jobs into it with run_autoexp --pool)"
+            )
     layout.root.mkdir(parents=True, exist_ok=True)
-    for sub in (layout.runs_dir, layout.hosts_dir, layout.requests_dir, layout.manifests_dir):
+    for sub in (
+        layout.runs_dir,
+        layout.hosts_dir,
+        layout.requests_dir,
+        layout.manifests_dir,
+        layout.held_dir,
+        layout.inbox_done_dir,
+    ):
         sub.mkdir(parents=True, exist_ok=True)
     meta = layout.load_meta() if layout.exists() else {"created": time.time()}
+    meta.setdefault("owner", {"user": user_name(os.getuid()), "uid": os.getuid()})
     cfg = replace(config, name=config.name or host_definition.name)
     meta.update(
         {
@@ -950,6 +1006,230 @@ def submit_request(pool_dir: str | Path, op: str, **payload: Any) -> Path:
     return path
 
 
+# ---------------------------------------------------------------------------
+# multi-user pools (docs/pool_allocation_improvement.md §10)
+# ---------------------------------------------------------------------------
+#
+# The submitter of an inbox file or a request is the file's OWNER (st_uid): another user cannot
+# create a file owned by the pool's owner. A user name written inside a file is never trusted.
+
+# metadata a foreign job may not carry: it would make the owner's monitor submit a host, replace
+# the pool's node check, or (singleton) displace a job in another pool
+FOREIGN_REJECTED_KEYS = (
+    "pool_role",
+    "pool_host_id",
+    "pool_host_account",
+    "pool_host_adopted",
+    "pool_adopt_workdir",
+    "pool_preflight_template",
+)
+# metadata only the monitor writes (overwritten on ingest, whoever enqueued)
+MONITOR_KEYS = ("pool_job_id", "pool_submitted_by", "pool_accounts", "pool_foreign")
+# monitor events that run something on the login node as the pool's owner: listed for the owner
+# before a permit (the run itself executes the submitter's code as the owner anyway)
+LOGIN_NODE_CLASSES = {
+    "CommandCondition",
+    "ShellCommandCondition",
+    "RunCommandAction",
+    "NewJobAction",
+    "AppendToFileAction",
+}
+
+
+def file_uid(path: Path) -> int:
+    """The owner uid of a file (the submitter of an inbox file / request)."""
+    return os.stat(path).st_uid
+
+
+def user_name(uid: int) -> str:
+    import pwd
+
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return str(uid)
+
+
+def user_in_group(user: str, group: str) -> bool | None:
+    """Whether ``user`` is a member of the Unix group ``group`` (listed, or as primary group);
+    None when there is no such group."""
+    import grp
+    import pwd
+
+    try:
+        g = grp.getgrnam(group)
+    except KeyError:
+        return None
+    if user in g.gr_mem:
+        return True
+    try:
+        return pwd.getpwnam(user).pw_gid == g.gr_gid
+    except KeyError:
+        return False
+
+
+def sacctmgr_assoc_users(account: str, user: str) -> set[str] | None:
+    """Users sacctmgr lists for (account, user): {user} when visible, set() when it shows nothing
+    (no association, OR the cluster hides other users' associations: PrivateData on MareNostrum
+    5), None when sacctmgr fails."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["sacctmgr", "-n", "-P", "show", "assoc", f"user={user}", f"account={account}",
+             "format=user"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return {line.strip() for line in out.stdout.splitlines() if line.strip()}
+
+
+def account_member(user: str, account: str) -> bool | None:
+    """Is ``user`` a member of SLURM account ``account``? sacctmgr only proves membership (an
+    empty answer may be PrivateData); else the Unix group of the account's name decides (MN5:
+    the accounts are groups). None: nothing could decide."""
+    seen = sacctmgr_assoc_users(account, user)
+    if seen and user in seen:
+        return True
+    return user_in_group(user, account)
+
+
+def pool_owner(layout: PoolLayout) -> tuple[str, int]:
+    """(user, uid) owning the pool: pool.json's "owner", else the owner of pool.json (pools
+    created before 2026-11-25)."""
+    owner = layout.load_meta().get("owner") or {}
+    if "uid" in owner:
+        uid = int(owner["uid"])
+        return str(owner.get("user") or user_name(uid)), uid
+    uid = file_uid(layout.pool_json)
+    return user_name(uid), uid
+
+
+def is_pool_admin(layout: PoolLayout, cfg: PoolHostConfig, uid: int) -> bool:
+    return uid == pool_owner(layout)[1] or user_name(uid) in _csv(cfg.pool_admins)
+
+
+def may_submit(layout: PoolLayout, cfg: PoolHostConfig, uid: int) -> bool:
+    """Whether a non-admin user may put jobs into the pool (foreign_submitters)."""
+    import grp
+
+    user = user_name(uid)
+    for item in _csv(cfg.foreign_submitters):
+        if item == "@group":
+            try:
+                group = grp.getgrgid(os.stat(layout.root).st_gid).gr_name
+            except (KeyError, OSError):
+                continue
+            if user_in_group(user, group):
+                return True
+        elif item.startswith("@"):
+            if user_in_group(user, item[1:]):
+                return True
+        elif item == user:
+            return True
+    return False
+
+
+def login_node_commands(payload: Any) -> list[str]:
+    """Descriptions of the monitor events of a record that run something on the login node."""
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            cls = node.get("class_name")
+            if cls in LOGIN_NODE_CLASSES:
+                what = node.get("command") or node.get("path") or ""
+                found.append(f"{cls}: {what}".strip(": ") if what else cls)
+            elif cls == "RestartAction" and (node.get("pre_command") or "").strip():
+                found.append(f"RestartAction.pre_command: {node['pre_command']}")
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return found
+
+
+def writable_here(directory: Path) -> str | None:
+    """None if this process can create files in ``directory`` (created if missing), else why.
+    A real probe file: os.access does not evaluate ACLs reliably on GPFS."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / f".autoexp_write_probe.{os.getpid()}.{uuid.uuid4().hex[:6]}"
+        probe.write_text("")
+        probe.unlink()
+    except OSError as exc:
+        return f"{directory}: {exc.strerror or exc}"
+    return None
+
+
+def foreign_enqueue_warnings(definitions: list, workdir: str | Path, owner: str) -> list[str]:
+    """What may stop another user's run of these jobs, seen from the submitter's side: the run
+    executes as ``owner`` (the owner's monitor checks writability for real when it ingests)."""
+    import stat
+
+    out: list[str] = []
+
+    def group_mode(path: Path, bits: int) -> bool:
+        try:
+            return bool(path.stat().st_mode & bits == bits)
+        except OSError:
+            return False
+
+    wd = Path(workdir)
+    if not group_mode(wd, stat.S_IRGRP | stat.S_IXGRP):
+        out.append(f"workdir {wd} is not group-readable by its mode bits: {owner} may not read it")
+    for definition in definitions:
+        for directory in PoolManager._job_dirs(definition):
+            probe = directory
+            while not probe.exists() and probe != probe.parent:
+                probe = probe.parent
+            if not group_mode(probe, stat.S_IWGRP | stat.S_IXGRP):
+                out.append(f"{definition.name}: {directory} is not group-writable by its mode bits "
+                           f"(fine if an ACL lets {owner} write)")
+        texts = [str(definition.log_path or ""), str(definition.config_path or "")]
+        texts += [str(v) for v in (getattr(definition.slurm, "env", None) or {}).values()]
+        for marker in ("~/", "$HOME", "${HOME}", "$USER", "${USER}", "/home/"):
+            if any(marker in text for text in texts):
+                out.append(f"{definition.name}: uses {marker} -- the run executes as {owner}, so it "
+                           f"resolves to {owner}'s")
+    return list(dict.fromkeys(out))
+
+
+def write_inbox(pool_dir: str | Path, job_id: str, payload: dict) -> Path:
+    """Put one job record into the pool's inbox (tmp dotfile + rename: the monitor skips
+    dotfiles, so it never reads half a file)."""
+    layout = PoolLayout(pool_dir)
+    name = f"{time.time():.6f}-{os.getuid()}-{_sanitize(job_id)}.job.json"
+    path = layout.inbox_dir / name
+    tmp = layout.inbox_dir / f".{name}.{uuid.uuid4().hex[:6]}.tmp"
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def inbox_result_path(layout: PoolLayout, inbox_file: str | Path) -> Path:
+    return layout.inbox_done_dir / f"{Path(inbox_file).name}.result.json"
+
+
+def held_jobs(layout: PoolLayout) -> list[dict]:
+    """The foreign jobs waiting for a permit (raw records, oldest first)."""
+    out = []
+    for path in sorted(layout.held_dir.glob("*.job.json")) if layout.held_dir.exists() else []:
+        try:
+            out.append(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
+
+
 def pools_have_pending_requests(session_dir: str | Path) -> bool:
     """Whether a pool of this monitor session still needs its monitor although no job record
     is active: unprocessed pool_ctl requests (an `adopt` creates the first record), or a pool
@@ -959,6 +1239,8 @@ def pools_have_pending_requests(session_dir: str | Path) -> bool:
         try:
             if any(layout.requests_dir.glob("*.json")):
                 return True
+            if any(not p.name.startswith(".") for p in layout.inbox_dir.glob("*.job.json")):
+                return True  # another user's enqueue waits for this monitor
             if layout.exists() and not layout.load_state().get("closed"):
                 cfg = layout.load_config()
                 if cfg.min_hosts > 0 or cfg.keep_monitor:
@@ -1112,7 +1394,10 @@ class PoolManager:
         enqueued_ts = float(metadata.get("pool_enqueued_ts") or time.time())
 
         workdir = metadata.get("pool_workdir") or ""
-        step_text = render_step_script(job.slurm, rid, log_path=log_path, workdir=workdir or None)
+        submitted_by = (metadata.get("pool_submitted_by") or {}).get("user") or ""
+        step_text = render_step_script(
+            job.slurm, rid, log_path=log_path, workdir=workdir or None, submitted_by=submitted_by
+        )
         (rd / "step.sh").write_text(step_text, encoding="utf-8")
         job_exclude = _exclude_list(job.slurm)
         write_env_file(
@@ -1149,6 +1434,10 @@ class PoolManager:
                     # the code it was planned with; the supervisor compares the code it
                     # launches with against this (launch_provenance.json)
                     "provenance": metadata.get("provenance"),
+                    # multi-user pools: who enqueued it (set by the inbox ingest), and the
+                    # accounts a foreign job may spend (its hosts' accounts it is a member of)
+                    "submitted_by": submitted_by,
+                    "accounts": list(metadata.get("pool_accounts") or []),
                 },
                 indent=2,
             ),
@@ -1639,6 +1928,9 @@ class PoolManager:
                 use_excl = run_meta(rid)[1]
                 if not host_allows_pin(pin, host.hid):
                     continue  # pool_ctl pin: this run may only take that host
+                allowed = _run_accounts(layout, rid)
+                if allowed and host.account not in allowed:
+                    continue  # a foreign job: only hosts of accounts its submitter belongs to
                 cap = free + (free_excl if use_excl else 0)
                 if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
                     # the previous attempt of this run may have ended moments ago and its step's
@@ -2663,27 +2955,284 @@ class PoolManager:
         )
         return hid
 
+    # --- inbox: enqueues of other users (and the owner's, if routed there) ----
+    def ingest(self, loop: MonitorLoop) -> None:
+        """Move the pools' inbox files into the session (or inbox/held/): before the poll reads
+        the records, so a queued job is scheduled in the same poll."""
+        pools = set((_read(Path(loop._store.root) / "pools.txt") or "").split()) | set(self._hosts)
+        for pool_dir in sorted(pools):
+            layout = PoolLayout(pool_dir)
+            if not layout.exists() or not layout.inbox_dir.exists():
+                continue
+            try:
+                self._ingest_pool(loop, layout)
+            except Exception:
+                if loop.no_error_catching:
+                    raise
+                LOGGER.exception("[pool] inbox of %s failed", pool_dir)
+
+    def _ingest_pool(self, loop: MonitorLoop, layout: PoolLayout) -> None:
+        paths = sorted(p for p in layout.inbox_dir.glob("*.job.json") if not p.name.startswith("."))
+        if not paths:
+            return
+        cfg = layout.load_config()
+        for path in paths:
+            try:
+                uid = file_uid(path)
+            except OSError:
+                continue
+            try:
+                status, job_id, message = self._ingest_one(loop, layout, cfg, path, uid)
+            except Exception as exc:  # pragma: no cover - never let one file block the inbox
+                status, job_id, message = "rejected", "", f"error: {exc}"
+            user = user_name(uid)
+            LOGGER.info("[pool %s] inbox %s from %s: %s %s %s", cfg.name, path.name, user, status,
+                        job_id, message)
+            layout.inbox_done_dir.mkdir(parents=True, exist_ok=True)
+            _atomic_write(
+                inbox_result_path(layout, path),
+                json.dumps({"status": status, "job_id": job_id, "message": message, "user": user,
+                            "uid": uid, "ts": time.time()}),
+            )
+            if status != "rejected":
+                self._pool_ledger(layout, job_id, f"{status} by {user}")
+            try:
+                os.replace(path, layout.inbox_done_dir / path.name)
+            except OSError:
+                path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _pool_ledger(layout: PoolLayout, what: str, text: str) -> None:
+        with open(layout.ledger, "a") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')}\t-\t-\t{what}\t{text}\n")
+
+    def _ingest_one(
+        self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig, path: Path, uid: int
+    ) -> tuple[str, str, str]:
+        """(status, job id, message): status "queued" | "held" | "rejected"."""
+        from oellm_autoexp.monitor.loop import JobRecord, JobRuntime
+
+        user = user_name(uid)
+        admin = is_pool_admin(layout, cfg, uid)
+        if not admin and not may_submit(layout, cfg, uid):
+            owner = pool_owner(layout)[0]
+            return "rejected", "", (f"{user} may not submit to this pool (foreign_submitters; ask "
+                                    f"{owner}: pool_ctl set foreign_submitters=...)")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            _import_registry()
+            record = parse_config(JobRecord, payload)
+        except Exception as exc:
+            return "rejected", "", f"unreadable job record: {exc}"
+        definition = record.definition
+        if not isinstance(definition, SlurmJobConfig):
+            return "rejected", "", "only SLURM jobs run in a pool (no local jobs)"
+        metadata = dict(definition.metadata or {})
+        foreign: dict[str, Any] = {}
+        if not admin:
+            bad = [k for k in FOREIGN_REJECTED_KEYS if metadata.get(k)]
+            if bad:
+                return "rejected", "", f"metadata a foreign job may not set: {', '.join(bad)}"
+            requested = int(metadata.get("pool_priority", 0) or 0)
+            if requested > cfg.foreign_max_priority:
+                metadata["pool_priority"] = cfg.foreign_max_priority
+                foreign["requested_priority"] = requested
+            if metadata.get("pool_singleton"):
+                foreign["dropped_singleton"] = metadata.pop("pool_singleton")
+            metadata["pool_enqueued_ts"] = time.time()  # the queue order is the monitor's
+        for key in MONITOR_KEYS:
+            metadata.pop(key, None)
+        definition = replace(definition, pool_dir=str(layout.root), metadata=metadata)
+        host = layout.load_host_definition()
+        problems = check_fits_host(definition, host, host_accounts(cfg))
+        if problems:
+            return "rejected", "", "; ".join(problems)
+        if not admin:
+            accounts = host_accounts(cfg) or [
+                a for a in [sbatch_get(host.slurm.sbatch, "account")] if a
+            ]
+            if cfg.foreign_account_check and accounts:
+                verdict = {a: account_member(user, str(a)) for a in accounts}
+                members = [a for a, ok in verdict.items() if ok]
+                if not members:
+                    unknown = [a for a, ok in verdict.items() if ok is None]
+                    why = (f"could not verify {user}'s membership of {', '.join(unknown)}"
+                           if unknown else f"{user} is not a member of {', '.join(accounts)}")
+                    return "rejected", "", (f"{why}; the owner may allow it with pool_ctl set "
+                                            "foreign_account_check=false")
+                metadata["pool_accounts"] = members
+            for directory in self._job_dirs(definition):
+                why = writable_here(directory)
+                if why:
+                    return "rejected", "", f"not writable for the pool owner: {why}"
+            workdir = metadata.get("pool_workdir") or ""
+            if workdir and not os.access(workdir, os.R_OK | os.X_OK):
+                return "rejected", "", f"workdir {workdir} is not readable for the pool owner"
+            clash = self._name_clash(loop, layout, definition, uid)
+            if clash:
+                return "rejected", "", clash
+            foreign["commands"] = login_node_commands(payload.get("definition"))
+            metadata["pool_foreign"] = foreign
+        metadata["pool_submitted_by"] = {"user": user, "uid": uid, "ts": time.time()}
+        job_id = record.job_id
+        n = 1
+        while loop._store.path_for(job_id).exists() or (layout.held_dir / f"{job_id}.job.json").exists():
+            n += 1
+            job_id = f"{record.job_id}_q{n}"
+        metadata["pool_job_id"] = job_id
+        # a fresh runtime: a submitted record must never name a run (or its state) of another job
+        record = JobRecord(job_id=job_id, definition=definition, runtime=JobRuntime())
+        hold = (
+            not admin and cfg.hold_foreign_jobs and user not in _csv(cfg.foreign_auto_permit)
+        )
+        if hold:
+            layout.held_dir.mkdir(parents=True, exist_ok=True)
+            _atomic_write(layout.held_dir / f"{job_id}.job.json",
+                          json.dumps(asdict(record), indent=2))
+            note = f"awaiting `pool_ctl permit {job_id}` by {pool_owner(layout)[0]}"
+            if foreign.get("commands"):
+                note += f"; runs on the login node: {foreign['commands']}"
+            return "held", job_id, note
+        loop._store.upsert(record)
+        return "queued", job_id, ""
+
+    @staticmethod
+    def _job_dirs(definition: SlurmJobConfig) -> list[Path]:
+        """Directories a run of the job writes into on its own (log, config dump)."""
+        dirs = [Path(str(p)).parent for p in (definition.log_path, definition.config_path) if p]
+        log_dir = getattr(definition.slurm, "log_dir", None)
+        if log_dir:
+            dirs.append(Path(str(log_dir)))
+        # templated parts (%j, $VAR) are only known per run
+        dirs = [d for d in dirs if "%" not in str(d) and "$" not in str(d)]
+        return list(dict.fromkeys(dirs))
+
+    def _name_clash(
+        self, loop: MonitorLoop, layout: PoolLayout, definition: SlurmJobConfig, uid: int
+    ) -> str:
+        """Why a foreign job's name collides with an active job of another submitter ('' if not)."""
+        for other in loop._store.load_all():
+            if not self.is_run(other) or str(PoolLayout(other.definition.pool_dir).root) != str(layout.root):
+                continue
+            md = other.definition.metadata or {}
+            other_uid = (md.get("pool_submitted_by") or {}).get("uid")
+            if other_uid is None:
+                other_uid = pool_owner(layout)[1]
+            if int(other_uid) != uid and other.definition.name == definition.name:
+                return (f"an active job named {definition.name!r} belongs to "
+                        f"{user_name(int(other_uid))} ({other.job_id}): choose another job.name")
+        return ""
+
+    def _permit(self, loop: MonitorLoop, layout: PoolLayout, request: dict) -> str:
+        """Held foreign jobs -> the session (they are scheduled from this poll on)."""
+        targets = set(request.get("targets") or [])
+        user = request.get("user")
+        permitted = []
+        for payload in held_jobs(layout):
+            job_id = payload.get("job_id")
+            md = ((payload.get("definition") or {}).get("metadata") or {})
+            by = (md.get("pool_submitted_by") or {}).get("user")
+            if not (request.get("all") or job_id in targets or (user and by == user)):
+                continue
+            from oellm_autoexp.monitor.loop import JobRecord
+
+            _import_registry()
+            record = parse_config(JobRecord, payload)
+            metadata = dict(record.definition.metadata or {})
+            foreign = dict(metadata.get("pool_foreign") or {})
+            if request.get("priority") is not None:
+                metadata["pool_priority"] = int(request["priority"])
+            if request.get("singleton") and foreign.get("dropped_singleton"):
+                metadata["pool_singleton"] = foreign["dropped_singleton"]
+            foreign["permitted_by"] = request.get("_by")
+            foreign["permitted_ts"] = time.time()
+            metadata["pool_foreign"] = foreign
+            record = replace(record, definition=replace(record.definition, metadata=metadata))
+            loop._store.upsert(record)
+            held = layout.held_dir / f"{job_id}.job.json"
+            layout.inbox_done_dir.mkdir(parents=True, exist_ok=True)
+            os.replace(held, layout.inbox_done_dir / f"{job_id}.permitted.job.json")
+            self._pool_ledger(layout, job_id, f"permitted by {request.get('_by')}")
+            permitted.append(job_id)
+        return f"permitted {permitted}" if permitted else "no held job matches"
+
+    def _deny(self, layout: PoolLayout, request: dict, uid: int, admin: bool) -> str:
+        denied, refused = [], []
+        for payload in held_jobs(layout):
+            job_id = payload.get("job_id")
+            if job_id not in set(request.get("targets") or []):
+                continue
+            md = ((payload.get("definition") or {}).get("metadata") or {})
+            if not admin and (md.get("pool_submitted_by") or {}).get("uid") != uid:
+                refused.append(job_id)
+                continue
+            layout.inbox_done_dir.mkdir(parents=True, exist_ok=True)
+            os.replace(layout.held_dir / f"{job_id}.job.json",
+                       layout.inbox_done_dir / f"{job_id}.denied.job.json")
+            self._pool_ledger(layout, job_id, f"denied by {request.get('_by')}: "
+                              f"{request.get('reason') or '-'}")
+            denied.append(job_id)
+        if refused:
+            return f"error: not yours to deny: {refused}" + (f"; denied {denied}" if denied else "")
+        return f"denied {denied}" if denied else "no held job matches"
+
+    def _submitter_uid(self, layout: PoolLayout, record) -> int:
+        md = record.definition.metadata or {}
+        uid = (md.get("pool_submitted_by") or {}).get("uid")
+        return int(uid) if uid is not None else pool_owner(layout)[1]
+
+    def _preempt_request(self, loop: MonitorLoop, layout: PoolLayout, request: dict, uid: int,
+                         admin: bool) -> str:
+        """A preempt by a submitter (their pool_ctl cannot write into runs/)."""
+        rid = str(request.get("run") or "")
+        for record in loop._store.load_all():
+            if not self.is_run(record) or record.runtime.runtime_job_id != rid:
+                continue
+            if not admin and self._submitter_uid(layout, record) != uid:
+                return f"error: run {rid} is not yours to preempt"
+            if read_run_state(layout, rid).status != "RUNNING":
+                return f"error: run {rid} is not RUNNING"
+            _atomic_write(layout.run_dir(rid) / "preempt", f"pool_ctl {request.get('_by')} {time.time()}\n")
+            return f"preempt requested for {rid}"
+        return f"error: no active run {rid}"
+
     # --- requests from pool_ctl ---------------------------------------------
     def _process_requests(self, loop: MonitorLoop, layout: PoolLayout, state: dict) -> None:
         try:
             paths = sorted(p for p in layout.requests_dir.glob("*.json"))
         except OSError:
             return
+        cfg = layout.load_config()
         for path in paths:
             try:
                 request = json.loads(path.read_text(encoding="utf-8"))
+                uid = file_uid(path)
             except (OSError, json.JSONDecodeError):
                 continue
             op = request.get("op")
             result = "ok"
+            # who asks is the request file's owner, never a name inside it
+            admin = is_pool_admin(layout, cfg, uid)
+            request["_by"] = user_name(uid)
             try:
-                if op == "close":
+                if not admin and op not in ("cancel", "deny", "preempt"):
+                    result = (f"error: {op} is for the pool owner ({pool_owner(layout)[0]}) or a "
+                              f"pool admin, not {request['_by']}")
+                elif op == "close":
                     state["closed"] = True
                 elif op == "open":
                     state["closed"] = False
                 elif op == "cancel":
                     targets = request.get("targets") or [str(request.get("target", ""))]
-                    result = self._cancel_targets(loop, layout, [str(t) for t in targets])
+                    result = self._cancel_targets(
+                        loop, layout, [str(t) for t in targets], None if admin else uid
+                    )
+                elif op == "permit":
+                    result = self._permit(loop, layout, request)
+                elif op == "deny":
+                    result = self._deny(layout, request, uid, admin)
+                elif op == "preempt":
+                    result = self._preempt_request(loop, layout, request, uid, admin)
                 elif op == "adopt":
                     result = self._adopt(loop, layout, state, request)
                 elif op == "drain":
@@ -2712,8 +3261,11 @@ class PoolManager:
             _atomic_write(done / path.name, json.dumps(request))
             path.unlink(missing_ok=True)
 
-    def _cancel_targets(self, loop: MonitorLoop, layout: PoolLayout, targets: list[str]) -> str:
-        matched = []
+    def _cancel_targets(
+        self, loop: MonitorLoop, layout: PoolLayout, targets: list[str], only_uid: int | None = None
+    ) -> str:
+        """Cancel the matching jobs; ``only_uid``: a submitter's request, their own jobs only."""
+        matched, refused = [], []
         for record in loop._store.load_all():
             if not self.is_run(record):
                 continue
@@ -2721,10 +3273,17 @@ class PoolManager:
                 continue
             rid = record.runtime.runtime_job_id
             if {record.job_id, rid, record.definition.name} & set(targets):
+                if only_uid is not None and self._submitter_uid(layout, record) != only_uid:
+                    refused.append(record.job_id)
+                    continue
                 if rid:
                     self.cancel(rid)
                 loop._store.mark_finished(record.job_id, "cancelled")
                 matched.append(record.job_id)
+        if refused:
+            return f"error: not yours to cancel: {refused}" + (
+                f"; cancelled {matched}" if matched else ""
+            )
         return f"cancelled {matched}" if matched else f"no active job matches {targets}"
 
 

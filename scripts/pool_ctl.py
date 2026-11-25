@@ -21,6 +21,16 @@ the pool's files directly and are picked up by the supervisors.
   pool_ctl.py <pool_dir> promote [<host> ...]    plan Nice=0 again (full priority back); --apply
   pool_ctl.py <pool_dir> queue                   all my pending jobs per account / QOS, in SLURM's order
   pool_ctl.py <pool_dir> doctor [--no-slurm]     read-only consistency check (exit 1 on a problem)
+  pool_ctl.py <pool_dir> permit <job>... | --user U | --all [--priority N] [--singleton]
+                                                 let held jobs of other users run (owner / admins)
+  pool_ctl.py <pool_dir> deny <job>... [--reason]  drop held jobs (owner / admins / their submitter)
+  pool_ctl.py <pool_dir> secure [--apply]        only inbox/ + requests/ group-writable (optional)
+
+Multi-user pools (2026-11-25, docs/pool_allocation_improvement.md §10): another user of the group
+enqueues with `run_autoexp.py --pool <pool_dir>`; the job lands in <pool>/inbox/ and the owner's
+monitor ingests it (submitter = the file's owner; foreign_submitters, hold_foreign_jobs,
+foreign_account_check, foreign_max_priority, pool_admins). Such a user may run status, doctor,
+queue, and cancel / deny / preempt for their own jobs; everything else is for the owner and admins.
 
 Resizing a host (2026-11-10): `freeze` it, wait until no run is active on it (or preempt them), then
 `shrink --keep N --apply`, then `unfreeze`. A step running during `scontrol update NodeList=` stays
@@ -43,6 +53,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -53,6 +64,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from oellm_autoexp.monitor.pool import (  # noqa: E402
     PoolHostConfig,
     PoolLayout,
+    held_jobs,
+    is_pool_admin,
+    pool_owner,
     read_env_file,
     read_run_state,
     submit_request,
@@ -182,8 +196,32 @@ def cmd_status(layout: PoolLayout, _args) -> int:
             f"started {_fmt_ts(rs.started.get('ts'))}"
             + (f"  rc {rs.code} {rs.reason}" if rs.reason else "")
             + (f"  [job {rec['job_id']} {rec.get('final') or 'active'}]" if rec else "")
+            + (f"  by {run['submitted_by']}" if run.get("submitted_by") else "")
             + (f"  CODE CHANGED SINCE ENQUEUE ({len(changed)} change(s))" if changed else "")
         )
+    held = held_jobs(layout)
+    if held:
+        print("\nheld jobs of other users (pool_ctl permit <job> | deny <job>):")
+        for payload in held:
+            definition = payload.get("definition") or {}
+            md = definition.get("metadata") or {}
+            by = (md.get("pool_submitted_by") or {}).get("user", "?")
+            foreign = md.get("pool_foreign") or {}
+            nodes = ((definition.get("slurm") or {}).get("sbatch") or {}).get("nodes")
+            notes = []
+            if foreign.get("requested_priority") is not None:
+                notes.append(f"asked priority {foreign['requested_priority']}")
+            if foreign.get("dropped_singleton"):
+                notes.append(f"singleton {foreign['dropped_singleton']} dropped (--singleton)")
+            if foreign.get("commands"):
+                notes.append(f"login-node commands: {foreign['commands']}")
+            print(f"  {payload.get('job_id'):<30} by {by:<12} {definition.get('name', ''):<40} "
+                  f"nodes {nodes}  priority {md.get('pool_priority', 0)}"
+                  + (f"  [{'; '.join(notes)}]" if notes else ""))
+    if layout.inbox_dir.exists():
+        waiting_files = [p.name for p in layout.inbox_dir.glob("*.job.json") if not p.name.startswith(".")]
+        if waiting_files:
+            print(f"\ninbox files not yet ingested by the monitor: {waiting_files}")
     pending = (
         sorted(p.name for p in layout.requests_dir.glob("*.json"))
         if layout.requests_dir.exists()
@@ -439,6 +477,11 @@ def cmd_adopt(layout: PoolLayout, args) -> int:
 
 
 def cmd_preempt(layout: PoolLayout, args) -> int:
+    if not _admin(layout):
+        # a submitter cannot (and should not) write into runs/: the monitor checks it is theirs
+        path = submit_request(layout.root, "preempt", run=args.run)
+        print(f"request preempt written: {path.name}")
+        return _await_result(layout, path, 120.0)
     rd = layout.run_dir(args.run)
     if not (rd / "run.json").exists():
         print(f"no such run: {args.run}", file=sys.stderr)
@@ -770,6 +813,119 @@ def cmd_nice(layout: PoolLayout, args, slurm=_slurm) -> int:
     return rc
 
 
+# ---------------------------------------------------------------- multi-user (2026-11-25)
+# what a user who is neither the owner nor a pool admin may run (the monitor checks the rest of
+# their requests again: cancel / deny / preempt act on their own jobs only)
+SUBMITTER_COMMANDS = {"status", "doctor", "queue", "cancel", "deny", "preempt"}
+
+
+def _my_uid() -> int:
+    return os.getuid()
+
+
+def _admin(layout: PoolLayout) -> bool:
+    return is_pool_admin(layout, layout.load_config(), _my_uid())
+
+
+def _held_targets(layout: PoolLayout, names: list[str], user: str | None, all_: bool) -> list[str]:
+    out = []
+    for payload in held_jobs(layout):
+        job_id = payload.get("job_id")
+        definition = payload.get("definition") or {}
+        by = ((definition.get("metadata") or {}).get("pool_submitted_by") or {}).get("user")
+        if all_ or job_id in names or definition.get("name") in names or (user and by == user):
+            out.append(job_id)
+    return out
+
+
+def cmd_permit(layout: PoolLayout, args) -> int:
+    targets = _held_targets(layout, args.jobs, args.user, args.all)
+    if not targets:
+        print("no held job matches (pool_ctl status lists them)", file=sys.stderr)
+        return 1
+    payload = {"targets": targets}
+    if args.priority is not None:
+        payload["priority"] = args.priority
+    if args.singleton:
+        payload["singleton"] = True
+    path = submit_request(layout.root, "permit", **payload)
+    print(f"permitting {', '.join(targets)}: request {path.name}")
+    if args.no_wait:
+        return 0
+    return _await_result(layout, path, args.wait)
+
+
+def cmd_deny(layout: PoolLayout, args) -> int:
+    targets = _held_targets(layout, args.jobs, None, False)
+    if not targets:
+        print("no held job matches (pool_ctl status lists them)", file=sys.stderr)
+        return 1
+    path = submit_request(layout.root, "deny", targets=targets, reason=args.reason or "")
+    print(f"denying {', '.join(targets)}: request {path.name}")
+    if args.no_wait:
+        return 0
+    return _await_result(layout, path, args.wait)
+
+
+def secure_plan(layout: PoolLayout, acl: bool) -> list[list[str]]:
+    """Commands that leave only inbox/ and requests/ group-writable (+ x on directories), so a
+    pool's own state (runs' step scripts, pool.env, hosts) changes only through the monitor.
+    Filesystem permissions only, no SLURM job. With ACLs (hybrid_nucleus hands out a default
+    group:<group>:rwx) the named group entry and the defaults are rewritten as well."""
+    import grp
+
+    root = str(layout.root)
+    try:
+        group = grp.getgrgid(layout.root.stat().st_gid).gr_name
+    except KeyError:
+        group = str(layout.root.stat().st_gid)
+    open_dirs = [str(layout.inbox_dir), str(layout.requests_dir)]
+    owner_dirs = [str(layout.held_dir), str(layout.inbox_done_dir), str(layout.requests_dir / "done")]
+    cmds = [["mkdir", "-p", *open_dirs, *owner_dirs]]
+    if acl:
+        cmds += [
+            ["setfacl", "-R", "-m", f"g::r-X,g:{group}:r-X", root],
+            ["setfacl", "-R", "-d", "-m", f"g::r-X,g:{group}:r-X", root],
+            ["setfacl", "-m", f"g::rwx,g:{group}:rwx", *open_dirs],
+            ["setfacl", "-d", "-m", f"g::rwx,g:{group}:rwx", *open_dirs],
+            ["setfacl", "-m", f"g::r-x,g:{group}:r-x", *owner_dirs],
+            ["setfacl", "-d", "-m", f"g::r-x,g:{group}:r-x", *owner_dirs],
+        ]
+    else:
+        cmds += [["chmod", "-R", "g-w", root], ["chmod", "g+rwxs", *open_dirs]]
+    return cmds
+
+
+def _has_acl_support(path: Path) -> bool:
+    import shutil
+    import subprocess
+
+    if not shutil.which("setfacl") or not shutil.which("getfacl"):
+        return False
+    return subprocess.run(["getfacl", "-p", str(path)], capture_output=True).returncode == 0
+
+
+def cmd_secure(layout: PoolLayout, args) -> int:
+    """Optional hardening: the multi-user flow works without it (inbox + permit + monitor-checked
+    requests); with it, members of the group can no longer change the pool's state by hand."""
+    import subprocess
+
+    acl = _has_acl_support(layout.root) and not args.no_acl
+    plan = secure_plan(layout, acl)
+    for cmd in plan:
+        print("  " + " ".join(cmd))
+    if not args.apply:
+        print("plan only (--apply runs it; filesystem permissions only, no SLURM job)")
+        return 0
+    for cmd in plan:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"failed: {' '.join(cmd)}: {proc.stderr.strip()}", file=sys.stderr)
+            return 1
+    print(f"pool {layout.root.name}: only inbox/ and requests/ are group-writable now")
+    return 0
+
+
 # ---------------------------------------------------------------- doctor (2026-11-25)
 # A request older than this was not executed by a monitor.
 REQUEST_STALE_S = 300.0
@@ -1083,6 +1239,21 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--nice", type=int, default=PARK_NICE)
         p.add_argument("--apply", action="store_true", help="scontrol update Nice (user's go)")
         p.set_defaults(func=cmd_nice)
+    p = waiting(sub.add_parser("permit", help="let held jobs of other users run (owner / admins)"))
+    p.add_argument("jobs", nargs="*", help="held job ids or names")
+    p.add_argument("--user", help="every held job of this user")
+    p.add_argument("--all", action="store_true", help="every held job")
+    p.add_argument("--priority", type=int, help="pool_priority (overrides foreign_max_priority)")
+    p.add_argument("--singleton", action="store_true", help="restore the job's pool_singleton key")
+    p.set_defaults(func=cmd_permit)
+    p = waiting(sub.add_parser("deny", help="drop held jobs (owner / admins / their submitter)"))
+    p.add_argument("jobs", nargs="+")
+    p.add_argument("--reason", default="")
+    p.set_defaults(func=cmd_deny)
+    p = sub.add_parser("secure", help="optional: only inbox/ + requests/ group-writable (plan; --apply)")
+    p.add_argument("--apply", action="store_true")
+    p.add_argument("--no-acl", action="store_true", help="chmod only, even where ACLs work")
+    p.set_defaults(func=cmd_secure)
     p = sub.add_parser("doctor", help="read-only consistency check (exit 1 on a problem)")
     p.add_argument("--no-slurm", action="store_true", help="no squeue / scontrol calls")
     p.set_defaults(func=cmd_doctor)
@@ -1093,6 +1264,13 @@ def main(argv: list[str] | None = None) -> int:
     if not layout.exists():
         print(f"{layout.root} is not a pool (no pool.json)", file=sys.stderr)
         return 2
+    if args.cmd not in SUBMITTER_COMMANDS and not _admin(layout):
+        print(
+            f"{args.cmd} is for the pool owner ({pool_owner(layout)[0]}) or a pool admin "
+            "(pool_admins); you may: " + ", ".join(sorted(SUBMITTER_COMMANDS)),
+            file=sys.stderr,
+        )
+        return 1
     return args.func(layout, args)
 
 

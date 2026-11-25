@@ -75,3 +75,17 @@ pool_host:
   # singleton runs (job.metadata.pool_singleton) move to hosts of these accounts ("cns144") at
   # the same node count: the waiting copy there supersedes the run on another account's host
   singleton_prefer_accounts: ""
+  # MULTI-USER pools (docs/pool_allocation_improvement.md §10): other users enqueue through
+  # <pool>/inbox/ (run_autoexp --pool as a non-owner). Who may: "" = the owner only, "@group" =
+  # members of the pool directory's group, or "userb,userc"
+  foreign_submitters: ""
+  # foreign jobs wait in inbox/held/ until `pool_ctl permit` (except foreign_auto_permit users)
+  hold_foreign_jobs: true
+  foreign_auto_permit: ""
+  # foreign pool_priority is clamped to this; `pool_ctl permit --priority` overrides
+  foreign_max_priority: 60
+  # the submitter must be a member of the host account(s) (sacctmgr, else the account's Unix
+  # group); false = the owner allows spending in accounts the submitter is not a member of
+  foreign_account_check: true
+  # users treated as the owner for steering (permit, set, cancel any job, ...)
+  pool_admins: ""

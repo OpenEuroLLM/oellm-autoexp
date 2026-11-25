@@ -244,6 +244,8 @@ class MonitorLoop:
             statuses.update(self._slurm_client.squeue())
         if self._local_client:
             statuses.update(self._local_client.squeue())
+        # other users' enqueues (pool inboxes) become records before the records are read
+        self._pool.ingest(self)
         records = self._store.load_all()
         # host views first (they need the SLURM states), then the pool runs'
         # states, which depend on whether their host is still there
