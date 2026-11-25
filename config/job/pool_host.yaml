@@ -89,3 +89,6 @@ pool_host:
   foreign_account_check: true
   # users treated as the owner for steering (permit, set, cancel any job, ...)
   pool_admins: ""
+  # the monitor runs the cheap part of `pool_ctl doctor` every this many seconds (<pool>/health.txt,
+  # new problems logged once); 0 = off
+  health_check_s: 900

@@ -274,6 +274,9 @@ class PoolHostConfig:
     foreign_account_check: bool = True
     # users treated as the owner for steering the pool (permit, set, cancel any job, ...)
     pool_admins: str = ""
+    # HEALTH CHECK: every this many seconds the monitor runs the cheap part of `pool_ctl doctor`
+    # (no SLURM calls), writes <pool>/health.txt and logs each new PROBLEM once; 0 = off
+    health_check_s: float = 900.0
 
 
 def _csv(value: str) -> list[str]:
@@ -1451,6 +1454,9 @@ class PoolManager:
         self._runs: dict[str, str] = {}
         # hid views of the current poll, by pool dir
         self._hosts: dict[str, dict[str, HostView]] = {}
+        # periodic health check (pool_doctor.health_check): last run, problems then, by pool dir
+        self._health_ts: dict[str, float] = {}
+        self._health_problems: dict[str, set[str]] = {}
 
     # --- JobClientProtocol --------------------------------------------------
     def submit(self, job: SlurmJobConfig) -> str:
@@ -1758,6 +1764,7 @@ class PoolManager:
             and r.runtime.final_state is None
         ]
         runs, held_job_rids = self._enforce_job_markers(loop, layout, cfg, runs)
+        self._health_check(layout, cfg, now)
         hosts = list(self._hosts.get(str(layout.root), {}).values())
         self._manage_adopted(loop, layout, cfg, hosts, state, now)
 
@@ -3033,6 +3040,27 @@ class PoolManager:
             f", nice {cfg.submit_nice}" if cfg.submit_nice else "",
         )
         return hid
+
+    def _health_check(self, layout: PoolLayout, cfg: PoolHostConfig, now: float) -> None:
+        """The periodic doctor (health_check_s): new problems are logged once, cleared ones too."""
+        key = str(layout.root)
+        if cfg.health_check_s <= 0 or now - self._health_ts.get(key, 0.0) < cfg.health_check_s:
+            return
+        self._health_ts[key] = now
+        from oellm_autoexp.monitor.pool_doctor import health_check
+
+        previous = self._health_problems.get(key, set())
+        try:
+            problems, new = health_check(layout, previous)
+        except Exception as exc:  # pragma: no cover - a check must never block scheduling
+            LOGGER.warning("[pool %s] health check failed: %s", cfg.name, exc)
+            return
+        for line in new:
+            LOGGER.warning("[pool %s] health: %s", cfg.name, line)
+        cleared = previous - problems
+        if cleared:
+            LOGGER.info("[pool %s] health: %d problem(s) cleared", cfg.name, len(cleared))
+        self._health_problems[key] = problems
 
     # --- jobs: durable control markers ------------------------------------------
     def _enforce_job_markers(
