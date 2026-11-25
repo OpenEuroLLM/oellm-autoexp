@@ -32,11 +32,11 @@ aux:
 
 backend:
   megatron:
-    packing_plan_path:  # horizon 51,000 -> 91,000
+    packing_plan_path:  # horizon 51,000 -> 91,000; copy-pool plans (q3e128p2) from 61,000 (2026-11-25)
       - ${aux.cds_plans}
-      - ${aux.cds_plan_root}/q3e128_g61000
-      - ${aux.cds_plan_root}/q3e128_g71000
-      - ${aux.cds_plan_root}/q3e128_g81000
+      - ${aux.cds_plan_root}/q3e128p2_g61000
+      - ${aux.cds_plan_root}/q3e128p2_g71000
+      - ${aux.cds_plan_root}/q3e128p2_g81000
     packing_plan_boundaries: group
     packing_plan_at_end: exit
     # the run's cached dataset indices in one file (cds_index_bundle_mn5, checked 2026-11-22: 3,211 indices,

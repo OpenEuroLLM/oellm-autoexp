@@ -58,14 +58,16 @@ backend:
     page_sparse_backend: rowmask
     page_sparse_per_group: true
     page_sparse_selector: page_maxpool
-    # Cross-document packing plans, group boundaries: four plans over the v4b_p2 sequences
-    # (q3e256 from step 51000, q3e128 from 61000/71000/81000).
+    # Cross-document packing plans, group boundaries: four plans over the v4b_p2 sequences.
+    # q3e256 from step 51000; from 61000 the copy-pool plans q3e128p2 (2026-11-25, user: change the plan from 61k):
+    # ~2.4 group segments per 64k sequence, token-weighted 53.5k tokens (the q3e128_g plans: 15.7, 17.7k --
+    # their copies cut the groups), docs/cross_doc_seqs/README.md. Same tokens per window, only the packing.
     packing_plan_boundaries: group
     packing_plan_path:
       - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e256_g51000
-      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g61000
-      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g71000
-      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128_g81000
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128p2_g61000
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128p2_g71000
+      - /gpfs/projects/ehpc533/users/korbip/data/cross_doc_seqs/v4b_p2/plan/q3e128p2_g81000
     dataloader_inter_document_masking: true
     dataloader_index_bundle: /gpfs/scratch/ehpc533/hybrid_nucleus/data_cache_bundles/v4b_p2_09a2a1c4
     # The live run saved rolling checkpoints every 50 steps, not the base config's 100: a crash then
