@@ -14,9 +14,9 @@ one process; this is the same plan (same format, same guarantees) for a window t
                  to --group-tokens (build_plan.leaf_groups); copies (repeats, near duplicates) of rank r <=
                  --copy-pools form pool r, ordered and grouped the same way (no pool holds two units of a class)
       assemble   one process: the buckets' bases concatenated in chain order, then pool 1 of all buckets, pool 2,
-                 ...; the remaining copies at random group boundaries, moved on until no sequence holds two units
-                 of a class (build_plan.separate_copies); cut into sequences, shuffled over the window's non-solo
-                 slots -> <out>/plan/<name>/ck<w0>_<w1>/
+                 ...; the remaining copies spread evenly over that order at group boundaries (build_plan.place_copies:
+                 no sequence holds two units of a class), each its own group; cut into sequences, shuffled over the
+                 window's non-solo slots -> <out>/plan/<name>/ck<w0>_<w1>/
                  (--copy-pools 0 --group-tokens 0: the plans before 61,000 -- every copy spread over the base as its
                  own group by build_plan.place_copies, one group per leaf; there the copies cut the groups to a
                  token-weighted ~18k tokens, see docs/cross_doc_seqs/README.md)
@@ -211,12 +211,17 @@ def stage_assign(a, dev, rank: int, world: int) -> None:
     rng = np.random.default_rng(a.seed + rank)
     P_ds, P_doc, P_off, P_len, P_b, K_key, K_cl, K_vec, K_b = [], [], [], [], [], [], [], [], []
     miss = 0
+    nkeys = 0
     for c0, c1, p in window_chunks(a)[rank::world]:
         (ds, doc, off, ln), _ = chunk_pieces(p)
         key = bp.doc_key(ds, doc)
         ukey, inv = np.unique(key, return_inverse=True)
         v, m = chunk_vectors(a, c0, c1, ukey, rng)
         miss += m
+        nkeys += len(ukey)
+        if m > a.max_missing * len(ukey):  # e.g. an embedding name that does not cover the window
+            raise SystemExit(f"assign r{rank}: chunk {c0}-{c1}: {m} of {len(ukey)} documents have no embedding in "
+                             f"emb/{a.emb} (--max-missing {a.max_missing})")
         cl = assign_rows(v.astype(np.float16) if dev.type == "cuda" else v, c, dev)
         b = bucket_of[cl]
         P_ds.append(ds); P_doc.append(doc); P_off.append(off); P_len.append(ln); P_b.append(b[inv])
@@ -368,14 +373,18 @@ def stage_assemble(a) -> None:
     S = json.load(open(os.path.join(a.out, "blend.json")))["seq_length"]
     rng = np.random.default_rng(a.seed + a.w0)
     cls = bp.conflict_classes(ukey, [tuple(p) for p in pairs.tolist()])
-    # the base (buckets in chain order), then pool 1 over all buckets, pool 2, ...; the rest of the copies at
-    # random group boundaries, moved on until no sequence holds two units of a class
+    # the base (buckets in chain order), then pool 1 over all buckets, pool 2, ...; the rest of the copies spread
+    # evenly over that order at group boundaries (place_copies), each its own group
     pooled = sum(len(x) for v in pools.values() for x in v)
     if a.copy_pools > 0:
         order = np.concatenate([base] + [cat(pools[r]) for r in sorted(pools)])
+        g = group[order]
+        bounds = np.nonzero(np.r_[True, g[1:] != g[:-1], True])[0]
+        del g
+        uorder, forced = bp.place_copies(order, copies, cls, utok, S, rng, allowed=bounds)
         group[copies] = goff + np.arange(len(copies))  # each copy its own group
-        uorder, moved, unseparated = bp.separate_copies(order, copies, group, cls, utok, S, rng)
-        forced = unseparated
+        # a class's units in the pools can only meet across a pool junction; move any such unit
+        uorder, moved, unseparated = bp.separate_copies(uorder, np.zeros(0, np.int64), group, cls, utok, S, rng)
     else:
         uorder, forced = bp.place_copies(base, copies, cls, utok, S, rng)
         moved = 0
@@ -497,6 +506,8 @@ def main() -> None:
                          "over the base as its own group, the plans before 61,000)")
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--dup-cos", type=float, default=0.97)
+    ap.add_argument("--max-missing", type=float, default=0.001,
+                    help="tolerated fraction of a chunk's documents without an embedding (assign stage)")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--task-rank", type=int, default=0)

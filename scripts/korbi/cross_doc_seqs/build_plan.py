@@ -274,14 +274,18 @@ def group_run_stats(seq_ptr: np.ndarray, seg_len: np.ndarray, seg_grp: np.ndarra
             "tokens_in_group_runs_ge_32k": float(runs[runs >= 32768].sum() / max(tot, 1))}
 
 
-def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np.ndarray, S: int, rng):
+def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np.ndarray, S: int, rng,
+                 allowed: np.ndarray | None = None):
     """Insert the copies (repeated documents, near duplicates) into the semantic base order so that no
-    sequence of S tokens holds two units of one conflict class (a class has at most one unit in the base).
+    sequence of S tokens holds two units of one conflict class (the base may hold several units of a class,
+    e.g. the base and the copy pools, if they are separated).
 
     Every class is spread evenly over the whole base (copy r of m aims at (r + offset) / m of it); the
     copies, taken in the order of their aims, go in at the next insertion point where the sequence holds no
     other unit of their class. Insertion points only move forward, so positions already decided never shift
-    relative to each other: one pass, no repair rounds. Returns (order, copies placed without separation)."""
+    relative to each other: one pass, no repair rounds. ``allowed``: the only insertion points (sorted base
+    indices, e.g. the boundaries between attention groups; must contain len(base)). Returns (order, copies
+    placed without separation)."""
     from collections import deque
     import bisect
 
@@ -289,10 +293,13 @@ def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np
     if M == 0:
         return base, 0
     base_cum = np.r_[0, np.cumsum(utok[base])]
-    in_base = np.full(len(cls), -1, np.int64)
-    in_base[base] = np.arange(nB)
-    copy_cls = set(cls[copies].tolist())
-    kept = {int(cls[u]): int(in_base[u]) for u in base[np.isin(cls[base], list(copy_cls))]}
+    copy_cls = np.unique(cls[copies])
+    pos = np.nonzero(np.isin(cls[base], copy_cls))[0]  # base indices of the units of classes with copies
+    o = np.lexsort((pos, cls[base[pos]]))
+    pos, pcls = pos[o], cls[base[pos[o]]]
+    starts = np.r_[0, np.nonzero(pcls[1:] != pcls[:-1])[0] + 1] if len(pos) else np.zeros(0, np.int64)
+    ends = np.r_[starts[1:], len(pos)]
+    kept = {int(pcls[s]): pos[s:e].tolist() for s, e in zip(starts, ends)}  # class -> sorted base indices
     # every class spread evenly over the whole base: copy r of a class with m copies aims at base position
     # (r + offset) / m (a random offset per class), all copies taken in the order of their aims
     perm = rng.permutation(M)
@@ -308,6 +315,10 @@ def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np
     o = np.argsort(aim, kind="stable")
     c = c[o]
     targets = np.minimum((aim[o] * nB).astype(np.int64), nB)
+    if allowed is not None:
+        allowed = np.asarray(allowed, np.int64)
+        assert len(allowed) and allowed[-1] == nB, "allowed insertion points must end with len(base)"
+        targets = allowed[np.searchsorted(allowed, targets)]
     ins_idx, ins_cum, out_j, out_u = [], [], [], []
     last_end: dict = {}
     off = 0
@@ -319,13 +330,15 @@ def place_copies(base: np.ndarray, copies: np.ndarray, cls: np.ndarray, utok: np
         P = int(base_cum[j]) + off
         s0, s1 = P // S, (P + L - 1) // S
         ok = s0 > last_end.get(k, -1)
-        q = kept.get(k, -1)
-        if ok and 0 <= q < j:  # the class's base unit lies before: its (final) end sequence
+        qs = kept.get(k, ())
+        i = bisect.bisect_left(qs, j)
+        if ok and i > 0:  # the class's nearest base unit before: its (final) end sequence
+            q = qs[i - 1]
             n_before = bisect.bisect_right(ins_idx, q)
             offq = ins_cum[n_before - 1] if n_before else 0
             ok = s0 > (int(base_cum[q + 1]) + offq - 1) // S
-        if ok and q >= j:  # it lies after: it starts at least here (later insertions only push it on)
-            ok = s1 < (int(base_cum[q]) + off + L) // S
+        if ok and i < len(qs):  # the nearest after: it starts at least here (later insertions only push it on)
+            ok = s1 < (int(base_cum[qs[i]]) + off + L) // S
         if not ok and not force:
             return False
         ins_idx.append(j)

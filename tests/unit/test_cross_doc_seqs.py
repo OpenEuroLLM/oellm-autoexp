@@ -306,6 +306,29 @@ def test_leaf_groups_merge_chained_leaves_inside_a_cluster():
     assert build_plan.leaf_groups(leaf, cluster, tokens, 0).tolist() == [0, 0, 1, 2, 3, 4, 5, 6]
 
 
+def test_place_copies_between_groups_with_several_base_units_per_class():
+    """The copy-pool order holds up to 1 + --copy-pools units of a class; the remaining copies of a giant class
+    go between groups only, and none may share a sequence with any unit of its class."""
+    rng = np.random.default_rng(4)
+    S, n_base = 65536, 20000
+    n_copies = 100  # + 3 units in the order: in a quarter of the ~375 sequences, insertion points ~2 per sequence
+    utok = rng.integers(50, 2400, n_base + n_copies).astype(np.int64)
+    n = len(utok)
+    cls = np.arange(n, dtype=np.int64)
+    giant_base = [7, 6000, 13000]  # the class's units already in the order (base + pools)
+    cls[giant_base] = 7
+    cls[n_base:] = 7
+    base = np.arange(n_base)
+    ugroup = np.r_[np.arange(n_base) // 25, 10**6 + np.arange(n_copies)]
+    bounds = np.nonzero(np.r_[True, ugroup[base][1:] != ugroup[base][:-1], True])[0]
+    order, forced = build_plan.place_copies(base, np.arange(n_base, n), cls, utok, S, rng, allowed=bounds)
+    assert sorted(order.tolist()) == list(range(n)) and forced == 0
+    assert build_plan.count_conflicts(order, utok, cls, S) == 0
+    g = ugroup[order]
+    runs = g[np.r_[True, g[1:] != g[:-1]]]
+    assert len(runs) == len(np.unique(runs))  # no group was cut by a copy
+
+
 def test_separate_copies_keeps_groups_whole():
     rng = np.random.default_rng(5)
     S, n_base = 1000, 3000
