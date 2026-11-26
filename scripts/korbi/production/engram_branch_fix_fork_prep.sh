@@ -20,6 +20,26 @@ EARLY_SCALE=${EARLY_SCALE:-0.3}
 LOGIT_SCALES=${LOGIT_SCALES:-0.025,0.1,0.3,1.0}
 it=iter_$(printf %07d "$IT")
 
+surgery() {  # $1 = the --logit-scale init
+    if [ -f "$FORK/ckpt/latest_checkpointed_iteration.txt" ]; then
+        echo "fork checkpoint exists ($(cat "$FORK/logit_scale_init.txt" 2>/dev/null)): skipped"
+        return
+    fi
+    PYTHONPATH="scripts/korbi/production${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 scripts/korbi/production/add_engram_branch_gates.py \
+        --src "$MAIN/ckpt_eval/$it" --dst "$FORK/ckpt/$it" --query-mix --logit-scale "$1"
+    echo "$1" > "$FORK/logit_scale_init.txt"
+    echo "$IT" > "$FORK/ckpt/latest_checkpointed_iteration.txt"
+}
+
+# fast path (SURGERY_ONLY=1, LOGIT_SCALE=2:0.3,52:0.47): the surgery alone, ~4 min, no export / diag
+if [ "${SURGERY_ONLY:-0}" = 1 ]; then
+    echo "== surgery only -> $FORK/ckpt/$it (--logit-scale ${LOGIT_SCALE:?})"
+    surgery "$LOGIT_SCALE"
+    echo "fork checkpoint ready: $FORK/ckpt/$it"
+    exit 0
+fi
+
 echo "== [1/5] export $MAIN $it -> $EXPORT"
 EXPERT_DTYPE=fp8 bash scripts/korbi/hf_export/export_run.sh "$MAIN" "$IT" "$EXPORT"
 
@@ -46,15 +66,7 @@ PY
 echo "logit_scale init: $scale"
 
 echo "== [4/5] surgery -> $FORK/ckpt/$it"
-if [ -f "$FORK/ckpt/latest_checkpointed_iteration.txt" ]; then
-    echo "fork checkpoint exists: skipped"
-else
-    PYTHONPATH="scripts/korbi/production${PYTHONPATH:+:$PYTHONPATH}" \
-        python3 scripts/korbi/production/add_engram_branch_gates.py \
-        --src "$MAIN/ckpt_eval/$it" --dst "$FORK/ckpt/$it" --query-mix --logit-scale "$scale"
-    echo "$scale" > "$FORK/logit_scale_init.txt"
-    echo "$IT" > "$FORK/ckpt/latest_checkpointed_iteration.txt"
-fi
+surgery "$scale"
 echo "fork checkpoint ready: $FORK/ckpt/$it"
 
 echo "== [5/5] diag (GSM8K, FLORES)"

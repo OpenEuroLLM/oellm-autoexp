@@ -1,0 +1,28 @@
+# @package _global_
+# Fast path of the fork checkpoint (docs/engram_main_run_trial_plan.md): the surgery alone (~4 min), with layer 52
+# at its 53,000 mean query RMS (0.47) instead of waiting ~1 h for the 62,900 export + diag, so the 128 fork nodes do
+# not sit idle. Layer 2 is 0.3 either way (gate-opening, not function-preserving). The prep job
+# (engram_branch_fix_fork_prep_mn5) still measures the 62,900 value (query_rms.json) and skips its surgery once
+# this tracker exists.
+defaults:
+  - engram_branch_fix_fork_prep_mn5
+  - _self_
+
+aux:
+  logit_scale: "2:0.3,52:0.47"
+
+backend:
+  env:
+    SURGERY_ONLY: "1"
+    LOGIT_SCALE: ${aux.logit_scale}
+
+job:
+  name: engram_branch_fix_fork_surgery_${aux.it}
+  base_output_dir: ${aux.fork}/surgery_logs
+  est_step_time_s: 600
+  metadata:
+    pool_priority: 130
+
+slurm:
+  sbatch:
+    time: "01:00:00"
