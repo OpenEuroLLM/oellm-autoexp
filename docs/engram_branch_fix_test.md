@@ -59,30 +59,20 @@ The 16-node failures were these node-set issues, not the Engram code: `fix_read`
 excluded `as02r3b02`; earlier attempts failed the rendezvous on `as05r2b29`. The light check passes
 both the GPU and the ring; it does not cover the TCP store.
 
-## 4. Shrink policy
+## 4. Idle policy (updated 2026-11-26)
 
-Trigger: the host has **≥ 16 idle nodes for ≥ 5 min**.
-
-Procedure (a resize changes the Slurm job, so it needs the user's explicit go):
-
-1. `pool_ctl freeze host003` — no new run starts.
-2. Wait until no run is active on the host, or preempt (only with the user's go).
-3. `pool_ctl shrink host003 --keep <used nodes + batch node> --apply`.
-4. `pool_ctl unfreeze host003`.
-
-Caveat from `pool_ctl`'s own note: a step running during `scontrol update NodeList=` stays RESIZING
-and keeps its GPUs after it ends, which gives `Insufficient GRES` to every later step on those
-nodes. Keep the active runs' nodes and prefer the shrink when no run is active.
-
-Current plan: host003 uses 96 nodes (`v4b_ctx64` 64 + eight cds evals 32) with 36 idle. Shrink to
-**96** after the active runs finish (or with the user's go to preempt them). The 36 idle nodes pass
-the light check, so the shrink removes only nodes that are healthy but unused.
+- **135-node hosts (c136):** no freeze. When the host is idle for >= 5 min it is freed automatically
+  (`idle_exit_s=300` on the c136 pool). The pool's chain successors keep the capacity.
+- **264-node hosts (p264):** freeze/hold when idle; only 264-node jobs are frozen.
+- The earlier "shrink on >= 16 idle for 5 min" procedure is superseded for the 135-node hosts: they
+  exit instead of being resized. A resize remains available for a 264-node host if needed.
 
 ## 5. Current state and next steps
 
-- host003: 96 used / 36 free; the three 16-node arms are cancelled (`fix` attempt 19, `fix_read` 13,
-  `fix_stream` 11).
-- Main run: `ckpt` 59000, `ckpt_rolling` 59800; p264 job `48871798` (264 nodes), unaffected.
-- Next: resubmit the 16-node arms on host003 after excluding `as05r2b29` (and keeping the light-check
-  exclusions), or run the 10-layer e2e on one node. The offline fixed-query NLL job still needs the
-  `--docs ''` env fix. The in-place 1k-step main-run switch remains at the next boundary (59,000).
+- host003: cancelled by the user (nothing was running); the c136 pool's `idle_exit_s=300`.
+- Main run: `ckpt` 61000, `ckpt_rolling` 61250; p264 job `48871798` (264 nodes), unaffected.
+- The three 16-node arms are cancelled. The 16-node test needs a 135-node c136 host
+  (host004/006/007/008 when one starts); the host frees itself 5 min after it goes idle.
+- Next: resubmit the 16-node arms on a c136 host, or run the 10-layer e2e on one node. The offline
+  fixed-query NLL job still needs the `--docs ''` env fix. The in-place 1k-step main-run switch is at
+  the next boundary (62,000).
