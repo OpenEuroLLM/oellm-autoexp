@@ -1253,11 +1253,13 @@ def held_jobs(layout: PoolLayout) -> list[dict]:
 # jobs: durable control (docs/pool_allocation_improvement.md §2, §11 P2)
 # ---------------------------------------------------------------------------
 #
-# A JOB is what is submitted by name, with all its records and runs: key "<submitter>:<name>"
-# (the pool_singleton key instead of the name when set). Its control markers live next to the
-# pools (<pools>/_jobs/<key>/control/), like the singleton guard, so they hold across pools and
-# monitor restarts: `cancel` is a tombstone every monitor honours on every poll (only an enqueue
-# with --replace clears it), `hold` keeps the job's queued runs from being placed.
+# A JOB is what is submitted by name into ONE pool, with all its records and runs there: key
+# "<submitter>:<name>" (the pool_singleton key instead of the name when set). Its control markers
+# live in the pool (<pool>/jobs/<key>/control/) and act on that pool only (user 2026-11-26: moving
+# a job between pools is exceptional, a cancel + submit; a cancel never reaches another pool).
+# `cancel` is a tombstone the pool's monitor honours on every poll, so it survives monitor
+# restarts (an enqueue with --replace or `pool_ctl uncancel` clears it); `hold` keeps the job's
+# queued runs from being placed.
 
 JOB_MARKERS = ("cancel", "hold")
 # requests a submitter may write (the monitor limits them to the submitter's own jobs)
@@ -1271,7 +1273,7 @@ def job_key(definition, owner: str) -> str:
 
 
 def job_control_dir(layout: PoolLayout, key: str) -> Path:
-    return layout.root.parent / "_jobs" / _sanitize(key.replace(":", "+")) / "control"
+    return layout.root / "jobs" / _sanitize(key.replace(":", "+")) / "control"
 
 
 def job_marker(layout: PoolLayout, key: str, name: str) -> dict | None:
@@ -1293,9 +1295,9 @@ def set_job_marker(layout: PoolLayout, key: str, name: str, by: str, reason: str
 
 
 def job_markers(layout: PoolLayout) -> dict[str, dict[str, dict]]:
-    """Every job marker in scope: key -> {marker name: content}."""
+    """Every job marker of the pool: key -> {marker name: content}."""
     out: dict[str, dict[str, dict]] = {}
-    root = job_control_dir(layout, "x").parent.parent
+    root = layout.root / "jobs"
     for path in sorted(root.glob("*/control/*")) if root.exists() else []:
         try:
             info = json.loads(path.read_text()) or {}
@@ -3083,8 +3085,8 @@ class PoolManager:
     def _enforce_job_markers(
         self, loop: MonitorLoop, layout: PoolLayout, cfg: PoolHostConfig, runs: list
     ) -> tuple[list, set[str]]:
-        """Close the records of cancelled jobs (every poll: after a monitor restart, and for a
-        cancel given in another pool); collect the rids of held jobs. Returns (runs, held rids)."""
+        """Close the records of this pool's cancelled jobs (every poll, so also after a monitor
+        restart); collect the rids of held jobs. Returns (runs, held rids)."""
         owner = pool_owner(layout)[0]
         left, held = [], set()
         for record in runs:
@@ -3108,7 +3110,7 @@ class PoolManager:
     ) -> list[str]:
         """The job keys `--job name` means here: the active records' keys whose name (or
         singleton key) is ``name``, of ``user`` if given; with none active "<user|owner>:name"
-        (a tombstone also holds for a copy of the job in another pool)."""
+        (a tombstone may precede the job's next enqueue)."""
         owner = pool_owner(layout)[0]
         keys = set()
         for record in loop._store.load_all():

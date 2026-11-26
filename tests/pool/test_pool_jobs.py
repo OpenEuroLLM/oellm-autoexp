@@ -68,8 +68,9 @@ def test_cancel_job_closes_every_record_and_survives_a_monitor_restart(env):
     assert "job cancelled by owner" in env.layout.ledger.read_text()
 
 
-def test_a_tombstone_holds_across_pools(tmp_path, monkeypatch):
-    """A main run moves between pools: a cancel in one pool also ends its copy in another."""
+def test_a_tombstone_acts_on_its_own_pool_only(tmp_path, monkeypatch):
+    """User 2026-11-26: a job lives in one pool; moving it is a cancel + submit, so a cancel in
+    one pool never closes a same-named job (or a singleton copy) in another pool."""
     monkeypatch.chdir(REPO)
     env = Env(tmp_path)
     other_session = tmp_path / "session2"
@@ -82,7 +83,10 @@ def test_a_tombstone_holds_across_pools(tmp_path, monkeypatch):
     loop2.observe_once()
     me = pool_ctl.pool_owner(env.layout)[0]
     set_job_marker(env.layout, f"{me}:main", "cancel", "pool_ctl")  # given in the first pool
-    assert job_control_dir(env.layout, "x").parent.parent == job_control_dir(other, "x").parent.parent
+    assert job_control_dir(env.layout, "k").is_relative_to(env.layout.root)
+    loop2.observe_once()
+    assert store2.load("main", include_finished=True).runtime.final_state is None
+    set_job_marker(other, f"{me}:main", "cancel", "pool_ctl")  # in its own pool it does
     loop2.observe_once()
     assert store2.load("main", include_finished=True).runtime.final_state == "cancelled"
 

@@ -8,8 +8,8 @@ the pool's files directly and are picked up by the supervisors.
 
   pool_ctl.py <pool_dir> status                  hosts, runs, queue
   pool_ctl.py <pool_dir> cancel <job|run|name>   cancel a job (stops its run)
-  pool_ctl.py <pool_dir> cancel --job <name>     cancel the JOB for good (tombstone, every pool;
-                                                 run_autoexp --replace starts it again)
+  pool_ctl.py <pool_dir> cancel --job <name>     cancel the JOB in this pool for good (tombstone;
+                                                 run_autoexp --replace / uncancel lift it)
   pool_ctl.py <pool_dir> hold | unhold --job <name>  keep a job's queued runs from being placed
   pool_ctl.py <pool_dir> status --job <name>     one job: markers, records, runs
   pool_ctl.py <pool_dir> jobs [--all]            every job of the pool, one line each (+ markers)
@@ -179,8 +179,8 @@ def cmd_job_status(layout: PoolLayout, name: str) -> int:
 
 
 def cmd_jobs(layout: PoolLayout, args) -> int:
-    """Every job of this pool (live records, held foreign jobs) and every job marker in scope
-    (cancel tombstones, holds), one line each."""
+    """Every job of this pool (live records, held foreign jobs) and its markers (cancel
+    tombstones, holds), one line each."""
     from oellm_autoexp.monitor.pool import job_key, job_markers
 
     owner = pool_owner(layout)[0]
@@ -1164,8 +1164,8 @@ def main(argv: list[str] | None = None) -> int:
     p = waiting(sub.add_parser("cancel"))
     p.add_argument("target", nargs="?", help="job id, job name, or any run id of the job")
     p.add_argument("--all", action="store_true", help="cancel every active job the name matches")
-    p.add_argument("--job", help="cancel the JOB (all its records, in every pool) for good: a "
-                   "tombstone only an enqueue with --replace clears")
+    p.add_argument("--job", help="cancel the JOB (all its records in this pool) for good: a "
+                   "tombstone an enqueue with --replace or `uncancel` lifts")
     p.add_argument("--user", help="with --job: the submitter (a job name of several users)")
     p.add_argument("--reason", default="")
     p.set_defaults(func=cmd_request("cancel"))
