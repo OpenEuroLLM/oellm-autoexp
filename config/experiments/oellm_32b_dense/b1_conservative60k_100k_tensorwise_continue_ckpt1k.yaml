@@ -17,12 +17,12 @@
 # can be up to 2000 steps behind (~2.4 h of 512-node time). Halving the interval
 # halves that loss.
 #
-# DISK: one persistent checkpoint is ~442 GiB. Keeping ALL of them from 610k to
-# 894k at 1k would be 284 saves ~ 125 TiB, against ~63 TiB at 2k, and the
-# fileset has ~37 TiB free. So save_retain_interval stays at 2000: every 1k save
-# is written (fine-grained resume), older ones are deleted, keeping the last plus
-# every 2000th -- the same footprint as the parent. Set
-# save_retain_interval: null to keep every 1k save (~125 TiB).
+# DISK: one persistent checkpoint is ~442 GiB, so every 1k save from 610k to
+# 894k is 284 saves ~ 125 TiB (the parent's 2k spacing is ~63 TiB). That does not
+# fit the 210 TiB fileset with ~35 TiB free, so older checkpoints are moved to
+# other space (operator decision, 2026-11-26) and every 1k save is RETAINED:
+# save_retain_interval: 1000 keeps each one instead of pruning the odd thousands.
+# (2000 -- the first draft -- kept only 610000/612000/614000 on disk.)
 #
 # The run stage's est_steps stays the parent's 782000 (894000 - 112000), so the
 # printed plan overstates the remaining work of a ~610k takeover; the run itself
@@ -38,6 +38,6 @@ backend:
   megatron:
     # persistent saves every 1000 steps (parent: 2000)
     save_interval: 1000
-    # ...but only every 2000th is retained, so the disk footprint matches the
-    # parent. null keeps all of them (~125 TiB over 284k steps).
-    save_retain_interval: 2000
+    # keep every 1k save (1000 == save_interval). Disk is handled by moving old
+    # checkpoints elsewhere, not by pruning here.
+    save_retain_interval: 1000
