@@ -38,7 +38,7 @@ def _next_prime(n: int) -> int:
 
 def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, blocks: list | None = None,
                 head_dim: int = 64, token_map: bool = False, embedding_norm: bool = False,
-                expert_fp8: bool = False) -> dict:
+                expert_fp8: bool = False, engram_gates: dict | None = None) -> dict:
     h, vocab = 256, 1024
     orders, heads = [2, 3, 4], 2
     sizes, c = [], 997
@@ -90,6 +90,7 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
         "tie_word_embeddings": False, "torch_dtype": "bfloat16",
         "bos_token_id": 1, "eos_token_id": 2, "pad_token_id": 2,
     }
+    cfg.update(engram_gates or {})  # the per-stream gate trial's options (engram_branch_gates, ...)
     return cfg
 
 
@@ -128,6 +129,10 @@ def build_tiny(out: Path, router_std: float = 0.05, **kw) -> Path:
                 p.fill_(0.01)
             elif name.endswith(".table"):
                 p.normal_(0.0, 1.0)
+            elif name.endswith("gate_terms.logit_scale"):
+                p.uniform_(0.2, 1.5)
+            elif name.endswith("gate_terms.query_mix"):
+                p.uniform_(-0.5, 0.5)
             elif name.endswith("mixer.gate") and p.dim() == 2:
                 p.normal_(0.0, router_std)  # large: wide top-k margins (no routing flips from noise)
             elif name.startswith("lm_head"):
@@ -351,9 +356,18 @@ def main() -> None:
                     "v4ldm_fp8": dict(residual="ldm", sign_hash=True, quantile=True, pab=True,
                                       embedding_norm=True, expert_fp8=True),
                     "mhc_bias_fp8": dict(residual="mhc", sign_hash=True, quantile=False, pab=True,
-                                         expert_fp8=True)}
+                                         expert_fp8=True),
+                    # the per-stream Engram gates of the main-run trial (docs/engram_main_run_trial_plan.md)
+                    "mhc_engram_branch": dict(residual="mhc", sign_hash=True, quantile=False, pab=False,
+                                              engram_gates=dict(engram_branch_gates=True,
+                                                                engram_branch_query="learned",
+                                                                engram_gate_logit_scale=True,
+                                                                engram_gate_query_eps=1e-12))}
+        only = [c for c in (a.only or "").split(",") if c]
         results = {}
         for name, kw in variants.items():
+            if only and name not in only:
+                continue
             d = build_tiny(Path(a.out) / name, **kw)
             # fp32 decides (a correct port agrees to ~1e-4); bf16 shows the production precision's spread
             for dtype, tol in (("float32", 1e-2), ("bfloat16", 0.05)):
