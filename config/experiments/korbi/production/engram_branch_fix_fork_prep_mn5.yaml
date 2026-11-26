@@ -29,6 +29,8 @@ backend:
     FORK: ${aux.fork}
     EARLY: ${aux.sweep_layer}
     EARLY_SCALE: ${aux.early_scale}
+    # HF_HOME (the datasets) is a colleague's read-only dir: a new export's remote code needs a writable modules cache
+    HF_MODULES_CACHE: /tmp/hf_modules
 
 job:
   name: engram_branch_fix_fork_prep_${aux.it}
