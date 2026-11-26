@@ -19,6 +19,9 @@
 #              e7fdda9f1; main grads / optimizer stay fp32). A numerics change -- speed first.
 #   m64_nolog  per-step MoE health logging off: only a check of what the logging still costs after Megatron
 #              5c84e20fc (the user keeps the logging)
+#   m64_stack  profile only (2026-11-26): the live main settings (bf16 expert reduce-scatter) with Python call stacks
+#              and shapes on rank 0, steps 40-41 -- attributes the ~36k small eager kernels per step (copies, casts,
+#              elementwise, fills: ~1.4 s of compute-stream time at 64 nodes) to the modules that launch them
 #   r8prep     not a speed arm: builds the data cache of v4b_ctx64_c136_mn5's c8k arm (phase-2 blend at seq 8192,
 #              train_iters 60 x gbs 2048, eval_iters 1, no fixed validation set) on 8 nodes and exits after one
 #              step, so the 64-node arm does not wait 15-25 min for a cold index build.
@@ -33,7 +36,7 @@ aux:
   suite: v4b_ctx_slice
   variant: m64
   arm: ${aux.variant}
-  only: [m64, m8, m64_gbf16x, m64_nolog, r8prep]
+  only: [m64, m8, m64_gbf16x, m64_nolog, r8prep, m64_stack]
   nodes: 8
   node_check: "off"
   moonep_lib: pylibs_moonep_e9e8238
@@ -141,6 +144,13 @@ sweep:
           backend.megatron.moe_expert_viability_metrics: false
           backend.megatron.moe_log_seq_aux_loss: false
           backend.megatron.log_timers_to_tensorboard: false
+        - aux.variant: m64_stack
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
+          backend.megatron.pytorch_profiler_collect_shapes: true
+          backend.megatron.pytorch_profiler_collect_callstack: true
+          backend.megatron.profile_ranks: [0]
+          backend.megatron.train_iters: 44
         - aux.variant: r8prep
           aux.profile: false
           backend.megatron.mock_data: false
