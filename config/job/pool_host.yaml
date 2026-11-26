@@ -35,6 +35,9 @@ pool_host:
   # (refused placements, lost hosts and preemptions are no faults); "" = no backoff
   retry_backoff_s: "60,180,600,1800"
   backoff_reset_s: 1800
+  # an idle host that can run none of the queued work (runs' own EXCLUDE counted) is released
+  # after this long idle (15 min; not at once: a node may come back)
+  unfit_release_s: 900
   host_stale_s: 900
   poll_s: 10
   # SLURM accounts in order of preference ("cns144,ehpc533"; "" = the host config's own): the

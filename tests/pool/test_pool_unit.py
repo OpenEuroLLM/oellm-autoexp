@@ -715,17 +715,44 @@ def test_new_hosts_avoid_pool_and_fleet_exclusions(env, tmp_path):
     assert "jpbo-004-04" in Path(newest.definition.slurm.script_path).read_text()
 
 
-def test_a_host_that_cannot_fit_any_queued_job_is_released_at_once(env):
+def test_a_host_that_cannot_fit_any_queued_job_is_released_after_unfit_release_s(env):
+    """User 2026-11-26: not at once -- after unfit_release_s (15 min) idle with unfittable work."""
     env.add_run("needs2", nodes=2)
     env.poll(2)
     hid = env.host_up(env.hosts()[0])
     (env.layout.host_dir(hid) / "state").write_text(f"idle {int(time.time())} 1\n")  # a bad node
     env.poll()
     exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    assert not exit_file.exists(), "kept while idle < unfit_release_s"
+    (env.layout.host_dir(hid) / "state").write_text(f"idle {int(time.time()) - 901} 1\n")
+    env.poll()
     assert exit_file.exists() and "needs 2 node(s), 1 usable" in exit_file.read_text()
     (env.layout.host_dir(hid) / "exited").write_text("exit requested\n")
     env.poll(2)
     assert len([h for h in env.hosts() if h.runtime.final_state is None]) >= 1  # a replacement
+
+
+def test_a_host_blocked_only_by_a_runs_own_exclude_is_released_after_unfit_release_s(env):
+    env.add_run("needs2", nodes=2)
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0], idle_since=time.time() - 901)
+    rid = env.rec("needs2").runtime.runtime_job_id
+    meta = env.layout.run_dir(rid) / "meta.env"
+    meta.write_text(meta.read_text().replace("EXCLUDE=''", "EXCLUDE=b", 1))
+    env.poll()
+    exit_file = env.layout.host_dir(hid) / "control" / "exit"
+    assert exit_file.exists() and "needs 2 node(s), 1 usable for it (own EXCLUDE 1)" in exit_file.read_text()
+
+
+def test_a_run_in_backoff_keeps_its_host(env):
+    env.add_run("job_a")
+    env.poll(2)
+    hid = env.host_up(env.hosts()[0], idle_since=time.time() - 901)
+    rec = env.rec("job_a")
+    rec.runtime.action_state["pool:backoff"] = {"rid": "x", "n": 4, "until": time.time() + 1800}
+    env.store.upsert(rec)
+    env.poll()
+    assert not (env.layout.host_dir(hid) / "control" / "exit").exists()
 
 
 def test_no_release_loop_for_a_job_bigger_than_every_host(env):

@@ -170,6 +170,10 @@ class PoolHostConfig:
     # Placement refusals, lost hosts and preemptions are no faults. "" = no backoff.
     retry_backoff_s: str = "60,180,600,1800"
     backoff_reset_s: float = 1800.0
+    # an idle host that can run none of the queued work (too few usable nodes, the runs' own
+    # EXCLUDE included, too little time left) is released after this long idle, not at once
+    # (user 2026-11-26: 15 min; a node may come back); idle_exit_s still applies without work
+    unfit_release_s: float = 900.0
     # a RUNNING host whose supervisor heartbeat is older than this is cancelled (unless held)
     host_stale_s: float = 900.0
     # supervisor poll period
@@ -2239,17 +2243,25 @@ class PoolManager:
             del self._waits[key]
         self._waits.update({(root, rid): text for rid, text in waits_now.items()})
 
-        # 5. release idle hosts that have had nothing to do for idle_exit_s -- or
-        #    at once when there IS queued work and this host can run none of it:
-        #    too few usable nodes (excluded bad nodes) or too little time left only
-        #    get worse, so waiting idle_exit_s would buy nothing. The freed slot
-        #    is refilled by a fresh allocation in step 6.
+        # 5. release idle hosts that have had nothing to do for idle_exit_s -- or,
+        #    when there IS queued work and this host can run none of it (too few usable
+        #    nodes, the runs' own EXCLUDE counted; too little time left), after
+        #    unfit_release_s idle (user 2026-11-26: 15 min, not at once). The freed slot is
+        #    refilled by a fresh allocation in step 6.
+        def could_run(host: HostView, item: tuple) -> bool:
+            """Whether the queued run could go to this host once it is free: it fits after its
+            own EXCLUDE, and the supervisor has not refused it here (a run in backoff fits)."""
+            _, _, rid, nodes, _, pin, job_id = item
+            if not host_allows_pin(pin, host.hid) or refused_here(host, rid, job_id):
+                return False
+            return fits(host, nodes + own_block(host, rid), rid)
+
         for host in live:
             if host.hid in busy or handover_in_progress:
                 continue
             if host.hid in held or host.hid in unverified:
                 continue  # held: never released by the monitor; unverified: in its preflight
-            if any(fits(host, item[3], item[2]) for item in queued):
+            if any(could_run(host, item) for item in queued):
                 continue
             # only if a FRESH host would do better: a job bigger than every host of
             # this pool (host definition changed after enqueue) must not turn into
@@ -2279,13 +2291,29 @@ class PoolManager:
                     )
                     warned.add((cfg.name, host.hid))
             elif fresh_fit:
-                need = min(item[3] for item in fresh_fit)
+                # the queued run that comes closest: its need vs what the host offers it
+                need, block = min(
+                    ((item[3], own_block(host, item[2])) for item in fresh_fit),
+                    key=lambda nb: nb[0] + nb[1],
+                )
                 why = (
-                    f"needs {need} node(s), {host.usable_nodes} usable"
-                    if need > host.usable_nodes
+                    f"needs {need} node(s), {host.usable_nodes - block} usable"
+                    + (f" for it (own EXCLUDE {block})" if block else "")
+                    if need + block > host.usable_nodes
                     else f"{host.remaining_s(now):.0f}s left, {cfg.min_remaining_s:.0f}s needed"
                 )
-                self._control(layout, host.hid, "exit", f"cannot run any queued job ({why})")
+                idle_for = now - host.state_ts
+                if idle_for < cfg.unfit_release_s:
+                    note = (cfg.name, host.hid, why)
+                    unfit = self.__dict__.setdefault("_unfit_noted", set())
+                    if note not in unfit:
+                        unfit.add(note)
+                        LOGGER.info("[pool %s] host %s cannot run any queued job (%s): released "
+                                    "after %.0f s idle unless that changes", cfg.name, host.hid,
+                                    why, cfg.unfit_release_s)
+                    continue
+                self._control(layout, host.hid, "exit", f"cannot run any queued job ({why}, idle "
+                              f"{idle_for:.0f}s)")
                 host.retiring = True
                 LOGGER.info(
                     "[pool %s] releasing host %s: cannot run any queued job (%s)",
