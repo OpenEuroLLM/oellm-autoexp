@@ -17,7 +17,7 @@ aux:
 backend:
   megatron:
     load: ${aux.fork_ckpt}
-    ckpt_step: 63000
+    ckpt_step: 62800
     engram_branch_gates: true
     engram_branch_query: learned
     engram_gate_logit_scale: true

@@ -10,9 +10,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
-MAIN_CKPT=${MAIN_CKPT:?set MAIN_CKPT to the main run's ckpt dir}
+MAIN_CKPT=${MAIN_CKPT:?set MAIN_CKPT to the main run's ckpt_rolling dir (62,800 is a rolling save)}
 FORK=${FORK:?set FORK to the fork checkpoint root}
-IT=${IT:-63000}
+IT=${IT:-62800}
 MEAN52=${MEAN52:?set MEAN52 to layer 52's mean query RMS from the 63,000 diag}
 READ_SCALE="2:0.3,52:${MEAN52}"
 

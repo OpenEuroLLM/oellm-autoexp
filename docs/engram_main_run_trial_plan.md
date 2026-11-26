@@ -41,9 +41,10 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
   is already open). This is a **gate-opening** value, not the function-preserving mean query RMS,
   because `lam=0` + a dead gate gives zero gradient to `lam` (double zero -> non-learnable). With the
   gate opened, `lam` starts at 0 (the read) and learns the stream; expect a short spike.
-- **Length:** 1,000 steps, 63,000 → 64,000; `exit_interval: 64000`; validation at 64,000.
-- **Baseline:** the main run's own 62,000 → 63,000 (previous 1k steps, same data order).
-- **Reset:** if the loss regresses, keep the 63,000 checkpoint and resume the main run without the fix.
+- **Length:** 1,200 steps, 62,800 → 64,000; `exit_interval: 64000`; early validation at 63,000 (200
+  steps) and 64,000 (1,200 steps).
+- **Baseline:** the main run's own 62,800 → 63,000 and 62,800 → 64,000 (paired, same data order).
+- **Reset:** if the loss regresses, keep the main run's 62,800 rolling save and continue without the fix.
 - **`bg_stream`:** only if `bg_read` wins; not in the first trial.
 
 ## 4. Prerequisites (before the trial)
@@ -59,15 +60,16 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 ## 5. Step-by-step (not executed)
 
 ### Step 1 — stop at 62,000 (user action)
-- The main run reaches 63,000; persistent save `iter_0063000`; the 63,000 validation.
+- The main run reaches 62,800; the rolling save `ckpt_rolling/iter_0062800`; the fork translation
+  persists it into the fork's own ckpt (the rolling save itself is overwritten later).
 - The user stops job `48871798`. The main tree is not edited.
 
 ### Step 2 — mean query RMS at 62,000
-- Export the 63,000 checkpoint with the standard HF export (the same export the offline rescore used).
+- Export the 62,800 rolling save with the standard HF export (the same export the offline rescore used).
 - Run the diag on the export:
   ```
   $R/autoexp_env/bin/python scripts/rluukkon/engram_gate_diag.py \
-    --model-dir <export_63000> --out <diag_63000> \
+    --model-dir <export_62800> --out <diag_62800> \
     --docs 16 --fixed-query --logit-scales 0.025,0.1,0.3,1.0 --sweep-layer 2
   ```
   Read `query_rms` for layers 2 and 52; layer 2's `logit_scale` is fixed at 0.3, layer 52 keeps the mean.
@@ -76,7 +78,7 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 ### Step 3 — surgery on 62,000
 - Run the surgery with layer 2 = 0.3 and layer 52 = the mean:
   ```
-  SRC=<main ckpt dir> IT=63000 OUT_ROOT=<surgery root> \
+  SRC=<main ckpt_rolling dir> IT=62800 OUT_ROOT=<fork root> \
   READ_SCALE=2:0.3,52:<mean52_read> \
   STREAM_SCALE=2:0.3,52:<mean52_stream> \
   bash scripts/korbi/production/engram_branch_fix_surgery.sh
@@ -90,10 +92,11 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 ### Step 5 — trial job
 - Enqueue the trial on the 128-node c136 host (the 134 nodes available now), in parallel with the
   main run's normal continuation on its 264 nodes.
-- `load` = the `bg_learned` 63,000 checkpoint; `exit_interval: 64000`; 1,000 steps.
+- `load` = the `bg_learned` 62,800 checkpoint; `exit_interval: 64000`; 1,200 steps.
 
 ### Step 6 — evaluation
-- Loss: the trial's 1,000-step loss vs the main run's **same steps** (63,000 → 64,000) on the 264
+- Loss: the trial's loss at 63,000 (200 steps) and 64,000 (1,200 steps) vs the main run's **same steps**
+  (62,800 → 63,000 and 62,800 → 64,000) on the 264
   nodes, paired by data order. That is the clean comparison; the previous 1k steps is only a fallback.
 - Spike: the loss at the first ~50 steps and the recovery by ~500 steps; reset if it has not recovered.
 - Arch metrics: per-stream gate spread, `query_rms`, `read_sum`, and the `query_mix` (`lam`) every 10
@@ -123,7 +126,7 @@ aux:
 backend:
   megatron:
     load: ${aux.surgery}/bg_learned/ckpt
-    ckpt_step: 63000
+    ckpt_step: 62800
     engram_branch_gates: true
     engram_branch_query: learned
     engram_gate_logit_scale: true
@@ -153,15 +156,15 @@ The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`
 - `learned` at `lam=0` with a **dead** gate has zero gradient to `lam` (double zero -> non-learnable).
   Layer 2's `logit_scale = 0.3` opens the gate at init; then `lam` learns and expect a short spike. The `bg_read`
   and `bg_stream` controls tell whether the read or the stream itself helps.
-- The `logit_scale` init depends on the 63,000 mean query RMS. If the export/diag is wrong, the step-0
+- The `logit_scale` init depends on the 62,800 mean query RMS. If the export/diag is wrong, the step-0
   loss jumps and the trial is invalid.
 - The 1k steps are ~0.6% of the remaining compute; the reset keeps the loss.
 - The host004 arms remain the controlled tiebreaker if the trial is ambiguous.
 
 ## 8. Open questions
 
-- Confirm the main run's stop at 63,000 (user).
-- Confirm 1,000 steps (63,000 → 64,000) is the trial length.
+- Confirm the fork trigger at 62,800 (the rolling save; the user stops nothing, the main continues).
+- Confirm 1,200 steps (62,800 → 64,000) with the early eval at 63,000.
 - Confirm `bg_learned` with layer 2 = 0.3 and the `bg_read`/`bg_stream` controls with the same
   `logit_scale`.
 - Set the reset threshold (e.g. loss delta > +0.0005 beyond noise) and the spike tolerance.
