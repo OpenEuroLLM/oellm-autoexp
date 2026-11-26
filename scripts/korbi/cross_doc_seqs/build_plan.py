@@ -213,19 +213,23 @@ def insert_between_groups(order: np.ndarray, extra: np.ndarray, ugroup: np.ndarr
 def separate_copies(order: np.ndarray, extra: np.ndarray, ugroup: np.ndarray, cls: np.ndarray, utok: np.ndarray,
                     S: int, rng, rounds: int = 20):
     """Insert ``extra`` at random group boundaries, then move every unit that shares a sequence with an earlier
-    unit of its conflict class to another random group boundary, until none does. Returns (order, units moved,
-    units still sharing a sequence with their class after ``rounds``)."""
+    unit of its conflict class to another random group boundary, until none does. Moves can create new clashes
+    (a giant class has units in most sequences), so the order with the fewest clashing units seen is returned:
+    never worse than the input. Returns (order, units moved, units still sharing a sequence with their class)."""
     order = insert_between_groups(order, extra, ugroup, rng)
     moved = 0
-    for _ in range(rounds):
+    best = None
+    for r in range(rounds + 1):
         bad = conflict_units(order, utok, cls, S)
-        if len(bad) == 0:
-            return order, moved, 0
+        if best is None or len(bad) < best[1]:
+            best = (order, len(bad), moved)
+        if len(bad) == 0 or r == rounds:
+            break
         moved += len(bad)
         keep = np.ones(len(cls), bool)
         keep[bad] = False
         order = insert_between_groups(order[keep[order]], bad, ugroup, rng)
-    return order, moved, len(conflict_units(order, utok, cls, S))
+    return best[0], best[2], best[1]
 
 
 def leaf_groups(leaf: np.ndarray, cluster: np.ndarray, tokens: np.ndarray, group_tokens: int) -> np.ndarray:
