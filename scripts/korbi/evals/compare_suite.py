@@ -112,6 +112,39 @@ def read_results(directory: str) -> dict[str, tuple[str, float]]:
     return out
 
 
+def read_lighteval(directory: str) -> dict[str, tuple[str, float]]:
+    """task -> (metric, value) from lighteval's results JSONs (they live outside results/).
+
+    ``results["flores200:eng_Latn-bul_Cyrl|4"]`` maps metric names to numbers; the ``|n`` suffix is
+    the few-shot count, not part of the task name.
+    """
+    per_task: dict[str, dict[str, float]] = defaultdict(dict)
+    pattern = os.path.join(directory, "lighteval", "lighteval_group_*", "results", "**", "results_*.json")
+    for path in sorted(glob.glob(pattern, recursive=True)):
+        try:
+            payload = json.load(open(path))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for raw_task, metrics in (payload.get("results") or {}).items():
+            task = raw_task.split("|")[0]
+            if not isinstance(metrics, dict):
+                continue
+            for key, value in metrics.items():
+                metric = base_metric(key)
+                if "stderr" in metric:
+                    continue
+                try:
+                    per_task[task][metric] = float(value)
+                except (TypeError, ValueError):
+                    continue
+    out = {}
+    for task, metrics in per_task.items():
+        chosen = pick(metrics)
+        if chosen:
+            out[task] = chosen
+    return out
+
+
 def read_summaries(directory: str) -> dict[str, tuple[str, float]]:
     """task -> (metric, value) from summary_shard*.tsv files."""
     per_task: dict[str, dict[str, float]] = defaultdict(dict)
@@ -173,6 +206,7 @@ def main() -> int:
     ours_dir = args.ours if os.path.isdir(args.ours) else os.path.join(EVAL_ROOT, args.ours)
     # summaries only cover the rows of the session that wrote them: merge instead of preferring
     ours = read_results(ours_dir)
+    ours.update(read_lighteval(ours_dir))
     ours.update(read_summaries(ours_dir))
     if not ours:
         print(f"no results in {ours_dir}", file=sys.stderr)

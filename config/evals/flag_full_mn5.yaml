@@ -32,7 +32,9 @@ evalchemy:
   # LiveCodeBench is enabled: scripts/korbi/flag_eval/patch_mn5_stage.py already patches the
   # stage's LCB question loading to map in-process (num_proc=1 unless EVALCHEMY_LCB_NUM_PROC>0),
   # which removes the dill/numpy PicklingError of 2026-11-06. Verified with --check.
-  engine: {tp: 4, max_num_seqs: 64}
+  # max_model_length: without it vLLM sizes the KV cache for the export's 100M window and the
+  # engine dies at init with CUDA OOM (2026-11-26: ec1 lost all 8 rows, rc 0 from run_tests).
+  engine: {tp: 4, max_num_seqs: 64, max_model_length: 8192, gpu_memory_utilization: 0.80}
   job: {priority: 55}
 
 paths:
