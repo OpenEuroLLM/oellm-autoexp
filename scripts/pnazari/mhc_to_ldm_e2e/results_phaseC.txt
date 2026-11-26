@@ -1,0 +1,26 @@
+
+4 V tensors put back unfolded: ['model.module.decoder.layers.5.self_attention.linear_proj.weight', 'optimizer.0.state.module.module.module.decoder.layers.5.self_attention.linear_proj.weight.g', 'optimizer.0.state.module.module.module.decoder.layers.5.self_attention.linear_proj.weight.m_g', 'optimize
+surgery: 16 hard links, 0 cross-device copies, 4 new file(s), 4 keys rewritten, 0 keys extended, 0 keys renamed, 4 tensor chunks
+collapse_nofold exit 0
+== ctrl_id
+
+iteration       21 lm loss: 5.139083E-02 
+iteration       22 lm loss: 4.862913E-02 
+iteration       23 lm loss: 5.198865E-02 
+iteration       24 lm loss: 3.523092E-02 
+iteration       25 lm loss: 2.804743E-02
+== collapse_id
+
+iteration       21 lm loss: 5.143775E-02 
+iteration       22 lm loss: 4.868719E-02 
+iteration       23 lm loss: 5.213806E-02 
+iteration       24 lm loss: 3.534877E-02 
+iteration       25 lm loss: 2.812022E-02
+== collapse_nofold
+
+iteration       21 lm loss: 4.985134E-02 
+iteration       22 lm loss: 4.705074E-02 
+iteration       23 lm loss: 5.065055E-02 
+iteration       24 lm loss: 3.390071E-02 
+iteration       25 lm loss: 2.680481E-02
+

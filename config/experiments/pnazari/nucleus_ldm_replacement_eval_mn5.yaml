@@ -1,0 +1,84 @@
+# @package _global_
+# Eval-only validation of the LDM replacement intervention (nucleus_ldm_replacement_mn5), every checkpoint under the
+# same job: same code, same 128-node layout, the full validation (seven fixed sets, full_validation; the loader from
+# position 0 under skip_train), as nucleus_engram_branch_gates_eval_mn5.
+#   aux.step=44000  the surgery's loss jump before any training: v4b's ckpt_eval/iter_0044000 against the surgery
+#                   checkpoints (collapse; ldm, which must equal collapse: its read gains are 0)
+#   aux.step=44500  after the 500 steps: v4b's rolling 44500 (pinned into ckpt_eval by the eval marks loop) against
+#                   each arm's final save (waits for it)
+# Eval only: no optimizer state, no save, ~40 min load + ~10 min validation on 128 nodes.
+#   ... --pool .../mn5_pool_c136 --config-name experiments/pnazari/nucleus_ldm_replacement_eval_mn5 \
+#       aux.step=44000 "aux.only=[v4b,collapse,ldm_fixed]" --yes
+# Readout: the "validation-<set> loss at iteration <step>" lines of each job's log.
+defaults:
+  - nucleus_ldm_replacement_mn5
+  - _self_
+
+aux:
+  suite: ldm_replacement_eval
+  arm: v4b
+  step: 44500
+
+backend:
+  megatron:
+    skip_train: true
+    no_load_optim: true
+    no_load_rng: true
+    ckpt_step: ${aux.step}
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    # the job's own (empty) rolling dir: Megatron loads a newer rolling save instead of --ckpt-step
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: nucleus_ldm_repl_eval_${aux.arm}_${aux.step}
+  base_output_dir: ${aux.lr_root}/eval/${aux.arm}_${aux.step}
+  est_steps: 1
+  est_step_time_s: 900.0
+  est_startup_min: 40.0
+  start_condition: null
+
+slurm:
+  sbatch:
+    time: "02:00:00"
+
+# literals in the entries: interpolations inside a sweep entry resolve against the base config. The 44500 arms
+# load the arms' run trees, the 44000 ones the surgery trees (launcher: STEP / the override below).
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: v4b
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/eval/v4b_${aux.step}
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+          backend.megatron.mhc: true
+          backend.megatron.v_block_learnable_gate: true
+          backend.megatron.depth_memory: false
+          backend.megatron.residual_mixer_lr_mult: 0.25
+        - aux.arm: collapse
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/eval/collapse_${aux.step}
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/${oc.eval:'"surgery/collapse" if ${aux.step} == ${aux.start} else "runs/collapse"'}/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*${aux.step}\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/${oc.eval:'"surgery/collapse" if ${aux.step} == ${aux.start} else "runs/collapse"'}/ckpt
+          backend.megatron.depth_memory: false
+        - aux.arm: ldm_fixed
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/eval/ldm_fixed_${aux.step}
+          job.start_condition:
+            class_name: FileContentCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/${oc.eval:'"surgery/ldm" if ${aux.step} == ${aux.start} else "runs/ldm_fixed"'}/ckpt/latest_checkpointed_iteration.txt
+            pattern: "^\\s*${aux.step}\\s*$"
+            mode: regex
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/${oc.eval:'"surgery/ldm" if ${aux.step} == ${aux.start} else "runs/ldm_fixed"'}/ckpt
+          backend.megatron.depth_memory: true

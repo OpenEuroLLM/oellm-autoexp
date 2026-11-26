@@ -1,0 +1,14 @@
+universe        = vanilla
+executable      = /fast/pnazari/ldm-work/scripts/run_in_env.sh
+arguments       = "bash /fast/pnazari/ldm-work/e2e/phaseB.sh"
+initialdir      = /fast/pnazari/ldm-work
+getenv          = False
+environment     = "CUTE_DIR=/fast/pnazari/ldm-work/cute_kernels_next MEGATRON_DIR=/fast/pnazari/ldm-work/Megatron-LM-rebased EXTRA_ENV=TOKENIZERS_PARALLELISM=false,FLA_TENSOR_CACHE_SIZE=64,MHC_FUSED_READ=1,RECOMPUTE_OFFLOAD=1,ENGRAM_STEP_LOOKUP=1,ENGRAM_STEP_GROUP=1,ENGRAM_SPARSE_GRAD=1,LIGER_WGRAD_ADDMM=1,MEGATRON_LAZY_SINGLETON_GROUPS=1,ANGULAR_MUOWN_COMPACT_CKPT=1,FSDP_DCP_LOCAL_LOAD_PLAN=1,WANDB_MODE=offline"
+request_gpus    = 4
+request_cpus    = 32
+request_memory  = 256GB
+requirements    = (TARGET.CUDADeviceName == "NVIDIA H100 80GB HBM3") && !regexp("i101|i104|i203|i205|i207", Machine)
+log             = /fast/pnazari/ldm-work/logs/e2e_phaseB-$(Cluster).log
+output          = /fast/pnazari/ldm-work/logs/e2e_phaseB-$(Cluster).out
+error           = /fast/pnazari/ldm-work/logs/e2e_phaseB-$(Cluster).err
+queue

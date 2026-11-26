@@ -1,0 +1,131 @@
+# @package _global_
+# LDM replacement intervention on the Nucleus main line v4b (ambitious_v4b_learned_256: mHC-4, six copy-init V layers
+# with learnable gates). The three LDM runs at scale (main_ldm, v3, v4_ldm) destabilized; one cause the code shows is
+# the backward of the CuTe kernels under full recompute: it unwinds M by subtraction in BF16 through all ~105 writes,
+# so a burst of large writes deep in the stack corrupts every earlier recomputed state (recomputed reads 6.3e-1 off
+# FP64 at a value burst of 85x). The fix (cute_kernels#1, NVIDIA-Megatron-LM#8): M in FP16 under BF16 training, with
+# the LDM backward scaling its own gradients, and a copy of M every 16 edges that the backward restores (1.3e-2).
+#
+# Question: on the trained model, does LDM with that fix train stably, and does it beat the plain residual it
+# replaces? A warm start of 500 steps from v4b's persistent save 44000 (its ckpt_eval copy, safe from the run's
+# pruning; launcher STEP= for another), on 128 nodes (reference sampler dp 512 x mbs 1: the same batches as v4b on
+# its 256 nodes), so losses are paired step by step with v4b, as nucleus_engram_branch_gates_mn5:
+#   (v4b)     the control: the main run continues 44000 -> 44500 unchanged (mHC-4)
+#   collapse  mHC removed, nothing added (scripts/korbi/production/mhc_to_ldm.py): the four streams become their mean,
+#             the stream the LM head reads (the doubly stochastic mixing keeps it); every layer reads Norm(mean)
+#             instead of its learned mix of the streams and writes its whole output (mHC: avg h_post of it); the V
+#             layers' g_v is folded into their linear_proj. The cost of the surgery alone
+#   ldm_fixed the same + LDM (K 8, 16 groups, address width 128 as ambitious_v4_ldm; cute, full recompute) with FP16 M
+#             and an M checkpoint every 16 edges (pinned host memory). Every read gain starts at 0, so at 44000 the
+#             model is exactly collapse; the memory opens through d loss / d gain
+# The step-0 loss jump of the surgery (eval only, before any training) and the paired 44500 validation:
+# nucleus_ldm_replacement_eval_mn5.
+#
+# Launch: scripts/pnazari/launch_nucleus_ldm_replacement.sh (checkpoint surgery, then this config), from a snapshot
+# whose Megatron-LM and cute_kernels have the FP16 M / checkpoint flags.
+# Validated end to end on the MPI cluster (scripts/pnazari/mhc_to_ldm_e2e/): this recipe on an 11-layer stack with
+# every layer kind of v4b (attention, MoE, Engram, CKDA, one V layer; mock data, 4 H100s, Megatron-FSDP, MuOwn),
+# mHC-4 trained 20 steps, converted, resumed 5 steps:
+#   - the converted ldm tree holds exactly the tensors (4043, shapes, dtypes) of a checkpoint the LDM config saves
+#   - collapse and ldm_fixed give the same lm loss at the first resumed step (read gains 0), from the trained mixers
+#     and from mixers reset to their init; ldm_fixed departs from collapse from the second step on
+#   - mixers reset to their init (mHC is then exactly the plain residual): converted 5.1438e-2 against the
+#     unconverted mHC model's 5.1391e-2 (bf16, two code paths); without the V fold (negative control) 4.985e-2
+#   - all arms train on (FP16 M, M checkpoints every 4 edges there), no non-finite loss
+# NOT measured: memory at 64k on 128 nodes. v4b runs at 0.81 of the 64 GB; collapse frees mHC's four streams, LDM
+# adds its stream records and workspace (~+10 GB over mHC-4 in the speed screens) and 12 GiB of pinned host memory
+# per GPU for the M checkpoints. Watch the first steps of ldm_fixed.
+# Readout: scripts/rluukkon/compare_runs_loss.py (lm loss / grad norm per step against v4b and between the arms),
+# validation every 200 steps, ldm/read_ratio, ldm/forget, ldm/grad_scale_log2 and ldm/grad_nonfinite every 10 steps.
+defaults:
+  - /experiments/korbi/recall_surgery/v4b_learned_mn5
+  - _self_
+
+aux:
+  suite: ldm_replacement
+  arm: ldm_fixed
+  only: []
+  # 128 nodes x mbs 1, 2 micro-batches of one 64k sequence per step (v4b's shape at 128 nodes)
+  nodes: 128
+  steps: 500
+  start: 44000
+  end: 44500
+  start_iter: iter_0044000
+  lr_root: ${aux.kv_root}/ldm_replacement
+  # v4b's pinned saves (ckpt/ prunes older persistent saves)
+  main_ckpt: ${aux.kv_root}/runs/v4b_learned/main/ckpt_eval
+  node_check: light
+
+backend:
+  megatron:
+    ckpt_step: ${aux.start}
+    # v4b's value; read only by ckda_branch / v_block_gate_ramp, both off in v4b
+    ckda_branch_start_iteration: 35900
+    exit_interval: ${aux.end}
+    # one persistent save, at the end (1.1 TB per arm); no rolling saves: a crash restarts from the start
+    save_interval: 1000000
+    save_extra_steps: ["${aux.end}"]
+    non_persistent_save_interval: null
+    save_retain_interval: null
+    # never on a save step (a save on a validation step is the 11-13 host-RAM OOM, v4_cont_mn5)
+    eval_interval: 200
+    arch_metrics_interval: 10
+    # both arms: the plain residual (mHC off); the V layers' learnable gates need mHC, their g_v is folded
+    mhc: false
+    v_block_learnable_gate: false
+    # LDM's settings (on in ldm_fixed only): ambitious_v4_ldm's K 8 / 16 groups / address width 128 and residual
+    # mixer lr x1, plus the fix
+    depth_memory_impl: cute
+    depth_memory_unwind: true
+    depth_memory_groups: 16
+    depth_memory_key_dim: 8
+    depth_memory_hidden_dim: 128
+    depth_memory_storage_dtype: float16
+    depth_memory_checkpoint_interval: 16
+    residual_mixer_lr_mult: 1.0
+
+job:
+  name: nucleus_ldm_repl_${aux.arm}
+  base_output_dir: ${aux.lr_root}/runs/${aux.arm}
+  est_steps: 500
+  # v4b: 19.5 s/step on 256 nodes -> ~38 s on 128 (LDM: unmeasured at this scale)
+  est_step_time_s: 40.0
+  est_startup_min: 40.0
+  # set per arm below: every arm waits for its checkpoint from scripts/pnazari/mhc_to_ldm_surgery.sbatch
+  start_condition: null
+  metadata:
+    pool_singleton: null
+    pool_priority: 80
+    pool_use_excluded_nodes: false
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "10:00:00"
+    account: cns143
+    qos: acc_xlarge
+
+# literals in the entries: interpolations inside a sweep entry resolve against the base config
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: collapse
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/runs/collapse
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/surgery/collapse/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/surgery/collapse/ckpt
+          backend.megatron.depth_memory: false
+        - aux.arm: ldm_fixed
+          job.base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/runs/ldm_fixed
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/surgery/ldm/ckpt/latest_checkpointed_iteration.txt
+            persistent_pass: true
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/ldm_replacement/surgery/ldm/ckpt
+          backend.megatron.depth_memory: true
