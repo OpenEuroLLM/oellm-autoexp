@@ -153,7 +153,9 @@ class PoolHostConfig:
     preempt_grace_s: float = 900.0
     # UNHEALTHY requeues of one job (lost host, host without enough nodes) before
     # it is given up; healthy ones (handover, wall clock, pool_ctl preempt) are
-    # unlimited, a continuous run has one per segment
+    # unlimited, a continuous run has one per segment. Since P3 (2026-11-26) neither a refused
+    # placement nor a lost host counts (user: a lost host is no attempt; a host that loses runs
+    # repeatedly is a health-check problem instead): kept for configs, not enforced.
     max_attempts: int = 20
     # Wait this long after a run's previous attempt ended before starting it again. Without it
     # a failed attempt is retried within seconds, while the dead step's processes still hold
@@ -162,6 +164,12 @@ class PoolHostConfig:
     # 1942-1948, 2027-2031, 2041-2045 -- rc 1 at ~90 s intervals, every retry OOMing at init).
     # Set it above the time a dead step needs to release the GPUs; 0 = retry immediately.
     retry_delay_s: float = 0.0
+    # BACKOFF after a run FAULT (the run ended non-zero): the job's next run is placed only this
+    # many seconds after the fault, per consecutive fault ("60,180,600,1800": 1st, 2nd, 3rd, 4th
+    # and later); a run that had lived backoff_reset_s before it failed starts the count anew.
+    # Placement refusals, lost hosts and preemptions are no faults. "" = no backoff.
+    retry_backoff_s: str = "60,180,600,1800"
+    backoff_reset_s: float = 1800.0
     # a RUNNING host whose supervisor heartbeat is older than this is cancelled (unless held)
     host_stale_s: float = 900.0
     # supervisor poll period
@@ -851,6 +859,38 @@ def _split_nodes(text: str | None) -> list[str]:
     return [t for t in re.split(r"[\s,]+(?![^\[]*\])", text or "") if t]
 
 
+def expand_hostlist(token: str) -> list[str]:
+    """``as01r1b[01-03,07]`` -> as01r1b01 as01r1b02 as01r1b03 as01r1b07 (SLURM hostlist syntax,
+    any number of bracket groups, zero padding kept); a plain name stays as it is."""
+    m = re.search(r"\[([^\]]*)\]", token)
+    if not m:
+        return [token] if token else []
+    head, tail = token[: m.start()], token[m.end():]
+    out = []
+    for part in m.group(1).split(","):
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            if lo.isdigit() and hi.isdigit():
+                out += [f"{head}{i:0{len(lo)}d}" for i in range(int(lo), int(hi) + 1)]
+                continue
+        out.append(f"{head}{part}")
+    return [name for item in out for name in expand_hostlist(item + tail)]
+
+
+def node_set(text: str | None) -> set[str]:
+    """Node names of an exclusion list / file text (commas, whitespace, # comments, ranges)."""
+    names: set[str] = set()
+    for line in (text or "").splitlines():
+        for tok in _split_nodes(line.split("#", 1)[0]):
+            names.update(expand_hostlist(tok))
+    return names
+
+
+def read_placement_refused(layout: PoolLayout, rid: str) -> dict[str, str]:
+    """``runs/<rid>/placement_refused``: the supervisor could not place the run (P3)."""
+    return read_env_file(layout.run_dir(rid) / "placement_refused")
+
+
 def _exclude_list(slurm: SlurmConfig) -> str:
     """The job's own exclusion list, re-read from exclude_file like
     build_sbatch_directives."""
@@ -1473,6 +1513,8 @@ class PoolManager:
         self._runs: dict[str, str] = {}
         # hid views of the current poll, by pool dir
         self._hosts: dict[str, dict[str, HostView]] = {}
+        # P3: why a queued run is not placed, as last logged ((pool dir, rid) -> text)
+        self._waits: dict[tuple[str, str], str] = {}
         # periodic health check (pool_doctor.health_check): last run, problems then, by pool dir
         self._health_ts: dict[str, float] = {}
         self._health_problems: dict[str, set[str]] = {}
@@ -1697,6 +1739,9 @@ class PoolManager:
             if state.status == "RUNNING":
                 LOGGER.warning("[pool] run %s lost its host %s", rid, state.host)
                 write_rc(layout, rid, -1, "host_lost")
+                if state.host:  # counted per host, not against the job (P3, health check)
+                    with open(layout.host_dir(state.host) / "lost_runs", "a") as fh:
+                        fh.write(f"{rid} {time.time():.0f}\n")
             else:
                 # assigned but never launched: back into the queue
                 self._unassign(layout, rid, state.host)
@@ -2005,6 +2050,70 @@ class PoolManager:
             nodes = alloc(host)
             return min(total, len(nodes)) if nodes else total
 
+        # P3 (2026-11-26): what keeps a run off a host before it is assigned there.
+        pool_excl = node_set(_read(layout.exclude_nodes))
+        records_by_job = {r.job_id: r for r in runs}
+        waits_now: dict[str, str] = {}
+
+        def own_block(host: HostView, rid: str) -> int:
+            """Nodes of the host the run's OWN EXCLUDE takes away from what the host offers it:
+            in the allocation, not excluded for the host anyway, not held by another run. The
+            supervisor's usable count (host.usable_nodes) does not know them."""
+            mine = node_set(read_env_file(layout.run_dir(rid) / "meta.env").get("EXCLUDE"))
+            if not mine:
+                return 0
+            hdir = layout.host_dir(host.hid)
+            alloc = set(_split_nodes(host.info.get("NODELIST")))
+            host_excl = pool_excl | node_set(_read(hdir / "exclude_nodes")) | set(dead_nodes(layout, host.hid))
+            held = set()
+            for f in hdir.glob("inuse/*"):
+                held |= node_set(_read(f))
+            return len((mine & alloc) - host_excl - held)
+
+        def refusal(rid: str, job_id: str) -> dict:
+            """The supervisor's refusal of the run (runs/<rid>/placement_refused), or the one an
+            older supervisor gave the job's previous run by ending it (insufficient_nodes:
+            "previous_run" set, the new run's own meta.env is younger anyway)."""
+            ref = read_placement_refused(layout, rid)
+            if not ref and job_id in records_by_job:
+                ref = dict((records_by_job[job_id].runtime.action_state or {}).get("pool:refused") or {})
+                if ref:
+                    ref["previous_run"] = "1"
+            return ref
+
+        def refused_here(host: HostView, rid: str, job_id: str) -> bool:
+            """The supervisor refused the run on this host (it keeps its rid) and nothing that
+            decides the placement changed since: the host's usable count, its exclusion lists,
+            the run's own EXCLUDE."""
+            ref = refusal(rid, job_id)
+            if ref.get("host") != host.hid:
+                return False
+            try:
+                ts = float(ref.get("ts") or 0)
+            except ValueError:
+                ts = 0.0
+            if str(host.usable_nodes) != ref.get("total_usable"):
+                return False
+            hdir = layout.host_dir(host.hid)
+            watched = [layout.exclude_nodes, hdir / "exclude_nodes", hdir / "dead_nodes"]
+            if not ref.get("previous_run"):
+                watched.append(layout.run_dir(rid) / "meta.env")
+            return max(_mtime(p) or 0 for p in watched) <= ts
+
+        def backoff_wait(job_id: str) -> float:
+            """Seconds the job still waits after its last run fault (retry_backoff_s)."""
+            record = records_by_job.get(job_id)
+            info = (record.runtime.action_state or {}).get("pool:backoff") if record else None
+            try:
+                return max(0.0, float((info or {}).get("until") or 0) - now)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def note_wait(rid: str, text: str) -> None:
+            waits_now[rid] = text
+            if self._waits.get((str(layout.root), rid)) != text:
+                LOGGER.info("[pool %s] %s waits: %s", cfg.name, rid, text)
+
         def fits(host: HostView, nodes: int, rid: str | None = None) -> bool:
             cap = host_total(host) if rid is not None and run_meta(rid)[1] else host.usable_nodes
             return nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s
@@ -2036,7 +2145,20 @@ class PoolManager:
                 allowed = _run_accounts(layout, rid)
                 if allowed and host.account not in allowed:
                     continue  # a foreign job: only hosts of accounts its submitter belongs to
-                cap = free + (free_excl if use_excl else 0)
+                wait = backoff_wait(job_id)
+                if wait > 0:
+                    note_wait(rid, f"backoff after a run fault, {wait:.0f} s left")
+                    continue
+                if refused_here(host, rid, job_id):
+                    ref = refusal(rid, job_id)
+                    note_wait(rid, f"refused by {host.hid} (needs {ref.get('need')}, "
+                                   f"{ref.get('usable')} usable for it); waits for a change")
+                    continue
+                block = own_block(host, rid)
+                cap = free + (free_excl if use_excl else 0) - block
+                if nodes > cap and block and nodes <= cap + block:
+                    note_wait(rid, f"needs {nodes}, {host.hid} has {cap} usable for it "
+                                   f"(own EXCLUDE {block} in the allocation)")
                 if nodes <= cap and host.remaining_s(now) >= cfg.min_remaining_s:
                     # the previous attempt of this run may have ended moments ago and its step's
                     # processes still hold the GPUs on every node: wait before retrying, or the
@@ -2093,6 +2215,8 @@ class PoolManager:
                             ",".join(kept_off[:10]),
                         )
                     self._assign(layout, rid, host.hid)
+                    (layout.run_dir(rid) / "placement_refused").unlink(missing_ok=True)
+                    waits_now.pop(rid, None)
                     busy.add(host.hid)
                     active.append(rid)
                     if use_excl:
@@ -2109,6 +2233,11 @@ class PoolManager:
                         host.hid,
                         host.record.runtime.runtime_job_id,
                     )
+        # why a queued run waits, logged once per change (P3)
+        root = str(layout.root)
+        for key in [k for k in self._waits if k[0] == root and k[1] not in waits_now]:
+            del self._waits[key]
+        self._waits.update({(root, rid): text for rid, text in waits_now.items()})
 
         # 5. release idle hosts that have had nothing to do for idle_exit_s -- or
         #    at once when there IS queued work and this host can run none of it:

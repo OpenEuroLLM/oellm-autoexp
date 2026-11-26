@@ -46,6 +46,9 @@ def _loads_or_none(path: Path) -> dict | None:
 
 # A request older than this was not executed by a monitor.
 REQUEST_STALE_S = 300.0
+# A live host that lost this many runs (rc host_lost: its supervisor or allocation went away while
+# they ran) is a problem: lost hosts are not counted against the jobs (P3, 2026-11-26).
+LOST_RUNS_PROBLEM = 3
 # A run whose own EXCLUDE covers more than this share of its host's allocation is suspicious
 # (11-24: 262 of 264 nodes, "needs 256 node(s), only 2 usable").
 EXCLUDE_SHARE_WARN = 0.5
@@ -124,6 +127,10 @@ def doctor_report(layout: PoolLayout, slurm=run_slurm, now: float | None = None)
         alloc = set(live if live else listed)
         excl = _node_set(pool_excl + _tokens(_read_text(hdir / "exclude_nodes")), slurm) & alloc
         hosts[hdir.name] = {"alloc": alloc, "excl": excl, "available": len(alloc) - len(excl)}
+        lost = [ln for ln in (_read_text(hdir / "lost_runs") or "").splitlines() if ln.strip()]
+        if len(lost) >= LOST_RUNS_PROBLEM:
+            out.append(("PROBLEM", f"host {hdir.name}: lost {len(lost)} run(s) (host_lost; "
+                        "pool_ctl doctor --probe, or exit-host)"))
         line = f"host {hdir.name} job {jid or '-'}: info.env {len(listed)} node(s)"
         if live is None:
             level = "info"

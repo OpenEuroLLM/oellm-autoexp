@@ -360,27 +360,22 @@ def test_preempted_run_is_requeued_with_a_new_run(env):
     assert read_run_state(env.layout, rec.runtime.runtime_job_id).status == "PENDING"
 
 
-def test_preemption_budget_counts_only_unhealthy_requeues(env):
+def test_no_requeue_reason_uses_up_the_job(env):
+    """P3 (2026-11-26): preemptions, lost hosts and refused placements are no attempts, so a job
+    is never given up for them, however many there are (max_attempts is no longer enforced)."""
     meta = env.layout.load_meta()
     meta["config"]["max_attempts"] = 2
     env.layout.write_meta(meta)
     env.add_run("job_a")
     env.poll(2)
     env.host_up(env.hosts()[0])
-    # healthy requeues (handover / wall clock / preempt) never use up the budget
-    for _ in range(5):
+    for reason in ["preempted"] * 3 + ["host_lost"] * 3 + ["insufficient_nodes"]:
         env.poll()
-        write_rc(env.layout, env.rec("job_a").runtime.runtime_job_id, 0, "preempted")
-    env.poll()
-    assert env.rec("job_a").runtime.final_state is None
-    # unhealthy ones do: two are allowed, the third gives up
-    for _ in range(3):
-        env.poll()
-        write_rc(env.layout, env.rec("job_a").runtime.runtime_job_id, -1, "host_lost")
+        write_rc(env.layout, env.rec("job_a").runtime.runtime_job_id, -1 if reason != "preempted" else 0, reason)
     env.poll()
     rec = env.rec("job_a")
-    assert rec.runtime.final_state == "cancelled"
-    assert rec.runtime.action_state["pool:requeues"] == {"preempted": 5, "host_lost": 3}
+    assert rec.runtime.final_state is None
+    assert rec.runtime.action_state["pool:requeues"] == {"preempted": 3, "host_lost": 3, "insufficient_nodes": 1}
 
 
 def test_timeout_is_final(env):

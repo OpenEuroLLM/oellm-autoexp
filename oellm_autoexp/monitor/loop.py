@@ -283,6 +283,9 @@ class MonitorLoop:
             # a shared 'current' symlink (dependency chain) tracks the running job.
             if runtime_id and new_status == "RUNNING" and runtime.last_status != "RUNNING":
                 self._update_current_symlinks(job)
+            if new_status == "FAILED" and PoolManager.is_run(job):
+                # before the job's own events restart it: the next run must see the backoff
+                self._pool_record_fault(job)
             status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
             if runtime.deferred_restart and self._resume_deferred_restart(job, runtime_id):
@@ -414,13 +417,18 @@ class MonitorLoop:
         """Built-in lifecycle of a pool run on the states only a pool reports.
 
         PREEMPTED means the run was stopped from outside -- a handover to a
-        newer host, the host's wall clock, a lost host -- not that the job went
-        wrong, so it is requeued (a new run of the same record, which resumes
-        from its checkpoint) up to the pool's ``max_attempts``. A RestartAction
-        a log policy deferred on the same exit (``sigterm_rollover``) has
-        already been resumed by the caller, so this never restarts twice.
-        TIMEOUT (the job's own ``sbatch.time``, enforced by the supervisor) is
-        final, like the cancel the array policy gives a timed-out task.
+        newer host, the host's wall clock, a lost host, a supervisor of older
+        code that could not place it -- not that the job went wrong, so it is
+        requeued (a new run of the same record, which resumes from its
+        checkpoint). Since P3 (2026-11-26) none of these counts against the job:
+        a refused placement keeps its run and waits (newer supervisors), and a
+        lost host is counted per host (health check). A RestartAction a log
+        policy deferred on the same exit (``sigterm_rollover``) has already been
+        resumed by the caller, so this never restarts twice. TIMEOUT (the job's
+        own ``sbatch.time``, enforced by the supervisor) is final, like the
+        cancel the array policy gives a timed-out task. FAILED (a run FAULT)
+        sets the job's backoff before any event acts (observe_once,
+        _pool_record_fault); whether the job restarts is up to its own events.
         """
         if not PoolManager.is_run(job) or new_status is None:
             return "continue"
@@ -428,33 +436,19 @@ class MonitorLoop:
             from oellm_autoexp.monitor.pool import PoolLayout, read_run_state
 
             layout = PoolLayout(job.definition.pool_dir)
-            try:
-                max_attempts = layout.load_config().max_attempts
-            except Exception:  # pragma: no cover - a missing pool.json must not wedge the run
-                max_attempts = 20
-            reason = read_run_state(layout, job.runtime.runtime_job_id).reason
-            # Only UNHEALTHY requeues count against max_attempts: a lost host or a
-            # host that no longer has the nodes. A handover, the host's wall clock
-            # or a pool_ctl preempt (reason "preempted") is the pool working as
-            # intended -- a continuous run hands over every segment, and counting
-            # those would cancel it after max_attempts segments (~10 days at 12 h).
+            run_state = read_run_state(layout, job.runtime.runtime_job_id)
+            reason = run_state.reason
+            if reason == "insufficient_nodes" and run_state.host:
+                # a supervisor of older code refused the placement by ending the run: the next run
+                # does not go back to that host until it changes (as runs/<rid>/placement_refused)
+                usable = ((layout.host_dir(run_state.host) / "state").read_text().split() or ["?"])[-1] \
+                    if (layout.host_dir(run_state.host) / "state").exists() else "?"
+                job.runtime.action_state["pool:refused"] = {
+                    "host": run_state.host, "total_usable": usable, "ts": f"{time.time():.3f}",
+                    "need": "?", "usable": "?",
+                }
             counters = job.runtime.action_state.setdefault("pool:requeues", {})
             counters[reason or "preempted"] = int(counters.get(reason or "preempted", 0)) + 1
-            unhealthy = sum(
-                v for k, v in counters.items() if k in ("host_lost", "insufficient_nodes")
-            )
-            if unhealthy > max_attempts:
-                LOGGER.warning(
-                    "Pool run %s of %s %s: %d unhealthy requeue(s) > max_attempts %d, giving up",
-                    job.runtime.runtime_job_id,
-                    job.job_id,
-                    reason,
-                    unhealthy,
-                    max_attempts,
-                )
-                # the cancel path reloads the record from disk: keep the counters
-                self._store.upsert(job)
-                return "cancelled"
             LOGGER.info(
                 "Pool run %s of %s was preempted (%s): requeueing (attempt %d; requeues %s)",
                 job.runtime.runtime_job_id,
@@ -467,6 +461,34 @@ class MonitorLoop:
         if new_status == "TIMEOUT":
             return "cancelled"
         return "continue"
+
+    def _pool_record_fault(self, job: JobRecord) -> None:
+        """A run of the job ended with a fault: its next run waits retry_backoff_s[n] (n-th
+        consecutive fault; a run that had lived backoff_reset_s counts as a fresh start)."""
+        from oellm_autoexp.monitor.pool import PoolLayout, _mtime, read_run_state
+
+        rid = job.runtime.runtime_job_id
+        info = job.runtime.action_state.setdefault("pool:backoff", {})
+        if not rid or info.get("rid") == rid:
+            return  # this fault is recorded already
+        layout = PoolLayout(job.definition.pool_dir)
+        try:
+            cfg = layout.load_config()
+        except Exception:  # pragma: no cover - a missing pool.json must not wedge the run
+            return
+        schedule = [float(s) for s in (cfg.retry_backoff_s or "").split(",") if s.strip()]
+        state = read_run_state(layout, rid)
+        end = _mtime(layout.run_dir(rid) / "rc") or time.time()
+        try:
+            lived = end - float(state.started.get("ts", end))
+        except ValueError:
+            lived = 0.0
+        n = 1 if lived >= cfg.backoff_reset_s else int(info.get("n", 0)) + 1
+        wait = schedule[min(n, len(schedule)) - 1] if schedule else 0.0
+        info.update({"rid": rid, "n": n, "until": end + wait, "lived_s": round(lived)})
+        if wait:
+            LOGGER.info("Pool run %s of %s failed (fault %d in a row): its next run waits %.0f s",
+                        rid, job.job_id, n, wait)
 
     def _check_start(self, job: JobRecord) -> bool:
         condition = job.definition.start_condition

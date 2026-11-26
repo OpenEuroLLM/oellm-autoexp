@@ -30,6 +30,11 @@ pool_host:
   stop_grace_s: 120
   preempt_grace_s: 900
   max_attempts: 20
+  # after a run FAULT (non-zero end) the job's next run waits 60 s, then 180, 600, 1800 s for
+  # consecutive faults; a run that lived backoff_reset_s before failing starts the count anew
+  # (refused placements, lost hosts and preemptions are no faults); "" = no backoff
+  retry_backoff_s: "60,180,600,1800"
+  backoff_reset_s: 1800
   host_stale_s: 900
   poll_s: 10
   # SLURM accounts in order of preference ("cns144,ehpc533"; "" = the host config's own): the

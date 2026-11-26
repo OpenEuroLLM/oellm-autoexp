@@ -451,8 +451,18 @@ while true; do
     nl=$(run_free_nodes "$run_excl" "$use_excl" | head -n "$need" | paste -sd, -)
     if [ "$(printf '%s' "$nl" | tr ',' '\n' | grep -c .)" -lt "$need" ]; then
       if [ "${#RUN_PID[@]}" -eq 0 ]; then
-        log "run $rid needs $need node(s), only $(run_free_nodes "$run_excl" "$use_excl" | grep -c .) usable"
-        finish_run "$rid" -1 insufficient_nodes
+        # P3 (2026-11-26): a placement refusal is no attempt. The run keeps its rid and goes
+        # back to the queue; the monitor does not send it here again until this host's usable
+        # count, its exclusion lists or the run's EXCLUDE change (placement_refused).
+        usable=$(run_free_nodes "$run_excl" "$use_excl" | grep -c .)
+        log "run $rid needs $need node(s), only $usable usable: refused, back to the queue"
+        atomic "$R/placement_refused" "host=$HID
+need=$need
+usable=$usable
+total_usable=$(usable_nodes "" | grep -c .)
+ts=$(now)"
+        ledger "$rid" "placement refused need=$need usable=$usable"
+        rm -f "$H/assign/$rid" "$R/assigned"
       fi
       continue  # (packed: it starts once another run frees its nodes)
     fi

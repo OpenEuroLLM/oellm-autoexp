@@ -1158,3 +1158,35 @@ def test_a_cancelled_job_stays_cancelled_until_an_enqueue_with_replace(pool):
     second = pool.runs_of("dummy_train")[1]
     pool.wait_for(lambda: pool.run_state(second).status == "COMPLETED", 120, "it to complete")
     assert "job cancelled by" in pool.layout.ledger.read_text()
+
+
+def test_a_supervisor_refuses_an_unplaceable_run_and_it_keeps_its_rid(pool):
+    """P3: the real supervisor, handed a run its own EXCLUDE leaves too few nodes for (a race the
+    monitor's fit check normally prevents), refuses it without ending it: no rc, no new run, the
+    run back in the queue; the monitor then does not send it there again until something changes."""
+    pool.create_pool(*FAST, "slurm.sbatch.nodes=2", "job.pool_host.keep_monitor=true")
+    pool.start_monitor(hold_new_jobs=True)
+    pool.enqueue("big", "aux.iters=5", "aux.tick=0.1", "slurm.sbatch.nodes=2")
+    jid = pool.wait_for(lambda: pool.fake_jobs() and pool.fake_jobs()[0]["id"], 30, "the host queued")
+    rid = pool.wait_for(lambda: pool.runs_of("dummy_big"), 30, "the queued run")[0]
+    pool.stop_monitor()
+    meta = pool.layout.run_dir(rid) / "meta.env"
+    meta.write_text(meta.read_text().replace("EXCLUDE=''", f"EXCLUDE=n{jid}-1"))
+    pool.release(jid)
+    hdir = pool.layout.host_dir("host001")
+    pool.wait_for(lambda: (hdir / "info.env").exists(), 30, "the supervisor up")
+    (pool.layout.run_dir(rid) / "assigned").write_text("host001\n")  # what a racing monitor does
+    (hdir / "assign").mkdir(exist_ok=True)
+    (hdir / "assign" / rid).write_text(rid + "\n")
+    refused = pool.layout.run_dir(rid) / "placement_refused"
+    pool.wait_for(lambda: refused.exists(), 30, "the refusal")
+    ref = refused.read_text()
+    assert "host=host001" in ref and "need=2" in ref and "usable=1" in ref, ref
+    assert not (pool.layout.run_dir(rid) / "rc").exists(), "no rc: not an ended attempt"
+    assert not (hdir / "assign" / rid).exists() and not (pool.layout.run_dir(rid) / "assigned").exists()
+    assert "placement refused need=2 usable=1" in pool.layout.ledger.read_text()
+    pool.start_monitor()
+    time.sleep(4)  # a few polls: not sent back, the same run waits
+    assert pool.run_state(rid).status == "PENDING" and pool.runs_of("dummy_big") == [rid]
+    assert not (hdir / "assign" / rid).exists()
+    assert f"{rid} waits: refused by host001" in pool.monitor_log.read_text()
