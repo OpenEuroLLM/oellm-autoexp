@@ -604,6 +604,31 @@ because tests cannot change uid.
   - **Fast pickup.** Instead of `SIGUSR2`, the monitor's sleep ends within ~2 s when a request or
     inbox file is waiting.
 
+**Implemented 2026-11-26 (P3), after the user's review:**
+
+- **Pools are isolated** (user): one job lives in one pool. The cross-pool singleton guard
+  (`pool_singleton`, `<pools>/_singletons/`) contradicts that; it is left as it is until P5
+  (preemption) decides about it.
+- **The fit check counts the run's own `EXCLUDE`.** The monitor assigns a run only where it fits
+  after its own `EXCLUDE` ∩ the allocation (minus nodes excluded for the host anyway, minus nodes
+  other runs hold). Otherwise the run waits, logged once per change:
+  `p264.2403 waits: needs 256, host010 has 255 usable for it (own EXCLUDE 3 in the allocation)`.
+- **A refusal keeps the rid.** A supervisor that still cannot place a run writes
+  `runs/<rid>/placement_refused` (host, need, usable, total_usable, ts), drops the assignment and
+  leaves the run PENDING (no `rc`, no new run dir, no attempt). The monitor does not send it to
+  that host again until the host's usable count, its exclusion lists or the run's `EXCLUDE`
+  change.
+- **Compatibility with old supervisors.** They still end such a run with
+  `rc -1 insufficient_nodes`. The monitor requeues it without counting it and keeps the new run
+  off that host until it changes (`action_state["pool:refused"]`); stray runs of that kind can be
+  post-fixed by hand.
+- **Lost hosts are counted per host.** `host_lost` is not counted against the job, and
+  `max_attempts` is no longer enforced for any requeue. It goes into `<host>/lost_runs`; a live
+  host with ≥3 lost runs is a health-check / `doctor` PROBLEM.
+- **Backoff.** After a run fault (`FAILED`, recorded before the job's own restart events act), the
+  job's next run is placed only after 60 → 180 → 600 → 1800 s of consecutive faults. A run that
+  lived `backoff_reset_s` (1800 s) starts the count anew (`retry_backoff_s`, "" = off).
+
 **Rollout notes per phase:**
 
 - **P0** is read-only plus one writer change, and is safe on live pools.
