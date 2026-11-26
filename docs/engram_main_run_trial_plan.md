@@ -23,15 +23,20 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 
 ## 3. Design
 
-- **Arm:** `bg_read` (per-stream gates, query read) + `engram_gate_logit_scale: true` +
-  `engram_gate_query_eps: 1e-12`.
-- **`bg_read` is already "all gates":** `engram_branch_gates` adds a gate for **every** mHC stream
-  (all 4) at every Engram layer. `bg_stream` is the same gate set with the query taken from the stream
-  instead of the read — not a different gate set. The `fix` is the single gate. The separate
-  `engram_gate_scale` term (currently false) is not part of `engram_branch_gates`; enable it with
-  `--gate-scale` only if the trial is extended to it. The mHC read/write/mix gates are separate too.
-- **Init:** function-preserving. `bg_read` at init is exactly the current single gate (stream params are
-  copies); `logit_scale` = the mean query RMS at 62,000 (not 53,000); the query eps is a constant.
+- **Arm:** `bg_stream` (per-stream gates, query stream — the original Engram) +
+  `engram_gate_logit_scale: true` + `engram_gate_query_eps: 1e-12`.
+- **Why stream:** the original Engram queries each branch's gate with the branch's hidden state;
+  `read` queries with the mHC read. The read `H_pre` collapsed, so `bg_read` normalizes the collapsed
+  read, while `bg_stream` uses the residual stream and bypasses it. The dead gate underuses the
+  per-token / per-stream **selection**, not the parameters themselves (the keys and values are still
+  computed).
+- **All gates:** `engram_branch_gates` adds a gate for **every** mHC stream (all 4) at every Engram
+  layer; `bg_stream` and `bg_read` differ only in the query source. The `fix` is the single gate. The
+  separate `engram_gate_scale` (false) and the mHC read/write/mix gates are separate mechanisms.
+- **Init and spike:** `logit_scale` = the mean query RMS at 62,000 (not 53,000); the query eps is a
+  constant. `bg_stream` is **not** function-preserving: it changes the queries at once, so expect a
+  loss spike. `bg_read` is the safe control; `learned` (`read + lam*(streams-read)`, lam=0 at init) is
+  the no-spike path to the stream.
 - **Length:** 1,000 steps, 62,000 → 63,000; `exit_interval: 63000`; validation at 63,000.
 - **Baseline:** the main run's own 61,000 → 62,000 (previous 1k steps, same data order).
 - **Reset:** if the loss regresses, keep the 62,000 checkpoint and resume the main run without the fix.
@@ -72,17 +77,19 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
   STREAM_SCALE=2:<mean2_stream>,52:<mean52_stream> \
   bash scripts/korbi/production/engram_branch_fix_surgery.sh
   ```
-- The trial uses `bg_read`; the `fix` checkpoint (single gate) is available as a control if needed.
+- The trial uses `bg_stream`; the `bg_read` checkpoint (safe control) and the `fix` (single gate) are
+  available if the spike is too large.
 
 ### Step 4 — trial config and snapshot
 - Add the trial config (§6) to the main repo; sync to `autoexp_engramfix7`; read `SYNC_STAMP`.
 
 ### Step 5 — trial job
 - Enqueue on the p264 pool / host011, 264 nodes, the main run's account/QOS, `pool_priority: 100`.
-- `load` = the `bg_read` 62,000 checkpoint; `exit_interval: 63000`; 1,000 steps.
+- `load` = the `bg_stream` 62,000 checkpoint; `exit_interval: 63000`; 1,000 steps.
 
 ### Step 6 — evaluation
 - Loss: the trial's 1,000-step loss vs the baseline's 61,000 → 62,000 (paired, same data order).
+- Spike: the loss at the first ~50 steps and the recovery by ~500 steps; reset if it has not recovered.
 - Arch metrics: per-stream gate spread, `query_rms`, `read_sum` every 10 steps.
 - Validation at 63,000 (`eval_iters: 10`) vs the 62,000 baseline.
 - Downstream export/eval at 63,000 if the loss is not decisive.
@@ -108,10 +115,10 @@ aux:
 
 backend:
   megatron:
-    load: ${aux.surgery}/bg_read/ckpt
+    load: ${aux.surgery}/bg_stream/ckpt
     ckpt_step: 62000
     engram_branch_gates: true
-    engram_branch_query: read
+    engram_branch_query: stream
     engram_gate_logit_scale: true
     engram_gate_query_eps: 1e-12
     exit_interval: 63000
@@ -119,8 +126,8 @@ backend:
     save_extra_steps: [63000]
 
 job:
-  name: ambitious_v4b_learned_trial_bg_read
-  base_output_dir: ${aux.kv_root}/runs/v4b_learned/trial_bg_read
+  name: ambitious_v4b_learned_trial_bg_stream
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned/trial_bg_stream
   metadata:
     pool_priority: 100
 
@@ -135,8 +142,11 @@ The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`
 ## 7. Risks and rollback
 
 - The main run is stopped at 62,000 by the user; the main tree is untouched; the trial has its own tree.
-- The function-preserving init depends on the 62,000 mean query RMS. If the export/diag is wrong, the
-  step-0 loss jumps and the trial is invalid.
+- `bg_stream` is not function-preserving: expect a loss spike. The 1k steps may not recover; the reset
+  threshold must catch a spike that does not recover. `bg_read` is the safe control; `learned` (lam=0)
+  is the no-spike path to the stream.
+- The `logit_scale` init depends on the 62,000 mean query RMS. If the export/diag is wrong, the step-0
+  loss jumps and the trial is invalid.
 - The 1k steps are ~0.6% of the remaining compute; the reset keeps the loss.
 - The host004 arms remain the controlled tiebreaker if the trial is ambiguous.
 
@@ -144,7 +154,9 @@ The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`
 
 - Confirm the main run's stop at 62,000 (user).
 - Confirm 1,000 steps (62,000 → 63,000) is the trial length.
-- Confirm `bg_read` first and `bg_stream` only on a win.
-- Set the reset threshold (e.g. loss delta > +0.0005 beyond noise).
+- Confirm `bg_stream` first (the original query) and `bg_read` as the control if the spike is large.
+- Set the spike tolerance and the reset threshold (e.g. loss delta > +0.0005 beyond noise; reset if the
+  loss has not recovered by ~500 steps).
+- Consider `learned` (lam=0 at init) if the spike is unacceptable.
 - Decide the host004 arms' role (tiebreaker or drop).
 - Land the Megatron commit `bd6b57856` in the main repo before the snapshot.
