@@ -1,0 +1,37 @@
+# MGSM-English discriminator on one node: 8/4/0-shot CoT and 8/0-shot direct, same 250 problems.
+# One lm-eval worker, so the whole probe runs on a single node of the p264 host.
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+  run_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256
+  step: 35900
+  name: ambitious_v4_2ph_fp8_35900
+  config: /gpfs/scratch/ehpc533/hybrid_nucleus/production/main_mhc4/ambitious_e360_eng80_v4_2ph_hd256/current_ambitious_v4_2ph_hd256_256n_p2.yaml
+
+rows:
+  harnesses: [lm-eval-harness]
+  suite_file: config/eval_tasks/mgsm_probe.yaml
+
+lm_eval:
+  workers: 1
+  split_s: 300
+  max_parts: 8
+  engine:
+    tp: 1
+    dp: 4
+    expert_parallel: true
+    max_num_seqs: 256
+    max_num_batched_tokens: 32768
+    gpu_memory_utilization: 0.85
+    request_batch_size: 256
+    response_cache: true
+  model_code:
+    # the fp8-direct load saves host memory but is off in every validated DP4 run
+    moe_fp8_direct: true
+  job: {priority: 70}
+
+paths:
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/flag_evals_oellm
+  pool: /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264

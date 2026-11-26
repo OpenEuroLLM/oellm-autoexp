@@ -1,0 +1,13 @@
+# MGSM-English discriminator: is the English CoT deficit demonstration-driven or a language gap?
+# Same 250 problems, same task; only the number of CoT demonstrations and the direct/CoT format vary.
+#   8-shot CoT  reproduces the measured 54% (reference for the probe)
+#   4-shot CoT  half the demonstrations
+#   0-shot CoT  no demonstrations at all
+#   8/0-shot direct  same task without CoT in the shots
+count: 5
+tasks:
+- {name: vllm/mgsm_native_cot_en/8, half: vllm, row: 900, task: mgsm_native_cot_en, n_shot: 8, suite: lm-eval-harness}
+- {name: vllm/mgsm_native_cot_en/4, half: vllm, row: 901, task: mgsm_native_cot_en, n_shot: 4, suite: lm-eval-harness}
+- {name: vllm/mgsm_native_cot_en/0, half: vllm, row: 902, task: mgsm_native_cot_en, n_shot: 0, suite: lm-eval-harness}
+- {name: vllm/mgsm_direct_en/8, half: vllm, row: 903, task: mgsm_direct_en, n_shot: 8, suite: lm-eval-harness}
+- {name: vllm/mgsm_direct_en/0, half: vllm, row: 904, task: mgsm_direct_en, n_shot: 0, suite: lm-eval-harness}
