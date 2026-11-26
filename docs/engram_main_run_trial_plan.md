@@ -25,6 +25,11 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 
 - **Arm:** `bg_read` (per-stream gates, query read) + `engram_gate_logit_scale: true` +
   `engram_gate_query_eps: 1e-12`.
+- **`bg_read` is already "all gates":** `engram_branch_gates` adds a gate for **every** mHC stream
+  (all 4) at every Engram layer. `bg_stream` is the same gate set with the query taken from the stream
+  instead of the read — not a different gate set. The `fix` is the single gate. The separate
+  `engram_gate_scale` term (currently false) is not part of `engram_branch_gates`; enable it with
+  `--gate-scale` only if the trial is extended to it. The mHC read/write/mix gates are separate too.
 - **Init:** function-preserving. `bg_read` at init is exactly the current single gate (stream params are
   copies); `logit_scale` = the mean query RMS at 62,000 (not 53,000); the query eps is a constant.
 - **Length:** 1,000 steps, 62,000 → 63,000; `exit_interval: 63000`; validation at 63,000.
