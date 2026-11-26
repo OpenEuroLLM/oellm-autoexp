@@ -145,6 +145,34 @@ def read_lighteval(directory: str) -> dict[str, tuple[str, float]]:
     return out
 
 
+def read_evalchemy(directory: str) -> dict[str, tuple[str, float]]:
+    """task -> (metric, value) from evalchemy's per-task result JSONs (also outside results/)."""
+    per_task: dict[str, dict[str, float]] = defaultdict(dict)
+    pattern = os.path.join(directory, "evalchemy", "evalchemy_*", "**", "results_*.json")
+    for path in sorted(glob.glob(pattern, recursive=True)):
+        try:
+            payload = json.load(open(path))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for task, metrics in (payload.get("results") or {}).items():
+            if not isinstance(metrics, dict):
+                continue
+            for key, value in metrics.items():
+                metric = base_metric(key)
+                if "stderr" in metric:
+                    continue
+                try:
+                    per_task[task][metric] = float(value)
+                except (TypeError, ValueError):
+                    continue
+    out = {}
+    for task, metrics in per_task.items():
+        chosen = pick(metrics)
+        if chosen:
+            out[task] = chosen
+    return out
+
+
 def read_summaries(directory: str) -> dict[str, tuple[str, float]]:
     """task -> (metric, value) from summary_shard*.tsv files."""
     per_task: dict[str, dict[str, float]] = defaultdict(dict)
@@ -225,6 +253,7 @@ def main() -> int:
     # summaries only cover the rows of the session that wrote them: merge instead of preferring
     ours = read_results(ours_dir)
     ours.update(read_lighteval(ours_dir))
+    ours.update(read_evalchemy(ours_dir))
     ours.update(read_summaries(ours_dir))
     if not ours:
         print(f"no results in {ours_dir}", file=sys.stderr)
