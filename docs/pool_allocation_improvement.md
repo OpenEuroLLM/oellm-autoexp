@@ -627,7 +627,15 @@ because tests cannot change uid.
   host with ≥3 lost runs is a health-check / `doctor` PROBLEM.
 - **Backoff.** After a run fault (`FAILED`, recorded before the job's own restart events act), the
   job's next run is placed only after 60 → 180 → 600 → 1800 s of consecutive faults. A run that
-  lived `backoff_reset_s` (1800 s) starts the count anew (`retry_backoff_s`, "" = off).
+  lived `backoff_reset_s` (1800 s) starts the count anew (`retry_backoff_s`, "" = off). The backoff is
+  on by default, and only for errors (user 2026-11-26): waiting for nodes, refusals, lost hosts
+  and preemptions never back off.
+- **Releasing unfit idle hosts** (user 2026-11-26). An idle host that can run none of the queued
+  work is released after `unfit_release_s` (900 s) idle, no longer at once. The check counts each
+  run's own `EXCLUDE` and a refusal on that host; a run in backoff counts as fitting, so it keeps
+  the host. Held and adopted hosts keep their rules (never / only after `idle_exit_s`). Example:
+  `releasing host host003: cannot run any queued job (needs 256 node(s), 253 usable for it (own
+  EXCLUDE 2), idle 905s)`.
 
 **Rollout notes per phase:**
 
