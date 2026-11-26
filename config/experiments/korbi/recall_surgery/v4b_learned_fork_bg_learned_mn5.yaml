@@ -1,0 +1,42 @@
+# @package _global_
+# Fork of the main run at 63,000: per-stream Engram gates with the learned query mix (bg_learned) and the
+# gate-opening fix. The base is the main run's *resolved* config, so every value the main actually runs
+# with is inherited (the repo config may be stale). Only the fork's own values are overridden here.
+#
+# The fork checkpoint is translated first (add_engram_branch_gates.py --query-mix --logit-scale) from the
+# main run's 63,000 persistent save; the trial then loads it and writes to its own run dir. The main tree
+# is not edited.
+defaults:
+  - file: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/config-mn5-pool-p264.2520.yaml
+  - _self_
+
+aux:
+  # the translated fork checkpoint (iter_0063000 with the per-stream gates + query_mix + logit_scale)
+  fork_ckpt: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix/fork_bg_learned_63k/ckpt
+
+backend:
+  megatron:
+    load: ${aux.fork_ckpt}
+    ckpt_step: 63000
+    engram_branch_gates: true
+    engram_branch_query: learned
+    engram_gate_logit_scale: true
+    engram_gate_query_eps: 1e-12
+    # 1,000 steps, 63,000 -> 64,000; validation at 64,000 (eval_interval 1000 from the main)
+    exit_interval: 64000
+    arch_metrics_interval: 10
+    save_extra_steps: [64000]
+
+job:
+  name: ambitious_v4b_learned_fork_bg_learned
+  # the fork's own run dir; the main tree stays untouched
+  base_output_dir: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/fork_bg_learned_63k
+  metadata:
+    pool_priority: 100
+
+slurm:
+  sbatch:
+    # 128 of the 134-node p134c host; the 128-node memory was proven at 56.7 GiB
+    nodes: 128
+    account: cns144
+    qos: acc_xehpc

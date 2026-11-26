@@ -18,7 +18,7 @@ it=iter_$(printf %07d "$IT")
 src_it="$SRC/$it"
 [ -f "$src_it/.metadata" ] || { echo "no checkpoint at $src_it"; exit 1; }
 export PYTHONPATH="scripts/korbi/production${PYTHONPATH:+:$PYTHONPATH}"
-for v in fix bg_read bg_stream; do
+for v in fix bg_read bg_stream bg_learned; do
     dst="$OUT_ROOT/$v/ckpt/$it"
     if [ -f "$OUT_ROOT/$v/ckpt/latest_checkpointed_iteration.txt" ]; then
         echo "$v exists: skipped"
@@ -29,6 +29,7 @@ for v in fix bg_read bg_stream; do
         fix) extra=(--no-branch --logit-scale "$READ_SCALE") ;;
         bg_read) extra=(--logit-scale "$READ_SCALE") ;;
         bg_stream) extra=(--logit-scale "$STREAM_SCALE") ;;
+        bg_learned) extra=(--query-mix --logit-scale "$READ_SCALE") ;;
     esac
     echo "== $v -> $dst (${extra[*]})"
     python3 scripts/korbi/production/add_engram_branch_gates.py --src "$src_it" --dst "$dst" "${extra[@]}"
