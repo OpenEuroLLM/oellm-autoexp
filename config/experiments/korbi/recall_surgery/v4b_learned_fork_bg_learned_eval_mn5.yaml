@@ -1,0 +1,102 @@
+# @package _global_
+# Paired eval-only validation of the main-run Engram fork (v4b_learned_fork_bg_learned_mn5) against the main run at
+# the same step, in ONE layout (8 nodes of c136 host004), with and without the early Engram layer:
+#   main / fork             the checkpoints as trained (the in-training validations are 128 vs 264 nodes apart;
+#                           long_64k showed +0.015 at 63,000, the layout artifact of the 44.5k arms)
+#   main_l2off / fork_l2off the same with layer 2's Engram output zeroed (engram_output_scale 0 on layer 2):
+#                           main - main_l2off ~ 0 is the dead gate; fork - fork_l2off < 0 means the revived
+#                           per-stream gates made layer 2's Engram carry information (the trial's question)
+# Eval only (no optimizer, no save), the full validation's seven fixed sets with eval_iters 3 (3 x 1024 x 64k
+# tokens per set; the same samples for every arm, so the differences are paired).
+#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/recall_surgery/v4b_learned_fork_bg_learned_eval_mn5 \
+#       aux.step=63000 --yes            (aux.step=64000 for the end point; aux.only=[...] for a subset)
+# Readout: the "validation-<set> loss at iteration <step>" lines of each job's log.
+defaults:
+  - v4b_learned_fork_bg_learned_mn5
+  - _self_
+
+aux:
+  nodes: 8
+  step: 63000
+  arm: fork
+  only: []
+  eval_root: ${aux.kv_root}/runs/v4b_learned/fork_bg_learned_62900_eval
+
+backend:
+  megatron:
+    skip_train: true
+    no_load_optim: true
+    no_load_rng: true
+    ckpt_step: ${aux.step}
+    eval_iters: 3
+    save: null
+    save_interval: null
+    save_extra_steps: []
+    non_persistent_save_interval: null
+    # the job's own (empty) rolling dir: Megatron loads a newer rolling save instead of --ckpt-step
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+job:
+  name: v4b_fork_bg_learned_eval_${aux.step}_${aux.arm}
+  base_output_dir: ${aux.eval_root}/${aux.step}/${aux.arm}
+  est_steps: 1
+  # 128 nodes: the 7-set validation (eval_iters 10) took < 9 min -> 8 nodes, eval_iters 3: ~40 min
+  est_step_time_s: 2400.0
+  est_startup_min: 30.0
+  metadata:
+    pool_priority: 90
+
+slurm:
+  sbatch:
+    time: "02:30:00"
+
+# literals in the entries: interpolations inside a sweep entry resolve against the base config
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - aux.arm: fork
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/fork_bg_learned_62900/ckpt
+          job.start_condition.conditions:
+            - class_name: FileContentCondition
+              path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/fork_bg_learned_62900/ckpt/latest_checkpointed_iteration.txt
+              pattern: "^\\s*${aux.step}\\s*$"
+              mode: regex
+              persistent_pass: true
+        - aux.arm: main
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+          job.start_condition.conditions:
+            - class_name: FileExistsCondition
+              path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval/iter_00${aux.step}/.metadata
+              persistent_pass: true
+          backend.megatron.engram_branch_gates: false
+          backend.megatron.engram_branch_query: read
+          backend.megatron.engram_gate_logit_scale: false
+          backend.megatron.engram_gate_query_eps: 1.0e-05
+        - aux.arm: fork_l2off
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/fork_bg_learned_62900/ckpt
+          job.start_condition.conditions:
+            - class_name: FileContentCondition
+              path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/fork_bg_learned_62900/ckpt/latest_checkpointed_iteration.txt
+              pattern: "^\\s*${aux.step}\\s*$"
+              mode: regex
+              persistent_pass: true
+          backend.megatron.engram_output_scale: 0.0
+          backend.megatron.engram_output_scale_layers: [2]
+        - aux.arm: main_l2off
+          backend.megatron.load: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval
+          job.start_condition.conditions:
+            - class_name: FileExistsCondition
+              path: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main/ckpt_eval/iter_00${aux.step}/.metadata
+              persistent_pass: true
+          backend.megatron.engram_branch_gates: false
+          backend.megatron.engram_branch_query: read
+          backend.megatron.engram_gate_logit_scale: false
+          backend.megatron.engram_gate_query_eps: 1.0e-05
+          backend.megatron.engram_output_scale: 0.0
+          backend.megatron.engram_output_scale_layers: [2]
