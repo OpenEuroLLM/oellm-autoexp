@@ -374,6 +374,9 @@ def _sleep_interruptibly(seconds: float, wake=None, wake_every_s: float = 2.0) -
 LOCK_DIRNAME = ".monitor.lock"
 # a lock without a readable owner file younger than this belongs to a monitor that is starting
 LOCK_STARTING_S = 30.0
+# a lock holder silent this long is taken over (user 2026-11-25: 900 s, above the heartbeat's 300 s:
+# a slow squeue poll on a busy MN5 login node must not let a second monitor in)
+LOCK_STALE_AFTER_S = 900.0
 
 
 def _lock_holder(session_dir: Path) -> tuple[int, str, float] | None:
@@ -393,7 +396,7 @@ def _lock_holder(session_dir: Path) -> tuple[int, str, float] | None:
 
 
 def acquire_monitor_lock(
-    session_dir: str | Path, *, stale_after_s: float = DEFAULT_STALE_AFTER_S, force: bool = False
+    session_dir: str | Path, *, stale_after_s: float = LOCK_STALE_AFTER_S, force: bool = False
 ) -> None:
     """Take the session's monitor lock or exit: a live holder elsewhere refuses; a dead holder
     on this host, a stale one (no heartbeat for stale_after_s) or ``force`` is taken over."""
@@ -464,7 +467,7 @@ def run_loop(
     controller: MonitorLoop,
     cpu_budget_s: float | None = None,
     *,
-    lock_stale_after_s: float = DEFAULT_STALE_AFTER_S,
+    lock_stale_after_s: float = LOCK_STALE_AFTER_S,
     force_lock: bool = False,
 ) -> str:
     """Poll until every job is finished, or until asked to stop.

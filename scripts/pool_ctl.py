@@ -12,6 +12,8 @@ the pool's files directly and are picked up by the supervisors.
                                                  run_autoexp --replace starts it again)
   pool_ctl.py <pool_dir> hold | unhold --job <name>  keep a job's queued runs from being placed
   pool_ctl.py <pool_dir> status --job <name>     one job: markers, records, runs
+  pool_ctl.py <pool_dir> jobs [--all]            every job of the pool, one line each (+ markers)
+  pool_ctl.py <pool_dir> uncancel --job <name>   clear a job's cancel tombstone (enqueues nothing)
   pool_ctl.py <pool_dir> preempt <run>           graceful stop + requeue (resumes from checkpoint)
   pool_ctl.py <pool_dir> exit-host <host>        preempt the host's run, release the allocation
   pool_ctl.py <pool_dir> drain [<host> ...]      finish current runs, then release (all hosts if none given)
@@ -126,6 +128,12 @@ def _job_records(session_dir: Path) -> dict[str, dict]:
     return out
 
 
+def cmd_uncancel(layout: PoolLayout, args) -> int:
+    path = submit_request(layout.root, "uncancel_job", job=args.job, user=args.user)
+    print(f"request uncancel_job written: {path.name}")
+    return 0 if args.no_wait else _await_result(layout, path, args.wait)
+
+
 def cmd_job_status(layout: PoolLayout, name: str) -> int:
     """One job (§2): its key(s), cancel / hold markers, its records here and their runs."""
     from oellm_autoexp.monitor.pool import JOB_MARKERS, job_key, job_marker
@@ -167,6 +175,54 @@ def cmd_job_status(layout: PoolLayout, name: str) -> int:
         live = [r for r in records if not (r.get("runtime") or {}).get("final_state")]
         if len(live) > 1:
             print(f"  WARNING: {len(live)} live records (1 expected; enqueue with --replace)")
+    return 0
+
+
+def cmd_jobs(layout: PoolLayout, args) -> int:
+    """Every job of this pool (live records, held foreign jobs) and every job marker in scope
+    (cancel tombstones, holds), one line each."""
+    from oellm_autoexp.monitor.pool import job_key, job_markers
+
+    owner = pool_owner(layout)[0]
+    session_dir = Path(layout.load_meta().get("session_dir", ""))
+    jobs: dict[str, dict] = {}
+    for path in sorted(session_dir.glob("*.job.json")) if session_dir.is_dir() else []:
+        record = _loads_or_none(path)
+        if record is None:
+            continue
+        definition = record.get("definition") or {}
+        md = definition.get("metadata") or {}
+        pool_dir = definition.get("pool_dir")
+        if md.get("pool_role") == "host" or not pool_dir or Path(pool_dir).absolute() != layout.root:
+            continue
+        key = job_key(SimpleNamespace(metadata=md, name=definition.get("name")), owner)
+        entry = jobs.setdefault(key, {"live": [], "ended": 0, "runs": []})
+        runtime = record.get("runtime") or {}
+        if runtime.get("final_state"):
+            entry["ended"] += 1
+            continue
+        entry["live"].append(record.get("job_id"))
+        rid = runtime.get("runtime_job_id")
+        if rid and (layout.run_dir(rid) / "run.json").exists():
+            entry["runs"].append(f"{rid} {read_run_state(layout, rid).status}")
+    for payload in held_jobs(layout):
+        definition = payload.get("definition") or {}
+        md = definition.get("metadata") or {}
+        key = job_key(SimpleNamespace(metadata=md, name=definition.get("name")), owner)
+        jobs.setdefault(key, {"live": [], "ended": 0, "runs": []})["held_foreign"] = payload.get("job_id")
+    markers = job_markers(layout)
+    shown = sorted(set(jobs) | set(markers)) if args.all else sorted(
+        k for k in set(jobs) | set(markers) if k in jobs and (jobs[k]["live"] or jobs[k].get("held_foreign") or k in markers)
+    )
+    print(f"{'job':<44} {'state':<16} {'live records':<28} runs")
+    for key in shown:
+        entry = jobs.get(key, {"live": [], "ended": 0, "runs": []})
+        mk = markers.get(key, {})
+        state = ("CANCELLED" if "cancel" in mk else "HELD" if "hold" in mk else
+                 "AWAITING PERMIT" if entry.get("held_foreign") else "live" if entry["live"] else "ended")
+        live = ",".join(entry["live"]) or ("-" if key in jobs else "(no record in this pool)")
+        print(f"{key:<44} {state:<16} {live:<28} {'; '.join(entry['runs']) or '-'}"
+              + (f"  [{len(entry['live'])} live records]" if len(entry["live"]) > 1 else ""))
     return 0
 
 
@@ -889,7 +945,7 @@ def cmd_nice(layout: PoolLayout, args, slurm=_slurm) -> int:
 # ---------------------------------------------------------------- multi-user (2026-11-25)
 # what a user who is neither the owner nor a pool admin may run (the monitor checks the rest of
 # their requests again: cancel / deny / preempt act on their own jobs only)
-SUBMITTER_COMMANDS = {"status", "doctor", "queue", "cancel", "deny", "preempt"}
+SUBMITTER_COMMANDS = {"status", "doctor", "queue", "cancel", "deny", "preempt", "jobs", "uncancel"}
 
 
 def _my_uid() -> int:
@@ -1113,6 +1169,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--user", help="with --job: the submitter (a job name of several users)")
     p.add_argument("--reason", default="")
     p.set_defaults(func=cmd_request("cancel"))
+    p = sub.add_parser("jobs", help="every job of the pool and its markers (cancel / hold)")
+    p.add_argument("--all", action="store_true",
+                   help="also ended jobs and markers of jobs without a record in this pool")
+    p.set_defaults(func=cmd_jobs)
+    p = waiting(sub.add_parser("uncancel", help="clear a job's cancel tombstone (enqueues nothing)"))
+    p.add_argument("--job", required=True)
+    p.add_argument("--user", help="the submitter (a job name of several users)")
+    p.set_defaults(func=cmd_uncancel)
     p = waiting(sub.add_parser("adopt", help="adopt a queued SLURM job as a host of this pool"))
     p.add_argument("job_id")
     p.add_argument("--workdir", help="where the job's step runs Python (default: its WorkDir)")

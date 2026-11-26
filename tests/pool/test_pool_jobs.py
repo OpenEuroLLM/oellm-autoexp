@@ -260,3 +260,34 @@ def test_a_lock_without_owner_is_a_starting_monitor_until_it_is_old(tmp_path):
     os.utime(session / LOCK_DIRNAME, (old, old))
     acquire_monitor_lock(session)
     assert (session / LOCK_DIRNAME / "owner").read_text().split()[0] == str(os.getpid())
+
+
+
+def test_uncancel_clears_the_tombstone_without_enqueuing(env):
+    env.add_run("train")
+    env.poll()
+    _request(env, OWNER, "cancel_job", job="train")
+    assert _request(env, OWNER, "uncancel_job", job="train") == (
+        "job owner:train uncancelled (it may be enqueued again; nothing was enqueued)")
+    assert job_marker(env.layout, "owner:train", "cancel") is None
+    assert env.rec("train").runtime.final_state == "cancelled", "the closed record stays closed"
+    assert _request(env, OWNER, "uncancel_job", job="train") == "job owner:train was not cancelled"
+    assert "job uncancelled by owner" in env.layout.ledger.read_text()
+
+
+def test_pool_ctl_jobs_lists_jobs_and_markers(env, capsys):
+    env.add_run("train")
+    env.add_run("bench")
+    env.submit_as(COLLEAGUE, "evalx")
+    env.poll()
+    _request(env, OWNER, "hold_job", job="bench")
+    _request(env, OWNER, "cancel_job", job="gone")  # a tombstone without a record here
+    capsys.readouterr()
+    assert pool_ctl.main([str(env.layout.root), "jobs"]) == 0
+    out = capsys.readouterr().out
+    assert "owner:train" in out and "owner:bench" in out and "HELD" in out
+    assert "colleague:evalx" in out and "AWAITING PERMIT" in out
+    assert "owner:gone" not in out, "markers of jobs without a record here only with --all"
+    assert pool_ctl.main([str(env.layout.root), "jobs", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert "owner:gone" in out and "CANCELLED" in out and "(no record in this pool)" in out

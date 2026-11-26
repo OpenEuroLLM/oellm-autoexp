@@ -1261,7 +1261,7 @@ def held_jobs(layout: PoolLayout) -> list[dict]:
 
 JOB_MARKERS = ("cancel", "hold")
 # requests a submitter may write (the monitor limits them to the submitter's own jobs)
-SUBMITTER_OPS = ("cancel", "deny", "preempt", "cancel_job", "hold_job", "unhold_job")
+SUBMITTER_OPS = ("cancel", "deny", "preempt", "cancel_job", "hold_job", "unhold_job", "uncancel_job")
 
 
 def job_key(definition, owner: str) -> str:
@@ -1290,6 +1290,20 @@ def set_job_marker(layout: PoolLayout, key: str, name: str, by: str, reason: str
         job_control_dir(layout, key) / name,
         json.dumps({"key": key, "by": by, "ts": time.time(), "reason": reason}),
     )
+
+
+def job_markers(layout: PoolLayout) -> dict[str, dict[str, dict]]:
+    """Every job marker in scope: key -> {marker name: content}."""
+    out: dict[str, dict[str, dict]] = {}
+    root = job_control_dir(layout, "x").parent.parent
+    for path in sorted(root.glob("*/control/*")) if root.exists() else []:
+        try:
+            info = json.loads(path.read_text()) or {}
+        except (OSError, json.JSONDecodeError):
+            info = {}
+        key = info.get("key") or path.parent.parent.name.replace("+", ":", 1)
+        out.setdefault(key, {})[path.name] = info
+    return out
 
 
 def clear_job_marker(layout: PoolLayout, key: str, name: str) -> bool:
@@ -3128,6 +3142,11 @@ class PoolManager:
         if op == "hold_job":
             set_job_marker(layout, key, "hold", by, str(request.get("reason") or ""))
             return f"job {key} held (its queued runs are not placed)"
+        if op == "uncancel_job":
+            if not clear_job_marker(layout, key, "cancel"):
+                return f"job {key} was not cancelled"
+            self._pool_ledger(layout, key, f"job uncancelled by {by}")
+            return f"job {key} uncancelled (it may be enqueued again; nothing was enqueued)"
         return f"job {key} " + ("released" if clear_job_marker(layout, key, "hold") else "was not held")
 
     def _supersede(self, loop: MonitorLoop, layout: PoolLayout, request: dict) -> str:
@@ -3447,7 +3466,7 @@ class PoolManager:
                     result = self._deny(layout, request, uid, admin)
                 elif op == "preempt":
                     result = self._preempt_request(loop, layout, request, uid, admin)
-                elif op in ("cancel_job", "hold_job", "unhold_job"):
+                elif op in ("cancel_job", "hold_job", "unhold_job", "uncancel_job"):
                     result = self._job_op(loop, layout, request, admin)
                 elif op == "supersede":
                     result = self._supersede(loop, layout, request)

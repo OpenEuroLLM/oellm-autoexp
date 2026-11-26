@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from oellm_autoexp.orchestrator import (
     DEFAULT_STALE_AFTER_S,
+    LOCK_STALE_AFTER_S,
     ensure_no_live_monitor,
     cpu_budget_from_rlimit,
     run_loop,
@@ -187,7 +188,7 @@ def main(argv: list[str] | None = None) -> None:
     outcome = run_loop(
         loop,
         cpu_budget_s=cpu_budget_from_rlimit(),
-        lock_stale_after_s=args.stale_after,
+        lock_stale_after_s=max(args.stale_after, LOCK_STALE_AFTER_S),
         force_lock=args.force,
     )
     if outcome == "cpu_budget":
