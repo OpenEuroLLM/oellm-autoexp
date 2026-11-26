@@ -22,6 +22,9 @@
 #   gbf16x_gcf   gbf16x + --moe-global-aux-counts-from-forward (Megatron 08f3874ec, 2026-11-26): the recompute reuses the
 #                checkpointed forward's async global token counts -- removes the 48 blocking count all-reduces per
 #                backward that wait for the slowest rank (gbf16x profile: 100-180 ms stalls ~12x per backward)
+#   gbf16x_gcf_fp  gbf16x_gcf on Megatron 4cf9331e9: page_sparse._fixed_packed's backward returns views instead of
+#                CopySlices clones of the whole packed gradient (stack profile: 568 DtoD copies / 72 ms per step in
+#                the 2-attention-layer slice, ~0.4 s expected at 12 attention layers). Same flags as gbf16x_gcf.
 #   c8k          8k x mbs 8, gbs 2048: the same 64k tokens per GPU per step, everything else equal. Its data cache
 #                (seq 8192, 60 x 2048 samples) is prebuilt by v4b_ctx_slice_mn5's r8prep arm.
 #
@@ -34,7 +37,7 @@ defaults:
 aux:
   suite: v4b_ctx64
   variant: base
-  only: [base, gbf16x, gbf16x_gcf, c8k]
+  only: [base, gbf16x, gbf16x_gcf, gbf16x_gcf_fp, c8k]
   moonep_lib: pylibs_moonep_e9e8238
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_ctx64
 
@@ -62,6 +65,10 @@ sweep:
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
           backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
         - aux.variant: gbf16x_gcf
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
+          backend.megatron.moe_global_aux_counts_from_forward: true
+        - aux.variant: gbf16x_gcf_fp
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
           backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
           backend.megatron.moe_global_aux_counts_from_forward: true
