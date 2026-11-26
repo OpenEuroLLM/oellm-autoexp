@@ -27,3 +27,5 @@ ambitious_v4c_ramp_256	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k
 nucleus_engram_bg_stream	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/stream
 nucleus_engram_bg_read	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/read
 nucleus_engram_bg_learned	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/engram_branch_gates/runs/learned
+# main-run Engram fork (bg_learned + gate fix) 62,900 -> 64,000 on c136 host004, paired with ambitious_v4b_learned_256 (docs/engram_main_run_trial_plan.md)
+ambitious_v4b_learned_fork_bg_learned	/gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/fork_bg_learned_62900
