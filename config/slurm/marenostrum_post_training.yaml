@@ -1,0 +1,45 @@
+# MareNostrum 5, jobs of the post-training repository (https://github.com/OpenEuroLLM/post-training):
+# SFT / DPO with TRL, started by its own launch script (<run_dir>/slurm/launch.sh).
+#
+# That launch script is complete: it loads the modules, sources the frozen cluster environment
+# (HF cache, allocator settings), sets its own NCCL / OMP values, computes MASTER_ADDR and the world
+# size from the SLURM_STEP_* variables of the srun step, and enters the container. So this group
+# deliberately does NOT inherit `marenostrum` / `base`:
+#   * no launcher_cmd (no container wrapper around the command);
+#   * none of the Megatron env exports (HF_HOME, NCCL_*, OMP_NUM_THREADS, WANDB_*, ...), which
+#     would change the environment the training runs in. Hydra merges `env` key by key, so an
+#     inherited key cannot be removed again; the list below is all there is.
+# One srun task per node (the launch script starts the 4 ranks of its node), as the Megatron jobs.
+template_path: ${oc.env:PWD,.}/templates/base.sbatch
+script_dir: ${job.base_output_dir}
+log_dir: ${job.base_output_dir}
+array: false
+array_concurrency: null
+launcher_cmd: ""
+launcher_env_passthrough: false
+exclude_file: null
+srun_opts: ""
+# as the srun of post-training's own job script: one failed node ends the step, and the step
+# does not outlive its first finished task by more than a minute
+srun_args:
+  kill_on_bad_exit: 1
+  wait: 60
+env:
+  # srun reads it as --cpus-per-task: all CPUs of the node for the one task (data workers,
+  # 4 ranks), as the Megatron jobs on MareNostrum (config/slurm/marenostrum.yaml)
+  SLURM_CPUS_PER_TASK: "160"
+srun: {}
+sbatch:
+  account: ${oc.env:SLURM_ACCOUNT,ehpc533}
+  qos: ${oc.env:SLURM_QOS,acc_ehpc}
+  partition: null
+  nodes: 1
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  gres: "gpu:4"
+  cpus_per_task: 160
+  threads_per_core: 2
+  time: "3-00:00:00"
+  exclusive: true
+  output: ${job.log_path}

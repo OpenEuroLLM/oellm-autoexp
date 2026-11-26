@@ -1,0 +1,70 @@
+# @package _global_
+# A run of the post-training repository (https://github.com/OpenEuroLLM/post-training, TRL
+# backend) on MareNostrum 5: a new one, or the continuation of one that already has checkpoints.
+#
+# post-training keeps its own config and prepares the run directory itself (frozen config and
+# code, HF cache, and the launch script this job runs):
+#   python scripts/submit.py --config <config> --prepare-only          # a new run
+#   python scripts/render_launch_script.py --run-dir <run_dir>         # a run directory that exists
+# This job only runs <run_dir>/slurm/launch.sh, once per node, through the existing BashBackend.
+# The launch script resumes from the newest complete checkpoint in <run_dir>/checkpoints, so every
+# new run of this job (pool requeue, handover, restart) continues the training.
+#
+# Into a pool (docs/sub_slurm_jobs.md); account and qos must be the pool host's:
+#   python scripts/run_autoexp.py --no-monitor --monitor-state-dir <state> --pool <pool_dir> \
+#       --config-name experiments/post_training/launch_mn5 aux.run_name=<run> \
+#       slurm.sbatch.account=<host account> slurm.sbatch.qos=<host qos>
+# As a job of its own:
+#   python scripts/run_autoexp.py --config-name experiments/post_training/launch_mn5 aux.run_name=<run>
+#
+# In a pool the run executes as the HOST OWNER's unix user: the run directory, the HF cache, the
+# container, the model and the datasets must be readable (the run directory writable) for it.
+# A stop (handover, the host's wall clock, pool_ctl preempt) ends the run without a save: the
+# trainer has no exit signal handler, and `accelerate launch` is not matched by the pool's
+# rank_pattern. The next run continues from the last periodic checkpoint.
+defaults:
+  - ../base
+  - /backend: bash
+  - /container: none
+  - /slurm: marenostrum_post_training
+  - /sweep: none
+  - _self_
+
+aux:
+  # post-training's paths.output_base and run_name: the run directory is <output_base>/<run_name>
+  output_base: ${oc.env:POST_TRAINING_OUTPUT_BASE,/gpfs/scratch/ehpc533/users/frei322049/post-training/outputs_sft}
+  run_name: ???
+  run_dir: ${aux.output_base}/${aux.run_name}
+  # must equal post-training's slurm.num_nodes: the launch script refuses any other node count
+  # (the gradient accumulation and the ZeRO checkpoints are valid for one world size only)
+  nodes: 8
+  # restarts after a crash (post-training's slurm.max_failures); stops by the pool do not count
+  max_failures: 3
+
+backend:
+  command: bash ${aux.run_dir}/slurm/launch.sh
+
+job:
+  # the same name = the same job; the checkpoints are found through aux.run_dir, not the name
+  name: ${aux.run_name}
+  # logs (slurm-<run id>.log) and resolved configs next to the run's own output
+  base_output_dir: ${aux.run_dir}/autoexp
+  log_events: []
+  # A run that fails after it was seen RUNNING is started again, at most max_failures times
+  # (MaxActionFiresCondition: per event, so the pool's own requeues do not use it up). A run
+  # that fails before the monitor saw it RUNNING (a wrong path, a wrong node count) is final.
+  state_events:
+    - name: failed
+      transition: ["RUNNING", "FAILED"]
+      condition:
+        class_name: MaxActionFiresCondition
+        max_fires: ${aux.max_failures}
+      action:
+        class_name: RestartAction
+        reason: "post-training run failed"
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+
+stage: post_training
