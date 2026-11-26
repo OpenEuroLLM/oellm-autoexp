@@ -303,6 +303,11 @@ Every window: **2.4 group segments per sequence, token-weighted 53.5k tokens, 83
 0 copies sharing a sequence, 0 forced, coherence 0.23 -> **0.63** (q3e128_g: 0.54), `checkplan` 0 failures,
 assembly ~870 s. Configs `v4b_learned_fix_mn5` / `v4b_learned_cds_mn5` point at q3e128p2 from 61,000 (5b9ce1cd);
 the main run switches at a restart from ckpt 61,000.
+All 18 windows done 2026-11-26 03:52 (host003, single-window jobs in parallel): contiguous 61,000 -> 236,733,
+150.3M sequences, `checkplan` 0 failures each, 2.15-2.40 segments per sequence, token-weighted 53.5-53.9k,
+83.7-84.4 % of tokens in segments >= 32k, coherence 0.626-0.637; `plan/q3e128p2_all` links them. Exception:
+**121k has 2,814 units sharing a sequence with their class** (place_copies left 1, the random move rounds made it
+worse; fixed in 98f4edad, the move pass now returns its best order) -- to rebuild before the run reaches 121,000.
 
 **Embeddings 63k → end** (`q3e128`, 128-dim, projects quota):
 - **complete 2026-11-22 20:59**: all 1,738 chunks 63,000-236,733 (0 failed); with `q3e256` 48,500-63,000 the whole rest of the run is embedded. One-node chunk jobs on c136 host005 (up to 136 at a time, ~55 min per chunk), paused 15:47-18:20 for the t24 branch.
