@@ -36,8 +36,10 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 - **All gates:** `engram_branch_gates` adds a gate for **every** mHC stream (all 4) at every Engram
   layer; `learned`, `read` and `stream` differ only in the query source. The `fix` is the single gate.
   The separate `engram_gate_scale` (false) and the mHC read/write/mix gates are separate mechanisms.
-- **Init and spike:** `logit_scale` = the mean query RMS at 62,000 (not 53,000); the query eps is a
-  constant. `learned` at `lam=0` is the read, so no spike; the risk is the mix staying at zero.
+- **Init and spike:** `logit_scale` = a **gate-opening** value (e.g. 0.1 or 0.3 from the offline
+  rescore, not the function-preserving mean query RMS), because `lam=0` + a dead gate gives zero
+  gradient to `lam` (double zero -> non-learnable). With the gate opened, `lam` starts at 0 (the read)
+  and learns the stream; expect a short spike when the gate opens.
 - **Length:** 1,000 steps, 62,000 → 63,000; `exit_interval: 63000`; validation at 63,000.
 - **Baseline:** the main run's own 61,000 → 62,000 (previous 1k steps, same data order).
 - **Reset:** if the loss regresses, keep the 62,000 checkpoint and resume the main run without the fix.
@@ -78,8 +80,8 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
   STREAM_SCALE=2:<mean2_stream>,52:<mean52_stream> \
   bash scripts/korbi/production/engram_branch_fix_surgery.sh
   ```
-- The trial uses `bg_learned` (the `--query-mix` surgery + `logit_scale` = the read mean); the `bg_read`
-  and `bg_stream` checkpoints are the controls; the `fix` (single gate) too.
+- The trial uses `bg_learned` (the `--query-mix` surgery + a gate-opening `logit_scale`); the `bg_read`
+  and `bg_stream` checkpoints with the same gate-opening `logit_scale` are the controls; the `fix` too.
 
 ### Step 4 — trial config and snapshot
 - Add the trial config (§6) to the main repo; sync to `autoexp_engramfix7`; read `SYNC_STAMP`.
@@ -144,8 +146,9 @@ The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`
 ## 7. Risks and rollback
 
 - The main run is stopped at 62,000 by the user; the main tree is untouched; the trial has its own tree.
-- `learned` at `lam=0` is the read (no spike), but the mix may stay at zero. The `bg_read` and
-  `bg_stream` controls tell whether the read or the stream itself helps.
+- `learned` at `lam=0` with a **dead** gate has zero gradient to `lam` (double zero -> non-learnable).
+  The `logit_scale` must open the gate at init; then `lam` learns and expect a short spike. The `bg_read`
+  and `bg_stream` controls tell whether the read or the stream itself helps.
 - The `logit_scale` init depends on the 62,000 mean query RMS. If the export/diag is wrong, the step-0
   loss jumps and the trial is invalid.
 - The 1k steps are ~0.6% of the remaining compute; the reset keeps the loss.
@@ -155,9 +158,9 @@ The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`
 
 - Confirm the main run's stop at 62,000 (user).
 - Confirm 1,000 steps (62,000 → 63,000) is the trial length.
-- Confirm `bg_learned` (best effort: no spike, the stream learned) and the `bg_read`/`bg_stream`
-  controls only if the mix stays at zero.
-- Set the reset threshold (e.g. loss delta > +0.0005 beyond noise).
+- Confirm `bg_learned` with a **gate-opening** `logit_scale` (not the mean query RMS) and the
+  `bg_read`/`bg_stream` controls with the same `logit_scale`.
+- Set the reset threshold (e.g. loss delta > +0.0005 beyond noise) and the spike tolerance.
 - Confirm the `learned` mix's `lam` is free to learn (the `--query-mix` surgery, zero Adam state).
 - Decide the host004 arms' role (tiebreaker or drop).
 - Land the Megatron commit `bd6b57856` in the main repo before the snapshot.
