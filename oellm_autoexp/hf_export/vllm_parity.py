@@ -300,6 +300,9 @@ def main() -> None:
                    help="one model per layer kind (fp32): which component carries a difference")
     t.add_argument("--only", default="", help="--components: a comma list of them")
     t.add_argument("--tp", type=int, default=1, help="vLLM tensor parallelism (the HF reference on one GPU)")
+    t.add_argument("--router-std", type=float, default=None,
+                   help="the variants' router init (default 0.05); 1.0 = wide top-k margins, no expert flips from "
+                        "fp noise (2026-11-26: every variant failed at 0.05 at a few positions, HF fast and reference)")
     e = sub.add_parser("export")
     e.add_argument("export")
     e.add_argument("--tp", type=int, default=1)
@@ -321,6 +324,8 @@ def main() -> None:
                  "engram_branch": dict(base, blocks=["engram"] * 2, engram_gates=_BRANCH_GATES),
                  "engram_branch_attn": dict(base, blocks=["attention", "engram", "attention", "engram"],
                                             engram_gates=_BRANCH_GATES),
+                 # its control: the same mix with the single gate
+                 "engram_attn": dict(base, blocks=["attention", "engram", "attention", "engram"]),
                  # a ckda_branch KronLSTM (kronlstm blocks), alone and in the v4 mix with attention and CKDA
                  "kronlstm": dict(base, blocks=["ckda", "kronlstm", "kronlstm"]),
                  # a ckda_branch kvshare attention (the keys / values of an earlier attention layer, its own q / o)
@@ -375,7 +380,7 @@ def main() -> None:
         for name, kw in variants.items():
             if only and name not in only:
                 continue
-            d = build_tiny(Path(a.out) / name, **kw)
+            d = build_tiny(Path(a.out) / name, **(kw if a.router_std is None else dict(kw, router_std=a.router_std)))
             # fp32 decides (a correct port agrees to ~1e-4); bf16 shows the production precision's spread
             for dtype, tol in (("float32", 1e-2), ("bfloat16", 0.05)):
                 results[f"{name}/{dtype}"] = r = check(d, dtype=dtype, tol=tol)

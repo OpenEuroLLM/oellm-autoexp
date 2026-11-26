@@ -16,7 +16,7 @@ export VLLM_LOGGING_LEVEL=${VLLM_LOGGING_LEVEL:-WARNING} HF_HUB_OFFLINE=1 TRANSF
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-1800} VLLM_WORKER_MULTIPROC_METHOD=spawn
 mode=$1; shift
 case $mode in
-  tiny)   python3 -m oellm_autoexp.hf_export.vllm_parity tiny --out "${1:-/tmp/vllm_parity_tiny}" ;;
+  tiny)   python3 -m oellm_autoexp.hf_export.vllm_parity tiny --out "${1:-/tmp/vllm_parity_tiny}" "${@:2}" ;;
   components) python3 -m oellm_autoexp.hf_export.vllm_parity tiny --components --only "${1:-}" --tp "${2:-1}" --out /tmp/vllm_parity_comp ;;
   score)  python3 -m oellm_autoexp.hf_export.vllm_parity score "$1" --datamix "$2" --tp "${3:-4}" --reference "${4:-}" ;;
   export) python3 -m oellm_autoexp.hf_export.vllm_parity export "$1" --tp "${2:-1}" ;;
