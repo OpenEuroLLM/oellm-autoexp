@@ -326,7 +326,7 @@ are wrong about the code. Corrections:
 
 | § | proposal | what the code does today | correction |
 |---|---|---|---|
-| 0, 2 | job = `(pool, definition-name)` | Records are keyed by `job_id`. `enqueue_into_pool` (`oellm_autoexp/orchestrator.py:1071`) makes `<name>`, `<name>_q2`, … for each enqueue. The only identity shared across records is `metadata.pool_singleton` (`PoolManager._claim_singleton`, `<pools>/_singletons/<key>`), and it **spans pools**. | Job key = `pool_singleton` when set, else `definition.name`, **qualified by the submitter** (§10): `(submitter, key)`. The job's `control/` lives next to the singletons (`<pools>/_jobs/<key>/`), so a cancel also applies to a copy of the job in another pool, as the singleton guard does. |
+| 0, 2 | job = `(pool, definition-name)` | Records are keyed by `job_id`. `enqueue_into_pool` (`oellm_autoexp/orchestrator.py:1071`) makes `<name>`, `<name>_q2`, … for each enqueue. The only identity shared across records is `metadata.pool_singleton` (`PoolManager._claim_singleton`, `<pools>/_singletons/<key>`), and it **spans pools**. | Job key = `pool_singleton` when set, else `definition.name`, **qualified by the submitter** (§10): `(submitter, key)`. The job's `control/` lives **in its pool** (`<pool>/jobs/<key>/`) and acts on that pool only: moving a job between pools is an exception, done as a cancel + submit (user, 2026-11-26). |
 | 3.1 | `flock` around `scripts/korbi/recall_surgery/supervise_main.sh` | That script is an agent helper, not the pool monitor. The monitor already refuses a second instance through its heartbeat (`ensure_no_live_monitor`: pid, host, age). | The lock belongs in the monitor (`run_autoexp.py` / `monitor_autoexp.py`). Use a `mkdir` lock plus the heartbeat, like `_claim_singleton`; do not rely on `flock` across GPFS login nodes. Helper scripts get their own lock. |
 | 3.2, 3.3 | "disk floor (§7.3)" | §7.3 does not exist. | Turn it into a `doctor` warning; no automatic action. |
 | 4.4.1 | `meta.env` writer must replace keys | `write_env_file` already rewrites the whole file. `add_run_exclude` (`pool.py:440`) appends a second `EXCLUDE=` **on purpose** (the last line wins). The 292-entry line came from re-reading the fleet `exclude_file` (`_exclude_list`) at render / refresh time. | The run's `EXCLUDE` holds only its own nodes, intersected with the host's allocation. Fleet, pool and host lists are merged by the supervisor at launch (it already reads all three). `add_run_exclude` rewrites the key. |
@@ -553,7 +553,7 @@ because tests cannot change uid.
 |---|---|---|---|
 | **P0** diagnostics + writer fix | `pool_ctl doctor` (read-only, §3.3); the run-level `EXCLUDE` holds only the run's own nodes ∩ allocation, and `add_run_exclude` rewrites the key (§9 row 4.4.1); `status` shows monitor age and record count | `scripts/pool_ctl.py`, `pool.py` (`add_run_exclude`, `_exclude_list` use in `submit`) | `doctor` on a fixture with two `EXCLUDE=` lines and a stale `info.env` reports both; a re-rendered run never carries fleet-list nodes outside its host |
 | **P1** inbox ingest + multi-user | `inbox/` for **other users'** enqueues. The owner's enqueues stay direct, which is compatible with old snapshots and gives immediate job ids; the monitor ingests an owner's inbox file the same way, and P2 can route everything through it; `owner` in `pool.json`; §10.4 ingest with sanitizer; `hold_foreign_jobs`, `permit`, `deny`, `foreign_*` settings; `foreign_account_check`; request authorization by `st_uid`; non-owner `run_autoexp` path (§10.7); `pool_ctl secure`; submitter in `run.json`, `status` and a monitor ledger line; `AUTOEXP_SUBMITTED_BY` rendered into `step.sh`. **No `supervisor.sh` change**, so running pools can be repurposed with a monitor restart. | `orchestrator.py` (`enqueue_into_pool` → inbox), `pool.py` (`PoolHostConfig`, `create_or_update_pool`, new `_ingest`, `_process_requests` authorization, `render_step_script`), `scripts/run_autoexp.py`, `scripts/pool_ctl.py` | a foreign job is held with no run dir and no events evaluated; `permit` by the owner queues it; a `permit` request written by a foreign uid is refused; with `hold_foreign_jobs=0` it queues directly; the sanitizer rejects `pool_role` and clamps the priority; a submitter outside the host's account group is rejected, and accepted with `foreign_account_check=false`; a non-owner `run_autoexp` does not start a monitor; an unwritable log dir → `rejected: <dir>`; a foreign `cancel` of the owner's job is refused |
-| **P2** job identity + durable control | job key `(submitter, singleton-or-name)`; `<pools>/_jobs/<key>/control/{cancel,hold,protect}`; `cancel --job` with tombstone, `replace`, `status --job`; `reconcile` on monitor start; `mkdir` monitor lock; fast request poll (§9 row 7.1) | `pool.py`, `loop.py` (submit refuses a tombstoned job), `scripts/pool_ctl.py`, `orchestrator.py` (lock) | killing and restarting the monitor does not resurrect a cancelled job; a submit leaves exactly one live record (11-24: `_q2 … _q18`); a cancel in p264 also stops the job's copy in another pool |
+| **P2** job identity + durable control | job key `(submitter, singleton-or-name)`; `<pool>/jobs/<key>/control/{cancel,hold,protect}`; `cancel --job` with tombstone, `replace`, `status --job`; `reconcile` on monitor start; `mkdir` monitor lock; fast request poll (§9 row 7.1) | `pool.py`, `loop.py` (submit refuses a tombstoned job), `scripts/pool_ctl.py`, `orchestrator.py` (lock) | killing and restarting the monitor does not resurrect a cancelled job; `--replace` leaves exactly one live record (11-24: `_q2 … _q18`); a cancel in p264 leaves a same-named job in another pool alone |
 | **P3** placement ≠ attempt | the supervisor keeps an unplaceable run PENDING with `placement` (no `rc`, no new rid); the monitor stops counting `insufficient_nodes`; fault classification §4.2; backoff | `scripts/pool/supervisor.sh`, `loop.py:425-460`, `pool.py` | a 256-node job against 255 usable nodes logs once and creates **no** run dir (11-24: one every 34 s) |
 | **P4** reservation | reserve N nodes for the highest-priority waiting run; largest-first launch within a host; `hold` on eviction against the 2-second refill | `pool.py` (assignment), `supervisor.sh` (launch order) | an eval cannot take a node the main run needs (11-24, 10-31) |
 | **P5** preemption | §6.2 predicate (`margin ≥ 100`, `feasible_after_evict`, lost-work budget) applied to **all three** paths: `pool_ctl preempt`, singleton supersede, handover; `protect` | `pool.py` (`_claim_singleton`, `_handover_check`), `pool_ctl.py` | the main run preempts an eval and starts; an evictor never preempts the run it is placing; a protected job is never preempted |
@@ -583,18 +583,23 @@ because tests cannot change uid.
   gated, and the owner's own enqueues stay direct.
 - **P2:**
   - **Job key and markers.** The key is `<submitter>:<pool_singleton or name>`. Markers live in
-    `<pools>/_jobs/<key>/control/{cancel,hold}`.
-  - **Tombstones.** The monitor closes the records of a tombstoned job on **every poll**, not only
-    at start. That covers a monitor restart and a cancel given in another pool, so no separate
-    `reconcile` command exists.
+    the pool, `<pool>/jobs/<key>/control/{cancel,hold}`, and act on that pool only (user
+    2026-11-26: a job belongs to one pool; moving it is an exception, done as cancel + submit; a
+    singleton's copies in several pools are cancelled pool by pool).
+  - **Tombstones.** The pool's monitor closes the records of a tombstoned job on **every poll**,
+    not only at start, so a monitor restart cannot resurrect it and no separate `reconcile`
+    command exists. `--replace` or `pool_ctl uncancel --job` lift a tombstone.
   - **`--replace`.** `run_autoexp --replace` clears the tombstone and closes the job's older live
     records in this pool (`supersede`). A plain enqueue next to a live record only warns; it does
     not auto-cancel.
-  - **Commands.** `pool_ctl cancel --job`, `hold --job` / `unhold --job` (`unhold` mirrors the
-    existing host command; no `release`), and `status --job`.
+  - **Commands.** `pool_ctl cancel --job`, `uncancel --job`, `hold --job` / `unhold --job`
+    (`unhold` mirrors the existing host command; no `release`), `status --job`, and `jobs [--all]`
+    (one line per job, with its markers). `hold --job` never preempts a running run (user
+    2026-11-26; that stays `preempt`).
   - **Not yet.** `protect` waits for P5, which has the evictor that reads it.
   - **Monitor lock.** A `mkdir` lock in `run_loop` (`<session>/.monitor.lock`): a live holder
-    refuses; a dead or stale holder, or `--force`, is taken over; the lock is released at exit,
+    refuses; a dead holder, one silent for 900 s (user 2026-11-26; the heartbeat check keeps its
+    300 s), or `--force`, is taken over; the lock is released at exit,
     which includes the CPU-budget restarts.
   - **Fast pickup.** Instead of `SIGUSR2`, the monitor's sleep ends within ~2 s when a request or
     inbox file is waiting.
