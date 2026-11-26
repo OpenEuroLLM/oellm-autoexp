@@ -717,6 +717,15 @@ class MegatronConfig(ConfigInterface):
     # too (per MoE layer, averaged) -- the expert reuse an offload cache sees.
     moe_router_log_stay_rate: bool = False
 
+    # Under activation recompute, the global aux loss's token counts come from the
+    # checkpointed layer's first (no-grad) forward: it launches their all-reduce over the TP x
+    # DP x CP group asynchronously, and the recompute reuses the result instead of a blocking
+    # collective. The aux loss runs only with grad enabled, i.e. in the recompute, where each
+    # MoE layer's count all-reduce stalled every rank until the slowest arrived (48 global
+    # syncs per backward at v4b). Same routing, same counts; layers outside a checkpoint keep
+    # the synchronous path.
+    moe_global_aux_counts_from_forward: bool = False
+
     # Page-sparse attention for the self-attention layers
     # (experimental_attention_variant/page_sparse.py): every query attends to the sink pages,
     # a local window and ``page_sparse_topk`` earlier pages chosen by this selector -- dense,
@@ -4476,6 +4485,16 @@ class MegatronConfig(ConfigInterface):
     # aborting on it.
     diag_nonfinite: bool = False
 
+    # Run gc.collect() and malloc_trim(0) immediately before every checkpoint save (persistent
+    # and non-persistent), so the save allocates on top of a smaller host footprint
+    # (megatron/training/host_gc.py). The v4b main run was OOM-killed by the host kernel at
+    # 1000-step saves. Off by default; costs a few seconds per save.
+    gc_before_save: bool = False
+
+    # Run gc.collect() and malloc_trim(0) before validation, which allocates on top of the
+    # training footprint. Off by default.
+    gc_before_val: bool = False
+
     # On a NaN loss, name the first module whose output went non-finite: print the bad module
     # outputs in reverse (loss -> input), the origin in forward order, and a reverse scan of
     # the parameters (see megatron/training/nan_trace.py). Counting hooks only, no retained
@@ -4483,9 +4502,6 @@ class MegatronConfig(ConfigInterface):
     # nonfinite, which scans weights and gradients at the diagnostics interval, this reports
     # at the moment of failure and includes the activations of the failing rank.
     nan_trace: bool = False
-    # gc.collect() + malloc_trim(0) before every checkpoint save / before validation
-    gc_before_save: bool = False
-    gc_before_val: bool = False
 
     # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains get
     # wd_mult=0 by default, so nothing opposes their drift; if they do go extreme the levers
