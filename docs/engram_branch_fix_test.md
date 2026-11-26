@@ -12,12 +12,11 @@ the Engram code.
 | 4 | 0.80 | OOM at model construction: 52.97 GiB in use vs 50.63 GiB allowed (`MoETransformerLayer` / `HybridStack`) |
 | 8 | 0.80 | OOM at the first step: 52.1 GiB vs 50.63 GiB |
 | 8 | 0.95 | OOM at 62.69 GiB of the node's 63.29 GiB — the node is physically full |
-| 16 | 0.95 | not reached: node-set failures (see §3) |
+| 16 | 0.95 | OOM at step 0: ~62.7 GiB in use vs the 60.12 GiB cap (the 63.29 GiB node is full) |
 
-The per-GPU parameter/optimizer shard scales as 1/nodes. The 128-node stream arm peaked at ~56.7 GiB;
-at 8 nodes the shard adds ~9.5 GiB (≈66 GiB, matching the 62.7 GiB observed with
-`recompute_num_layers: 4`); at 16 nodes it adds ~4.4 GiB (≈58 GiB, inside the 60.12 GiB cap). So 16
-nodes is the first viable size on these nodes.
+The 128-node stream arm peaked at ~56.7 GiB. At 8 and 16 nodes the arms OOMed at ~62.7 GiB (the
+63.29 GiB node is full): the 16-node estimate of ~58 GiB was wrong, and the activation memory, not the
+parameter shard, dominates. 16 nodes is **not** viable; the 64-node arm is the next step.
 
 ## 2. Node check on host003's free nodes (2026-11-26 03:18)
 
@@ -55,9 +54,10 @@ Free nodes: `as02r3b31`, `as03r2b27`, `as03r2b29`, `as03r2b31`, `as03r2b32`, `as
 The four host-level exclusions live in `hosts/host003/exclude_nodes`; `as05r2b29` is in the pool's
 `exclude_nodes`, so no host launches on it.
 
-The 16-node failures were these node-set issues, not the Engram code: `fix_read` attempt 2328
-excluded `as02r3b02`; earlier attempts failed the rendezvous on `as05r2b29`. The light check passes
-both the GPU and the ring; it does not cover the TCP store.
+The 16-node arms did start, but they OOMed at step 0 at ~62.7 GiB (vs the 60.12 GiB cap). The
+rendezvous errors on the batch node (`as01r1b17` for fix/fix_stream, `as01r1b29` for fix_read;
+`Broken pipe`, `RendezvousConnectionError`) follow the dead ranks. `fix_read` also excluded
+`as02r3b02`. The light check passes the GPU and the ring; it does not test memory or the TCP store.
 
 ## 4. Idle policy (updated 2026-11-26)
 
@@ -71,8 +71,8 @@ both the GPU and the ring; it does not cover the TCP store.
 
 - host003: cancelled by the user (nothing was running); the c136 pool's `idle_exit_s=300`.
 - Main run: `ckpt` 61000, `ckpt_rolling` 61250; p264 job `48871798` (264 nodes), unaffected.
-- The three 16-node arms are cancelled. The 16-node test needs a 135-node c136 host
+- The three 16-node arms are cancelled. The 64-node rerun needs a 135-node c136 host
   (host004/006/007/008 when one starts); the host frees itself 5 min after it goes idle.
-- Next: resubmit the 16-node arms on a c136 host, or run the 10-layer e2e on one node. The offline
-  fixed-query NLL job still needs the `--docs ''` env fix. The in-place 1k-step main-run switch is at
-  the next boundary (62,000).
+- Next: rerun the arms at 64 nodes (the 128-node stream arm peaked at 56.7 GiB), or run the 10-layer
+  e2e on one node. The offline fixed-query NLL job still needs the `--docs ''` env fix. The in-place
+  1k-step main-run switch is at the next boundary (62,000).
