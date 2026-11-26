@@ -2,7 +2,7 @@
 # v4b main run, same job name / tree / rolling save, with the expert gradients reduce-scattered in bf16.
 # Prepared 2026-11-25 for the next interrupt of the main run (user: "We'd do this when we see another
 # interrupt on the main run"); swap procedure: cancel the automatic restart of the live entry, enqueue this
-# config from snapshot autoexp_v4bbf16b (scratchpad bf16rs_swap_on_crash.sh). Not enqueued yet.
+# config from snapshot autoexp_v4bbf16c (scratchpad bf16rs_swap_on_crash.sh). Not enqueued yet.
 #
 # Why: the 64k step is held up by the backward's FSDP traffic, not by attention (v4b_speed_ab64 base, 64 nodes,
 # 18.0 s): the backward takes 13.2-13.4 s with the GPU 58-66 % busy, and the fp32 expert-gradient reduce-scatter
@@ -17,6 +17,10 @@
 # optimizer state and the checkpoint format stay fp32 / unchanged, so the run resumes from the same rolling save.
 # The snapshot also carries the exact radix-select page-selection threshold (Megatron bcffb0d1d, same lists) and
 # the MoonEP bf16-main-grad path (Megatron dc40910eb; without it MoonEP rejects bf16 expert grads).
+# v4bbf16c (2026-11-26) adds exact code-only speedups: page_sparse._fixed_packed's backward returns views instead of
+# CopySlices clones (Megatron 4cf9331e9: 64 nodes 16.57 -> 15.44 s/step on top of bf16, v4b_ctx64 gbf16x_gcf_fp),
+# the MoE health report on host copies (88565faa0) and the MuOwn per-parameter overheads (a9360cdd5, a7d461f43).
+# --moe-global-aux-counts-from-forward stays off: no gain at 64 nodes (the waits move to the next collective).
 defaults:
   - v4b_learned_fix_lowmem_mn5
   - _self_
