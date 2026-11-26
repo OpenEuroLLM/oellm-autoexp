@@ -23,6 +23,11 @@ aux:
   eval_root: ${aux.kv_root}/runs/v4b_learned/fork_bg_learned_62900_eval
 
 backend:
+  env:
+    # 8 nodes: each rank holds 1/32 of the Engram tables (~10 GB vs 0.6 GB at 128 nodes) and the model build
+    # peaked at 49.7 GiB against the 0.80 cap (OOM at the output layer, 2026-11-26 21:31). Eval only (no
+    # optimizer state): 0.95 = 60.1 GiB of the 63.29 GiB GPU
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True,per_process_memory_fraction:0.95"
   megatron:
     skip_train: true
     no_load_optim: true
