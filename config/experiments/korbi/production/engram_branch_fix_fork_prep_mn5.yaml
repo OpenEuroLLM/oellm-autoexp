@@ -1,0 +1,47 @@
+# @package _global_
+# Fork checkpoint for the main-run Engram gate trial (docs/engram_main_run_trial_plan.md) as one 1-node pool job:
+# HF export of the main run's pinned 62,900 save, the gate diag on the validation sets, the layer-wise mean
+# query RMS, then add_engram_branch_gates.py --query-mix --logit-scale (layer 2: 0.3, gate-opening; the other
+# Engram layer: its mean) -> <aux.fork>/ckpt/iter_0062900. The fork (recall_surgery/v4b_learned_fork_bg_learned_mn5)
+# waits on that tracker. scripts/korbi/production/engram_branch_fix_fork_prep.sh does the work.
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_c136 \
+#       --config-name experiments/korbi/production/engram_branch_fix_fork_prep_mn5 --yes
+defaults:
+  - engram_gate_fixed_query_mn5
+  - _self_
+
+aux:
+  it: 62900
+  main: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116/runs/v4b_learned/main
+  export: ambitious_v4b_learned_fp8_${aux.it}
+  fork: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix/fork_bg_learned_${aux.it}
+  early_scale: 0.3
+
+backend:
+  command: bash scripts/korbi/production/engram_branch_fix_fork_prep.sh
+  env:
+    MAIN: ${aux.main}
+    IT: ${aux.it}
+    EXPORT: ${aux.hf_exports}/${aux.export}
+    DIAG: ${aux.out}
+    FORK: ${aux.fork}
+    EARLY: ${aux.sweep_layer}
+    EARLY_SCALE: ${aux.early_scale}
+
+job:
+  name: engram_branch_fix_fork_prep_${aux.it}
+  base_output_dir: ${aux.fork}/prep_logs
+  # export ~10 min, validation-set diag ~30-60 min, surgery ~10 min, then the GSM8K / FLORES diag
+  est_step_time_s: 7200
+  metadata:
+    # ahead of the fork it feeds
+    pool_priority: 120
+
+slurm:
+  sbatch:
+    time: "04:00:00"
+    # c136's hosts: account cns143, qos acc_xlarge
+    account: cns143
+    qos: acc_xlarge
