@@ -2238,6 +2238,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "engram_gate_logit_scale": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="A learnable scalar per gate (per stream with ``engram_branch_gates``) on the gate's logit, applied BEFORE the signed square root, from 1: the fix for a collapsed query. With ``engram_gate_query_eps`` the query norm is scale-invariant, so this scalar sets the logit size instead of the hidden magnitude. Initialise it at the checkpoint's mean query RMS (scripts/korbi/production/add_engram_branch_gates.py --logit-scale) to stay function-preserving.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "engram_gate_query_eps": MegatronArgMetadata(
+        arg_type=float,
+        default=1e-05,
+        help="The eps of the Engram gate's query RMSNorm. ``layernorm_epsilon`` (1e-5) floors a collapsed query (mean h^2 << eps) and crushes the logit; a scale-invariant query uses ~1e-12 (with ``engram_gate_logit_scale``). The key side keeps ``layernorm_epsilon``.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "engram_gate_scale": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -11352,6 +11368,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=64,
+    ),
+    "engram_gate_logit_scale": MegatronActionSpec(
+        option_strings=("--engram-gate-logit-scale",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "engram_gate_query_eps": MegatronActionSpec(
+        option_strings=("--engram-gate-query-eps",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1e-05,
     ),
     "engram_gate_scale": MegatronActionSpec(
         option_strings=("--engram-gate-scale",),
