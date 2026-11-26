@@ -94,6 +94,11 @@ def tiny_config(residual: str, sign_hash: bool, quantile: bool, pab: bool, block
     return cfg
 
 
+# the per-stream Engram gates of the main-run trial: learned query mix, logit_scale, scale-invariant query norm
+_BRANCH_GATES = dict(engram_branch_gates=True, engram_branch_query="learned", engram_gate_logit_scale=True,
+                     engram_gate_query_eps=1e-12)
+
+
 def _copy_code(out: Path) -> None:
     for f in ("configuration_oellm_ambitious.py", "modeling_oellm_ambitious.py", "mhc_kernels.py", "oellm_kernels.py",
               "sparse_attention.py", "page_sparse.py", "sparse_variants.py"):
@@ -311,6 +316,11 @@ def main() -> None:
         # and hangs at startup: the MoE models carry one attention layer (compare with "attention")
         comps = {"attention": dict(base, blocks=["attention"] * 3), "ckda": dict(base, blocks=["ckda"] * 3),
                  "moe": dict(base, blocks=["attention", "moe", "moe"]), "engram": dict(base, blocks=["engram"] * 2),
+                 # the per-stream Engram gates (docs/engram_main_run_trial_plan.md), alone and between attention
+                 # layers: no MoE, so no router ties (the full tiny variants flip experts at a few positions)
+                 "engram_branch": dict(base, blocks=["engram"] * 2, engram_gates=_BRANCH_GATES),
+                 "engram_branch_attn": dict(base, blocks=["attention", "engram", "attention", "engram"],
+                                            engram_gates=_BRANCH_GATES),
                  # a ckda_branch KronLSTM (kronlstm blocks), alone and in the v4 mix with attention and CKDA
                  "kronlstm": dict(base, blocks=["ckda", "kronlstm", "kronlstm"]),
                  # a ckda_branch kvshare attention (the keys / values of an earlier attention layer, its own q / o)
@@ -359,10 +369,7 @@ def main() -> None:
                                          expert_fp8=True),
                     # the per-stream Engram gates of the main-run trial (docs/engram_main_run_trial_plan.md)
                     "mhc_engram_branch": dict(residual="mhc", sign_hash=True, quantile=False, pab=False,
-                                              engram_gates=dict(engram_branch_gates=True,
-                                                                engram_branch_query="learned",
-                                                                engram_gate_logit_scale=True,
-                                                                engram_gate_query_eps=1e-12))}
+                                              engram_gates=_BRANCH_GATES)}
         only = [c for c in (a.only or "").split(",") if c]
         results = {}
         for name, kw in variants.items():
