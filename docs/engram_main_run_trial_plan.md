@@ -88,11 +88,13 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 - Add the trial config (§6) to the main repo; sync to `autoexp_engramfix7`; read `SYNC_STAMP`.
 
 ### Step 5 — trial job
-- Enqueue on the p264 pool / host011, 264 nodes, the main run's account/QOS, `pool_priority: 100`.
+- Enqueue the trial on the 128-node c136 host (the 134 nodes available now), in parallel with the
+  main run's normal continuation on its 264 nodes.
 - `load` = the `bg_learned` 63,000 checkpoint; `exit_interval: 64000`; 1,000 steps.
 
 ### Step 6 — evaluation
-- Loss: the trial's 1,000-step loss vs the baseline's 62,000 → 63,000 (paired, same data order).
+- Loss: the trial's 1,000-step loss vs the main run's **same steps** (63,000 → 64,000) on the 264
+  nodes, paired by data order. That is the clean comparison; the previous 1k steps is only a fallback.
 - Spike: the loss at the first ~50 steps and the recovery by ~500 steps; reset if it has not recovered.
 - Arch metrics: per-stream gate spread, `query_rms`, `read_sum`, and the `query_mix` (`lam`) every 10
   steps; if `lam` stays at zero, the stream adds nothing.
@@ -100,11 +102,11 @@ and already has 264 nodes; 1,000 steps is ~0.6% of the remaining compute.
 - Downstream export/eval at 64,000 if the loss is not decisive.
 
 ### Step 7 — decision
-- **Win:** loss improves beyond noise and the gates open → continue the main run on the trial tree; then
-  consider `bg_stream`.
-- **Neutral:** loss within noise, gates open → the gate is not the bottleneck; continue the main run
-  without the fix; drop the per-stream gates.
-- **Loss:** loss regresses → reset to 62,000; resume the main run without the fix.
+- **Win:** the trial's loss beats the main run's same steps beyond noise and the gates open → switch
+  the main run's tree to the trial tree at 64,000.
+- **Neutral:** loss within noise, gates open → the gate is not the bottleneck; keep the main tree; drop
+  the per-stream gates.
+- **Loss:** loss regresses → keep the main tree; the trial tree is discarded.
 
 ## 6. Trial config (draft)
 
@@ -138,7 +140,7 @@ job:
 
 slurm:
   sbatch:
-    nodes: 264
+    nodes: 128
 ```
 
 The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`); the main tree
@@ -146,11 +148,12 @@ The trial writes only `${job.base_output_dir}` (`runs/v4b_learned/trial_bg_read`
 
 ## 7. Risks and rollback
 
-- The main run is stopped at 63,000 by the user; the main tree is untouched; the trial has its own tree.
+- The main run continues on its 264 nodes; the trial runs in parallel on 128 nodes. The main tree is
+  untouched; the trial has its own tree. The switch to the trial tree happens only on a win.
 - `learned` at `lam=0` with a **dead** gate has zero gradient to `lam` (double zero -> non-learnable).
   Layer 2's `logit_scale = 0.3` opens the gate at init; then `lam` learns and expect a short spike. The `bg_read`
   and `bg_stream` controls tell whether the read or the stream itself helps.
-- The `logit_scale` init depends on the 62,000 mean query RMS. If the export/diag is wrong, the step-0
+- The `logit_scale` init depends on the 63,000 mean query RMS. If the export/diag is wrong, the step-0
   loss jumps and the trial is invalid.
 - The 1k steps are ~0.6% of the remaining compute; the reset keeps the loss.
 - The host004 arms remain the controlled tiebreaker if the trial is ambiguous.
