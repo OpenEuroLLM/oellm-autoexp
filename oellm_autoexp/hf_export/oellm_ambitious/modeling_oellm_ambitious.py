@@ -180,6 +180,17 @@ class OellmMHC(nn.Module):
         return x, (h_post, h_res)
 
     @staticmethod
+    def write_streams(streams: torch.Tensor, outs: torch.Tensor, pending) -> torch.Tensor:
+        """:meth:`write` with one output per stream (``outs`` ``[b, s, n, h]``, Engram's per-stream gates):
+        ``h_res @ streams + h_post_m * outs_m`` (Megatron ``_mhc_write_streams``)."""
+        b, s, n, h = streams.shape
+        h_post, h_res = pending
+        h_post = h_post.to(streams.dtype).reshape(b, s, n)
+        h_res = h_res.to(streams.dtype).reshape(b, s, n, n)
+        mixed = (h_res.unsqueeze(-1) * streams.unsqueeze(-3)).sum(dim=-2)
+        return mixed + h_post.unsqueeze(-1) * outs.to(streams.dtype)
+
+    @staticmethod
     def write(streams: torch.Tensor, out: torch.Tensor, pending) -> torch.Tensor:
         b, s, n, h = streams.shape
         if n == 4 and _fast(streams):
@@ -741,6 +752,68 @@ class OellmEngramV2(OellmEngram):
             self.sign_mult = [[int(a) for a in row] for row in config.engram_sign_multipliers[str(layer_idx)]]
             self.sign_size = int(config.engram_sign_table_size)
             self.register_buffer("sign_table", torch.ones(self.sign_size, config.engram_embed_dim))
+        # the gate options of the per-stream gate trial (Megatron engram.py, docs/engram_main_run_trial_plan.md)
+        eps_q = getattr(config, "engram_gate_query_eps", None)
+        if eps_q is not None:
+            self.hidden_norm.variance_epsilon = float(eps_q)
+        self.branch_gates = bool(getattr(config, "engram_branch_gates", False))
+        self.branch_query = getattr(config, "engram_branch_query", "read")
+        self.n_gates = int(config.mhc_expansion_rate) if self.branch_gates else 1
+        if self.branch_gates:
+            if config.residual != "mhc":
+                raise ValueError("engram_branch_gates needs the mHC residual")
+            h = config.hidden_size
+            kp, eps_k = self.key_proj, self.key_norm.variance_epsilon
+            # stream m > 0: key_proj_extra.<m-1> / key_norm_extra.<m-1> / hidden_norm_extra.<m-1>
+            self.key_proj_extra = nn.ModuleList(
+                nn.Linear(kp.in_features, kp.out_features, bias=False) for _ in range(self.n_gates - 1))
+            self.key_norm_extra = nn.ModuleList(OellmRMSNorm(h, eps_k) for _ in range(self.n_gates - 1))
+            self.hidden_norm_extra = nn.ModuleList(
+                OellmRMSNorm(h, self.hidden_norm.variance_epsilon) for _ in range(self.n_gates - 1))
+        self.gate_terms = None
+        learned = self.branch_gates and self.branch_query == "learned"
+        if learned or getattr(config, "engram_gate_logit_scale", False):
+            self.gate_terms = nn.Module()
+            self.gate_terms.query_mix = nn.Parameter(torch.zeros(self.n_gates)) if learned else None
+            self.gate_terms.logit_scale = (nn.Parameter(torch.ones(self.n_gates))
+                                           if getattr(config, "engram_gate_logit_scale", False) else None)
+
+    def _branch_queries(self, read: torch.Tensor, streams: torch.Tensor) -> torch.Tensor:
+        """The gate queries of the ``n`` streams, ``[b, s, n, h]``: the read, the streams, or (learned)
+        ``read + query_mix (streams - read)`` (Megatron ``EngramLayer._branch_queries``)."""
+        read = read.unsqueeze(-2)
+        if self.branch_query == "read":
+            return read.expand(-1, -1, self.n_gates, -1)
+        streams = streams.to(read.dtype)
+        if self.branch_query == "stream":
+            return streams
+        lam = self.gate_terms.query_mix.to(read.dtype).view(-1, 1)
+        return read + lam * (streams - read)
+
+    def _branch_gate_logits(self, q: torch.Tensor, e: torch.Tensor) -> torch.Tensor:
+        """``<RMSNorm_m(q_m), RMSNorm_m(k_m)>`` of every stream, ``[b, s, n, 1]`` fp32, in the arithmetic of
+        Megatron ``EngramLayer._branch_gate_logits`` (the gains folded into one product, fp32 inverse RMS)."""
+        weight = torch.cat([self.key_proj.weight] + [p.weight for p in self.key_proj_extra])
+        k = F.linear(e, weight.to(e.dtype)).unflatten(-1, (self.n_gates, -1))  # [b, s, n, h]
+        w = torch.stack([hn.weight.float() * kn.weight.float()
+                         for hn, kn in zip([self.hidden_norm, *self.hidden_norm_extra],
+                                           [self.key_norm, *self.key_norm_extra])])  # [n, h]
+        dot = ((q * w.to(q.dtype)) * k).sum(-1, keepdim=True, dtype=torch.float32)
+        dim = q.shape[-1]
+
+        def inv_rms(x, eps):
+            ms = torch.linalg.vector_norm(x, dim=-1, keepdim=True, dtype=torch.float32).square() / dim
+            return torch.rsqrt(ms + eps)
+
+        return dot * inv_rms(q, self.hidden_norm.variance_epsilon) * inv_rms(k, self.key_norm.variance_epsilon)
+
+    def _norm_gated(self, v: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+        """``conv_norm(alpha_m * v)`` for ``v`` [b, s, 1, h] and the gates ``alpha`` [b, s, n, 1] from one
+        normalization of ``v`` (Megatron ``EngramLayer._norm_gated``)."""
+        ms = v.float().pow(2).mean(-1, keepdim=True)
+        a = alpha.float()
+        beta = a * torch.rsqrt(a.square() * ms + self.conv_norm.variance_epsilon)
+        return (v * self.conv_norm.weight.to(v.dtype)) * beta.to(v.dtype)
 
     def _sign_rows(self, shifted: torch.Tensor, s: int) -> torch.Tensor:
         """Sign-table rows of the last ``s`` positions: ``engram_hash`` with the sign multipliers
@@ -831,9 +904,11 @@ class OellmEngramV2(OellmEngram):
         src = table if table.device == dev else self.__dict__["_uva"]._host
         return kern.gather(src, table.shape[-1], rows, dtype, sign)
 
-    def forward(self, hidden_states, input_ids, token_mask=None, state=None):
+    def forward(self, hidden_states, input_ids, token_mask=None, state=None, streams=None):
+        """``hidden_states`` the mHC read ``[b, s, h]``; with ``engram_branch_gates`` also the ``streams``
+        ``[b, s, n, h]``, and the output is one per stream, ``[b, s, n, h]``."""
         b, s, h = hidden_states.shape
-        fast = _fast(hidden_states)
+        fast = _fast(hidden_states) and not self.branch_gates
         ids = input_ids if self.token_map is None else self.token_map[input_ids]
         shifted = ids.long() + 1
         if token_mask is not None:
@@ -850,6 +925,33 @@ class OellmEngramV2(OellmEngram):
             if self.sign_hash:
                 e = e * self.sign_table[self._sign_rows(shifted, s).to(self.sign_table.device)].to(e.device, e.dtype)
         e = e.reshape(b, s, -1)
+        logit_scale = None if self.gate_terms is None else self.gate_terms.logit_scale
+        if self.branch_gates:
+            if streams is None:
+                raise ValueError("engram_branch_gates: the layer needs the mHC streams")
+            q = self._branch_queries(hidden_states, streams)
+            gate = self._branch_gate_logits(q, e) / h**0.5  # [b, s, n, 1]
+            v = self.value_proj(e)
+            if logit_scale is not None:
+                gate = gate * logit_scale.to(gate.dtype).view(-1, 1)
+            if self.signed_sqrt:
+                gate = gate.abs().clamp_min(1e-6).sqrt() * gate.sign()
+            alpha = torch.sigmoid(gate).to(v.dtype)
+            v = v.unsqueeze(-2)  # [b, s, 1, h], gated per stream
+            conv_in = alpha * v if self.conv_norm is None else self._norm_gated(v, alpha)
+            v = alpha * v
+            if token_mask is not None:
+                v = v * token_mask[..., None, None].to(v.dtype)
+                conv_in = conv_in * token_mask[..., None, None].to(conv_in.dtype)
+            n, pad = self.n_gates, (self.kernel_size - 1) * self.dilation
+            ct = conv_in.permute(0, 2, 3, 1).reshape(b * n, h, s)  # the streams as batch entries of the conv
+            # the state as [b, n * h, pad]: batch-major, so the cache's beam reordering (dim 0) stays right
+            conv_state = ct.new_zeros(b * n, h, pad) if conv_state is None else conv_state.reshape(b * n, h, pad)
+            padded = torch.cat([conv_state.to(ct.dtype), ct], dim=-1)
+            conv = F.conv1d(padded, self.conv1d.weight, groups=h, dilation=self.dilation)
+            new_conv_state = padded[..., padded.shape[-1] - pad :].reshape(b, n * h, pad)
+            conv = conv.view(b, n, h, s).permute(0, 3, 1, 2)
+            return F.silu(conv) + v, (new_id_state, new_conv_state)
         if fast:
             kw, vw = self.key_proj.weight, self.value_proj.weight
             k, v = F.linear(e, _cached(self, "_kv", lambda: torch.cat([kw, vw]), kw, vw)).split(h, dim=-1)
@@ -860,6 +962,8 @@ class OellmEngramV2(OellmEngram):
         else:
             k, v = self.key_proj(e), self.value_proj(e)
             gate = (self.hidden_norm(hidden_states).float() * self.key_norm(k).float()).sum(-1, keepdim=True) / h**0.5
+        if logit_scale is not None:
+            gate = gate * logit_scale.float()
         if self.signed_sqrt:
             gate = gate.abs().clamp_min(1e-6).sqrt() * gate.sign()
         v = torch.sigmoid(gate).to(v.dtype) * v
@@ -957,6 +1061,10 @@ class OellmAmbitiousLayer(nn.Module):
                 self.ldm_mixer.write_site, self.ldm_mixer.next_query, x, out, memory, covariance
             )
             return (x, r, memory, covariance), new_state
+        if self.kind == "engram" and self.mixer.branch_gates:  # one output per stream
+            x, pending = self.mhc.read(streams)
+            outs, new_state = self.mixer(x, input_ids, token_mask, state, streams=streams)
+            return self.mhc.write_streams(streams, outs, pending), new_state
         norm = self.input_layernorm
         raw = None
         if _fast(streams) and streams.shape[-2] == 4 and not self._needs_raw():

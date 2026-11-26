@@ -297,6 +297,8 @@ def hf_config(m: dict, vocab: int) -> dict:
         raise ValueError("muP embedding / output scaling not ported")
     if m.get("linear_xsa"):
         raise ValueError("linear XSA in CKDA not ported")
+    if m.get("engram_gate_scale"):
+        raise ValueError("engram_gate_scale not ported")
     heads = m["num_attention_heads"]
     types = [_KINDS[c] for c in syms]
     engram_layers = [i for i, t in enumerate(types) if t == "engram"]
@@ -372,6 +374,13 @@ def hf_config(m: dict, vocab: int) -> dict:
         "engram_sign_hash": sign,
         "engram_sign_table_size": int(m.get("engram_sign_table_size", 8192)),
         "engram_sign_multipliers": {str(i): engram_sign_multipliers(m, engram_seed_numbers[i]) for i in engram_layers} if sign else {},
+        # the per-stream gate trial (docs/engram_main_run_trial_plan.md); a run without the keys: the single gate,
+        # its query norm at the layernorm eps
+        "engram_branch_gates": bool(m.get("engram_branch_gates")),
+        "engram_branch_query": str(m.get("engram_branch_query") or "read"),
+        "engram_gate_logit_scale": bool(m.get("engram_gate_logit_scale")),
+        "engram_gate_query_eps": (float(m["engram_gate_query_eps"]) if m.get("engram_gate_query_eps") is not None
+                                  else None),
         "embedding_multiplier": float(m.get("embedding_multiplier") or 1.0),
         "embedding_norm": bool(m.get("embedding_norm")),
         "tie_word_embeddings": not m.get("untie_embeddings_and_output_weights", False),
@@ -694,6 +703,13 @@ def convert_layer(i: int, t: dict, cfg: dict, m: dict, add, cast: torch.dtype, t
             add(hp + f"mixer.{n}", g(n).to(cast))
         if cfg["engram_conv_prenorm"]:
             add(hp + "mixer.conv_norm.weight", g("conv_norm.weight").to(cast))
+        # engram_branch_gates: streams 1 .. n-1's key projections and norms (stream 0 keeps the names above)
+        extra = ("key_proj_extra.", "key_norm_extra.", "hidden_norm_extra.")
+        for k in sorted(k for k in t if k[len(p):].startswith(extra)):
+            add(hp + "mixer." + k[len(p):], t.pop(k).to(cast))
+        for n in ("query_mix", "logit_scale"):  # gate scalars: fp32, as the model applies them
+            if p + f"gate_terms.{n}" in t:
+                add(hp + f"mixer.gate_terms.{n}", g(f"gate_terms.{n}").float())
         if cfg["engram_sign_hash"]:  # not in the checkpoint: a function of Megatron's fixed seed
             add(hp + "mixer.sign_table", torch.from_numpy(engram_sign_table_np(m)))
         if cfg["engram_token_map"]:

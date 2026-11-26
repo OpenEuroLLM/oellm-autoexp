@@ -100,6 +100,14 @@ class OellmAmbitiousConfig(PretrainedConfig):
         engram_sign_multipliers: dict | None = None,  # {layer index (str): [[...]]}
         engram_table_dtype: str | None = None,
         engram_scale_dtype: str = "fp32",
+        # Engram gate options of the per-stream gate trial (Megatron engram_branch_gates / engram_branch_query /
+        # engram_gate_logit_scale / engram_gate_query_eps): one gate per mHC stream (own key projection, key and
+        # hidden norms; query = the read, the stream, or read + query_mix (stream - read)), a learnable scale per
+        # gate on the logit before the signed square root, and the query norm's eps (None: rms_norm_eps)
+        engram_branch_gates: bool = False,
+        engram_branch_query: str = "read",
+        engram_gate_logit_scale: bool = False,
+        engram_gate_query_eps: float | None = None,
         # the embedding output: x * embedding_multiplier, then (embedding_norm) an fp32 RMSNorm with a gain
         embedding_multiplier: float = 1.0,
         embedding_norm: bool = False,
@@ -175,6 +183,12 @@ class OellmAmbitiousConfig(PretrainedConfig):
         self.engram_sign_multipliers = engram_sign_multipliers or {}
         self.engram_table_dtype = engram_table_dtype
         self.engram_scale_dtype = engram_scale_dtype
+        if engram_branch_query not in ("read", "stream", "learned"):
+            raise ValueError(f"engram_branch_query {engram_branch_query!r}")
+        self.engram_branch_gates = engram_branch_gates
+        self.engram_branch_query = engram_branch_query
+        self.engram_gate_logit_scale = engram_gate_logit_scale
+        self.engram_gate_query_eps = engram_gate_query_eps
         self.embedding_multiplier = embedding_multiplier
         self.embedding_norm = embedding_norm
         if expert_weight_dtype not in ("bf16", "fp8"):
