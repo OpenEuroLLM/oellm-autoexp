@@ -19,6 +19,9 @@
 #                Numerics change -- needs a gradient-error check and the user's go before the main run.
 #   (no MoE-logging arm: the user keeps the health logging; ab64's -3.8 % for logging off was the viability
 #    statistics before Megatron 5c84e20fc fused them and skipped the recompute -- the live code has that fix)
+#   gbf16x_gcf   gbf16x + --moe-global-aux-counts-from-forward (Megatron 08f3874ec, 2026-11-26): the recompute reuses the
+#                checkpointed forward's async global token counts -- removes the 48 blocking count all-reduces per
+#                backward that wait for the slowest rank (gbf16x profile: 100-180 ms stalls ~12x per backward)
 #   c8k          8k x mbs 8, gbs 2048: the same 64k tokens per GPU per step, everything else equal. Its data cache
 #                (seq 8192, 60 x 2048 samples) is prebuilt by v4b_ctx_slice_mn5's r8prep arm.
 #
@@ -31,7 +34,7 @@ defaults:
 aux:
   suite: v4b_ctx64
   variant: base
-  only: [base, gbf16x, c8k]
+  only: [base, gbf16x, gbf16x_gcf, c8k]
   moonep_lib: pylibs_moonep_e9e8238
   test_root: /gpfs/scratch/ehpc533/hybrid_nucleus/speed/v4b_ctx64
 
@@ -58,6 +61,10 @@ sweep:
         - aux.variant: gbf16x
           backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
           backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
+        - aux.variant: gbf16x_gcf
+          backend.megatron.megatron_fsdp_grad_comm_dtype: bf16
+          backend.megatron.megatron_fsdp_grad_comm_dtype_experts_only: true
+          backend.megatron.moe_global_aux_counts_from_forward: true
         # keep train_iters / gbs / seq / eval / valid settings identical to the slice's r8prep arm (cache hit)
         - aux.variant: c8k
           backend.megatron.seq_length: 8192
