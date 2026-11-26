@@ -193,6 +193,22 @@ def read_jupiter() -> dict[str, dict[str, float]]:
     return refs
 
 
+def read_jupiter_samples() -> dict[str, dict[str, int]]:
+    """ref -> task -> n_samples, to drop tasks too small to mean anything (a 4-item task swings 50 pp)."""
+    out: dict[str, dict[str, int]] = defaultdict(dict)
+    for label, fname in JUPITER_REFS.items():
+        path = os.path.join(JUPITER_DIR, fname)
+        if not os.path.exists(path):
+            continue
+        with open(path) as handle:
+            for row in csv.DictReader(handle):
+                try:
+                    out[label][row["task"]] = int(float(row.get("n_samples") or 0))
+                except (TypeError, ValueError):
+                    continue
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ours", required=True, help="our eval dir (summary_shard*.tsv)")
@@ -201,6 +217,8 @@ def main() -> int:
     ap.add_argument("--csv", default="", help="also write the table as CSV")
     ap.add_argument("--worst", type=int, default=0, help="also list the N largest negative deltas")
     ap.add_argument("--ref", default="32B@300k", help="reference for --worst")
+    ap.add_argument("--min-samples", type=int, default=30,
+                    help="drop tasks with fewer reference samples (default 30; 0 keeps all)")
     args = ap.parse_args()
 
     ours_dir = args.ours if os.path.isdir(args.ours) else os.path.join(EVAL_ROOT, args.ours)
@@ -223,10 +241,16 @@ def main() -> int:
 
     columns = list(JUPITER_REFS) + list(QWEN_REFS)
     columns = [c for c in columns if c in refs]
+    sample_sizes = read_jupiter_samples()
     rows = []
     for task in sorted(ours):
         metric, value = ours[task]
         cells = [refs[c].get(task) for c in columns]
+        if args.min_samples:
+            sizes = [sample_sizes.get(c, {}).get(task) for c in columns]
+            sizes = [n for n in sizes if n is not None]
+            if sizes and max(sizes) < args.min_samples:
+                continue
         if sum(1 for c in cells if c is not None) < args.min_common:
             continue
         rows.append((task, metric, value, cells))
