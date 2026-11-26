@@ -26,15 +26,10 @@ aux:
   samples: 32
 
 backend:
-  # shell variables, not OmegaConf: the bash backend runs this under bash -c '<command>'
-  command: python3 scripts/korbi/production/mhc_coeff_dump.py --model-dir "$HF_EXPORTS/$EXPORT" --out "$OUT" --docs "$DOCS" --seq-len "$SEQ_LEN" --samples "$SAMPLES"
+  # literal values, not shell variables: the job's env variables arrived empty in the container
+  # ("--docs: invalid int value: ''", 2026-11-27, as in engram_gate_fixed_query_mn5)
+  command: python3 scripts/korbi/production/mhc_coeff_dump.py --model-dir ${aux.hf_exports}/${aux.export} --out ${aux.out} --docs ${aux.docs} --seq-len ${aux.seq_len} --samples ${aux.samples}
   env:
-    HF_EXPORTS: ${aux.hf_exports}
-    EXPORT: ${aux.export}
-    OUT: ${aux.out}
-    DOCS: ${aux.docs}
-    SEQ_LEN: ${aux.seq_len}
-    SAMPLES: ${aux.samples}
     PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_ep:${aux.hybrid_env}/pylibs_hfx"
     OELLM_HF_IMPL: fast
     OELLM_HF_MOE: fused
