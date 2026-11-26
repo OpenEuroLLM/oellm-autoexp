@@ -56,6 +56,9 @@ job:
 slurm:
   sbatch:
     time: "02:30:00"
+    # c136's hosts (host004): account cns143, qos acc_xlarge
+    account: cns143
+    qos: acc_xlarge
 
 # literals in the entries: interpolations inside a sweep entry resolve against the base config
 sweep:

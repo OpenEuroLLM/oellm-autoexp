@@ -2,63 +2,58 @@
 # Main-run Engram gate trial (docs/engram_main_run_trial_plan.md): a fork of the v4b main run at its rolling save
 # 62,900 with per-stream Engram gates and the learned query mix (bg_learned: query = read + lambda (stream - read),
 # lambda = 0 at init) plus the gate fix (scale-invariant query, learnable logit_scale; layer 2 opened at 0.3, the
-# other Engram layer at its mean query RMS). 1,100 steps to 64,000 on 128 nodes of c136 host004, in parallel with
-# the main run; the main run's own 62,900 -> 64,000 is the paired baseline (reference sampler dp 512 x mbs 1: the
-# same batches on 128 as on 264 nodes). Validation at 63,000 and 64,000 (the main's eval_interval 1000).
+# other Engram layer at its mean query RMS). Started 2026-11-26 on 128 nodes of c136 host004 (62,900 -> 63,4xx);
+# from there on host011's 256 nodes in place of the main run (user 2026-11-26: the fork keeps training past
+# 64,000 while the paired 64k evals run; the better of fork / main continues from 64,000).
 #
 # Base: the config the main run runs (p264.2520: v4b_learned_fix_bf16rs_mn5 from snapshot autoexp_v4bbf16c, Megatron
-# a7d461f43); the fork's snapshot has that Megatron + the gate fix (1054d2b75) + two LDM-only commits. Only the fork's
-# own values are overridden; it reads the main tree and writes only ${job.base_output_dir} and ${aux.fork}.
-# The checkpoint: experiments/korbi/production/engram_branch_fix_fork_prep_mn5 (export, diag, surgery); this run
-# waits on its tracker.
+# a7d461f43); the fork's snapshot has that Megatron + the gate fix (1054d2b75) + two LDM-only commits. Everything
+# else as the main run: persistent saves + validation every 1000 steps (all kept), rolling saves every 100 (main: 50),
+# arch metrics every 500, 24 h segments, pool priority 150, the main's restart events and exclude list. The fork
+# has its own tree (${job.base_output_dir}); load = its own ckpt (+ the newer rolling save), as the main run.
+# The checkpoint it started from: experiments/korbi/production/engram_branch_fix_fork_surgery_mn5 (surgery of
+# the main's 62,900 rolling save, pinned in main/ckpt_eval).
 #
-#   ... --pool .../mn5_pool_c136 --config-name experiments/korbi/recall_surgery/v4b_learned_fork_bg_learned_mn5 --yes
-#   then pin to host004: pool_ctl pin <run> host004
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/recall_surgery/v4b_learned_fork_bg_learned_mn5 --yes
 defaults:
   - v4b_learned_fix_bf16rs_mn5
   - _self_
 
 aux:
-  nodes: 128
+  nodes: 256
   fork_it: 62900
-  # the translated fork checkpoint (iter_0062900 + per-stream gates + query_mix + logit_scale)
+  # the translated fork checkpoint the run started from (iter_0062900 + per-stream gates + query_mix + logit_scale)
   fork: /gpfs/scratch/ehpc533/hybrid_nucleus/production/engram_branch_fix/fork_bg_learned_62900
 
 backend:
   env:
     CUDA_COREDUMP_FILE: ${job.base_output_dir}/coredumps/core_%h_%p.nvcu
   megatron:
-    load: ${aux.fork}/ckpt
-    ckpt_step: ${aux.fork_it}
+    # as the main run: the run's own ckpt and the newer rolling save in ckpt_rolling
+    load: ${job.base_output_dir}/ckpt
+    ckpt_step: null
     save: ${job.base_output_dir}/ckpt
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    # rolling saves every 100 (the main run: 50; user 2026-11-26: 100 saves a bit of time)
+    non_persistent_save_interval: 100
     engram_branch_gates: true
     engram_branch_query: learned
     engram_gate_logit_scale: true
     engram_gate_query_eps: 1e-12
-    # 1,100 steps; persistent saves (save_interval 1000) + validation at 63,000 and 64,000; rolling saves every 50
-    # into the fork's own ckpt_rolling (a restart resumes there)
-    exit_interval: 64000
-    arch_metrics_interval: 10
 
 slurm:
   env:
     NODE_CHECK_DIR: ${job.base_output_dir}/node_check
   sbatch:
     nodes: ${aux.nodes}
-    # ~30 s / step on 128 nodes (t24/t28) -> ~9 h + load
-    time: "12:00:00"
-    # c136's hosts: account cns143, qos acc_xlarge
-    account: cns143
-    qos: acc_xlarge
+    # p264's hosts: account cns144, qos acc_xehpc (the main run's)
+    account: cns144
+    qos: acc_xehpc
 
 job:
   name: ambitious_v4b_learned_fork_bg_learned
   base_output_dir: ${aux.kv_root}/runs/v4b_learned/fork_bg_learned_62900
-  est_steps: 1100
-  est_step_time_s: 30.0
-  est_startup_min: 40.0
-  # the main's AndCondition (switch file + p264 check) with its list replaced: wait for the fork checkpoint only
+  # the main's AndCondition (switch file + p264 check) with its list replaced: the fork checkpoint only
   start_condition:
     class_name: AndCondition
     persistent_pass: true
@@ -66,7 +61,6 @@ job:
       - class_name: FileExistsCondition
         path: ${aux.fork}/ckpt/latest_checkpointed_iteration.txt
   metadata:
-    # below the main run (150), above the eval / speed jobs
-    pool_priority: 100
+    pool_priority: 150
     pool_use_excluded_nodes: false
     pool_singleton: null
