@@ -11,7 +11,7 @@
 #   in a job, from a synced snapshot:
 #   DEST=/tmp/pylibs_vllm scripts/korbi/vllm/build_pylibs_vllm.sh [<wheel dir>]
 set -euo pipefail
-R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+R=${HYBRID_ROOT:-${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}}
 W=${1:-$R/wheels_vllm032}
 cd "$(dirname "$0")/../../.."
 SRC=$PWD/submodules/vllm

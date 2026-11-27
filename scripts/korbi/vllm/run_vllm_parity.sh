@@ -4,7 +4,8 @@
 #   run_vllm_parity.sh tiny [<out dir>]            tiny random models (mHC / LDM), one GPU
 #   run_vllm_parity.sh export <export dir> [<tp>]  an existing export
 set -euo pipefail
-R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+# HYBRID_ROOT, not R: the pools set R to the run directory (c136: the wheels were looked up there)
+export R=${HYBRID_ROOT:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
 cd "$(dirname "$0")/../../.."
 SHA=$(grep -m1 "^submodules/vllm " SYNC_STAMP | awk '{print $3}')
 export DEST=/tmp/pylibs_vllm_$SHA
