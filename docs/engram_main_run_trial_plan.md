@@ -1,6 +1,6 @@
 # Main-run Engram fork trial plan: 62,900 → 64,000
 
-Status (2026-11-26 17:30): **prep + fork enqueued on c136 host004** (snapshot `autoexp_engramfix7`). The trial
+Status (2026-11-27): **the fork is the main run** (decision after the 64k tie, §6b); started 2026-11-26 on c136 host004 (snapshot `autoexp_engramfix7`). The trial
 tests the per-stream Engram gates (`bg_learned`) plus the scale-invariant query / `logit_scale` fix on the main
 run's real trajectory for 1,100 steps, in parallel on 128 nodes, with the main run's own same steps as the paired
 baseline.
@@ -109,6 +109,34 @@ into the fork's `ckpt_rolling` (a restart resumes there).
 - diag: `/gpfs/scratch/ehpc533/hybrid_nucleus/engram_gate_diag/ambitious_v4b_learned_fp8_62900_fixed_query`
 
 The fork writes only its own dirs; the main tree `runs/v4b_learned/main` is untouched.
+
+## 6b. Outcome (2026-11-27)
+
+- The fork ran 62,900 -> 63,376 on 128 nodes of c136 host004, and from there on host011's 256 nodes in place of
+  the main run (main stopped at 64,083 with a clean save). Speed on 256 nodes: about 16.0-16.2 s/step (main 15.7).
+  Memory use: 0.90-0.96 of the cap (main 0.83).
+- Paired eval-only validation (same 8-node layout and samples, eval_iters 3), fork - v4b:
+  - 63k: +0.0001 to +0.0006 per set (`all` +0.0004). The in-training long_64k +0.015 was the 128- vs 264-node
+    layout.
+  - 64k: `all` +0.00003, per set -0.0003 to +0.0005: a tie.
+- Layer-2 Engram off (engram_output_scale 0 on layer 2), the cost per model:
+  - v4b: +0.375 (63k) / +0.392 (64k).
+  - fork: +0.356 / +0.365.
+  - Layer 2 carries a lot in both; the fork leans on it slightly less, not more.
+- Gate scales (read from the saves):
+  - layer 2, streams 0/1 hold about 0.27-0.28; streams 2/3 decay towards v4b's effective 0.015 (63,600: 0.05 /
+    0.14);
+  - layer 52 sharpens by itself (0.47 -> 0.58-0.77);
+  - lam stays about +-0.01.
+- Decision (user, 2026-11-27): continue the fork as the main run despite the tie (no cost, and hope for a later
+  gain). The v4b main tree stays as the fallback at 64,083.
+- Inference: per-stream gates in the HF export (0e0716ae; gate math bit-identical to Megatron) and in vLLM
+  (9c9ecd37d0; passes the MoE-free parity components). A separate vLLM attention discrepancy predates this work
+  and affects all v4b exports (single attention component up to 0.05 in fp32, TF32 or not).
+- Incidents:
+  - 00:16 GPU MMU fault in an eager bf16 `abs` kernel (as05r3b20; likely the clamped-SwiGLU backward); restart
+    from 63,600.
+  - 01:09 a healthy restart killed by the pool after my preempt of its node check (template fix 6dd3c23a).
 
 ## 7. Risks and rollback
 
