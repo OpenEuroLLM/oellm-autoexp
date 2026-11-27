@@ -54,12 +54,15 @@ class LDM(torch.nn.Module):
         self.q = torch.nn.Parameter(torch.randn(L, K, generator=g))
         self.s = torch.nn.Parameter(torch.zeros(L))                             # read gain: 0 = collapse
 
-    def forward(self):
-        """Input coefficients [L, L + 1] of every layer (row l: e, delta_0 .. delta_{L-1})."""
+    def forward(self, production: bool = False):
+        """Input coefficients [L, L + 1] of every layer (row l: e, delta_0 .. delta_{L-1}). ``production``: P in
+        fp32 and M rounded to fp16 after every write (depth_memory_covariance_dtype float32, storage float16)."""
         L, K = self.L, self.K
         B = L + 1
         M = torch.zeros(K, B)
         P = self.alpha * torch.eye(K)
+        cast_P = (lambda t: t.float().double()) if production else (lambda t: t)  # noqa: E731
+        cast_M = (lambda t: t.half().double()) if production else (lambda t: t)  # noqa: E731
         keys = torch.nn.functional.normalize(self.key, dim=-1)
         qs = torch.nn.functional.normalize(self.q, dim=-1)
         w, lam = 2 * torch.sigmoid(self.w), torch.sigmoid(self.f)
@@ -75,8 +78,8 @@ class LDM(torch.nn.Module):
                 break
             kb = w[t].sqrt() * keys[t]
             kappa = P @ kb / (lam[t] + kb @ P @ kb)
-            M = M + torch.outer(kappa, w[t].sqrt() * eye[t] - M.t() @ kb)
-            P = (P - torch.outer(kappa, kb @ P)) / lam[t]
+            M = cast_M(M + torch.outer(kappa, w[t].sqrt() * eye[t] - M.t() @ kb))
+            P = cast_P((P - torch.outer(kappa, kb @ P)) / lam[t])
         return torch.stack(rows)
 
 
@@ -88,6 +91,9 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=0.03)
     ap.add_argument("--seeds", type=int, default=2)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--tokens", type=Path, default=None,
+                    help="mhc_imitation_fit --tokens output: also report the held-out per-token cosine (a norm follows "
+                         "every read, so each token's scale is free) and the rows at production precision")
     a = ap.parse_args()
     layers, Gf, bf, Gt, bt, Nf, Nt = load(a.gram)
     L = len(layers)
@@ -95,12 +101,39 @@ def main() -> int:
     def score(rows, G, b, N):
         return [explained(rows[i][: i + 1], G[i], b[i], N) for i in range(L)]
 
+    tok = None
+    if a.tokens:
+        z = np.load(a.tokens)
+        tok = {k: torch.from_numpy(z[k]) for k in ("K", "Du", "uu", "test")}
+        held_tok = tok["test"].bool()
+
+    def token_cos(rows):
+        """held-out mean per-token cosine of u_l with sum_j rows[l, j] D_j, per layer."""
+        out = []
+        for i in range(L):
+            k = i + 1
+            beta = rows[i][:k].to(torch.float32)
+            Du, uu, KK = tok["Du"][i, held_tok, :k], tok["uu"][i, held_tok], tok["K"][held_tok, :k, :k]
+            num = Du @ beta
+            den = uu.sqrt() * torch.einsum("j,tjk,k->t", beta, KK, beta).clamp_min(1e-30).sqrt()
+            out.append(float((num / den).mean()))
+        return out
+
     coll = score([torch.ones(L + 1) for _ in range(L)], Gt, bt, Nt)
     ceil = []
     for i in range(L):
         G = Gf[i] + 1e-4 * Gf[i].diagonal().mean() * torch.eye(i + 1)
         ceil.append(explained(torch.linalg.solve(G, bf[i]), Gt[i], bt[i], Nt))
     result = {"layers": layers, "collapse": coll, "ceiling": ceil}
+    if tok is not None:
+        ceil_rows = []
+        for i in range(L):
+            G = Gf[i] + 1e-4 * Gf[i].diagonal().mean() * torch.eye(i + 1)
+            ceil_rows.append(torch.cat([torch.linalg.solve(G, bf[i]), torch.zeros(L - i)]))
+        result["collapse_cos"] = token_cos([torch.ones(L + 1) for _ in range(L)])
+        result["ceiling_cos"] = token_cos(ceil_rows)
+        print(f"held-out per-token cosine, mean over layers: collapse {np.mean(result['collapse_cos']):.4f}  "
+              f"fixed-coefficient ceiling {np.mean(result['ceiling_cos']):.4f}", flush=True)
     print(f"held-out explained share, mean over layers: collapse {np.mean(coll):.4f}  fixed-coefficient ceiling "
           f"{np.mean(ceil):.4f}", flush=True)
     for K in [int(k) for k in a.keys.split(",")]:
@@ -123,6 +156,16 @@ def main() -> int:
                 best = (held, {k: v.detach().tolist() for k, v in m.state_dict().items()})
         print(f"K {K}: held-out explained {np.mean(best[0]):.4f} (min {min(best[0]):.4f}, layer "
               f"{layers[int(np.argmin(best[0]))]})", flush=True)
+        if tok is not None:
+            m = LDM(L, K, 0)
+            m.load_state_dict({k: torch.tensor(v) for k, v in best[1].items()})
+            with torch.no_grad():
+                exact, prod = m(), m(production=True)
+            cos_exact, cos_prod = token_cos(exact), token_cos(prod)
+            result[f"ldm_K{K}_cos"], result[f"ldm_K{K}_cos_production"] = cos_exact, cos_prod
+            print(f"K {K}: held-out per-token cosine {np.mean(cos_exact):.4f} (min {min(cos_exact):.4f}, layer "
+                  f"{layers[int(np.argmin(cos_exact))]}); at production precision {np.mean(cos_prod):.4f}, "
+                  f"max row change {float((exact - prod).abs().max()):.2e}", flush=True)
         result[f"ldm_K{K}"] = best[0]
         result[f"ldm_K{K}_params"] = best[1]
     if a.out:

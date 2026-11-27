@@ -7,5 +7,5 @@ cd "$(dirname "$0")/../../.."
 DUMP=$1
 KEYS=${2:-8,16,32}
 STEPS=${3:-3000}
-python3 scripts/korbi/production/mhc_imitation_fit.py --dump "$DUMP" --out "$DUMP/fit.json" --device cuda --gram "$DUMP/gram.npz"
-python3 scripts/korbi/production/ldm_imitation_init.py --gram "$DUMP/gram.npz" --keys "$KEYS" --steps "$STEPS" --out "$DUMP/ldm_init.json"
+python3 scripts/korbi/production/mhc_imitation_fit.py --dump "$DUMP" --out "$DUMP/fit.json" --device cuda --gram "$DUMP/gram.npz" --tokens "$DUMP/tokens.npz"
+python3 scripts/korbi/production/ldm_imitation_init.py --gram "$DUMP/gram.npz" --keys "$KEYS" --steps "$STEPS" --out "$DUMP/ldm_init.json" --tokens "$DUMP/tokens.npz"

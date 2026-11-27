@@ -41,6 +41,9 @@ def main() -> int:
     ap.add_argument("--gram", type=Path, default=None,
                     help="also write the per-layer normal equations (fit / held-out halves) to this .npz: the input "
                          "of a rank-constrained LDM fit without the dump")
+    ap.add_argument("--tokens", type=Path, default=None,
+                    help="also write the per-token basis Gram, D'u and |u|^2 to this .npz: per-token cosines of any "
+                         "coefficient rows without the dump")
     a = ap.parse_args()
     dev = a.device
     meta = json.loads((a.dump / "meta.json").read_text())
@@ -75,6 +78,8 @@ def main() -> int:
 
     rows = []
     grams = {}
+    tok_Du = torch.zeros(len(layers), T, B) if a.tokens else None
+    tok_uu = torch.zeros(len(layers), T) if a.tokens else None
     wbar = torch.tensor([1.0] + H, device=dev)
     for i, l in enumerate(layers):
         k = i + 1                                          # e, delta_0 .. delta_{i-1}
@@ -82,6 +87,9 @@ def main() -> int:
         Du = torch.einsum("tjh,th->tj", D[:, :k], u)
         uu = (u * u).sum(-1)
         KK = K[:, :k, :k]
+        if a.tokens:
+            tok_Du[i, :, :k] = Du.cpu()
+            tok_uu[i] = uu.cpu()
         res = {"layer": l, "kind": stats[str(l)]["kind"],
                "collapse": cos_of(torch.ones(k, device=dev), Du, uu, KK),
                "fold": cos_of(wbar[:k], Du, uu, KK),
@@ -124,6 +132,9 @@ def main() -> int:
     per_set_avg = {s: {c: float(np.mean([r[c] for r in v])) for c in avg} for s, v in per_set.items()}
     for s, v in per_set_avg.items():
         print(f"  {s:13s}", {c: round(x, 4) for c, x in v.items()})
+    if a.tokens:
+        np.savez(a.tokens, K=K.cpu().numpy(), Du=tok_Du.numpy(), uu=tok_uu.numpy(), test=test.cpu().numpy(),
+                 sets=sets, layers=np.array(layers))
     if a.gram:
         np.savez(a.gram, **grams, wbar=wbar.cpu().numpy(), layers=np.array(layers))
     if a.out:
