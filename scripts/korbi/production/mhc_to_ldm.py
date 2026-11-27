@@ -81,6 +81,51 @@ def ldm_init(name: str, shape, std: float, lambda_init: float, gen) -> torch.Ten
     return torch.zeros(shape)  # biases, the gate heads (2 sigmoid(0) = 1), read_gain (the memory closed)
 
 
+def imitation_values(a, groups: int):
+    """The fitted fixed-address LDM of ldm_imitation_init.py (run ``a.imitate_run`` of ``a.imitate``) as per-site
+    targets: writes [(address [G, K], gate logit, forget logit)] (the embedding's, then one per layer) and reads
+    [(address [G, K], read gain)] (the first query, then each layer's following read; the last is the LM head's)."""
+    entry = json.loads(Path(a.imitate).read_text())[a.imitate_run]
+    p = {k: torch.tensor(v, dtype=torch.float64) for k, v in entry["params"].items()}
+    lam_min = entry.get("lambda_min", 0.0)
+    key = torch.nn.functional.normalize(p["key"], dim=-1)
+    q = torch.nn.functional.normalize(p["q"], dim=-1)
+    if a.duplicate:  # every slot twice: [k, k] / sqrt 2, function-preserving with exact keys
+        key = torch.cat([key, key], -1) / math.sqrt(2)
+        q = torch.cat([q, q], -1) / math.sqrt(2)
+    K = key.shape[-1]
+    w = 2 * torch.sigmoid(p["w"])
+    lam = lam_min + (1 - lam_min) * torch.sigmoid(p["f"])
+    logit = lambda x: math.log(x / (1 - x))  # noqa: E731
+    gen = torch.Generator().manual_seed(a.seed)
+    writes = [(key[t].expand(groups, K), logit(float(w[t]) / 2), logit(float(lam[t]))) for t in range(key.shape[0])]
+    reads = []
+    for t in range(q.shape[0]):  # symmetry breaking on the read side only (the read is linear)
+        qq = q[t].expand(groups, K) + a.query_noise * torch.randn(groups, K, generator=gen, dtype=torch.float64) / math.sqrt(K)
+        reads.append((torch.nn.functional.normalize(qq, dim=-1), float(p["s"][t])))
+    return K, writes, reads
+
+
+def imitated(rel: str, shape, w: torch.Tensor, value, kind: str, head_std: float, gen) -> torch.Tensor:
+    """One LDM tensor of an imitated site: the address network gives the fitted constant address / gate for every
+    token (w1 and the norm at Megatron's init, the heads at ``head_std`` -- tiny, nonzero for MuOwn's row
+    directions -- with the fitted values in their biases); a site without a fitted value (the LM head's read when
+    the fit had no final target) gets read gain 0."""
+    if rel in ("net.address.weight", "net.gate.weight"):
+        return torch.randn(shape, generator=gen) * head_std
+    if value is None:
+        return torch.zeros(shape) if rel == "read_gain" else w
+    if rel == "net.address.bias":
+        return value[0].reshape(-1).float()
+    if rel == "net.gate.bias":
+        return torch.full(shape, value[1] if kind == "write" else 0.0)
+    if rel == "forget_logit":
+        return torch.full(shape, value[2])
+    if rel == "read_gain":
+        return torch.full(shape, value[1])  # gate 2 sigmoid(0) = 1: gamma * gate = the fitted gain
+    return w
+
+
 def ldm_sites(smd) -> list[str]:
     """Every LDM site's module prefix (relative to decoder.): one per mHC mixer, plus the boundary's two."""
     sites = []
@@ -138,6 +183,20 @@ def derive(smd, read, a, args) -> tuple[dict, dict]:
     dtype = smd[f"{M}{mixers[0][1]}"].properties.dtype  # the saved (main) parameters' dtype
     gen = torch.Generator().manual_seed(a.seed)
     sites = ldm_sites(smd)
+    imitate = None
+    if getattr(a, "imitate", None):
+        K, writes, reads = imitation_values(a, groups)
+        if K != key_dim:
+            raise SystemExit(f"the imitation has key width {K}, the args {key_dim}")
+        write_sites = [x for x in sites if x.endswith(("write_site", "embed_write"))]
+        read_sites = [x for x in sites if x.endswith(("next_query", "first_query"))]
+        if len(writes) != len(write_sites) or len(reads) not in (len(read_sites), len(read_sites) - 1):
+            raise SystemExit(f"imitation: {len(writes)} writes / {len(reads)} reads for {len(write_sites)} / "
+                             f"{len(read_sites)} sites")
+        imitate = {**dict(zip(write_sites, writes)), **dict(zip(read_sites, reads))}
+        info["imitation"] = {"run": a.imitate_run, "key_dim": K, "duplicate": a.duplicate,
+                             "query_noise": a.query_noise, "head_std": a.head_std,
+                             "final_read": len(reads) == len(read_sites)}
     for site in sites:
         kind = "write" if site.endswith(("write_site", "embed_write")) else "read"
         for rel, shape in shapes[kind].items():
@@ -145,6 +204,8 @@ def derive(smd, read, a, args) -> tuple[dict, dict]:
             if M + name in smd:
                 raise SystemExit(f"{M + name} already exists: the source has LDM already")
             w = ldm_init(name, shape, std, args.depth_memory_lambda_init, gen)
+            if imitate is not None:
+                w = imitated(rel, shape, w, imitate.get(site), kind, a.head_std, gen)
             replace[M + name] = w.to(dtype)
             if is_muown(shape):
                 rows, cols = shape
@@ -167,7 +228,7 @@ def new_args(args, a):
     args.depth_memory = bool(a.ldm)
     if a.ldm:
         for k, v in (("depth_memory_impl", "cute"), ("depth_memory_unwind", True), ("depth_memory_groups", 16),
-                     ("depth_memory_key_dim", 8), ("depth_memory_hidden_dim", a.hidden_dim),
+                     ("depth_memory_key_dim", getattr(a, "key_dim", 8)), ("depth_memory_hidden_dim", a.hidden_dim),
                      ("depth_memory_storage_dtype", "float16"), ("depth_memory_checkpoint_interval", 16),
                      ("residual_mixer_lr_mult", 1.0)):
             setattr(args, k, v)
@@ -233,7 +294,20 @@ def main(argv=None) -> int:
     ap.add_argument("--hidden-dim", type=int, default=128, help="depth_memory_hidden_dim (ambitious_v4_ldm: 128)")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--dry-run", action="store_true")
-    return apply(ap.parse_args(argv))
+    ap.add_argument("--imitate", default=None,
+                    help="ldm_imitation_init.py json: the LDM sites imitate mHC (fitted fixed addresses) instead of "
+                         "starting closed (read gain 0); needs --ldm")
+    ap.add_argument("--imitate-run", default="K8_lam0.9_noise0.02", help="the run tag in the --imitate json")
+    ap.add_argument("--duplicate", action="store_true", help="key width x2, every slot twice (exact keys)")
+    ap.add_argument("--query-noise", type=float, default=0.0, help="per-group query noise (the read side only)")
+    ap.add_argument("--head-std", type=float, default=1e-6, help="address / gate head weights of imitated sites")
+    a = ap.parse_args(argv)
+    if a.imitate:
+        if not a.ldm:
+            raise SystemExit("--imitate needs --ldm")
+        entry = json.loads(Path(a.imitate).read_text())[a.imitate_run]
+        a.key_dim = entry["K"] * (2 if a.duplicate else 1)
+    return apply(a)
 
 
 def selftest() -> int:
@@ -308,6 +382,49 @@ def selftest() -> int:
                 assert torch.equal(back[f"{M}{mixer}.write_site.net.gate.weight"], torch.zeros(16, width))
             assert torch.equal(back[f"{M}ldm_stream_boundary.first_query.read_gain"], torch.zeros(16))
             assert args.depth_memory_hidden_dim == width and args.depth_memory_checkpoint_interval == 16
+        # --imitate: the fitted fixed addresses in the address heads' biases (4 writes: e + 3 mixers; reads: the
+        # first query + 3 following reads, the last one the LM head's -- dropped here to check the gain-0 fallback)
+        g = torch.Generator().manual_seed(5)
+        fit = {"K": 8, "lambda_min": 0.9, "params": {
+            "key": torch.randn(4, 8, generator=g).tolist(), "w": torch.randn(4, generator=g).tolist(),
+            "f": torch.randn(4, generator=g).tolist(), "q": torch.randn(3, 8, generator=g).tolist(),
+            "s": (3 * torch.randn(3, generator=g)).tolist()}}
+        Path(root, "fit.json").write_text(json.dumps({"run": fit}))
+        for dup in (False, True):
+            dst = os.path.join(root, f"imitate{int(dup)}", "iter_0000010")
+            ns = argparse.Namespace(src=src, dst=dst, ldm=True, hidden_dim=width, seed=1, dry_run=False,
+                                    imitate=os.path.join(root, "fit.json"), imitate_run="run", duplicate=dup,
+                                    query_noise=0.0, head_std=1e-6, key_dim=16 if dup else 8)
+            assert apply(ns) == 0
+            smd = FileSystemReader(dst).read_metadata().state_dict_metadata
+            tensors = [k for k in smd if hasattr(smd[k], "size")]
+            back = {k: torch.empty(tuple(smd[k].size), dtype=smd[k].properties.dtype) for k in tensors}
+            back["args"] = None
+            dcp.load(back, storage_reader=FileSystemReader(dst), no_dist=True)
+            K = 16 if dup else 8
+            assert back["args"].depth_memory_key_dim == K
+            P = {k: torch.tensor(v, dtype=torch.float64) for k, v in fit["params"].items()}
+            key = torch.nn.functional.normalize(P["key"], dim=-1)
+            q = torch.nn.functional.normalize(P["q"], dim=-1)
+            if dup:
+                key, q = torch.cat([key, key], -1) / math.sqrt(2), torch.cat([q, q], -1) / math.sqrt(2)
+            lam = 0.9 + 0.1 * torch.sigmoid(P["f"])
+            writes = ["ldm_stream_boundary.embed_write"] + [f"{m}.write_site" for m in mixers]
+            reads = ["ldm_stream_boundary.first_query"] + [f"{m}.next_query" for m in mixers]
+            for t, site in enumerate(writes):
+                assert torch.allclose(back[f"{M}{site}.net.address.bias"].double(), key[t].repeat(16)), site
+                assert torch.allclose(back[f"{M}{site}.forget_logit"].double(), torch.logit(lam[t]).expand(16),
+                                      atol=1e-5), site
+                w = 2 * torch.sigmoid(back[f"{M}{site}.net.gate.bias"].double())
+                assert torch.allclose(w, (2 * torch.sigmoid(P["w"][t])).expand(16), atol=1e-5), site
+                assert back[f"{M}{site}.net.address.weight"].abs().max() < 1e-4, site
+            for t, site in enumerate(reads):
+                gain = back[f"{M}{site}.read_gain"].double()
+                if t < 3:
+                    assert torch.allclose(back[f"{M}{site}.net.address.bias"].double(), q[t].repeat(16)), site
+                    assert torch.allclose(gain, P["s"][t].expand(16), atol=1e-5), site
+                else:
+                    assert torch.equal(gain, torch.zeros(16)), site  # no fitted final read: closed
     print("selftest passed")
     return 0
 
