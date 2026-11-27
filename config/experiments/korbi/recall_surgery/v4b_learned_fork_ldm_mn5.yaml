@@ -1,0 +1,54 @@
+# @package _global_
+# The bg_learned fork (the main run since 11-27) continued with Linear Depth Memory in place of mHC-4, from a
+# persistent save converted by scripts/korbi/production/mhc_to_ldm.py --ldm --imitate: the LDM sites start as the
+# fitted fixed-address imitation of mHC (ldm_imitation_init.py on the activations of the same save's HF export;
+# scripts/korbi/production/ldm_imitation_pipeline.sh), not closed (PR #82's read gain 0 = collapse, held-out
+# cosine of the layer inputs 0.67 vs 0.976). The V layers' g_v is folded into linear_proj, the per-stream Engram
+# gates average their outputs (Megatron 7abde2e8e), LDM with FP16 M and an M checkpoint every 16 edges (PR #82).
+#
+# The surgery writes straight into this run's tree (<base_output_dir>/ckpt/iter_<it>, .distcp hard-linked), so
+# load = the run's own ckpt from the first start on, as the fork. Not enqueued: switching the main run needs the
+# user's go (stop the fork at the persistent save aux.ldm_it, surgery, enqueue this; fallback: the fork resumes
+# from the same save).
+#
+#   ... --pool .../mn5_pool_p264 --config-name experiments/korbi/recall_surgery/v4b_learned_fork_ldm_mn5 \
+#       aux.ldm_it=68000 --yes
+defaults:
+  - v4b_learned_fork_bg_learned_mn5
+  - _self_
+
+aux:
+  # the fork's persistent save the LDM run starts from (the surgery's iteration)
+  ldm_it: 68000
+  # 8 (the fit's key width) or 16 (mhc_to_ldm --duplicate)
+  ldm_key_dim: 8
+
+backend:
+  env:
+    # the save path as the fork runs it (05dc0e6e9's layout cache is on by default in this Megatron)
+    MEGATRON_FSDP_SAVE_CACHE: "0"
+  megatron:
+    mhc: false
+    v_block_learnable_gate: false
+    depth_memory: true
+    depth_memory_impl: cute
+    depth_memory_unwind: true
+    depth_memory_groups: 16
+    depth_memory_key_dim: ${aux.ldm_key_dim}
+    depth_memory_hidden_dim: 128
+    depth_memory_storage_dtype: float16
+    depth_memory_checkpoint_interval: 16
+    # the LDM sites' lr (the authors: x1; mHC ran at 0.25)
+    residual_mixer_lr_mult: 1.0
+    # ldm/read_ratio, ldm/forget, ldm/grad_scale_log2, ldm/grad_nonfinite early on
+    arch_metrics_interval: 100
+
+job:
+  name: ambitious_v4b_learned_fork_ldm
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned/fork_ldm_${aux.ldm_it}
+  start_condition:
+    class_name: AndCondition
+    persistent_pass: true
+    conditions:
+      - class_name: FileExistsCondition
+        path: ${job.base_output_dir}/ckpt/latest_checkpointed_iteration.txt
