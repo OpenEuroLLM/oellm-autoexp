@@ -9,19 +9,28 @@
 #
 # Into a pool (docs/sub_slurm_jobs.md); account and qos must be the pool host's:
 #   python scripts/run_autoexp.py --no-monitor --pool <pool_dir> \
-#       --config-name experiments/post_training/launch_mn5 backend.config=configs/trl/<run>.yaml \
+#       --config-name experiments/post_training/launch_mn5 \
+#       backend.repo_dir=<your post-training checkout> backend.config=configs/trl/<run>.yaml \
 #       slurm.sbatch.account=<host account> slurm.sbatch.qos=<host qos>
 # As a job of its own:
 #   python scripts/run_autoexp.py --config-name experiments/post_training/launch_mn5 \
-#       backend.config=configs/trl/<run>.yaml
+#       backend.repo_dir=<your post-training checkout> backend.config=configs/trl/<run>.yaml
+# The README (post-training runs) explains every value.
 # Add --dry-run first: it does all checks of the prepare step and writes nothing into the run
 # directory.
 #
 # The shell needs the modules that `backend.python` was built with (`module load python`).
 #
-# `slurm.sbatch.nodes` and `slurm.sbatch.gpus_per_node` must be equal to slurm.num_nodes and
-# slurm.gpus_per_node of the post-training YAML, or the enqueue stops. The same applies to a
-# continued run and its frozen config.
+# THE SLURM SETTINGS COME FROM AUTOEXP, NOT FROM POST-TRAINING. The `slurm:` block of the
+# post-training YAML is for post-training's own submit.py. In a run that autoexp starts:
+#   * account, qos, partition, wall_time, cpus_per_task, mem, exclude, max_failures,
+#     signal_time_seconds and job_name of that block are NOT used. The values of this config
+#     apply (`slurm.sbatch.*` below and in config/slurm/marenostrum_post_training.yaml, and
+#     `job.state_events` for the restarts);
+#   * num_nodes and gpus_per_node must be equal to `slurm.sbatch.nodes` and
+#     `slurm.sbatch.gpus_per_node`, or the enqueue stops. The same applies to a continued run
+#     and its frozen config;
+#   * modules and module_purge are used: the launch script loads the modules.
 #
 # In a pool the run executes as the HOST OWNER's unix user: the run directory, the HF cache, the
 # container, the model and the datasets must be readable (the run directory writable) for it.
@@ -37,9 +46,11 @@ defaults:
   - _self_
 
 backend:
-  repo_dir: /gpfs/scratch/ehpc533/users/frei322049/post-training
+  # repo_dir: YOUR post-training checkout, on the command line (backend.repo_dir=...). No default:
+  #           the run uses the code of that checkout.
+  # config:   the post-training YAML of the experiment, on the command line (backend.config=...)
+  # The shared post-training environment of ehpc533; override it if you use a different one.
   python: /gpfs/projects/ehpc533/environments/post-training-venv/bin/python
-  # config: the post-training YAML of the experiment, on the command line (backend.config=...)
 
 job:
   # the same name = the same job; the name is the run name of the post-training YAML

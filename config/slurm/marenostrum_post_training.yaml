@@ -10,6 +10,10 @@
 #     would change the environment the training runs in. Hydra merges `env` key by key, so an
 #     inherited key cannot be removed again; the list below is all there is.
 # One srun task per node (the launch script starts the 4 ranks of its node), as the Megatron jobs.
+#
+# These are the Slurm settings of a post-training run that autoexp starts. The `slurm:` block of
+# the post-training YAML is not used for it (except num_nodes / gpus_per_node, which must be
+# equal to the values here, and modules).
 template_path: ${oc.env:PWD,.}/templates/base.sbatch
 script_dir: ${job.base_output_dir}
 log_dir: ${job.base_output_dir}
