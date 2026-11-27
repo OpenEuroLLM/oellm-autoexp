@@ -38,6 +38,9 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--ridge", type=float, default=1e-4, help="relative ridge on the least-squares fit")
+    ap.add_argument("--gram", type=Path, default=None,
+                    help="also write the per-layer normal equations (fit / held-out halves) to this .npz: the input "
+                         "of a rank-constrained LDM fit without the dump")
     a = ap.parse_args()
     dev = a.device
     meta = json.loads((a.dump / "meta.json").read_text())
@@ -71,6 +74,7 @@ def main() -> int:
         return num / den
 
     rows = []
+    grams = {}
     wbar = torch.tensor([1.0] + H, device=dev)
     for i, l in enumerate(layers):
         k = i + 1                                          # e, delta_0 .. delta_{i-1}
@@ -84,9 +88,16 @@ def main() -> int:
                "mean_stream": torch.nn.functional.cosine_similarity(u, M[i], dim=-1)}
         # static_best: min_b sum_t |u_t - D_t b|^2 / |u_t|^2 on the fit half
         w = (~test).float() / uu
-        G = torch.einsum("t,tjk->jk", w, KK).double()
+        G_raw = torch.einsum("t,tjk->jk", w, KK).double()
         bvec = torch.einsum("t,tj->j", w, Du).double()
-        G = G + a.ridge * G.diagonal().mean() * torch.eye(k, device=dev, dtype=G.dtype)
+        G = G_raw + a.ridge * G_raw.diagonal().mean() * torch.eye(k, device=dev, dtype=G_raw.dtype)
+        if a.gram:
+            wt = test.float() / uu
+            grams[f"G_fit_{l}"] = G_raw.cpu().numpy()
+            grams[f"b_fit_{l}"] = bvec.cpu().numpy()
+            grams[f"G_test_{l}"] = torch.einsum("t,tjk->jk", wt, KK).double().cpu().numpy()
+            grams[f"b_test_{l}"] = torch.einsum("t,tj->j", wt, Du).double().cpu().numpy()
+            grams[f"n_fit_{l}"] = np.array([float((~test).sum()), float(test.sum())])
         beta = torch.linalg.solve(G, bvec).float()
         res["static_best"] = cos_of(beta, Du, uu, KK)
         res["beta"] = beta.tolist()
@@ -113,6 +124,8 @@ def main() -> int:
     per_set_avg = {s: {c: float(np.mean([r[c] for r in v])) for c in avg} for s, v in per_set.items()}
     for s, v in per_set_avg.items():
         print(f"  {s:13s}", {c: round(x, 4) for c, x in v.items()})
+    if a.gram:
+        np.savez(a.gram, **grams, wbar=wbar.cpu().numpy(), layers=np.array(layers))
     if a.out:
         a.out.write_text(json.dumps({"held_out": held, "mean": avg, "per_set": per_set_avg,
                                      "beta": {r["layer"]: r["beta"] for r in rows}, "tokens": T}, indent=1))

@@ -1,7 +1,8 @@
 # @package _global_
 # The fit of mhc_coeff_dump's samples as a 1-node job (the 7 GB dump stays on GPFS): how well collapse, the
 # write fold, the per-token mean stream and the best fixed LDM read reproduce mHC-4's layer inputs
-# (scripts/korbi/production/mhc_imitation_fit.py). Output <aux.out>/fit.json and the job log.
+# (scripts/korbi/production/mhc_imitation_fit.py), then the LDM with fixed addresses fitted to them
+# (ldm_imitation_init.py). Output <aux.out>/{fit.json,gram.npz,ldm_init.json} and the job log.
 #
 #   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
 #       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
@@ -23,11 +24,14 @@ aux:
   docs: 16
   seq_len: 4096
   samples: 32
+  # the rank-constrained LDM fit (ldm_imitation_init.py): key dims and Adam steps
+  keys: "8,16,32"
+  steps: 3000
 
 backend:
   # literal values, not shell variables: the job's env variables arrived empty in the container
   # ("--docs: invalid int value: ''", 2026-11-27, as in engram_gate_fixed_query_mn5)
-  command: python3 scripts/korbi/production/mhc_imitation_fit.py --dump ${aux.out} --out ${aux.out}/fit.json --device cuda
+  command: python3 scripts/korbi/production/mhc_imitation_fit.py --dump ${aux.out} --out ${aux.out}/fit.json --device cuda --gram ${aux.out}/gram.npz && python3 scripts/korbi/production/ldm_imitation_init.py --gram ${aux.out}/gram.npz --keys ${aux.keys} --steps ${aux.steps} --out ${aux.out}/ldm_init.json
   env:
     PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_ep:${aux.hybrid_env}/pylibs_hfx"
     OELLM_HF_IMPL: fast
@@ -47,7 +51,7 @@ job:
   name: mhc_imitation_fit_${aux.export}
   base_output_dir: ${aux.out}/fit_logs
   est_steps: 1
-  est_step_time_s: 900
+  est_step_time_s: 2400
   metadata:
     # above the eval agent's 1-node jobs (60), below the main run (150)
     pool_priority: 95
@@ -64,7 +68,7 @@ job:
 slurm:
   sbatch:
     nodes: 1
-    time: "00:45:00"
+    time: "01:30:00"
     # p264's hosts: account cns144, qos acc_xehpc
     account: cns144
     qos: acc_xehpc
