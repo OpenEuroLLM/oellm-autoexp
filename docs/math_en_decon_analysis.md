@@ -32,6 +32,20 @@ Two traps were hit and fixed, both worth remembering:
 
 ## Result 1 — the residue is question-only
 
+Per segment is the cleaner instrument (each reference segment takes its best document); per pair is the
+same data weighted by how many documents echo a segment.
+
+| source | kind | segments | any hit | median coverage | cov ≥ 0.95 |
+|---|---|---|---|---|---|
+| gsm8k | **question only** | 1069 | **1065 (99.6 %)** | **1.000** | 1038 (**97.1 %**) |
+| gsm8k | question + solution | 1316 | 166 (12.6 %) | 0.000 | 95 (7.2 %) |
+| MATH500 | question | 484 | 287 (59.3 %) | 0.764 | 227 (46.9 %) |
+| MATH500 | solution (`\boxed{}`) | 496 | 120 (24.2 %) | 0.000 | 11 (2.2 %) |
+| mgsm | question, **en** | 12 | **11 (92 %)** | 1.000 | 11 |
+| mgsm | question, es/fr/de | 60 | **0 (0 %)** | 0.000 | 0 |
+
+Pair-level view of the same hits (documents per segment):
+
 | source | kind | pairs | cov ≥ 0.95 | cov < 0.4 |
 |---|---|---|---|---|
 | gsm8k | question only | 4004 | **3117 (77.8 %)** | 160 (4.0 %) |
@@ -41,9 +55,11 @@ Two traps were hit and fixed, both worth remembering:
 | mgsm | question, **en** | 33 | 30 (90.9 %) | 0 |
 | mgsm | question, es/fr/de | **0** | — | — |
 
-English math **problems** sit in the training tree verbatim; worked **solutions** do not (0.1–5.4 %
-full coverage against 77.8 % for question-only segments). The hypothesis "overlaps are questions
-without answers" describes the residue correctly.
+English math **problems** sit in the training tree verbatim; worked **solutions** do not: 99.6 % of
+GSM8K question-only segments are matched at median coverage 1.000, against 12.6 % of the
+solution-bearing segments at median coverage 0.000 (7.2 % full). MATH500 repeats the pattern
+(59.3 % vs 24.2 % any-hit, median 0.764 vs 0.000). The hypothesis "overlaps are questions without
+answers" describes the residue correctly, and at dataset scale rather than anecdotally.
 
 The asymmetry also runs opposite to the contamination story: English MGSM questions are present
 (11 of 12 found verbatim), the Spanish/French/German translations have **no hits at any coverage**,
