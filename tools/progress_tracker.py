@@ -92,6 +92,9 @@ DEFAULT_FOREIGN_MACHINE = {"LEO": "MN5", "MN5": "LEO", "LUMI": "LEO"}
 # Model-size label in run names, e.g. qwen3_dense_0.1B_ne_lr... -> "0.1B_ne"
 RE_SIZE = re.compile(r"(?:^|_)(\d+(?:\.\d+)?B_ne)(?:_|$)")
 
+# First line the launcher writes to stdout: "Launching job <slurm job name>"
+RE_LAUNCH = re.compile(r"^Launching job (\S+)", re.MULTILINE)
+
 # Model parameter count lines
 RE_TOTAL_PARAMS_B = re.compile(r"\[default0\]:Total number of parameters in billions:\s+([\d.]+)")
 RE_TRANSFORMER_PARAMS_B = re.compile(
@@ -792,11 +795,16 @@ def parse_stdout(log_path: Path) -> dict:
         "data_mix_path": None,
         "data_path": None,
         "output_path": None,
+        "launch_name": None,
     }
     if not log_path.is_file():
         return result
 
     text = log_path.read_text(errors="replace")
+
+    # Slurm job name the log itself was written under (cross-checked against sacct)
+    m = RE_LAUNCH.search(text, 0, 4096)
+    result["launch_name"] = m.group(1) if m else None
 
     # --- Training args section ---
     arg_map: dict[str, str] = {}
@@ -816,6 +824,9 @@ def parse_stdout(log_path: Path) -> dict:
             return float(v) if v is not None else None
         except (ValueError, TypeError):
             return None
+
+    # Megatron printed its arguments: the job got as far as starting training
+    result["has_args"] = bool(arg_map)
 
     result["global_batch_size"] = _int("global_batch_size")
     result["lr"] = _float("lr")
@@ -977,7 +988,7 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
                 "sacct",
                 "-j",
                 ",".join(job_ids),
-                "--format=JobID,State,Elapsed,AllocTRES%80,Start,End,User",
+                "--format=JobID,State,Elapsed,AllocTRES%80,Start,End,User,JobName",
                 # Every instance of requeued jobs, merged per ID below
                 # (gpu_hours.merge_requeued explains why).
                 "--duplicates",
@@ -993,13 +1004,18 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return {}
 
-    info: dict[str, dict] = {}
+    # Instances per job ID, grouped by job name.  A requeued job keeps its name,
+    # so same-name instances are merged; Slurm can also reuse an ID for an
+    # unrelated job, which shows up under another name and must stay separate.
+    groups: dict[str, dict[str, dict]] = {}
+    latest: dict[str, str] = {}
     for line in result.stdout.splitlines():
         parts = line.split("|")
         if len(parts) < 6:
             continue
         jid_field, state, elapsed, alloc_tres, start, end = parts[:6]
         user = parts[6].strip() if len(parts) > 6 else ""
+        name = "|".join(parts[7:]).strip()
         if "." in jid_field:
             continue
         gpus = 0
@@ -1021,10 +1037,38 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
             # "None"/"Unknown" for instances that never started
             "start_str": start.strip() if _start_ts is not None else "",
             "user": user,
+            "name": name,
         }
         jid = jid_field.strip()
-        info[jid] = _gpu_merge_requeued(info[jid], rec) if jid in info else rec
-    return info
+        g = groups.setdefault(jid, {})
+        g[name] = _gpu_merge_requeued(g[name], rec) if name in g else rec
+        latest[jid] = name
+    # Top level: the latest job under each ID; "by_name" keeps every job, for
+    # sacct_for_run() to pick the one that belongs to a given run.
+    return {jid: {**g[latest[jid]], "by_name": g} for jid, g in groups.items()}
+
+
+def job_name_matches(name: str | None, run_name: str) -> bool:
+    """True if Slurm job *name* belongs to *run_name*: the run name itself, or
+    the run name plus the ``_<index>`` suffix some launchers append."""
+    if not name:
+        return False
+    return name == run_name or re.fullmatch(re.escape(run_name) + r"_\d+", name) is not None
+
+
+def sacct_for_run(sacct_info: dict[str, dict], job_id: str, run_name: str) -> dict:
+    """sacct record of *job_id* as seen from *run_name*'s directory.
+
+    When Slurm reused the ID, prefer the job whose name belongs to the run;
+    otherwise return the latest job under that ID.
+    """
+    entry = sacct_info.get(job_id)
+    if not entry:
+        return {}
+    for name, rec in entry.get("by_name", {}).items():
+        if job_name_matches(name, run_name):
+            return rec
+    return entry
 
 
 def gpu_hours_from_timestamps(
@@ -2003,6 +2047,11 @@ def main() -> None:
             "sacct returned nothing for this machine's jobs; --accumulate must run "
             f"on {args.machine} itself (login node), not off-cluster."
         )
+    # Each run's view of sacct: a reused job ID resolves to the job named after the run.
+    run_sacct: dict[str, dict[str, dict]] = {
+        rn: {jid: sacct_for_run(sacct_info, jid, rn) for jid in jids}
+        for rn, jids in run_job_map.items()
+    }
 
     # If sacct is unavailable and --csv points to an existing file, read back the
     # GPU-h column from that file so the values are preserved when it is rewritten.
@@ -2027,7 +2076,7 @@ def main() -> None:
         sessions = run_monitor_sessions[run_name]
         if sessions is not None:
             run_job_monitor_events[run_name] = map_events_to_jobs(
-                run_job_map.get(run_name, []), sacct_info, sessions
+                run_job_map.get(run_name, []), run_sacct.get(run_name, {}), sessions
             )
 
     # ── Collect rows ────────────────────────────────────────────────────────
@@ -2184,7 +2233,7 @@ def main() -> None:
             stderr_data = parse_stderr(stderr_log)
 
             # GPU hours: prefer sacct (authoritative), then external CSV
-            sacct_entry = sacct_info.get(job_id, {})
+            sacct_entry = run_sacct[run_name].get(job_id, {})
             sacct_state = sacct_entry.get("state", "")
             sacct_elapsed = sacct_entry.get("elapsed", "")
             gpu_hours: float | None = None
@@ -2208,14 +2257,32 @@ def main() -> None:
             # Cross-cluster collision detection:
             # MN5 and Leonardo share a numeric Slurm job ID space.  A job ID from
             # MN5 that also exists on Leonardo as a different job returns wrong
-            # timestamps and GPU counts.  Two heuristics:
+            # timestamps and GPU counts.  The job name decides first:
+            #   - sacct's job name belongs to this run → a local job of the run,
+            #     whatever its GPU count (resumes may use fewer nodes than
+            #     job.sbatch declares);
+            #   - the log was launched under this run's name but sacct reports
+            #     another name → collision.
+            # Otherwise (no name evidence) fall back to two GPU heuristics:
             #   1. sacct reports 0 GPUs but sbatch declares GPUs → CPU-only collision
             #   2. sacct reports GPUs but fewer than half of what sbatch declares →
             #      a different user's small job collided (e.g. 1 GPU vs expected 32)
             _sacct_gpus = sacct_entry.get("gpus", 0)
-            _is_collision = bool(sacct_elapsed) and (
-                (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
-                or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
+            _sacct_name = sacct_entry.get("name", "")
+            _name_is_run = job_name_matches(_sacct_name, run_name)
+            _name_conflict = (
+                bool(_sacct_name)
+                and not _name_is_run
+                and job_name_matches(stdout_data.get("launch_name"), run_name)
+            )
+            _is_collision = (
+                bool(sacct_elapsed)
+                and not _name_is_run
+                and (
+                    _name_conflict
+                    or (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
+                    or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
+                )
             )
             cluster = ""
             source = "local"
@@ -2233,9 +2300,12 @@ def main() -> None:
                 # sacct unavailable altogether: every job is assumed local
                 # (GPU-h, if any, came from the previous CSV of this machine).
                 cluster = args.machine
-            elif has_log:
-                # sacct works but has never seen this job: its log was synced
-                # here from the cluster it actually ran on.
+            else:
+                # sacct works but has never seen this job: its log or its
+                # config-{id}.yaml was synced here from the cluster it was
+                # submitted on.  (A local submission is known to sacct even
+                # while pending; an array task with this raw ID is listed under
+                # <array>_<task>, so it does not count as known.)
                 cluster = _foreign_cluster
                 source = "inferred"
 
@@ -2407,6 +2477,12 @@ def main() -> None:
                     "error_desc": error_desc,
                     "has_log": has_log,
                     "is_collision": _is_collision,
+                    "log_has_args": bool(stdout_data.get("has_args")),
+                    # Local job that ended without ever starting (sacct has no
+                    # start time and the job is no longer pending)
+                    "never_started": bool(sacct_entry)
+                    and sacct_entry.get("start_ts") is None
+                    and not sacct_state.startswith(("PENDING", "REQUEUED")),
                 }
             )
 
@@ -2480,13 +2556,18 @@ def main() -> None:
 
     # Drop config-only rows that never produced a log and carry no useful status:
     # - CANCELLED stubs with no log are always noise.
-    # - Collision-detected rows with no log have an unreliable status (the sacct
-    #   data belongs to a different job on the local cluster); drop them too.
-    _kept_rows = [
-        r
-        for r in rows
-        if r.get("has_log") or (r["status_word"] != "CANCELLED" and not r.get("is_collision"))
-    ]
+    # - Collision-detected rows have an unreliable status (the sacct data belongs
+    #   to a different job on the local cluster); keep them only when the synced
+    #   log itself shows a training run.  The cluster the job ran on reports it.
+    # - Jobs that ended without ever starting (no log, no sacct start) ran nothing.
+    def _keep_row(r: dict[str, Any]) -> bool:
+        if r.get("is_collision"):
+            return bool(r.get("has_log") and r.get("log_has_args"))
+        if r.get("has_log"):
+            return True
+        return r["status_word"] != "CANCELLED" and not r.get("never_started")
+
+    _kept_rows = [r for r in rows if _keep_row(r)]
     # A run whose every job was dropped above must not vanish: the CSV (and the
     # Markdown rendered from it) only knows runs that have a row.  Keep one
     # job-less CANCELLED placeholder for it instead.
