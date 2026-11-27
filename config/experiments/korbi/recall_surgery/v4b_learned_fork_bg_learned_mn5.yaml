@@ -28,6 +28,9 @@ aux:
 backend:
   env:
     CUDA_COREDUMP_FILE: ${job.base_output_dir}/coredumps/core_%h_%p.nvcu
+    # on an abort (a CUDA fault's core dump ends in SIGABRT) every rank prints its Python stack: which module /
+    # phase was launching kernels (2026-11-27: an MMU fault in a bf16 abs kernel left no host-side trace)
+    PYTHONFAULTHANDLER: "1"
   megatron:
     # as the main run: the run's own ckpt and the newer rolling save in ckpt_rolling
     load: ${job.base_output_dir}/ckpt
