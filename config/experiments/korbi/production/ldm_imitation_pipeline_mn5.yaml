@@ -1,0 +1,75 @@
+# @package _global_
+# The mHC-4 -> LDM imitation of one HF export as a 1-node job (p264 host011's spare nodes): activation dump, fit,
+# fixed-address LDM fits and the step-0 loss of the converted model (scripts/korbi/production/
+# ldm_imitation_pipeline.sh; every stage skipped when its output exists). Output <aux.out>/: layer_*.npz, fit.json,
+# gram.npz, tokens.npz, ldm_init.json, eval.json.
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/ldm_imitation_pipeline_mn5 --yes
+defaults:
+  - /experiments/base
+  - /backend: bash
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  # the bg_learned fork (the main run since 11-27): its persistent save's export
+  export: ambitious_v4b_fork_bg_fp8_66000
+  hf_exports: /gpfs/scratch/ehpc533/hybrid_nucleus/hf_exports
+  out: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ldm_imitation/${aux.export}
+  runs: K8:0:0,K8:0.9:0,K8:0.95:0,K8:0.9:0.02
+  variants: mhc,collapse,K8_lam0_noise0,K8_lam0.9_noise0,K8_lam0.9_noise0.02,K8_lam0.9_noise0.02+q0.05,K8_lam0.9_noise0.02+dup+q0.05
+  hybrid_env: /gpfs/projects/ehpc533/users/korbip/hybrid_v019
+  sif: ${aux.hybrid_env}/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+  docs: 16
+  seq_len: 4096
+  samples: 32
+
+backend:
+  # literal values, not shell variables: the job's env variables arrived empty in the container
+  command: bash scripts/korbi/production/ldm_imitation_pipeline.sh ${aux.hf_exports}/${aux.export} ${aux.out} ${aux.runs} ${aux.variants}
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_ep:${aux.hybrid_env}/pylibs_hfx"
+    OELLM_HF_IMPL: fast
+    OELLM_HF_MOE: fused
+    OELLM_HF_ENGRAM_UVA: "1"
+    OELLM_HF_GRAD: "0"
+    HF_DATASETS_OFFLINE: "1"
+    HF_HUB_OFFLINE: "1"
+    HOME: /tmp
+    TRITON_CACHE_DIR: /tmp/triton
+    TORCHINDUCTOR_CACHE_DIR: /tmp/inductor
+
+container:
+  image: ${aux.sif}
+
+job:
+  name: ldm_imitation_${aux.export}
+  base_output_dir: ${aux.out}/logs
+  est_steps: 1
+  est_step_time_s: 6000
+  metadata:
+    # above the eval agent's 1-node jobs (60), below the main run (150)
+    pool_priority: 95
+    pool_use_excluded_nodes: false
+    pool_singleton: null
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: timeout
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "03:00:00"
+    # p264's hosts: account cns144, qos acc_xehpc
+    account: cns144
+    qos: acc_xehpc
+
+stage: test
