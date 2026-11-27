@@ -1,0 +1,62 @@
+# Knowledge + multilingual subset for the Engram gate trial (docs/engram_main_run_trial_plan.md §9):
+# the rows where the Engram claim lives. The recall suite (config/evals/recall_pair_mn5.yaml) holds
+# no factual-knowledge row at all and one multilingual row (belebele), so it can only show collateral
+# damage; these rows test the benefit.
+#
+#   $R/autoexp_env/bin/python scripts/evals/launch.py config/evals/knowledge_ml_mn5.yaml \
+#       --set export.step=66000 --set export.name=ambitious_v4b_fork_bg_fp8_66000 \
+#       --set export.run_dir=<fork run dir> --set export.config=<fork current config> \
+#       --set lm_eval.model_code.moe_fp8_direct=true \
+#       --set paths.pool=/gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264
+#
+# 27 rows, one harness (lm-eval-harness): multilingual knowledge MC (include_base_44, global_mmlu_full),
+# multilingual topic classification (sib200), multilingual math (global_mgsm, mgsm_native_cot).
+# The step mismatch fork@66k vs main@64k is a stated confound; run both arms so the rows match.
+export:
+  model: ambitious_v4_hd256
+  expert_dtype: fp8
+  exporter: parallel
+  max_positions: 100000000
+
+rows:
+  harnesses: [lm-eval-harness]
+  names:
+    # multilingual academic knowledge (21 European languages in the suite; 6 chosen, incl. Greek script)
+    - vllm/include_base_44_german/0
+    - vllm/include_base_44_french/0
+    - vllm/include_base_44_spanish/0
+    - vllm/include_base_44_dutch/0
+    - vllm/include_base_44_polish/0
+    - vllm/include_base_44_greek/0
+    # multilingual knowledge MC
+    - vllm/global_mmlu_full_en/5
+    - vllm/global_mmlu_full_de/5
+    - vllm/global_mmlu_full_fr/5
+    - vllm/global_mmlu_full_es/5
+    - vllm/global_mmlu_full_it/5
+    - vllm/global_mmlu_full_nl/5
+    - vllm/global_mmlu_full_pl/5
+    - vllm/global_mmlu_full_tr/5
+    # multilingual topic classification
+    - vllm/sib200_eng_Latn/0
+    - vllm/sib200_deu_Latn/0
+    - vllm/sib200_fra_Latn/0
+    - vllm/sib200_spa_Latn/0
+    - vllm/sib200_ell_Grek/0
+    - vllm/sib200_tur_Latn/0
+    - vllm/sib200_pol_Latn/0
+    - vllm/sib200_ukr_Cyrl/0
+    # multilingual math
+    - vllm/global_mgsm_en/5
+    - vllm/global_mgsm_es/5
+    - vllm/global_mgsm_de/5
+    - vllm/global_mgsm_fr/5
+    - vllm/mgsm_native_cot_en/5
+    - vllm/mgsm_native_cot_es/5
+
+lm_eval:
+  workers: 10
+  split_s: 300
+  max_parts: 8
+  engine: {tp: 1, dp: 4, expert_parallel: true, max_num_seqs: 256, request_batch_size: 256}
+  job: {priority: 60}
