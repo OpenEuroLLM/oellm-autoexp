@@ -39,6 +39,11 @@ backend:
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
     # rolling saves every 100 (the main run: 50; user 2026-11-26: 100 saves a bit of time)
     non_persistent_save_interval: 100
+    # host GC + malloc_trim before validation only (user 2026-11-27): before every save it cost 4.5 s of the
+    # synchronous part and freed nothing (0 objects, RSS 72.7 -> 72.7 GB at 65,900). Watch the 1000-step saves:
+    # the 57k / 59k host-RAM OOMs hit at the save right after validation, and this GC now runs before validation
+    gc_before_save: false
+    gc_before_val: true
     engram_branch_gates: true
     engram_branch_query: learned
     engram_gate_logit_scale: true
