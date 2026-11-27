@@ -223,6 +223,16 @@ class PostTrainingBackend(BaseBackend):
             *(["--check"] if check_only else []),
             *[str(item) for item in cfg.overrides],
         ]
+        # The prepare command prints nothing until it ends, and a new run takes minutes on a
+        # parallel file system (check of the model and the datasets, copy of the code).
+        if check_only:
+            LOGGER.info("post-training: checking the run of %s (dry run) ...", cfg.config)
+        else:
+            LOGGER.info(
+                "post-training: preparing the run directory of %s; a new run can take some "
+                "minutes ...",
+                cfg.config,
+            )
         done = subprocess.run(
             argv, cwd=cfg.repo_dir, env=env, capture_output=True, text=True, check=False
         )
