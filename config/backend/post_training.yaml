@@ -1,0 +1,28 @@
+# The post-training backend (https://github.com/OpenEuroLLM/post-training, SFT / DPO with TRL);
+# see oellm_autoexp/backends/post_training_backend.py.
+#
+# The post-training YAML (`config`) describes the experiment: model, data, hyperparameters, run
+# name and output directory. This group holds only the link to it. On enqueue the backend calls
+# post-training's `scripts/prepare_run.py` with `python`, in `repo_dir`; the job then runs
+# `bash <run_dir>/slurm/launch.sh`, one task for each node.
+class_name: PostTrainingBackend
+
+# Mandatory, and explicit on purpose (no default, no environment variable):
+repo_dir: ???   # the post-training checkout
+python: ???     # the interpreter of the post-training environment, <venv>/bin/python
+config: ???     # the post-training YAML, absolute or relative to repo_dir
+
+# post-training overrides ("key=value"), for example ["training.learning_rate=1e-5"]. Not the run
+# name, the paths, or the node and GPU counts: those have one source each (see below).
+overrides: []
+
+# Derived, do not override.
+#   * the world size comes from slurm.sbatch; a different value in the post-training YAML stops
+#     the enqueue (gradient accumulation and checkpoints are valid for one world size only);
+#   * the run directory comes from the post-training YAML (paths.output_base + run_name).
+num_nodes: ${slurm.sbatch.nodes}
+gpus_per_node: ${slurm.sbatch.gpus_per_node}
+run_dir: ${post_training.run_dir:${backend.repo_dir},${backend.config}}
+
+# The launch script sets its own environment (frozen cluster env file, NCCL, OMP).
+env: {}

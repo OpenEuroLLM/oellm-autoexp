@@ -35,6 +35,7 @@ import oellm_autoexp.postprocess.oellm_eval  # noqa  - register
 import oellm_autoexp.backends.titan_backend  # noqa  - register
 import oellm_autoexp.backends.oellm_eval_backend  # noqa  - register
 import oellm_autoexp.backends.megatron_bridge_backend  # noqa  - register
+import oellm_autoexp.backends.post_training_backend  # noqa  - register
 from oellm_autoexp.utils.dry_run import dry_run_path
 from oellm_autoexp.config.schema import (
     RootConfig,

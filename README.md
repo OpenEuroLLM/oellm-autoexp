@@ -221,6 +221,31 @@ python scripts/pool_ctl.py <pool_dir> status | cancel <job> | preempt <run> | se
 * Hands-on tasks against a local fake SLURM:
   [`docs/sub_slurm_jobs_tutorial.md`](docs/sub_slurm_jobs_tutorial.md)
 
+### post-training runs (SFT / DPO with TRL)
+The `post_training` backend runs an experiment of the
+[post-training](https://github.com/OpenEuroLLM/post-training) repository, in a pool or as a job
+of its own. post-training keeps its own YAML file, which describes the experiment (model, data,
+hyperparameters, run name, output directory). The autoexp config holds only the Slurm settings,
+the restart rules and the link to that file:
+
+```bash
+module load python          # the modules that backend.python was built with
+python scripts/run_autoexp.py --no-monitor --pool <pool_dir> \
+    --config-name experiments/post_training/launch_mn5 backend.config=configs/trl/<run>.yaml \
+    slurm.sbatch.account=<host account> slurm.sbatch.qos=<host qos>      # add --dry-run first
+```
+
+* On enqueue, the backend calls `scripts/prepare_run.py` of the post-training checkout
+  (`backend.repo_dir`) with the interpreter of the post-training environment (`backend.python`).
+  A new run gets its run directory (frozen config and code); a run that exists is continued from
+  its last checkpoint. The autoexp environment needs no post-training package.
+* The job name and the log directory (`<run_dir>/autoexp`) come from the post-training YAML.
+* `slurm.sbatch.nodes` and `slurm.sbatch.gpus_per_node` must be equal to `slurm.num_nodes` and
+  `slurm.gpus_per_node` of the post-training YAML, or the enqueue stops.
+* `--dry-run` does all checks of the prepare command and writes nothing into the run directory.
+* Other keys of the post-training config can be changed for a new run with
+  `'backend.overrides=["training.learning_rate=1e-5"]'`.
+
 ### Monitoring sessions
 - Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:
 ```bash

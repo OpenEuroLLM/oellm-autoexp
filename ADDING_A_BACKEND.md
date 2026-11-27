@@ -15,6 +15,8 @@ Existing backends live in `oellm_autoexp/backends/` and are good references:
 - `titan_backend.py` — TorchTitan training (emits a TOML config file)
 - `oellm_eval_backend.py` — evaluation by way of `oellm-eval schedule` (compact, good template)
 - `megatron_bridge_backend.py` — checkpoint conversion
+- `post_training_backend.py` — SFT / DPO of the post-training repository (calls that repository's
+  own prepare command in a subprocess, and reads two values of its config with a resolver)
 - `base.py::NullBackend` — minimal echo backend for tests
 
 ## How it fits together
