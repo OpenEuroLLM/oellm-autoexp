@@ -8,6 +8,7 @@ any candidate built from {e, delta_0 .. delta_{l-1}} can be compared (the cosine
   collapse      e + sum_j delta_j                      PR #82's conversion (every write weight 1)
   fold          e + sum_j wbar_j delta_j               the same with each layer's all-token mean write folded in
   mean_stream   mean_m X_l (per token)                  the per-token write fold (what the LM head reads)
+  (the LM head's input, the mean of the last layer's output streams, is one more target when the dump has it)
   static_best   e*b_e + sum_j b_{l,j} delta_j          the best fixed coefficients per layer (least squares in
                                                         activation space, fitted on half the sequences, scored
                                                         on the other half): the ceiling of any LDM init with
@@ -54,6 +55,7 @@ def main() -> int:
     sets = np.array(meta["sets"])[seq_of]
 
     D, U, M, H = [], [], [], []
+    final = None
     for l in layers:
         z = np.load(a.dump / f"layer_{l:03d}.npz")
         X = bf16(z["streams"]).to(dev).float()            # [T, n, h]
@@ -64,7 +66,13 @@ def main() -> int:
         M.append(X.mean(-2))
         D.append(bf16(z["delta"]).to(dev).float())         # delta_l
         H.append(float(np.mean(stats[str(l)]["h_post_mean"])))
+        if "final_streams" in z.files:                     # the LM head's input: the mean of the output streams
+            final = bf16(z["final_streams"]).to(dev).float().mean(-2)
     D = torch.stack(D, 1)                                  # [T, L + 1, h]: e, delta_0 ..
+    # the targets: every layer's input, then (if dumped) the LM head's input over all L + 1 basis vectors
+    targets = [(l, stats[str(l)]["kind"], U[i], M[i], i + 1) for i, l in enumerate(layers)]
+    if final is not None:
+        targets.append((layers[-1] + 1, "final", final, final, len(layers) + 1))
     T, B, h = D.shape
     K = torch.einsum("tjh,tkh->tjk", D, D)                 # per-token Gram of the basis
     print(f"{T} tokens, {len(layers)} layers, hidden {h}", flush=True)
@@ -78,22 +86,20 @@ def main() -> int:
 
     rows = []
     grams = {}
-    tok_Du = torch.zeros(len(layers), T, B) if a.tokens else None
-    tok_uu = torch.zeros(len(layers), T) if a.tokens else None
+    tok_Du = torch.zeros(len(targets), T, B) if a.tokens else None
+    tok_uu = torch.zeros(len(targets), T) if a.tokens else None
     wbar = torch.tensor([1.0] + H, device=dev)
-    for i, l in enumerate(layers):
-        k = i + 1                                          # e, delta_0 .. delta_{i-1}
-        u = U[i]
+    for i, (l, kind, u, m_l, k) in enumerate(targets):   # k basis vectors: e, delta_0 .. delta_{k-2}
         Du = torch.einsum("tjh,th->tj", D[:, :k], u)
         uu = (u * u).sum(-1)
         KK = K[:, :k, :k]
         if a.tokens:
             tok_Du[i, :, :k] = Du.cpu()
             tok_uu[i] = uu.cpu()
-        res = {"layer": l, "kind": stats[str(l)]["kind"],
+        res = {"layer": l, "kind": kind,
                "collapse": cos_of(torch.ones(k, device=dev), Du, uu, KK),
                "fold": cos_of(wbar[:k], Du, uu, KK),
-               "mean_stream": torch.nn.functional.cosine_similarity(u, M[i], dim=-1)}
+               "mean_stream": torch.nn.functional.cosine_similarity(u, m_l, dim=-1)}
         # static_best: min_b sum_t |u_t - D_t b|^2 / |u_t|^2 on the fit half
         w = (~test).float() / uu
         G_raw = torch.einsum("t,tjk->jk", w, KK).double()
@@ -121,7 +127,7 @@ def main() -> int:
     held = summary(test)
     print(f"{'layer':>5s} {'kind':>10s} {'collapse':>9s} {'fold':>9s} {'mean_str':>9s} {'static':>9s}  (held-out mean cosine)")
     for r in held:
-        if r["layer"] % 8 == 0 or r["layer"] == layers[-1]:
+        if r["layer"] % 8 == 0 or r["layer"] >= layers[-1]:
             print(f"{r['layer']:5d} {r['kind']:>10s} {r['collapse']:9.4f} {r['fold']:9.4f} {r['mean_stream']:9.4f} "
                   f"{r['static_best']:9.4f}")
     avg = {c: float(np.mean([r[c] for r in held])) for c in ("collapse", "fold", "mean_stream", "static_best")}
@@ -134,9 +140,10 @@ def main() -> int:
         print(f"  {s:13s}", {c: round(x, 4) for c, x in v.items()})
     if a.tokens:
         np.savez(a.tokens, K=K.cpu().numpy(), Du=tok_Du.numpy(), uu=tok_uu.numpy(), test=test.cpu().numpy(),
-                 sets=sets, layers=np.array(layers))
+                 sets=sets, layers=np.array([t[0] for t in targets]))
     if a.gram:
-        np.savez(a.gram, **grams, wbar=wbar.cpu().numpy(), layers=np.array(layers))
+        np.savez(a.gram, **grams, wbar=wbar.cpu().numpy(), layers=np.array([t[0] for t in targets]),
+                 final=np.array(targets[-1][1] == "final"))
     if a.out:
         a.out.write_text(json.dumps({"held_out": held, "mean": avg, "per_set": per_set_avg,
                                      "beta": {r["layer"]: r["beta"] for r in rows}, "tokens": T}, indent=1))

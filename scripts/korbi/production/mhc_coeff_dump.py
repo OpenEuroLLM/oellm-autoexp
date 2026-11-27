@@ -12,7 +12,11 @@ So the imitation needs activations. Every mHC decoder layer's forward is wrapped
                   collapsed input c = e + sum_j delta_j (the PR #82 conversion before any training)
   sampled tokens  (--samples per sequence, the same positions in every layer) the input streams [4, h], the
                   sublayer output delta [h] and h_pre / h_post / H_res, so any candidate input (static fold,
-                  fitted LDM read, ...) can be rebuilt offline from e and the deltas
+                  fitted LDM read, ...) can be rebuilt offline from e and the deltas; the last layer's output
+                  streams (final_streams: the LM head reads their mean)
+
+engram_branch_gates (the bg_learned fork): an Engram layer writes one output per stream; delta is their mean, the
+value a single-stream layer writes when its n gates are averaged.
 
 Sets: the run's fixed validation sets (BOS + document, as trained), --docs per set, cut to --seq-len.
 Output <out>/: layer_<l>.npz (samples), stats.json (per layer all-token statistics), meta.json.
@@ -72,7 +76,8 @@ class Recorder:
         n_layers, n = self.n_layers, self.n
         self.pos = None          # sampled positions of the current sequence (LongTensor on CPU)
         self.collapsed = None    # c = e + sum_j delta_j, fp32 [T, h]
-        self.samples = {l: {k: [] for k in ("streams", "delta", "h_pre", "h_post", "h_res")} for l in range(n_layers)}
+        self.samples = {l: {k: [] for k in ("streams", "delta", "h_pre", "h_post", "h_res", "final_streams")}
+                        for l in range(n_layers)}
         z = lambda *s: torch.zeros(*s, dtype=torch.float64)  # noqa: E731
         self.stats = {l: {"tokens": 0, "h_pre": z(n), "h_pre_sq": z(n), "h_post": z(n), "h_post_sq": z(n),
                           "h_res": z(n, n), "h_res_sq": z(n, n), "cos_mean": 0.0, "cos_collapse": 0.0,
@@ -86,10 +91,19 @@ def instrument(model, rec: Recorder) -> list[int]:
     for idx, layer in enumerate(model.model.layers):
         if getattr(layer, "ldm", False) or getattr(layer, "mhc", None) is None:
             continue
-        if layer.kind == "engram" and getattr(layer.mixer, "branch_gates", False):
-            raise SystemExit("engram_branch_gates exports are not covered (one output per stream)")
         layers.append(idx)
         orig_forward, orig_mix = layer.forward, layer._mix
+        if layer.kind == "engram" and getattr(layer.mixer, "branch_gates", False):
+            # per-stream Engram gates: the layer bypasses _mix and writes one output per stream; delta is their
+            # mean, the value a single-stream (LDM) layer writes when its n gates are averaged
+            orig_mixer = layer.mixer.forward
+
+            def mixer_forward(*args, _orig=orig_mixer, _layer=layer, **kw):
+                outs, state = _orig(*args, **kw)
+                _layer._mhcdump_delta = outs.mean(dim=-2) if outs.dim() == 4 else outs
+                return outs, state
+
+            layer.mixer.forward = mixer_forward
 
         def mix(self, *args, _orig=orig_mix, _l=idx, **kw):
             out, state = _orig(*args, **kw)
@@ -127,6 +141,8 @@ def instrument(model, rec: Recorder) -> list[int]:
                 smp["h_pre"].append(h_pre[p].cpu())
                 smp["h_post"].append(h_post[p].cpu())
                 smp["h_res"].append(h_res[p].cpu())
+                if _l == layers[-1]:  # the LM head reads the mean of the last layer's output streams
+                    smp["final_streams"].append(new_streams.reshape(b * s, n, h)[p].to(torch.bfloat16).cpu())
                 rec.calls += 1
             return new_streams, state
 
@@ -218,7 +234,9 @@ def main() -> int:
                  streams=torch.cat(smp["streams"]).view(torch.int16).numpy(),  # bf16 bits
                  delta=torch.cat(smp["delta"]).view(torch.int16).numpy(),
                  h_pre=torch.cat(smp["h_pre"]).numpy(), h_post=torch.cat(smp["h_post"]).numpy(),
-                 h_res=torch.cat(smp["h_res"]).numpy())
+                 h_res=torch.cat(smp["h_res"]).numpy(),
+                 **({"final_streams": torch.cat(smp["final_streams"]).view(torch.int16).numpy()}
+                    if smp["final_streams"] else {}))
     (a.out / "stats.json").write_text(json.dumps(stats, indent=1))
     (a.out / "meta.json").write_text(json.dumps(meta))
     print(f"[{time.time() - t0:6.0f}s] wrote {a.out}: {len(layers)} layers, "
