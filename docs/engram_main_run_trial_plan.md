@@ -169,8 +169,10 @@ Read from the exported `gate_terms.logit_scale` tensors (`hf_exports/ambitious_v
 
 - Layer 52 opened all four streams (+30–75 % over init) and held them: a learned increase in the
   Engram read magnitude, not a schedule.
-- Layer 2 diverged: two streams closed to ~0, one opened to 0.61 — the dead gate revived
-  *selectively*, which is the trial's question and it is happening in the weights.
+- Layer 2 diverged: two streams fell to ~0.003–0.026, one opened to 0.61. Note what ~0 means here:
+  `logit_scale` scales the **pre-sqrt logit**, so `logit_scale = 0` gives `gate = sigmoid(0) = 0.5`
+  — the *neutral* point, not a closed gate. Those two streams stopped modulating and sit at half
+  strength; only stream 2 is actively query-dependent.
 - `query_mix` (λ, init 0) moved only to ±0.01–0.04: the read/stream blend is nudged, not rewritten.
 
 Consequence for the readout: the fork is functionally distinct from the main run, yet the recall
