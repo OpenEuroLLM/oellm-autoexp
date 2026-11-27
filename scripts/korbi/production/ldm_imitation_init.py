@@ -91,7 +91,6 @@ def main() -> int:
     a = ap.parse_args()
     layers, Gf, bf, Gt, bt, Nf, Nt = load(a.gram)
     L = len(layers)
-    pad = lambda v, k: torch.cat([v, torch.zeros(L + 1 - k)])  # noqa: E731
 
     def score(rows, G, b, N):
         return [explained(rows[i][: i + 1], G[i], b[i], N) for i in range(L)]
