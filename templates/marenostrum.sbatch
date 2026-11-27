@@ -72,6 +72,19 @@ if [ -n "$NODE_CHECK" ] && [ "$NODE_CHECK" != "off" ] && [ -z "$NC_SKIP" ]; then
     fi
 fi
 
+# a pool stop (cancel / preempt / host exit) that arrived during the node check: the check's step died on the
+# signal, but nothing must start after it -- the supervisor would kill the training step at the end of its
+# grace period (2026-11-27, p264.2540: a healthy restart killed 45 min after a preempt of its node check)
+if [ -n "$AUTOEXP_POOL_DIR" ] && [ -n "$AUTOEXP_RUN_ID" ]; then
+    for POOL_STOP_MARK in "$AUTOEXP_POOL_DIR/runs/$AUTOEXP_RUN_ID/stop" "$AUTOEXP_POOL_DIR/runs/$AUTOEXP_RUN_ID/preempt" \
+        "$AUTOEXP_POOL_DIR/hosts/$AUTOEXP_POOL_HOST/control/exit" "$AUTOEXP_POOL_DIR/hosts/$AUTOEXP_POOL_HOST/control/signal"; do
+        if [ -e "$POOL_STOP_MARK" ]; then
+            echo "[pool] stop requested ($POOL_STOP_MARK) before the training started: not launching it"
+            exit 143
+        fi
+    done
+fi
+
 echo "Launching job {job_name}"
 srun {srun_opts} bash -c '{launcher_cmd} {command}'
 # keep the training step's exit status: the echo lines below would otherwise make every job
