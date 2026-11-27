@@ -156,3 +156,28 @@ The fork writes only its own dirs; the main tree `runs/v4b_learned/main` is unto
 - Set the reset threshold (e.g. loss delta > +0.0005 beyond noise) and the spike tolerance.
 - Decide the host004 arms' role (tiebreaker or drop).
 - Land the Megatron commit `bd6b57856` in the main repo before the snapshot.
+
+## 9. Observed gate values (2026-11-27)
+
+Read from the exported `gate_terms.logit_scale` tensors (`hf_exports/ambitious_v4b_fork_bg_fp8_*`,
+4 streams per Engram layer; init was one value per layer, broadcast to all streams):
+
+| layer | init | @64,000 | @66,000 |
+|---|---|---|---|
+| 2 | 0.30 | 0.253, 0.354, 0.003, 0.026 | 0.194, **0.606**, 0.0007, 0.010 |
+| 52 | 0.47 | 0.634, 0.749, 0.598, 0.804 | 0.615, 0.770, 0.649, **0.828** |
+
+- Layer 52 opened all four streams (+30–75 % over init) and held them: a learned increase in the
+  Engram read magnitude, not a schedule.
+- Layer 2 diverged: two streams closed to ~0, one opened to 0.61 — the dead gate revived
+  *selectively*, which is the trial's question and it is happening in the weights.
+- `query_mix` (λ, init 0) moved only to ±0.01–0.04: the read/stream blend is nudged, not rewritten.
+
+Consequence for the readout: the fork is functionally distinct from the main run, yet the recall
+suite is a tie (fork@64,000 mean 57.74 vs main@64,000 58.02, −0.28 pp inside the 1.3–1.7 pp floor,
+no row collapse). A large change in Engram read magnitude produced no measurable collateral damage
+on QA — consistent with the Engram contributing 0.47 % of active FLOPs.
+
+Still open: whether the revived layer-2 gates make that Engram carry information. That is the
+paired validation in `config/experiments/korbi/recall_surgery/v4b_learned_fork_bg_learned_eval_mn5.yaml`
+(main / fork x layer-2 Engram on/off, seven fixed validation sets, same samples per arm).
