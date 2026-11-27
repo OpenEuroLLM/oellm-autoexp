@@ -1,0 +1,77 @@
+# @package _global_
+# The fork's persistent save aux.it converted for the LDM continuation (recall_surgery/v4b_learned_fork_ldm_mn5) as a
+# 1-node job (CPU only; p264 host011's spare nodes): scripts/korbi/production/mhc_to_ldm.py --ldm --imitate writes
+# <runs>/fork_ldm_<it>/ckpt/iter_<it> (.distcp hard-linked: run as the owner of the fork's files) with the LDM sites
+# set to the fitted imitation (aux.init, run aux.run), then that run's start condition passes. Run only with the
+# user's go, after the fork stopped at aux.it.
+#
+#   cd $R/autoexp_<snapshot> && scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py --no-monitor \
+#       --monitor-state-dir $R/pool_state --pool /gpfs/scratch/ehpc533/hybrid_nucleus/pools/mn5_pool_p264 \
+#       --config-name experiments/korbi/production/fork_ldm_surgery_mn5 aux.it=68000 --yes
+defaults:
+  - /experiments/base
+  - /backend: bash
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  it: 68000
+  kv_root: /gpfs/scratch/ehpc533/hybrid_nucleus/production/kvshare_k_fresh35900_20261116
+  src: ${aux.kv_root}/runs/v4b_learned/fork_bg_learned_62900/ckpt/iter_${oc.eval:'f"{${aux.it}:07d}"'}
+  dst: ${aux.kv_root}/runs/v4b_learned/fork_ldm_${aux.it}/ckpt/iter_${oc.eval:'f"{${aux.it}:07d}"'}
+  init: /gpfs/scratch/ehpc533/hybrid_nucleus/production/ldm_imitation/ambitious_v4b_fork_bg_fp8_66000/ldm_init.json
+  run: K8_lam0.9_noise0.02
+  query_noise: 0.05
+  # extra flags: "--duplicate" (key width 16: then aux.ldm_key_dim=16 in v4b_learned_fork_ldm_mn5), "--dry-run"
+  # (reads the save, prints the rewritten keys, writes nothing; the login node's 300 s CPU limit kills it)
+  extra: ""
+  hybrid_env: /gpfs/projects/ehpc533/users/korbip/hybrid_v019
+  sif: ${aux.hybrid_env}/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+
+backend:
+  # literal values, not shell variables: the job's env variables arrived empty in the container
+  command: python3 scripts/korbi/production/mhc_to_ldm.py --src ${aux.src} --dst ${aux.dst} --ldm --imitate ${aux.init} --imitate-run ${aux.run} --query-noise ${aux.query_noise} ${aux.extra}
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_ep:${aux.hybrid_env}/pylibs_hfx"
+    OELLM_HF_IMPL: fast
+    OELLM_HF_MOE: fused
+    OELLM_HF_ENGRAM_UVA: "1"
+    OELLM_HF_GRAD: "0"
+    HF_DATASETS_OFFLINE: "1"
+    HF_HUB_OFFLINE: "1"
+    HOME: /tmp
+    TRITON_CACHE_DIR: /tmp/triton
+    TORCHINDUCTOR_CACHE_DIR: /tmp/inductor
+
+container:
+  image: ${aux.sif}
+
+job:
+  name: fork_ldm_surgery_${aux.it}
+  base_output_dir: ${aux.kv_root}/runs/v4b_learned/fork_ldm_${aux.it}/surgery_logs
+  est_steps: 1
+  est_step_time_s: 900
+  metadata:
+    # before the eval agent's 1-node jobs (60): the main run waits for it
+    pool_priority: 140
+    pool_use_excluded_nodes: false
+    pool_singleton: null
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: timeout
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "01:00:00"
+    # p264's hosts: account cns144, qos acc_xehpc
+    account: cns144
+    qos: acc_xehpc
+
+stage: test
