@@ -54,6 +54,9 @@ slurm:
     NODE_CHECK_DIR: ${job.base_output_dir}/node_check
   sbatch:
     nodes: ${aux.nodes}
+    # in a pool the run's time is its maximum runtime (MAX_RUNTIME_S): 72 h = the hosts' 3-day limit, so a
+    # segment ends only with its host, not every 24 h (user 2026-11-28; each restart cost ~8 min)
+    time: "72:00:00"
     # p264's hosts: account cns144, qos acc_xehpc (the main run's)
     account: cns144
     qos: acc_xehpc
